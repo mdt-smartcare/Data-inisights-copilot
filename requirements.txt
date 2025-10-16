@@ -1,0 +1,12 @@
+flask==2.2.5
+
+flask-cors==4.0.0
+langchain==0.0.334
+openai>=1.10.0,<2.0.0
+langchain-openai==0.0.5
+langchain-community==0.0.10
+langchain-core>=0.1.16,<0.2.0
+sentence-transformers==2.2.2
+transformers==4.31.0
+psycopg2-binary==2.9.7
+chromadb==0.4.15

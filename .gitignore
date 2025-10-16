@@ -1,3 +1,4 @@
 .env
 models/all-MiniLM-L6-v2/
 /fhir-data-pipes
+/__pycache__
