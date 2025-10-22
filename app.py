@@ -28,7 +28,6 @@ CORS(app) # Allows the Superset frontend to call this API
 
 # --- IMPORTANT: SET YOUR API KEYS HERE ---
 api_key = os.getenv("OPENAI_API_KEY")
-
 os.environ["OPENAI_API_KEY"] = api_key
 
 # --- 0. CUSTOM EMBEDDING CLASS ---
@@ -44,9 +43,16 @@ class LocalHuggingFaceEmbeddings(Embeddings):
 DB_USER = "admin"
 DB_PASSWORD = "admin"
 DB_NAME = "views"
-# Use host.docker.internal to connect from the host machine to a docker container
 DB_URI = f"postgresql://{DB_USER}:{DB_PASSWORD}@localhost:5432/{DB_NAME}"
-db = SQLDatabase.from_uri(DB_URI, include_tables=["patient_flat", "condition_flat", "practitioner_flat"])
+
+# --- THIS IS THE FIX: All tables are now included ---
+all_tables = [
+    "condition_flat", "diagnostic_report_flat", "encounter_flat",
+    "immunization_flat", "location_flat", "medication_request_flat",
+    "observation_flat", "organization_flat", "patient_flat",
+    "practitioner_flat", "practitioner_role_flat", "procedure_flat"
+]
+db = SQLDatabase.from_uri(DB_URI, include_tables=all_tables)
 
 # --- 2. SETUP ALL AGENT COMPONENTS (GLOBAL) ---
 print("Loading all agent components...")

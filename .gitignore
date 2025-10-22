@@ -2,3 +2,8 @@
 models/all-MiniLM-L6-v2/
 /fhir-data-pipes
 /__pycache__
+/models/bge-m3
+/superset
+/chroma_db_index
+/chroma_db_index_bge_m3_full
+
