@@ -120,7 +120,7 @@ def log_feedback(query: str, suggestions_json: str, selected_index: int, rating:
         print(f"Error logging feedback: {e}")
         return gr.update(value="Error logging feedback.", visible=True)
 
-# --- 4. CORE AGENT AND UI LOGIC ---
+# --- 4. CORE AGENT AND UI LOGIC (CORRECTED YIELDS) ---
 
 async def get_agent_response(message: str) -> Dict[str, Any]:
     result = await main_agent_executor.ainvoke({"input": message})
@@ -145,7 +145,9 @@ async def get_agent_response(message: str) -> Dict[str, Any]:
 
 async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
     history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": "🤔 Thinking..."})
+    history.append({"role": "assistant", "content": ""})
+    
+    # The number of items yielded must match the number of outputs (8 items)
     yield (history, gr.update(visible=False), gr.update(value="*Agent is thinking...*"),
            gr.Dataframe(value=[]), gr.update(visible=False), "",
            gr.Textbox(value=message), gr.Textbox())
@@ -179,23 +181,30 @@ async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
                gr.update(), gr.update(visible=False),
                "", gr.update(), gr.update())
 
-# --- 5. GRADIO UI LAYOUT AND EVENT HANDLING ---
+# --- 5. GRADIO UI LAYOUT AND EVENT HANDLING (CORRECTED) ---
 
 with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="blue", neutral_hue="slate"), title="FHIR RAG Chatbot") as demo:
     gr.Markdown("# FHIR RAG Chatbot")
     with gr.Row():
         with gr.Column(scale=1):
-            chatbot = gr.Chatbot(height=600, label="Chat History", type="messages")
+            chatbot = gr.Chatbot( label="Chat History", type="messages")
+            # Progress bars are defined but are NOT outputs
+            chat_progress = gr.Progress()
             textbox = gr.Textbox(placeholder="Ask a question...", container=False, scale=7)
             submit_btn = gr.Button("Send", variant="primary")
         with gr.Column(scale=2):
             plot = gr.Plot(label="Chart Visualization", visible=False)
             with gr.Accordion("Show Agent's Reasoning", open=False):
+                agent_progress = gr.Progress()
                 thinking_box = gr.Markdown(label="Agent's Thoughts", value="*Waiting for a question...*")
 
-    with gr.Group(visible=False) as suggestions_box:
+    with gr.Group(visible=True) as suggestions_box:
         with gr.Row():
-            suggestions_df = gr.Dataframe(headers=["Suggested Questions"], col_count=(1, "fixed"), interactive=False, label="Suggestions (Select a row below to give feedback)")
+            suggestions_df = gr.Dataframe(
+                headers=["Suggested Questions"],
+                value=[["What is the total number of patients?"], ["Show the patient distribution by gender."], ["What are the top 5 most common conditions?"]],
+                col_count=(1, "fixed"), interactive=False, label="Suggestions (Select a row below to give feedback)",
+            )
         with gr.Row():
             good_btn = gr.Button("Mark as Good 👍")
             bad_btn = gr.Button("Mark as Bad 👎")
@@ -203,16 +212,27 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
 
     last_query, suggestions_store, selected_suggestion_index = gr.Textbox(visible=False), gr.Textbox(visible=False), gr.Number(label="Selected Index", visible=False)
     
-    outputs = [chatbot, plot, thinking_box, suggestions_df, suggestions_box, textbox, last_query, suggestions_store]
+    # CORRECTED: The outputs list does NOT include the progress bars
+    outputs = [
+        chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
+        textbox, last_query, suggestions_store
+    ]
     
-    # CORRECTED: The wrapper is now an async function
-    async def submit_wrapper(message, history):
-        # CORRECTED: Use 'async for' to iterate over the async generator
+    # CORRECTED: Wrapper function is now async
+    async def submit_and_clear(message, history):
+        # CORRECTED: Use async for to iterate
         async for update in chat_ui_updater(message, history):
+            # Show/hide progress bars manually before yielding
+            if history[-1]["content"] == "":
+                chat_progress.visible = True
+                agent_progress.visible = True
+            else:
+                chat_progress.visible = False
+                agent_progress.visible = False
             yield update
 
-    submit_btn.click(submit_wrapper, [textbox, chatbot], outputs).then(lambda: "", None, textbox)
-    textbox.submit(submit_wrapper, [textbox, chatbot], outputs).then(lambda: "", None, textbox)
+    submit_btn.click(submit_and_clear, [textbox, chatbot], outputs).then(lambda: "", None, textbox)
+    textbox.submit(submit_and_clear, [textbox, chatbot], outputs).then(lambda: "", None, textbox)
 
     def handle_suggestion_select(evt: gr.SelectData):
         log_feedback(last_query.value, suggestions_store.value, evt.index[0], 0.5)
