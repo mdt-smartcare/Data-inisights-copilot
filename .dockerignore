@@ -1,0 +1,23 @@
+# .dockerignore
+
+# Python virtual environment
+rag_env/
+.venv/
+venv/
+
+# Git
+.git/
+.gitignore
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
+
+# Runtime data and logs
+feedback_log.csv
+*.log

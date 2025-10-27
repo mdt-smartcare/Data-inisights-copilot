@@ -35,6 +35,13 @@ class Config:
     VECTOR_DB_PATH = 'chroma_db_index_b-m3_full'
     LLM_MODEL = "gpt-4o"
     FEEDBACK_LOG_FILE = "feedback_log.csv"
+    
+    # Authentication configuration
+    USERS = {
+        "admin": "admin",
+        "analyst": "analyst2024",
+        "viewer": "view123"
+    }
 
 if not Config.OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY not found or is empty in your .env file.")
@@ -120,6 +127,46 @@ def log_feedback(query: str, suggestions_json: str, selected_index: int, rating:
         print(f"Error logging feedback: {e}")
         return gr.update(value="Error logging feedback.", visible=True)
 
+# --- AUTHENTICATION FUNCTIONS ---
+
+def authenticate_user(username: str, password: str) -> tuple[bool, str]:
+    """Authenticate user credentials"""
+    if not username or not password:
+        return False, "Please enter both username and password"
+    
+    if username in Config.USERS and Config.USERS[username] == password:
+        return True, f"Welcome, {username}!"
+    else:
+        return False, "Invalid username or password"
+
+def login_interface(username: str, password: str):
+    """Handle login form submission"""
+    is_valid, message = authenticate_user(username, password)
+    
+    if is_valid:
+        return (
+            gr.update(visible=False),  # Hide login form
+            gr.update(visible=True),   # Show main interface  
+            gr.update(value=message, visible=True),  # Show welcome message
+            username  # Store current user
+        )
+    else:
+        return (
+            gr.update(visible=True),   # Keep login form visible
+            gr.update(visible=False),  # Keep main interface hidden
+            gr.update(value=message, visible=True),  # Show error message
+            ""  # Clear user
+        )
+
+def logout_user():
+    """Handle logout"""
+    return (
+        gr.update(visible=True),   # Show login form
+        gr.update(visible=False),  # Hide main interface
+        gr.update(value="Logged out successfully", visible=True),  # Show logout message
+        ""  # Clear current user
+    )
+
 # --- 4. CORE AGENT AND UI LOGIC (CORRECTED YIELDS) ---
 
 async def get_agent_response(message: str) -> Dict[str, Any]:
@@ -181,48 +228,154 @@ async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
                gr.update(), gr.update(visible=False),
                "", gr.update(), gr.update())
 
-# --- 5. GRADIO UI LAYOUT AND EVENT HANDLING (CORRECTED) ---
+# --- 5. GRADIO UI LAYOUT WITH AUTHENTICATION ---
 
 with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="blue", neutral_hue="slate"), title="FHIR RAG Chatbot") as demo:
-    gr.Markdown("# FHIR RAG Chatbot")
-    with gr.Row():
-        with gr.Column(scale=1):
-            chatbot = gr.Chatbot( label="Chat History", type="messages")
-            # Progress bars are defined but are NOT outputs
-            chat_progress = gr.Progress()
-            textbox = gr.Textbox(placeholder="Ask a question...", container=False, scale=7)
-            submit_btn = gr.Button("Send", variant="primary")
-        with gr.Column(scale=2):
-            plot = gr.Plot(label="Chart Visualization", visible=False)
-            with gr.Accordion("Show Agent's Reasoning", open=False):
-                agent_progress = gr.Progress()
-                thinking_box = gr.Markdown(label="Agent's Thoughts", value="*Waiting for a question...*")
-
-    with gr.Group(visible=True) as suggestions_box:
+    
+    # State variables for authentication
+    current_user = gr.State("")
+    login_message = gr.Textbox(label="Status", visible=False, interactive=False)
+    
+    # Login Interface
+    with gr.Group(visible=True) as login_form:
+        gr.Markdown("# 🔐 Login Required")
+        gr.Markdown("### Data Insights AI-Copilot (Sierra Leone FHIR Training Data)")
+        
         with gr.Row():
-            suggestions_df = gr.Dataframe(
-                headers=["Suggested Questions"],
-                value=[["What is the total number of patients?"], ["Show the patient distribution by gender."], ["What are the top 5 most common conditions?"]],
-                col_count=(1, "fixed"), interactive=False, label="Suggestions (Select a row below to give feedback)",
+            with gr.Column(scale=1):
+                gr.Markdown("")  # Spacer
+            with gr.Column(scale=2):
+                with gr.Group():
+                    gr.Markdown("**Please log in to access the system:**")
+                    username_input = gr.Textbox(
+                        label="Username", 
+                        placeholder="Enter your username",
+                        max_lines=1
+                    )
+                    password_input = gr.Textbox(
+                        label="Password", 
+                        placeholder="Enter your password",
+                        type="password",
+                        max_lines=1
+                    )
+                    with gr.Row():
+                        login_btn = gr.Button("Login", variant="primary", scale=2)
+                        gr.Button("Clear", variant="secondary", scale=1).click(
+                            lambda: ("", ""), 
+                            outputs=[username_input, password_input]
+                        )
+            with gr.Column(scale=1):
+                gr.Markdown("")  # Spacer
+    
+    # Main Application Interface (hidden by default)
+    with gr.Group(visible=False) as main_interface:
+        # Header with user info and logout
+        with gr.Row():
+            gr.Markdown("# Data Insights AI-Copilot (Sierra Leone FHIR Training Data)")
+            with gr.Column(scale=1, min_width=200):
+                user_display = gr.Markdown("", elem_classes=["user-info"])
+                logout_btn = gr.Button("Logout", variant="secondary", size="sm")
+        
+        # Main chat interface
+        with gr.Row():
+            with gr.Column(scale=1):
+                chatbot = gr.Chatbot(label="Chat History", type="messages")
+                chat_progress = gr.Progress()
+                textbox = gr.Textbox(placeholder="Ask a question...", container=False, scale=7)
+                submit_btn = gr.Button("Send", variant="primary")
+            with gr.Column(scale=2):
+                plot = gr.Plot(label="Chart Visualization", visible=False)
+                with gr.Accordion("Show Agent's Reasoning", open=False):
+                    agent_progress = gr.Progress()
+                    thinking_box = gr.Markdown(label="Agent's Thoughts", value="*Waiting for a question...*")
+
+        # Suggestions and feedback section
+        with gr.Group(visible=True) as suggestions_box:
+            with gr.Row():
+                suggestions_df = gr.Dataframe(
+                    headers=["Suggested Questions"],
+                    value=[["What is the total number of patients?"], 
+                           ["Show the patient distribution by gender."], 
+                           ["What are the top 5 most common conditions?"]],
+                    col_count=(1, "fixed"), 
+                    interactive=False, 
+                    label="Suggestions (Select a row below to give feedback)",
+                )
+            with gr.Row():
+                good_btn = gr.Button("Mark as Good 👍")
+                bad_btn = gr.Button("Mark as Bad 👎")
+            feedback_toast = gr.Textbox(label="Feedback Status", interactive=False, visible=False)
+
+        # Hidden state variables
+        last_query = gr.Textbox(visible=False)
+        suggestions_store = gr.Textbox(visible=False)
+        selected_suggestion_index = gr.Number(label="Selected Index", visible=False)
+    
+    # Login event handler
+    def handle_login(username, password):
+        is_valid, message = authenticate_user(username, password)
+        
+        if is_valid:
+            return (
+                gr.update(visible=False),  # Hide login form
+                gr.update(visible=True),   # Show main interface
+                gr.update(value=f"**Logged in as:** {username}", visible=True),  # Update user display
+                username,  # Store current user
+                "",  # Clear username field
+                "",  # Clear password field
+                gr.update(value="Login successful!", visible=False)  # Show success message
             )
-        with gr.Row():
-            good_btn = gr.Button("Mark as Good 👍")
-            bad_btn = gr.Button("Mark as Bad 👎")
-        feedback_toast = gr.Textbox(label="Feedback Status", interactive=False, visible=False)
-
-    last_query, suggestions_store, selected_suggestion_index = gr.Textbox(visible=False), gr.Textbox(visible=False), gr.Number(label="Selected Index", visible=False)
+        else:
+            return (
+                gr.update(visible=True),   # Keep login form visible
+                gr.update(visible=False),  # Keep main interface hidden
+                gr.update(value="", visible=False),  # Clear user display
+                "",  # Clear current user
+                username,  # Keep username (don't clear on failed login)
+                "",  # Clear password
+                gr.update(value=message, visible=True)  # Show error message
+            )
     
-    # CORRECTED: The outputs list does NOT include the progress bars
-    outputs = [
-        chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
-        textbox, last_query, suggestions_store
-    ]
+    # Logout event handler
+    def handle_logout():
+        return (
+            gr.update(visible=True),   # Show login form
+            gr.update(visible=False),  # Hide main interface
+            gr.update(value="", visible=False),  # Clear user display
+            "",  # Clear current user
+            "",  # Clear username
+            "",  # Clear password
+            gr.update(value="Logged out successfully", visible=True)  # Show logout message
+        )
     
-    # CORRECTED: Wrapper function is now async
+    # Event bindings for login/logout
+    login_outputs = [login_form, main_interface, user_display, current_user, 
+                    username_input, password_input, login_message]
+    
+    login_btn.click(
+        handle_login,
+        inputs=[username_input, password_input],
+        outputs=login_outputs
+    )
+    
+    # Allow Enter key to submit login
+    password_input.submit(
+        handle_login,
+        inputs=[username_input, password_input], 
+        outputs=login_outputs
+    )
+    
+    logout_btn.click(
+        handle_logout,
+        outputs=login_outputs
+    )
+    
+    # Chat functionality (only works when logged in)
+    chat_outputs = [chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
+                   textbox, last_query, suggestions_store]
+    
     async def submit_and_clear(message, history):
-        # CORRECTED: Use async for to iterate
         async for update in chat_ui_updater(message, history):
-            # Show/hide progress bars manually before yielding
             if history[-1]["content"] == "":
                 chat_progress.visible = True
                 agent_progress.visible = True
@@ -231,9 +384,10 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
                 agent_progress.visible = False
             yield update
 
-    submit_btn.click(submit_and_clear, [textbox, chatbot], outputs).then(lambda: "", None, textbox)
-    textbox.submit(submit_and_clear, [textbox, chatbot], outputs).then(lambda: "", None, textbox)
+    submit_btn.click(submit_and_clear, [textbox, chatbot], chat_outputs).then(lambda: "", None, textbox)
+    textbox.submit(submit_and_clear, [textbox, chatbot], chat_outputs).then(lambda: "", None, textbox)
 
+    # Suggestion handling
     def handle_suggestion_select(evt: gr.SelectData):
         log_feedback(last_query.value, suggestions_store.value, evt.index[0], 0.5)
         return evt.value, evt.index[0]

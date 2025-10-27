@@ -1,8 +1,8 @@
 # LangChain and OpenAI
-langchain
+langchain==0.3.27
 langchain-openai
 langchain-community
-
+huggingface-hub
 # Vector Store
 chromadb
 sentence-transformers
@@ -15,6 +15,7 @@ psycopg2-binary
 gradio
 pandas
 plotly
+numpy
 
 # Kotaemon specific dependencies
 nest_asyncio
