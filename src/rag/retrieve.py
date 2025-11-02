@@ -1,122 +1,77 @@
-import faiss
-import json
-import os
-import numpy as np
-from typing import List, Dict, Any
 import logging
+import pickle
+import os
+from dotenv import load_dotenv
+from typing import List, Dict
+from langchain.docstore.document import Document
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+from langchain.retrievers.parent_document_retriever import ParentDocumentRetriever
+from langchain_community.vectorstores import Chroma
+
+# --- Reranker imports REMOVED to fix the error ---
+
+from src.pipeline.embed import LocalHuggingFaceEmbeddings
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+import yaml
 import chromadb
-from src.pipeline.embed import create_embedding_model
 
 logger = logging.getLogger(__name__)
+load_dotenv()
 
-class VectorRetriever:
-    def __init__(self, config_path="config/embedding_config.yaml"):
-        self.config = self._load_config(config_path)
-        self.client = None
-        self.collection = None
-        self.embedding_model = create_embedding_model(config_path)
+class AdvancedRAGRetriever:
+    def __init__(self, config: Dict):
+        self.config = config
+        self.embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
         
-    def _load_config(self, config_path):
-        """Load configuration"""
-        import yaml
-        with open(config_path, 'r') as file:
-            return yaml.safe_load(file)
-    
-    def load_index(self):
-        """Load ChromaDB index"""
-        try:
-            chroma_path = "./data/indexes/chroma_db"
-            self.client = chromadb.PersistentClient(path=chroma_path)
-            self.collection = self.client.get_collection("spice_healthcare")
-            
-            logger.info(f"Loaded ChromaDB index with {self.collection.count()} documents")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to load ChromaDB index: {e}")
-            return False
-    
-    def search(self, query: str, k: int = 5, score_threshold: float = 0.7) -> List[Dict[str, Any]]:
-        """Search for similar documents"""
-        if not self.collection:
-            raise ValueError("Collection not loaded. Call load_index() first.")
+        self.vector_store = self._load_vector_store()
+        self.docstore = self._load_docstore()
         
-        try:
-            # Use ChromaDB's built-in search
-            results = self.collection.query(
-                query_texts=[query],
-                n_results=k,
-                include=["documents", "metadatas", "distances"]
-            )
-            
-            formatted_results = []
-            if results["documents"] and results["documents"][0]:
-                for i, (doc, metadata, distance) in enumerate(zip(
-                    results["documents"][0],
-                    results["metadatas"][0],
-                    results["distances"][0]
-                )):
-                    # Convert distance to similarity score (Chroma uses distance, we want similarity)
-                    similarity_score = 1.0 / (1.0 + distance) if distance > 0 else 1.0
-                    
-                    if similarity_score >= score_threshold:
-                        result = {
-                            "content": doc,
-                            "metadata": metadata,
-                            "score": float(similarity_score)
-                        }
-                        formatted_results.append(result)
-            
-            logger.info(f"Search returned {len(formatted_results)} results for query: {query}")
-            return formatted_results
-            
-        except Exception as e:
-            logger.error(f"Search failed: {e}")
-            return []
-    
-    def batch_search(self, queries: List[str], k: int = 5) -> List[List[Dict[str, Any]]]:
-        """Search for multiple queries at once"""
-        if not self.collection:
-            raise ValueError("Collection not loaded. Call load_index() first.")
+        # Create a child splitter instance (this fixes the other error)
+        child_splitter_config = self.config['chunking']['child_splitter']
+        child_splitter = RecursiveCharacterTextSplitter(**child_splitter_config)
         
-        try:
-            results = self.collection.query(
-                query_texts=queries,
-                n_results=k,
-                include=["documents", "metadatas", "distances"]
-            )
-            
-            all_results = []
-            for query_idx in range(len(queries)):
-                query_results = []
-                if (results["documents"] and results["documents"][query_idx] and
-                    results["metadatas"] and results["metadatas"][query_idx] and
-                    results["distances"] and results["distances"][query_idx]):
-                    
-                    for doc, metadata, distance in zip(
-                        results["documents"][query_idx],
-                        results["metadatas"][query_idx],
-                        results["distances"][query_idx]
-                    ):
-                        similarity_score = 1.0 / (1.0 + distance) if distance > 0 else 1.0
-                        query_results.append({
-                            "content": doc,
-                            "metadata": metadata,
-                            "score": float(similarity_score)
-                        })
-                
-                all_results.append(query_results)
-            
-            return all_results
-            
-        except Exception as e:
-            logger.error(f"Batch search failed: {e}")
-            return [[] for _ in queries]
+        # 1. Initialize ParentDocumentRetriever
+        parent_retriever = ParentDocumentRetriever(
+            vectorstore=self.vector_store,
+            docstore=self.docstore,
+            child_splitter=child_splitter,
+        )
 
-# Factory function
-def create_retriever(config_path="config/embedding_config.yaml"):
-    retriever = VectorRetriever(config_path)
-    if retriever.load_index():
-        return retriever
-    else:
-        raise Exception("Failed to load vector index")
+        # 2. Sparse Retriever (BM25)
+        parent_documents = list(self.docstore.mget(list(self.docstore.yield_keys())))
+        self.sparse_retriever = BM25Retriever.from_documents(parent_documents)
+        self.sparse_retriever.k = config['retriever']['top_k_initial']
+
+        # 3. Dense Retriever
+        self.dense_retriever = parent_retriever
+        self.dense_retriever.search_kwargs = {'k': config['retriever']['top_k_initial']}
+
+        # 4. Ensemble Retriever (Hybrid Search)
+        # This is now our final retriever
+        self.final_retriever = EnsembleRetriever(
+            retrievers=[self.sparse_retriever, self.dense_retriever],
+            weights=config['retriever']['hybrid_search_weights']
+        )
+        
+        logger.info("Advanced RAG Retriever (Hybrid Search Only) initialized successfully.")
+
+    def _load_vector_store(self):
+        # Disable telemetry to fix the log errors
+        client_settings = chromadb.Settings(anonymized_telemetry=False)
+        return Chroma(
+            persist_directory=self.config['vector_store']['chroma_path'],
+            embedding_function=self.embedding_function,
+            collection_name=self.config['vector_store']['collection_name'],
+            client_settings=client_settings
+        )
+
+    def _load_docstore(self):
+        docstore_path = f"{self.config['vector_store']['chroma_path']}/parent_docstore.pkl"
+        with open(docstore_path, "rb") as f:
+            return pickle.load(f)
+
+    def query(self, question: str) -> List[Document]:
+        logger.info(f"Executing advanced query: {question}")
+        # Use 'invoke' which is the standard for langchain 0.2.x
+        return self.final_retriever.invoke(question)

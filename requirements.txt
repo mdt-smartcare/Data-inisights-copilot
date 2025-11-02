@@ -1,23 +1,19 @@
-# LangChain and OpenAI
-langchain==0.3.27
-langchain-openai
-langchain-community
-huggingface-hub
-# Vector Store
-chromadb
-sentence-transformers
+# LangChain, Vector Store, and Core
+langchain==0.2.1
+langchain-core==0.2.3
+langchain-community==0.2.1
+chromadb==0.4.24
+sentence-transformers==2.6.1
 
-# Backend and UI
-flask
-flask_cors
-python-dotenv
-psycopg2-binary
-gradio
-pandas
-plotly
-numpy
+# Advanced RAG Features
+rank_bm25==0.2.2
 
-# Kotaemon specific dependencies
-nest_asyncio
-py-singleton
-tabulate
+# Backend and Utilities
+python-dotenv==1.0.1
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.29
+pandas==2.2.1
+pyyaml==6.0.1
+tqdm==4.66.2
+numpy==1.26.4
+gradio==4.25.0

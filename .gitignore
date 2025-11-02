@@ -8,3 +8,7 @@ models/all-MiniLM-L6-v2/
 /chroma_db_index_bge_m3_full
 
 /chroma_db_spice_bd
+*.pyc
+/data/indexes/chroma_db_advanced
+/logs
+/logs

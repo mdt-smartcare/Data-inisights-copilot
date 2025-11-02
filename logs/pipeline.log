@@ -1,0 +1,384 @@
+2025-10-31 15:26:43,198 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:26:43,198 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:26:43,280 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:26:43,284 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:26:44,239 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:26:44,239 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:26:44,262 - __main__ - CRITICAL - Pipeline build failed: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 35, in build_advanced_pipeline
+    initial_documents = transformer.create_documents_from_tables(table_data)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 20, in create_documents_from_tables
+    content = "\n".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 20, in <listcomp>
+    content = "\n".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+2025-10-31 15:26:44,264 - src.db.connector - INFO - Database connection closed.
+2025-10-31 15:27:35,887 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:27:35,887 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:27:35,968 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:27:35,973 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:27:36,826 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:27:36,826 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:27:36,829 - src.pipeline.transform - WARNING - Table 'account_clinical_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:27:36,832 - src.pipeline.transform - WARNING - Table 'account_customized_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:27:36,849 - __main__ - CRITICAL - Pipeline build failed: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 35, in build_advanced_pipeline
+    initial_documents = transformer.create_documents_from_tables(table_data)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 54, in create_documents_from_tables
+    formatted_val = self._safe_format_value(val)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 23, in _safe_format_value
+    if pd.isna(value):
+ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+2025-10-31 15:27:36,851 - src.db.connector - INFO - Database connection closed.
+2025-10-31 15:28:41,524 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:28:41,524 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:28:41,584 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:28:41,589 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:28:42,446 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:28:42,446 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:28:42,449 - src.pipeline.transform - WARNING - Table 'account_clinical_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:28:42,452 - src.pipeline.transform - WARNING - Table 'account_customized_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:28:42,468 - __main__ - CRITICAL - Pipeline build failed: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 35, in build_advanced_pipeline
+    initial_documents = transformer.create_documents_from_tables(table_data)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 53, in create_documents_from_tables
+    formatted_val = self._safe_format_value(val)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 24, in _safe_format_value
+    if value is None or pd.isna(value).any() if isinstance(value, (np.ndarray, pd.Series)) else pd.isna(value):
+ValueError: The truth value of an array with more than one element is ambiguous. Use a.any() or a.all()
+2025-10-31 15:28:42,471 - src.db.connector - INFO - Database connection closed.
+2025-10-31 15:29:30,049 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:29:30,049 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:29:30,109 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:29:30,114 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:29:30,958 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:29:30,959 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:29:30,961 - src.pipeline.transform - WARNING - Table 'account_clinical_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:29:30,965 - src.pipeline.transform - WARNING - Table 'account_customized_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:29:33,429 - src.pipeline.transform - WARNING - Table 'patient_medical_review_complaints' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:29:33,440 - src.pipeline.transform - WARNING - Table 'patient_nutrition_lifestyle_lifestyle' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:29:34,579 - src.pipeline.transform - WARNING - Table 'site_program' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:29:34,639 - src.pipeline.transform - WARNING - Table 'user_organization' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:29:34,658 - src.pipeline.transform - WARNING - Table 'user_role' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:29:35,061 - src.pipeline.transform - INFO - Created 117690 initial documents from all tables.
+2025-10-31 15:29:35,063 - __main__ - CRITICAL - Pipeline build failed: 1 validation error for ParentDocumentRetriever
+vectorstore
+  Input should be an instance of VectorStore [type=is_instance_of, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/is_instance_of
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 36, in build_advanced_pipeline
+    child_documents, parent_docstore = transformer.perform_parent_child_chunking(initial_documents)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 75, in perform_parent_child_chunking
+    retriever = ParentDocumentRetriever(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/langchain_core/load/serializable.py", line 115, in __init__
+    super().__init__(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/pydantic/main.py", line 250, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+pydantic_core._pydantic_core.ValidationError: 1 validation error for ParentDocumentRetriever
+vectorstore
+  Input should be an instance of VectorStore [type=is_instance_of, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.12/v/is_instance_of
+2025-10-31 15:29:35,066 - src.db.connector - INFO - Database connection closed.
+2025-10-31 15:30:57,557 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:30:57,557 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:30:57,619 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:30:57,624 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:30:58,488 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:30:58,488 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:30:58,489 - __main__ - CRITICAL - Pipeline build failed: name 'np' is not defined
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 35, in build_advanced_pipeline
+    initial_documents = transformer.create_documents_from_tables(table_data)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 50, in create_documents_from_tables
+    formatted_val = self._safe_format_value(val)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 22, in _safe_format_value
+    if isinstance(value, (list, np.ndarray, pd.Series)):
+NameError: name 'np' is not defined
+2025-10-31 15:30:58,490 - src.db.connector - INFO - Database connection closed.
+2025-10-31 15:31:22,683 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:31:22,683 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:31:22,742 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:31:22,747 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:31:23,589 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:31:23,590 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:31:23,592 - src.pipeline.transform - WARNING - Table 'account_clinical_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:31:23,595 - src.pipeline.transform - WARNING - Table 'account_customized_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:31:26,031 - src.pipeline.transform - WARNING - Table 'patient_medical_review_complaints' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:31:26,043 - src.pipeline.transform - WARNING - Table 'patient_nutrition_lifestyle_lifestyle' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:31:27,176 - src.pipeline.transform - WARNING - Table 'site_program' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:31:27,235 - src.pipeline.transform - WARNING - Table 'user_organization' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:31:27,255 - src.pipeline.transform - WARNING - Table 'user_role' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:31:27,656 - src.pipeline.transform - INFO - Created 117690 initial documents from all tables.
+2025-10-31 15:31:27,656 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-10-31 15:31:32,496 - src.pipeline.transform - INFO - Chunking complete. Created 315817 child documents.
+2025-10-31 15:31:32,497 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-10-31 15:31:32,511 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-10-31 15:31:32,511 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-10-31 15:31:34,418 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-10-31 15:31:34,419 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-10-31 15:31:34,419 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 315817 documents.
+2025-10-31 15:31:35,429 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-31 15:31:36,718 - src.db.connector - INFO - Database connection closed.
+2025-10-31 15:35:48,406 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:35:48,406 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:35:49,575 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:35:49,581 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:35:49,887 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:35:49,887 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:35:49,892 - src.pipeline.transform - WARNING - Table 'account_clinical_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:35:49,895 - src.pipeline.transform - WARNING - Table 'account_customized_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:35:50,014 - src.pipeline.transform - WARNING - Table 'patient_medical_review_complaints' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:35:50,019 - src.pipeline.transform - WARNING - Table 'patient_nutrition_lifestyle_lifestyle' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:35:50,064 - src.pipeline.transform - WARNING - Table 'site_program' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:35:50,076 - src.pipeline.transform - WARNING - Table 'user_organization' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:35:50,078 - src.pipeline.transform - WARNING - Table 'user_role' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:35:50,085 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-10-31 15:35:50,086 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-10-31 15:35:50,495 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-10-31 15:35:50,495 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-10-31 15:35:50,495 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-10-31 15:35:51,366 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-10-31 15:35:52,190 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-10-31 15:35:52,190 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-10-31 15:35:52,190 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 17434 documents.
+2025-10-31 15:35:53,244 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-31 15:35:53,887 - __main__ - CRITICAL - Pipeline build failed: no such column: collections.topic
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 50, in build_advanced_pipeline
+    build_advanced_chroma_index(
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/build_index.py", line 22, in build_advanced_chroma_index
+    Chroma.from_documents(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/langchain_community/vectorstores/chroma.py", line 778, in from_documents
+    return cls.from_texts(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/langchain_community/vectorstores/chroma.py", line 714, in from_texts
+    chroma_collection = cls(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/langchain_community/vectorstores/chroma.py", line 126, in __init__
+    self._collection = self._client.get_or_create_collection(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/api/client.py", line 237, in get_or_create_collection
+    return self._server.get_or_create_collection(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/api/segment.py", line 217, in get_or_create_collection
+    return self.create_collection(  # type: ignore
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/api/segment.py", line 167, in create_collection
+    coll, created = self._sysdb.create_collection(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/db/mixins/sysdb.py", line 209, in create_collection
+    existing = self.get_collections(name=name, tenant=tenant, database=database)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/db/mixins/sysdb.py", line 435, in get_collections
+    rows = cur.execute(sql, params).fetchall()
+sqlite3.OperationalError: no such column: collections.topic
+2025-10-31 15:35:53,898 - src.db.connector - INFO - Database connection closed.
+2025-10-31 15:38:20,684 - __main__ - INFO - Connecting to database and extracting data...
+2025-10-31 15:38:20,684 - src.db.connector - INFO - Connecting to database...
+2025-10-31 15:38:20,739 - src.db.connector - INFO - Database connection successful.
+2025-10-31 15:38:20,744 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-10-31 15:38:21,043 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-10-31 15:38:21,043 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-10-31 15:38:21,048 - src.pipeline.transform - WARNING - Table 'account_clinical_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:38:21,051 - src.pipeline.transform - WARNING - Table 'account_customized_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:38:21,168 - src.pipeline.transform - WARNING - Table 'patient_medical_review_complaints' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:38:21,173 - src.pipeline.transform - WARNING - Table 'patient_nutrition_lifestyle_lifestyle' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:38:21,216 - src.pipeline.transform - WARNING - Table 'site_program' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:38:21,229 - src.pipeline.transform - WARNING - Table 'user_organization' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:38:21,230 - src.pipeline.transform - WARNING - Table 'user_role' is missing an 'id' column. Source ID will be 'N/A'.
+2025-10-31 15:38:21,238 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-10-31 15:38:21,238 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-10-31 15:38:21,644 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-10-31 15:38:21,645 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-10-31 15:38:21,645 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-10-31 15:38:22,397 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-10-31 15:38:23,088 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-10-31 15:38:23,089 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-10-31 15:38:23,089 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 17434 documents.
+2025-10-31 15:38:23,302 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-10-31 15:42:10,629 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
+2025-10-31 15:42:10,630 - __main__ - INFO - ✅ Advanced pipeline built successfully!
+2025-10-31 15:42:10,634 - src.db.connector - INFO - Database connection closed.
+2025-11-03 00:33:47,791 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 00:33:47,791 - src.db.connector - INFO - Connecting to database...
+2025-11-03 00:33:47,899 - src.db.connector - INFO - Database connection successful.
+2025-11-03 00:33:47,906 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 00:33:48,143 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 00:33:48,143 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 00:33:48,148 - src.pipeline.transform - WARNING - Table 'account_clinical_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-11-03 00:33:48,151 - src.pipeline.transform - WARNING - Table 'account_customized_workflow' is missing an 'id' column. Source ID will be 'N/A'.
+2025-11-03 00:33:48,272 - src.pipeline.transform - WARNING - Table 'patient_medical_review_complaints' is missing an 'id' column. Source ID will be 'N/A'.
+2025-11-03 00:33:48,277 - src.pipeline.transform - WARNING - Table 'patient_nutrition_lifestyle_lifestyle' is missing an 'id' column. Source ID will be 'N/A'.
+2025-11-03 00:33:48,321 - src.pipeline.transform - WARNING - Table 'site_program' is missing an 'id' column. Source ID will be 'N/A'.
+2025-11-03 00:33:48,333 - src.pipeline.transform - WARNING - Table 'user_organization' is missing an 'id' column. Source ID will be 'N/A'.
+2025-11-03 00:33:48,334 - src.pipeline.transform - WARNING - Table 'user_role' is missing an 'id' column. Source ID will be 'N/A'.
+2025-11-03 00:33:48,341 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-11-03 00:33:48,342 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 00:33:48,749 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-11-03 00:33:48,750 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 00:33:48,750 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 00:33:49,800 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 00:33:50,750 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 00:33:50,750 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 00:33:50,751 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 17434 documents.
+2025-11-03 00:33:51,029 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-11-03 00:33:51,108 - __main__ - CRITICAL - Pipeline build failed: no such column: collections.topic
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 49, in build_advanced_pipeline
+    build_advanced_chroma_index(
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/build_index.py", line 23, in build_advanced_chroma_index
+    Chroma.from_documents(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/langchain_community/vectorstores/chroma.py", line 790, in from_documents
+    return cls.from_texts(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/langchain_community/vectorstores/chroma.py", line 726, in from_texts
+    chroma_collection = cls(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/langchain_community/vectorstores/chroma.py", line 127, in __init__
+    self._collection = self._client.get_or_create_collection(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/api/client.py", line 237, in get_or_create_collection
+    return self._server.get_or_create_collection(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/api/segment.py", line 217, in get_or_create_collection
+    return self.create_collection(  # type: ignore
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/api/segment.py", line 167, in create_collection
+    coll, created = self._sysdb.create_collection(
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/db/mixins/sysdb.py", line 209, in create_collection
+    existing = self.get_collections(name=name, tenant=tenant, database=database)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/telemetry/opentelemetry/__init__.py", line 127, in wrapper
+    return f(*args, **kwargs)
+  File "/opt/anaconda3/envs/rag_env/lib/python3.10/site-packages/chromadb/db/mixins/sysdb.py", line 435, in get_collections
+    rows = cur.execute(sql, params).fetchall()
+sqlite3.OperationalError: no such column: collections.topic
+2025-11-03 00:33:51,118 - src.db.connector - INFO - Database connection closed.
+2025-11-03 00:40:08,687 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 00:40:08,687 - src.db.connector - INFO - Connecting to database...
+2025-11-03 00:40:10,903 - src.db.connector - INFO - Database connection successful.
+2025-11-03 00:40:10,909 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 00:40:11,725 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 00:40:11,725 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 00:40:15,812 - src.pipeline.transform - INFO - Created 117690 initial documents from all tables.
+2025-11-03 00:40:15,812 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 00:40:17,613 - __main__ - CRITICAL - Pipeline build failed: name 'uuid' is not defined
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 42, in build_advanced_pipeline
+    child_documents, parent_docstore = transformer.perform_parent_child_chunking(initial_documents)
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 88, in perform_parent_child_chunking
+    parent_doc_ids = [str(uuid.uuid4()) for _ in parent_docs]
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/transform.py", line 88, in <listcomp>
+    parent_doc_ids = [str(uuid.uuid4()) for _ in parent_docs]
+NameError: name 'uuid' is not defined
+2025-11-03 00:40:17,639 - src.db.connector - INFO - Database connection closed.
+2025-11-03 00:41:31,829 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 00:41:31,829 - src.db.connector - INFO - Connecting to database...
+2025-11-03 00:41:31,884 - src.db.connector - INFO - Database connection successful.
+2025-11-03 00:41:31,889 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 00:41:32,119 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 00:41:32,119 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 00:41:32,295 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-11-03 00:41:32,295 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 00:41:32,662 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-11-03 00:41:32,662 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 00:41:32,662 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 00:41:33,461 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 00:41:34,333 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 00:41:34,333 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 00:41:34,333 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 17434 documents.
+2025-11-03 00:41:36,632 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-11-03 00:41:36,936 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 00:41:36,943 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 00:45:35,407 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
+2025-11-03 00:45:35,407 - __main__ - INFO - ✅ Advanced pipeline built successfully!
+2025-11-03 00:45:35,412 - src.db.connector - INFO - Database connection closed.
+2025-11-03 01:11:34,806 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 01:11:34,806 - src.db.connector - INFO - Connecting to database...
+2025-11-03 01:11:36,206 - src.db.connector - INFO - Database connection successful.
+2025-11-03 01:11:36,212 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 01:11:36,458 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 01:11:36,458 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 01:11:36,637 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-11-03 01:11:36,637 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 01:11:37,001 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-11-03 01:11:37,002 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 01:11:37,002 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 01:11:37,838 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 01:11:38,813 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 01:11:38,814 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 01:11:38,814 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 17434 documents.
+2025-11-03 01:11:39,120 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-11-03 01:11:39,175 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:11:39,176 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:11:48,823 - src.db.connector - INFO - Database connection closed.
+2025-11-03 01:13:10,234 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 01:13:10,234 - src.db.connector - INFO - Connecting to database...
+2025-11-03 01:13:10,299 - src.db.connector - INFO - Database connection successful.
+2025-11-03 01:13:10,304 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 01:13:10,515 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 01:13:10,515 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 01:13:10,555 - src.pipeline.transform - INFO - Created 849 initial documents from all tables.
+2025-11-03 01:13:10,555 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 01:13:10,629 - src.pipeline.transform - INFO - Chunking complete. Created 3628 child documents.
+2025-11-03 01:13:10,630 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 01:13:10,630 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 01:13:11,474 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 01:13:12,332 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 01:13:12,332 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 01:13:12,332 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 3628 documents.
+2025-11-03 01:13:12,521 - chromadb.telemetry.product.posthog - INFO - Anonymized telemetry enabled. See                     https://docs.trychroma.com/telemetry for more information.
+2025-11-03 01:13:12,584 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:13:12,589 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:14:07,563 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
+2025-11-03 01:14:07,564 - __main__ - INFO - ✅ Advanced pipeline built successfully!
+2025-11-03 01:14:07,568 - src.db.connector - INFO - Database connection closed.
+2025-11-03 01:28:24,397 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 01:28:24,397 - src.db.connector - INFO - Connecting to database...
+2025-11-03 01:28:24,480 - src.db.connector - INFO - Database connection successful.
+2025-11-03 01:28:24,485 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 01:28:24,692 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 01:28:24,693 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 01:28:24,735 - src.pipeline.transform - INFO - Created 849 initial documents from all tables.
+2025-11-03 01:28:24,735 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 01:28:24,809 - src.pipeline.transform - INFO - Chunking complete. Created 3628 child documents.
+2025-11-03 01:28:24,809 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 01:28:24,809 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 01:28:25,791 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 01:28:26,871 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 01:28:26,872 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 01:28:26,872 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 3628 documents.
+2025-11-03 01:28:26,953 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:28:26,957 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:29:22,357 - __main__ - CRITICAL - Pipeline build failed: [Errno 2] No such file or directory: './data/indexes/chroma_db_advanced/parent_docstore.pkl'
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 49, in build_advanced_pipeline
+    build_advanced_chroma_index(
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/build_index.py", line 37, in build_advanced_chroma_index
+    with open(docstore_path, "wb") as f:
+FileNotFoundError: [Errno 2] No such file or directory: './data/indexes/chroma_db_advanced/parent_docstore.pkl'
+2025-11-03 01:29:22,369 - src.db.connector - INFO - Database connection closed.
+2025-11-03 01:34:29,693 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 01:34:29,693 - src.db.connector - INFO - Connecting to database...
+2025-11-03 01:34:29,773 - src.db.connector - INFO - Database connection successful.
+2025-11-03 01:34:29,779 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 01:34:29,975 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 01:34:29,975 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 01:34:30,015 - src.pipeline.transform - INFO - Created 849 initial documents from all tables.
+2025-11-03 01:34:30,015 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 01:34:30,090 - src.pipeline.transform - INFO - Chunking complete. Created 3628 child documents.
+2025-11-03 01:34:30,090 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 01:34:30,090 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 01:34:30,912 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 01:34:31,762 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 01:34:31,762 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 01:34:31,762 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 3628 documents.
+2025-11-03 01:34:31,828 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:34:31,831 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 01:35:26,143 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
+2025-11-03 01:35:26,143 - __main__ - INFO - ✅ Advanced pipeline built successfully!
+2025-11-03 01:35:26,146 - src.db.connector - INFO - Database connection closed.

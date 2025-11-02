@@ -68,20 +68,39 @@ tables:
       - "username"
 
 # Embedding configuration
+# Embedding configuration
 embedding:
   model_name: "BAAI/bge-m3"
   model_path: "./models/bge-m3"
   batch_size: 32
-  max_length: 512
+
+# Advanced Chunking Configuration for Small-to-Big Retrieval
+chunking:
+  parent_splitter:
+    chunk_size: 1000
+    chunk_overlap: 200
+  child_splitter:
+    chunk_size: 250
+    chunk_overlap: 30
 
 # Vector store configuration
 vector_store:
-  type: "faiss"  # or "chroma"
-  index_path: "./data/indexes/spice_vectors.index"
-  metadata_path: "./data/metadata/spice_metadata.jsonl"
+  type: "chroma"
+  chroma_path: "./data/indexes/chroma_db_advanced"
+  collection_name: "spice_healthcare_advanced"
+
+# Advanced Retriever Configuration
+retriever:
+  # Weights for combining dense (vector) and sparse (keyword) search
+  hybrid_search_weights: [0.7, 0.3] # Give more weight to semantic search
+  # Number of initial documents to fetch before reranking
+  top_k_initial: 20
+  # Number of final documents to return after reranking
+  top_k_final: 5
 
 # Text processing
 text_processing:
   chunk_size: 1000
   chunk_overlap: 200
   min_chunk_length: 50
+

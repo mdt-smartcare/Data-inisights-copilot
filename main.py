@@ -14,7 +14,7 @@ import plotly.express as px
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.utilities import SQLDatabase
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
