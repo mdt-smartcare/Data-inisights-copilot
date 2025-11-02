@@ -5,13 +5,31 @@ from tqdm import tqdm
 import logging
 from typing import Dict, List, Any
 import numpy as np
-from langchain.docstore.document import Document
-from langchain.storage import InMemoryStore
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.retrievers.parent_document_retriever import ParentDocumentRetriever
+from langchain_core.documents import Document
+from langchain_core.stores import BaseStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import uuid
 
 logger = logging.getLogger(__name__)
+
+class SimpleInMemoryStore(BaseStore[str, Document]):
+    def __init__(self):
+        self._dict = {}
+
+    def mget(self, keys: List[str]) -> List[Document]:
+        return [self._dict[key] for key in keys if key in self._dict]
+    
+    def mset(self, key_value_pairs: List[tuple[str, Document]]) -> None:
+        for key, value in key_value_pairs:
+            self._dict[key] = value
+    
+    def mdelete(self, keys: List[str]) -> None:
+        for key in keys:
+            if key in self._dict:
+                del self._dict[key]
+
+    def yield_keys(self) -> List[str]:
+        return list(self._dict.keys())
 
 class AdvancedDataTransformer:
     def __init__(self, config: Dict):
@@ -83,7 +101,7 @@ class AdvancedDataTransformer:
         parent_splitter = RecursiveCharacterTextSplitter(**parent_splitter_config)
         child_splitter = RecursiveCharacterTextSplitter(**child_splitter_config)
         
-        docstore = InMemoryStore()
+        docstore = SimpleInMemoryStore()
         child_documents = []
         
         logger.info("Applying parent-child chunking to all documents...")

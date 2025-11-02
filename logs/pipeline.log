@@ -382,3 +382,362 @@ FileNotFoundError: [Errno 2] No such file or directory: './data/indexes/chroma_d
 2025-11-03 01:35:26,143 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
 2025-11-03 01:35:26,143 - __main__ - INFO - ✅ Advanced pipeline built successfully!
 2025-11-03 01:35:26,146 - src.db.connector - INFO - Database connection closed.
+2025-11-03 02:41:43,835 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 02:41:43,835 - src.db.connector - INFO - Connecting to database...
+2025-11-03 02:41:44,100 - src.db.connector - INFO - Database connection successful.
+2025-11-03 02:41:44,104 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 02:41:44,332 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 02:41:44,333 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 02:41:44,467 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-11-03 02:41:44,467 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 02:41:44,724 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-11-03 02:41:44,725 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 02:41:44,725 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 02:41:44,778 - src.pipeline.embed - ERROR - Failed to load SentenceTransformer model from ./models/bge-m3: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+2025-11-03 02:41:44,778 - __main__ - CRITICAL - Pipeline build failed: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+Traceback (most recent call last):
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1282, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/generation/utils.py", line 84, in <module>
+    from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+  File "/opt/anaconda3/lib/python3.12/site-packages/accelerate/__init__.py", line 16, in <module>
+    from .accelerator import Accelerator
+  File "/opt/anaconda3/lib/python3.12/site-packages/accelerate/accelerator.py", line 34, in <module>
+    from huggingface_hub import split_torch_state_dict_into_shards
+ImportError: cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1282, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/xlm_roberta/modeling_xlm_roberta.py", line 37, in <module>
+    from ...modeling_utils import PreTrainedModel
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/modeling_utils.py", line 39, in <module>
+    from .generation import GenerationConfig, GenerationMixin
+  File "<frozen importlib._bootstrap>", line 1412, in _handle_fromlist
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1272, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1284, in _get_module
+    raise RuntimeError(
+RuntimeError: Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 45, in build_advanced_pipeline
+    embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/embed.py", line 12, in __init__
+    self.model = SentenceTransformer(model_id)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/SentenceTransformer.py", line 95, in __init__
+    modules = self._load_sbert_model(model_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/SentenceTransformer.py", line 840, in _load_sbert_model
+    module = module_class.load(os.path.join(model_path, module_config['path']))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 137, in load
+    return Transformer(model_name_or_path=input_path, **config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 29, in __init__
+    self._load_model(model_name_or_path, config, cache_dir)
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 49, in _load_model
+    self.auto_model = AutoModel.from_pretrained(model_name_or_path, config=config, cache_dir=cache_dir)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 564, in from_pretrained
+    model_class = _get_model_class(config, cls._model_mapping)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 387, in _get_model_class
+    supported_models = model_mapping[type(config)]
+                       ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 739, in __getitem__
+    return self._load_attr_from_module(model_type, model_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 753, in _load_attr_from_module
+    return getattribute_from_module(self._modules[module_name], attr)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 697, in getattribute_from_module
+    if hasattr(module, attr):
+       ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1272, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1284, in _get_module
+    raise RuntimeError(
+RuntimeError: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+2025-11-03 02:41:44,783 - src.db.connector - INFO - Database connection closed.
+2025-11-03 02:41:48,296 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 02:41:48,296 - src.db.connector - INFO - Connecting to database...
+2025-11-03 02:41:48,353 - src.db.connector - INFO - Database connection successful.
+2025-11-03 02:41:48,358 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 02:41:48,594 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 02:41:48,594 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 02:41:48,735 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-11-03 02:41:48,735 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 02:41:49,004 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-11-03 02:41:49,004 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 02:41:49,004 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 02:41:49,042 - src.pipeline.embed - ERROR - Failed to load SentenceTransformer model from ./models/bge-m3: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+2025-11-03 02:41:49,042 - __main__ - CRITICAL - Pipeline build failed: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+Traceback (most recent call last):
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1282, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/generation/utils.py", line 84, in <module>
+    from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+  File "/opt/anaconda3/lib/python3.12/site-packages/accelerate/__init__.py", line 16, in <module>
+    from .accelerator import Accelerator
+  File "/opt/anaconda3/lib/python3.12/site-packages/accelerate/accelerator.py", line 34, in <module>
+    from huggingface_hub import split_torch_state_dict_into_shards
+ImportError: cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1282, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/xlm_roberta/modeling_xlm_roberta.py", line 37, in <module>
+    from ...modeling_utils import PreTrainedModel
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/modeling_utils.py", line 39, in <module>
+    from .generation import GenerationConfig, GenerationMixin
+  File "<frozen importlib._bootstrap>", line 1412, in _handle_fromlist
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1272, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1284, in _get_module
+    raise RuntimeError(
+RuntimeError: Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 45, in build_advanced_pipeline
+    embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/embed.py", line 12, in __init__
+    self.model = SentenceTransformer(model_id)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/SentenceTransformer.py", line 95, in __init__
+    modules = self._load_sbert_model(model_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/SentenceTransformer.py", line 840, in _load_sbert_model
+    module = module_class.load(os.path.join(model_path, module_config['path']))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 137, in load
+    return Transformer(model_name_or_path=input_path, **config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 29, in __init__
+    self._load_model(model_name_or_path, config, cache_dir)
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 49, in _load_model
+    self.auto_model = AutoModel.from_pretrained(model_name_or_path, config=config, cache_dir=cache_dir)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 564, in from_pretrained
+    model_class = _get_model_class(config, cls._model_mapping)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 387, in _get_model_class
+    supported_models = model_mapping[type(config)]
+                       ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 739, in __getitem__
+    return self._load_attr_from_module(model_type, model_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 753, in _load_attr_from_module
+    return getattribute_from_module(self._modules[module_name], attr)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 697, in getattribute_from_module
+    if hasattr(module, attr):
+       ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1272, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1284, in _get_module
+    raise RuntimeError(
+RuntimeError: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+2025-11-03 02:41:49,046 - src.db.connector - INFO - Database connection closed.
+2025-11-03 02:42:19,764 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 02:42:19,764 - src.db.connector - INFO - Connecting to database...
+2025-11-03 02:42:19,819 - src.db.connector - INFO - Database connection successful.
+2025-11-03 02:42:19,824 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 02:42:20,071 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 02:42:20,071 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 02:42:20,209 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-11-03 02:42:20,209 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 02:42:20,479 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-11-03 02:42:20,479 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 02:42:20,479 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 02:42:20,515 - src.pipeline.embed - ERROR - Failed to load SentenceTransformer model from ./models/bge-m3: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+2025-11-03 02:42:20,515 - __main__ - CRITICAL - Pipeline build failed: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+Traceback (most recent call last):
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1282, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/generation/utils.py", line 84, in <module>
+    from accelerate.hooks import AlignDevicesHook, add_hook_to_module
+  File "/opt/anaconda3/lib/python3.12/site-packages/accelerate/__init__.py", line 16, in <module>
+    from .accelerator import Accelerator
+  File "/opt/anaconda3/lib/python3.12/site-packages/accelerate/accelerator.py", line 34, in <module>
+    from huggingface_hub import split_torch_state_dict_into_shards
+ImportError: cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1282, in _get_module
+    return importlib.import_module("." + module_name, self.__name__)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+  File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/xlm_roberta/modeling_xlm_roberta.py", line 37, in <module>
+    from ...modeling_utils import PreTrainedModel
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/modeling_utils.py", line 39, in <module>
+    from .generation import GenerationConfig, GenerationMixin
+  File "<frozen importlib._bootstrap>", line 1412, in _handle_fromlist
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1272, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1284, in _get_module
+    raise RuntimeError(
+RuntimeError: Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/adityanbhatt/fhir_rag/src/main.py", line 45, in build_advanced_pipeline
+    embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/adityanbhatt/fhir_rag/src/pipeline/embed.py", line 12, in __init__
+    self.model = SentenceTransformer(model_id)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/SentenceTransformer.py", line 95, in __init__
+    modules = self._load_sbert_model(model_path)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/SentenceTransformer.py", line 840, in _load_sbert_model
+    module = module_class.load(os.path.join(model_path, module_config['path']))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 137, in load
+    return Transformer(model_name_or_path=input_path, **config)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 29, in __init__
+    self._load_model(model_name_or_path, config, cache_dir)
+  File "/opt/anaconda3/lib/python3.12/site-packages/sentence_transformers/models/Transformer.py", line 49, in _load_model
+    self.auto_model = AutoModel.from_pretrained(model_name_or_path, config=config, cache_dir=cache_dir)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 564, in from_pretrained
+    model_class = _get_model_class(config, cls._model_mapping)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 387, in _get_model_class
+    supported_models = model_mapping[type(config)]
+                       ~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 739, in __getitem__
+    return self._load_attr_from_module(model_type, model_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 753, in _load_attr_from_module
+    return getattribute_from_module(self._modules[module_name], attr)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/models/auto/auto_factory.py", line 697, in getattribute_from_module
+    if hasattr(module, attr):
+       ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1272, in __getattr__
+    module = self._get_module(self._class_to_module[name])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/lib/python3.12/site-packages/transformers/utils/import_utils.py", line 1284, in _get_module
+    raise RuntimeError(
+RuntimeError: Failed to import transformers.models.xlm_roberta.modeling_xlm_roberta because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (/opt/anaconda3/lib/python3.12/site-packages/huggingface_hub/__init__.py)
+2025-11-03 02:42:20,520 - src.db.connector - INFO - Database connection closed.
+2025-11-03 02:57:04,580 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 02:57:04,580 - src.db.connector - INFO - Connecting to database...
+2025-11-03 02:57:04,680 - src.db.connector - INFO - Database connection successful.
+2025-11-03 02:57:04,685 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 02:57:04,917 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 02:57:04,917 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 02:57:05,084 - src.pipeline.transform - INFO - Created 5848 initial documents from all tables.
+2025-11-03 02:57:05,085 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 02:57:05,422 - src.pipeline.transform - INFO - Chunking complete. Created 17434 child documents.
+2025-11-03 02:57:05,423 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 02:57:05,423 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 02:57:06,545 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 02:57:07,596 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 02:57:07,596 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 02:57:07,596 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 17434 documents.
+2025-11-03 02:57:07,815 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientStartEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 02:57:07,819 - chromadb.telemetry.product.posthog - ERROR - Failed to send telemetry event ClientCreateCollectionEvent: capture() takes 1 positional argument but 3 were given
+2025-11-03 03:01:13,302 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
+2025-11-03 03:01:13,302 - __main__ - INFO - ✅ Advanced pipeline built successfully!
+2025-11-03 03:01:13,309 - src.db.connector - INFO - Database connection closed.

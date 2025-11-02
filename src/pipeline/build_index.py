@@ -1,10 +1,10 @@
 import logging
 import pickle
-import os  # <-- ADD THIS IMPORT
-from typing import List, Dict, Any
-from langchain.docstore.document import Document
-from langchain.storage import InMemoryStore
-from langchain_community.vectorstores import Chroma 
+import os
+from typing import List, Dict
+from langchain_core.documents import Document
+from langchain_core.stores import BaseStore
+from langchain_chroma import Chroma
 from src.pipeline.embed import LocalHuggingFaceEmbeddings
 import chromadb
 
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 def build_advanced_chroma_index(
     child_docs: List[Document],
-    docstore: InMemoryStore,
+    docstore: BaseStore,
     embedding_function: LocalHuggingFaceEmbeddings,
     config: dict
 ):
