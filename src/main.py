@@ -53,7 +53,7 @@ def build_advanced_pipeline(limit: int = None):
             config=config
         )
 
-        logger.info("✅ Advanced pipeline built successfully!")
+        logger.info(" Advanced pipeline built successfully!")
     except Exception as e:
         logger.critical(f"Pipeline build failed: {e}", exc_info=True)
     finally:

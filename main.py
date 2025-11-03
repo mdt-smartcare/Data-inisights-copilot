@@ -3,6 +3,7 @@ import re
 import json
 from typing import List, Dict, Any
 import pandas as pd
+import yaml  # <-- ADDED
 
 # --- Core Dependencies ---
 from dotenv import load_dotenv
@@ -14,11 +15,14 @@ import plotly.express as px
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 from langchain_community.utilities import SQLDatabase
-from langchain_chroma import Chroma
 from langchain_core.embeddings import Embeddings
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor, create_openai_tools_agent, Tool
+from langchain.agents import create_tool_calling_agent, AgentExecutor
+from langchain.tools import Tool
+
+# --- NEW RAG RETRIEVER IMPORT ---
+from src.rag.retrieve import AdvancedRAGRetriever
 
 # --- 1. CONFIGURATION ---
 
@@ -29,10 +33,10 @@ class Config:
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     DB_USER = "admin"
     DB_PASSWORD = "admin"
-    DB_NAME = "views"
+    DB_NAME = "Spice_BD"
     DB_URI = f"postgresql://{DB_USER}:{DB_PASSWORD}@localhost:5432/{DB_NAME}"
     EMBEDDING_MODEL_PATH = "./models/bge-m3"
-    VECTOR_DB_PATH = 'chroma_db_index_b-m3_full'
+    # VECTOR_DB_PATH = 'chroma_db_index_b-m3_full' <-- REMOVED (now loaded from config)
     LLM_MODEL = "gpt-4o"
     FEEDBACK_LOG_FILE = "feedback_log.csv"
     
@@ -58,10 +62,20 @@ print("Initializing agent components...")
 llm = ChatOpenAI(temperature=0, model_name=Config.LLM_MODEL)
 embedding_model = LocalHuggingFaceEmbeddings(model_id=Config.EMBEDDING_MODEL_PATH)
 db = SQLDatabase.from_uri(Config.DB_URI)
+
+# --- SQL AGENT (The "Counter") ---
 sql_agent = create_sql_agent(llm=llm, db=db, agent_type="openai-tools", verbose=True)
-vector_db = Chroma(persist_directory=Config.VECTOR_DB_PATH, embedding_function=embedding_model)
-rag_retriever = vector_db.as_retriever(search_kwargs={"k": 3})
-rag_chain = RetrievalQA.from_chain_type(llm=llm, retriever=rag_retriever)
+
+# --- NEW RAG RETRIEVER (The "Finder") ---
+# Load the RAG config file to find the correct path
+with open("config/embedding_config.yaml", 'r') as f:
+    rag_config = yaml.safe_load(f)
+
+# Initialize the advanced retriever we built
+rag_retriever = AdvancedRAGRetriever(config=rag_config)
+
+
+# --- (Original RAG chain REMOVED) ---
 
 prompt_template = ChatPromptTemplate.from_messages([
     ("system", """You are a senior data analyst. Your goal is to provide clear answers with valuable context and proactive suggestions.
@@ -82,16 +96,26 @@ prompt_template = ChatPromptTemplate.from_messages([
     MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
 
+# --- AGENT TOOLS ---
 tools = [
-    Tool(name="database_query_agent", func=sql_agent.invoke, description="Use this to answer any question about the data in the database. This includes counting, listing, finding, or aggregating patient data, conditions, procedures, etc. This should be your default tool for any data-related query."),
-    Tool(name="semantic_patient_search", func=rag_chain.invoke, description="Use this ONLY when the user asks a question about a specific patient that requires searching through their unstructured notes or records for deeper context. Do NOT use for counting or listing general information."),
+    Tool(
+        name="database_query_agent", 
+        func=sql_agent.invoke, 
+        description="Use this to answer any question about the data in the database. This includes counting, listing, finding, or aggregating patient data, conditions, procedures, etc. This should be your default tool for any data-related query."
+    ),
+    Tool(
+        name="semantic_patient_search", 
+        func=rag_retriever.invoke,  # <-- UPDATED to use the new retriever
+        description="Use this ONLY when the user asks a question about a specific patient that requires searching through their unstructured notes or records for deeper context. Do NOT use for counting or listing general information."
+    ),
 ]
 
-main_agent = create_openai_tools_agent(llm, tools, prompt_template)
+main_agent = create_tool_calling_agent(llm, tools, prompt_template)
 main_agent_executor = AgentExecutor(agent=main_agent, tools=tools, verbose=True, handle_parsing_errors=True, return_intermediate_steps=True)
 print("--- FHIR RAG Chatbot is Ready ---")
 
 # --- 3. HELPER AND LOGGING FUNCTIONS ---
+# (No changes needed from here down)
 
 def create_plotly_chart(chart_json: Dict[str, Any]) -> object:
     title = chart_json.get("title", "Chart")
@@ -108,7 +132,12 @@ def format_thinking_process(intermediate_steps: List) -> str:
     if not intermediate_steps: return log + "No intermediate steps."
     for action, observation in intermediate_steps:
         log += f"**Thought:** {str(action.log)}\n\n**Tool:** `{action.tool}`\n\n"
-        log += f"**Input:**\n```sql\n{str(action.tool_input)}\n```\n\n"
+        # Check if tool_input is a dict (like from sql_agent) or string
+        if isinstance(action.tool_input, dict):
+            input_str = action.tool_input.get("input", str(action.tool_input))
+        else:
+            input_str = str(action.tool_input)
+        log += f"**Input:**\n```\n{input_str}\n```\n\n"
         log += f"**Output:**\n```\n{str(observation)}\n```\n---\n"
     return log
 
@@ -169,8 +198,8 @@ def logout_user():
 
 # --- 4. CORE AGENT AND UI LOGIC (CORRECTED YIELDS) ---
 
-async def get_agent_response(message: str) -> Dict[str, Any]:
-    result = await main_agent_executor.ainvoke({"input": message})
+def get_agent_response(message: str) -> Dict[str, Any]:
+    result = main_agent_executor.invoke({"input": message})
     full_response = result.get("output", "An error occurred.")
     parsed_output = {
         "text_answer": full_response, "chart_figure": None,
@@ -190,9 +219,13 @@ async def get_agent_response(message: str) -> Dict[str, Any]:
             parsed_output["text_answer"] += " (Note: Visualization data was malformed)"
     return parsed_output
 
-async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": ""})
+def chat_ui_updater(message: str, history: List[List[str]]):
+    # Convert history format for Gradio 4.16.0 - expects [[user_msg, bot_msg], ...]
+    if not history:
+        history = []
+    
+    # Add user message as a new conversation pair with empty bot response
+    history.append([message, ""])
     
     # The number of items yielded must match the number of outputs (8 items)
     yield (history, gr.update(visible=False), gr.update(value="*Agent is thinking...*"),
@@ -200,15 +233,18 @@ async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
            gr.Textbox(value=message), gr.Textbox())
 
     try:
-        response = await get_agent_response(message)
-        history[-1]["content"] = ""
+        response = get_agent_response(message)
+        
+        # Stream the response character by character
         bot_message_so_far = ""
         for char in response["text_answer"]:
             bot_message_so_far += char
-            history[-1]["content"] = bot_message_so_far
+            # Update the last conversation pair with the streaming response
+            history[-1][1] = bot_message_so_far
             yield (history, gr.update(), gr.update(), gr.update(), gr.update(),
                    "", gr.update(), gr.update())
 
+        # Final update with chart and suggestions
         plot_update = gr.update(visible=False)
         if response["chart_figure"]:
             plot_update = gr.update(value=response["chart_figure"], visible=True)
@@ -223,14 +259,38 @@ async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
                
     except Exception as e:
         print(f"An error occurred in chat_ui_updater: {e}")
-        history[-1]["content"] = "Sorry, an error occurred. Please check the logs."
+        # Update the bot response with error message
+        history[-1][1] = "Sorry, an error occurred. Please check the logs."
         yield (history, gr.update(), gr.update(value=f"Error: {e}"),
                gr.update(), gr.update(visible=False),
                "", gr.update(), gr.update())
 
 # --- 5. GRADIO UI LAYOUT WITH AUTHENTICATION ---
 
-with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="blue", neutral_hue="slate"), title="FHIR RAG Chatbot") as demo:
+# Monkey patch for Gradio JSON schema bug
+import gradio_client.utils
+original_get_type = gradio_client.utils.get_type
+
+def patched_get_type(schema):
+    if isinstance(schema, bool):
+        return "any"
+    return original_get_type(schema)
+
+gradio_client.utils.get_type = patched_get_type
+
+with gr.Blocks(
+    theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="blue", neutral_hue="slate"), 
+    title="FHIR RAG Chatbot",
+    css="""
+    .user-info { 
+        text-align: right; 
+        padding: 10px; 
+        background-color: #f0f0f0; 
+        border-radius: 5px; 
+        margin: 5px 0; 
+    }
+    """
+) as demo:
     
     # State variables for authentication
     current_user = gr.State("")
@@ -239,7 +299,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
     # Login Interface
     with gr.Group(visible=True) as login_form:
         gr.Markdown("# 🔐 Login Required")
-        gr.Markdown("### Data Insights AI-Copilot (Sierra Leone FHIR Training Data)")
+        gr.Markdown("### Data Insights AI-Copilot (Bangaladesh Data)")
         
         with gr.Row():
             with gr.Column(scale=1):
@@ -279,15 +339,24 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
         # Main chat interface
         with gr.Row():
             with gr.Column(scale=1):
-                chatbot = gr.Chatbot(label="Chat History", type="messages")
-                chat_progress = gr.Progress()
-                textbox = gr.Textbox(placeholder="Ask a question...", container=False, scale=7)
+                chatbot = gr.Chatbot(
+                    label="Chat History", 
+                    height=400
+                )
+                textbox = gr.Textbox(
+                    placeholder="Ask a question...", 
+                    container=False, 
+                    scale=7,
+                    max_lines=3
+                )
                 submit_btn = gr.Button("Send", variant="primary")
             with gr.Column(scale=2):
                 plot = gr.Plot(label="Chart Visualization", visible=False)
                 with gr.Accordion("Show Agent's Reasoning", open=False):
-                    agent_progress = gr.Progress()
-                    thinking_box = gr.Markdown(label="Agent's Thoughts", value="*Waiting for a question...*")
+                    thinking_box = gr.Markdown(
+                        label="Agent's Thoughts", 
+                        value="*Waiting for a question...*"
+                    )
 
         # Suggestions and feedback section
         with gr.Group(visible=True) as suggestions_box:
@@ -374,14 +443,8 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
     chat_outputs = [chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
                    textbox, last_query, suggestions_store]
     
-    async def submit_and_clear(message, history):
-        async for update in chat_ui_updater(message, history):
-            if history[-1]["content"] == "":
-                chat_progress.visible = True
-                agent_progress.visible = True
-            else:
-                chat_progress.visible = False
-                agent_progress.visible = False
+    def submit_and_clear(message, history):
+        for update in chat_ui_updater(message, history):
             yield update
 
     submit_btn.click(submit_and_clear, [textbox, chatbot], chat_outputs).then(lambda: "", None, textbox)
@@ -389,12 +452,21 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
 
     # Suggestion handling
     def handle_suggestion_select(evt: gr.SelectData):
-        log_feedback(last_query.value, suggestions_store.value, evt.index[0], 0.5)
-        return evt.value, evt.index[0]
+        if evt.value and len(evt.value) > 0:
+            return evt.value[0], evt.index[0] if evt.index else 0
+        return "", 0
         
     suggestions_df.select(handle_suggestion_select, None, [textbox, selected_suggestion_index])
     good_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(1, visible=False)], [feedback_toast])
     bad_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(-1, visible=False)], [feedback_toast])
 
 if __name__ == "__main__":
-    demo.launch()
+    # Fix for Gradio JSON schema issues and localhost access
+    demo.launch(
+        share=False,
+        server_name="127.0.0.1",
+        server_port=7860,
+        inbrowser=True,
+        show_error=True,
+        quiet=False
+    )

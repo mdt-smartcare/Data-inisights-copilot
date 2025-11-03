@@ -21,7 +21,7 @@ with open("config/embedding_config.yaml", 'r') as f:
 
 # Initialize the RAG pipeline components
 retriever = AdvancedRAGRetriever(config)
-print("✅ Application is ready to use!")
+print(" Application is ready to use!")
 
 # Initialize LLM
 llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
