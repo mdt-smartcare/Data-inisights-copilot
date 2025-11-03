@@ -1,27 +1,37 @@
+# --- Standard Library Imports ---
 import os
 import re
 import json
-from typing import List, Dict, Any
+import yaml
+from typing import List, Dict, Any, Tuple, Optional, Generator
+
+# --- Third-Party Core Imports ---
 import pandas as pd
-import yaml  # <-- ADDED
-
-# --- Core Dependencies ---
-from dotenv import load_dotenv
-import gradio as gr
-from sentence_transformers import SentenceTransformer
+import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
+import gradio as gr
+import gradio_client.utils  # For monkey patch
+from dotenv import load_dotenv
 
-# --- LangChain Imports ---
-from langchain.chains import RetrievalQA
+# --- ML/Embeddings Imports ---
+from sentence_transformers import SentenceTransformer
+from sklearn.decomposition import PCA
+from sklearn.metrics.pairwise import cosine_similarity
+
+# --- LangChain Core Imports ---
+from langchain.chains import RetrievalQA  # Kept as per "don't remove"
 from langchain.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
-from langchain_community.utilities import SQLDatabase
+from langchain.tools import Tool
+from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.embeddings import Embeddings
+
+# --- LangChain Community/OpenAI Imports ---
+from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
-from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain.tools import Tool
 
-# --- NEW RAG RETRIEVER IMPORT ---
+# --- Local/Project Imports ---
 from src.rag.retrieve import AdvancedRAGRetriever
 
 # --- 1. CONFIGURATION ---
@@ -29,19 +39,18 @@ from src.rag.retrieve import AdvancedRAGRetriever
 load_dotenv()
 
 class Config:
-    """ Centralized configuration for the application. """
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-    DB_USER = "admin"
-    DB_PASSWORD = "admin"
-    DB_NAME = "Spice_BD"
-    DB_URI = f"postgresql://{DB_USER}:{DB_PASSWORD}@localhost:5432/{DB_NAME}"
-    EMBEDDING_MODEL_PATH = "./models/bge-m3"
-    # VECTOR_DB_PATH = 'chroma_db_index_b-m3_full' <-- REMOVED (now loaded from config)
-    LLM_MODEL = "gpt-4o"
-    FEEDBACK_LOG_FILE = "feedback_log.csv"
+    """Centralized configuration for the application."""
+    OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+    DB_USER: str = "admin"
+    DB_PASSWORD: str = "admin"
+    DB_NAME: str = "Spice_BD"
+    DB_URI: str = f"postgresql://{DB_USER}:{DB_PASSWORD}@localhost:5432/{DB_NAME}"
+    EMBEDDING_MODEL_PATH: str = "./models/bge-m3"
+    LLM_MODEL: str = "gpt-4o"
+    FEEDBACK_LOG_FILE: str = "feedback_log.csv"
     
     # Authentication configuration
-    USERS = {
+    USERS: Dict[str, str] = {
         "admin": "admin",
         "analyst": "analyst2024",
         "viewer": "view123"
@@ -54,9 +63,17 @@ os.environ["OPENAI_API_KEY"] = Config.OPENAI_API_KEY
 # --- 2. AGENT AND TOOL SETUP ---
 
 class LocalHuggingFaceEmbeddings(Embeddings):
-    def __init__(self, model_id): self.model = SentenceTransformer(model_id)
-    def embed_documents(self, texts: List[str]) -> List[List[float]]: return self.model.encode(texts, show_progress_bar=False).tolist()
-    def embed_query(self, text: str) -> List[float]: return self.model.encode(text).tolist()
+    """Custom wrapper for SentenceTransformer to comply with LangChain Embeddings interface."""
+    def __init__(self, model_id: str):
+        self.model = SentenceTransformer(model_id)
+
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        """Embed a list of documents."""
+        return self.model.encode(texts, show_progress_bar=False).tolist()
+
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query."""
+        return self.model.encode(text).tolist()
 
 print("Initializing agent components...")
 llm = ChatOpenAI(temperature=0, model_name=Config.LLM_MODEL)
@@ -64,19 +81,18 @@ embedding_model = LocalHuggingFaceEmbeddings(model_id=Config.EMBEDDING_MODEL_PAT
 db = SQLDatabase.from_uri(Config.DB_URI)
 
 # --- SQL AGENT (The "Counter") ---
+# This agent is responsible for querying structured data from the SQL database.
 sql_agent = create_sql_agent(llm=llm, db=db, agent_type="openai-tools", verbose=True)
 
-# --- NEW RAG RETRIEVER (The "Finder") ---
-# Load the RAG config file to find the correct path
+# --- RAG RETRIEVER (The "Finder") ---
+# Load the RAG config file to find the correct vector store path
 with open("config/embedding_config.yaml", 'r') as f:
     rag_config = yaml.safe_load(f)
 
-# Initialize the advanced retriever we built
+# Initialize the advanced retriever for semantic search on unstructured notes
 rag_retriever = AdvancedRAGRetriever(config=rag_config)
 
-
-# --- (Original RAG chain REMOVED) ---
-
+# --- Main Agent Prompt Template ---
 prompt_template = ChatPromptTemplate.from_messages([
     ("system", """You are a senior data analyst. Your goal is to provide clear answers with valuable context and proactive suggestions.
     **Core Instructions:**
@@ -97,7 +113,7 @@ prompt_template = ChatPromptTemplate.from_messages([
 ])
 
 # --- AGENT TOOLS ---
-tools = [
+tools: List[Tool] = [
     Tool(
         name="database_query_agent", 
         func=sql_agent.invoke, 
@@ -105,61 +121,99 @@ tools = [
     ),
     Tool(
         name="semantic_patient_search", 
-        func=rag_retriever.invoke,  # <-- UPDATED to use the new retriever
+        func=rag_retriever.invoke,  # Use the new retriever's invoke method
         description="Use this ONLY when the user asks a question about a specific patient that requires searching through their unstructured notes or records for deeper context. Do NOT use for counting or listing general information."
     ),
 ]
 
+# --- Main Agent Executor ---
 main_agent = create_tool_calling_agent(llm, tools, prompt_template)
-main_agent_executor = AgentExecutor(agent=main_agent, tools=tools, verbose=True, handle_parsing_errors=True, return_intermediate_steps=True)
+main_agent_executor = AgentExecutor(
+    agent=main_agent, 
+    tools=tools, 
+    verbose=True, 
+    handle_parsing_errors=True, 
+    return_intermediate_steps=True
+)
 print("--- FHIR RAG Chatbot is Ready ---")
 
 # --- 3. HELPER AND LOGGING FUNCTIONS ---
-# (No changes needed from here down)
 
-def create_plotly_chart(chart_json: Dict[str, Any]) -> object:
-    title = chart_json.get("title", "Chart")
-    chart_type = chart_json.get("type", "bar")
-    data = chart_json.get("data", {})
-    labels, values = data.get("labels", []), data.get("values", [])
-    if not labels or not values: return None
-    fig = px.pie(names=labels, values=values, title=title) if chart_type == "pie" else px.bar(x=labels, y=values, title=title)
-    fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
-    return fig
+def create_plotly_chart(chart_json: Dict[str, Any]) -> Optional[go.Figure]:
+    """Creates a Plotly figure from a JSON-like dictionary."""
+    try:
+        title = chart_json.get("title", "Chart")
+        chart_type = chart_json.get("type", "bar")
+        data = chart_json.get("data", {})
+        labels, values = data.get("labels", []), data.get("values", [])
+        
+        if not labels or not values: 
+            return None
+        
+        if chart_type == "pie":
+            fig = px.pie(names=labels, values=values, title=title)
+        else:
+            fig = px.bar(x=labels, y=values, title=title)
+        
+        fig.update_layout(margin=dict(l=20, r=20, t=40, b=20))
+        return fig
+    except Exception as e:
+        print(f"Error creating plotly chart: {e}")
+        return None
 
-def format_thinking_process(intermediate_steps: List) -> str:
+def format_thinking_process(intermediate_steps: List[Tuple[Any, Any]]) -> str:
+    """Formats the agent's intermediate steps into a readable markdown string."""
     log = "### Agent Thinking Process\n\n"
-    if not intermediate_steps: return log + "No intermediate steps."
+    if not intermediate_steps: 
+        return log + "No intermediate steps."
+    
     for action, observation in intermediate_steps:
         log += f"**Thought:** {str(action.log)}\n\n**Tool:** `{action.tool}`\n\n"
+        
         # Check if tool_input is a dict (like from sql_agent) or string
         if isinstance(action.tool_input, dict):
             input_str = action.tool_input.get("input", str(action.tool_input))
         else:
             input_str = str(action.tool_input)
+            
         log += f"**Input:**\n```\n{input_str}\n```\n\n"
         log += f"**Output:**\n```\n{str(observation)}\n```\n---\n"
     return log
 
-def log_feedback(query: str, suggestions_json: str, selected_index: int, rating: float):
+def log_feedback(query: str, suggestions_json: str, selected_index: int, rating: float) -> gr.update:
+    """Logs user feedback on suggested questions to a CSV file."""
     try:
         if not query or not suggestions_json or selected_index is None:
             return gr.update(value="Could not log feedback: Missing context.", visible=True)
+        
         suggestions_list = json.loads(suggestions_json)
         selected_question = suggestions_list[int(selected_index)]
-        feedback_data = {"timestamp": [pd.Timestamp.now()], "query": [query], "suggested_question": [selected_question], "rating": [rating]}
+        
+        feedback_data = {
+            "timestamp": [pd.Timestamp.now()], 
+            "query": [query], 
+            "suggested_question": [selected_question], 
+            "rating": [rating]
+        }
         df = pd.DataFrame(feedback_data)
+        
         file_exists = os.path.isfile(Config.FEEDBACK_LOG_FILE)
         df.to_csv(Config.FEEDBACK_LOG_FILE, mode='a', header=not file_exists, index=False)
+        
         return gr.update(value=f"Feedback logged (Rating: {rating})", visible=True)
+        
     except Exception as e:
         print(f"Error logging feedback: {e}")
         return gr.update(value="Error logging feedback.", visible=True)
 
 # --- AUTHENTICATION FUNCTIONS ---
+# NOTE: The following two functions (login_interface, logout_user) define
+# logic that is re-implemented in the `handle_login` and `handle_logout`
+# functions within the `gr.Blocks` context. They are not directly
+# used by the final app's event handlers but are kept per request.
 
-def authenticate_user(username: str, password: str) -> tuple[bool, str]:
-    """Authenticate user credentials"""
+def authenticate_user(username: str, password: str) -> Tuple[bool, str]:
+    """Authenticate user credentials against the config."""
     if not username or not password:
         return False, "Please enter both username and password"
     
@@ -168,8 +222,8 @@ def authenticate_user(username: str, password: str) -> tuple[bool, str]:
     else:
         return False, "Invalid username or password"
 
-def login_interface(username: str, password: str):
-    """Handle login form submission"""
+def login_interface(username: str, password: str) -> Tuple[gr.update, gr.update, gr.update, str]:
+    """Handle login form submission (Not used by final app handlers)."""
     is_valid, message = authenticate_user(username, password)
     
     if is_valid:
@@ -187,8 +241,8 @@ def login_interface(username: str, password: str):
             ""  # Clear user
         )
 
-def logout_user():
-    """Handle logout"""
+def logout_user() -> Tuple[gr.update, gr.update, gr.update, str]:
+    """Handle logout (Not used by final app handlers)."""
     return (
         gr.update(visible=True),   # Show login form
         gr.update(visible=False),  # Hide main interface
@@ -196,14 +250,10 @@ def logout_user():
         ""  # Clear current user
     )
 
-# --- NEW EMBEDDING VISUALIZATION FUNCTIONS ---
-import numpy as np
-import plotly.graph_objects as go
-from sklearn.decomposition import PCA
-from sklearn.metrics.pairwise import cosine_similarity
+# --- 4. NEW EMBEDDING VISUALIZATION FUNCTIONS ---
 
 def get_embedding_info(query: str) -> Dict[str, Any]:
-    """Get detailed embedding information for a query"""
+    """Get detailed embedding information and statistics for a query."""
     try:
         # Generate embedding for the query
         query_embedding = embedding_model.embed_query(query)
@@ -231,30 +281,29 @@ def get_embedding_info(query: str) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Failed to generate embedding: {str(e)}"}
 
-def create_embedding_visualization(query: str, retrieved_docs=None) -> Dict[str, Any]:
-    """Create visualizations for embedding analysis"""
+def create_embedding_visualization(query: str, retrieved_docs: Optional[List[Any]] = None) -> Dict[str, Any]:
+    """
+    Create visualizations for embedding analysis.
+    - If docs are provided, shows a 2D PCA scatter plot of query vs. docs.
+    - If no docs, shows a bar chart of the query's embedding vector.
+    """
     try:
         # Get query embedding
         query_embedding = np.array(embedding_model.embed_query(query))
         
-        # Create a simple 2D visualization using PCA
         if retrieved_docs and len(retrieved_docs) > 0:
-            # Get embeddings for retrieved documents
+            # --- PCA 2D Scatter Plot ---
             doc_texts = [doc.page_content[:200] for doc in retrieved_docs[:5]]  # Limit for visualization
             doc_embeddings = [embedding_model.embed_query(text) for text in doc_texts]
             
-            # Combine query and document embeddings
             all_embeddings = np.array([query_embedding] + doc_embeddings)
             
-            # Reduce to 2D using PCA
             pca = PCA(n_components=2)
             embeddings_2d = pca.fit_transform(all_embeddings)
             
-            # Calculate similarities
             similarities = [cosine_similarity([query_embedding], [doc_emb])[0][0] 
                           for doc_emb in doc_embeddings]
             
-            # Create scatter plot
             fig = go.Figure()
             
             # Add query point
@@ -300,7 +349,7 @@ def create_embedding_visualization(query: str, retrieved_docs=None) -> Dict[str,
                 "doc_texts": doc_texts
             }
         else:
-            # Just show query embedding statistics
+            # --- Query Vector Bar Chart ---
             fig = go.Figure()
             fig.add_trace(go.Bar(
                 x=list(range(min(50, len(query_embedding)))),
@@ -320,25 +369,32 @@ def create_embedding_visualization(query: str, retrieved_docs=None) -> Dict[str,
         return {"error": f"Failed to create visualization: {str(e)}"}
 
 def enhanced_rag_search(query: str) -> Dict[str, Any]:
-    """Enhanced RAG search that returns embedding information"""
+    """
+    Performs a RAG search and bundles it with embedding info and visualizations.
+    Used by the 'Embedding Explorer' tab.
+    """
     try:
-        # Get embedding info
+        # 1. Get embedding info for the query
         embedding_info = get_embedding_info(query)
+        if "error" in embedding_info:
+            return embedding_info
         
-        # Perform RAG search
+        # 2. Perform RAG search
+        # Using _get_relevant_documents to bypass the full chain logic for analysis
         retrieved_docs = rag_retriever._get_relevant_documents(query)
         
-        # Create visualization
+        # 3. Create visualization
         viz_info = create_embedding_visualization(query, retrieved_docs)
         
-        # Format retrieved documents info
+        # 4. Format retrieved documents info
         docs_info = []
+        similarities = viz_info.get("similarities", [])
         for i, doc in enumerate(retrieved_docs[:5]):  # Limit to 5 for display
             docs_info.append({
                 "index": i + 1,
                 "content": doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content,
                 "metadata": doc.metadata,
-                "similarity": viz_info.get("similarities", [0])[i] if i < len(viz_info.get("similarities", [])) else 0
+                "similarity": similarities[i] if i < len(similarities) else 0
             })
         
         return {
@@ -352,13 +408,17 @@ def enhanced_rag_search(query: str) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Enhanced RAG search failed: {str(e)}"}
 
-# --- 4. CORE AGENT AND UI LOGIC (ENHANCED WITH EMBEDDINGS) ---
+# --- 5. CORE AGENT AND UI LOGIC ---
 
 def get_agent_response(message: str) -> Dict[str, Any]:
+    """
+    Runs the main agent executor and formats the output, including
+    live embedding analysis for the query.
+    """
     result = main_agent_executor.invoke({"input": message})
     full_response = result.get("output", "An error occurred.")
     
-    # NEW: Always get embedding analysis for every query
+    # Always get embedding analysis for every query
     embedding_analysis = get_embedding_info(message)
     
     # Check if semantic search was used by examining intermediate steps
@@ -367,61 +427,78 @@ def get_agent_response(message: str) -> Dict[str, Any]:
     for action, observation in result.get("intermediate_steps", []):
         if action.tool == "semantic_patient_search":
             semantic_search_used = True
-            # Try to get retrieved documents from RAG system
             try:
+                # Re-fetch docs for visualization (agent observation is just text)
                 retrieved_docs = rag_retriever._get_relevant_documents(message)
-            except:
+            except Exception as e:
+                print(f"Could not re-fetch docs for viz: {e}")
                 retrieved_docs = []
             break
     
-    # Create visualization for the query
+    # Create visualization for the query's embedding
     viz_info = create_embedding_visualization(message, retrieved_docs if semantic_search_used else None)
     
+    # Standardize the output format
     parsed_output = {
         "text_answer": full_response, 
         "chart_figure": None,
         "suggested_questions": [], 
         "thinking_markdown": format_thinking_process(result.get("intermediate_steps", [])),
-        # NEW: Always include embedding information
         "embedding_info": embedding_analysis,
         "embedding_viz": viz_info.get("visualization", None),
         "semantic_search_used": semantic_search_used,
         "retrieved_docs_count": len(retrieved_docs) if retrieved_docs else 0
     }
     
+    # Try to parse the JSON block for charts and suggestions
     json_match = re.search(r'```json\s*({.*?})\s*```', full_response, re.DOTALL)
     if json_match:
         try:
             response_data = json.loads(json_match.group(1))
             parsed_output["text_answer"] = full_response[:json_match.start()].strip()
+            
             if chart_json := response_data.get("chart_json"):
                 parsed_output["chart_figure"] = create_plotly_chart(chart_json)
             if questions := response_data.get("suggested_questions"):
                 parsed_output["suggested_questions"] = questions
+                
         except json.JSONDecodeError:
             print("Warning: Failed to parse JSON from agent response.")
             parsed_output["text_answer"] += " (Note: Visualization data was malformed)"
+            
     return parsed_output
 
-def chat_ui_updater(message: str, history: List[List[str]]):
-    # Convert history format for Gradio 4.16.0 - expects [[user_msg, bot_msg], ...]
+def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, None, None]:
+    """
+    A generator function to handle the chat UI updates, including streaming.
+    Yields tuples of gr.update objects for all outputs.
+    """
     if not history:
         history = []
     
-    # Add user message as a new conversation pair with empty bot response
+    # Add user message to history
     history.append([message, ""])
     
-    # The number of items yielded must match the number of outputs (10 items now)
-    yield (history, gr.update(visible=False), gr.update(value="*Agent is thinking...*"),
-           gr.Dataframe(value=[]), gr.update(visible=False), "",
-           gr.Textbox(value=message), gr.Textbox(),
-           # NEW: Reset embedding displays
-           gr.update(value={}, visible=False), gr.update(value="*Analyzing embeddings...*"), gr.update(visible=False))
+    # 1. First yield: Show user message and "thinking" status
+    yield (
+        history, 
+        gr.update(visible=False),  # plot
+        gr.update(value="*Agent is thinking...*"),  # thinking_box
+        gr.Dataframe(value=[]),  # suggestions_df
+        gr.update(visible=False),  # suggestions_box
+        "",  # textbox
+        gr.Textbox(value=message),  # last_query
+        gr.Textbox(),  # suggestions_store
+        gr.update(value={}, visible=False),  # live_embedding_info
+        gr.update(value="*Analyzing embeddings...*"),  # embedding_method_info
+        gr.update(visible=False)  # live_embedding_viz
+    )
 
     try:
+        # 2. Get the full response from the agent
         response = get_agent_response(message)
         
-        # NEW: Prepare embedding information for live display
+        # Prepare embedding information for live display
         embedding_display = {}
         embedding_method_text = ""
         embedding_viz_update = gr.update(visible=False)
@@ -447,18 +524,20 @@ def chat_ui_updater(message: str, history: List[List[str]]):
                 if response.get("embedding_viz"):
                     embedding_viz_update = gr.update(value=response["embedding_viz"], visible=True)
         
-        # Stream the response character by character
+        # 3. Stream the text response
         bot_message_so_far = ""
         for char in response["text_answer"]:
             bot_message_so_far += char
-            # Update the last conversation pair with the streaming response
-            history[-1][1] = bot_message_so_far
-            yield (history, gr.update(), gr.update(), gr.update(), gr.update(),
-                   "", gr.update(), gr.update(),
-                   # Keep embedding info static during streaming
-                   gr.update(), gr.update(), gr.update())
+            history[-1][1] = bot_message_so_far  # Update last bot message
+            
+            # Yield streaming update
+            yield (
+                history, gr.update(), gr.update(), gr.update(), gr.update(),
+                "", gr.update(), gr.update(),
+                gr.update(), gr.update(), gr.update() # Keep embedding info static
+            )
 
-        # Final update with chart, suggestions, and embedding analysis
+        # 4. Final yield: Update with chart, suggestions, and full analysis
         plot_update = gr.update(visible=False)
         if response["chart_figure"]:
             plot_update = gr.update(value=response["chart_figure"], visible=True)
@@ -467,38 +546,50 @@ def chat_ui_updater(message: str, history: List[List[str]]):
         dataframe_value = [[q] for q in suggestions_list]
         suggestions_box_update = gr.update(visible=True) if suggestions_list else gr.update(visible=False)
         
-        yield (history, plot_update, response["thinking_markdown"],
-               gr.Dataframe(value=dataframe_value), suggestions_box_update,
-               "", gr.update(), json.dumps(suggestions_list),
-               # NEW: Final embedding analysis display
-               gr.update(value=embedding_display, visible=True),
-               gr.update(value=embedding_method_text),
-               embedding_viz_update)
+        yield (
+            history, 
+            plot_update, 
+            response["thinking_markdown"],
+            gr.Dataframe(value=dataframe_value), 
+            suggestions_box_update,
+            "",  # Clear textbox
+            gr.update(),  # last_query (already set)
+            json.dumps(suggestions_list),  # suggestions_store
+            gr.update(value=embedding_display, visible=True),  # live_embedding_info
+            gr.update(value=embedding_method_text),  # embedding_method_info
+            embedding_viz_update  # live_embedding_viz
+        )
                
     except Exception as e:
         print(f"An error occurred in chat_ui_updater: {e}")
-        # Update the bot response with error message
         history[-1][1] = "Sorry, an error occurred. Please check the logs."
-        yield (history, gr.update(), gr.update(value=f"Error: {e}"),
-               gr.update(), gr.update(visible=False),
-               "", gr.update(), gr.update(),
-               # Error state for embeddings
-               gr.update(value={"Error": str(e)}, visible=True),
-               gr.update(value="❌ Error during embedding analysis"),
-               gr.update(visible=False))
+        
+        # Yield error state
+        yield (
+            history, 
+            gr.update(), 
+            gr.update(value=f"Error: {e}"),
+            gr.update(), 
+            gr.update(visible=False),
+            "", 
+            gr.update(), 
+            gr.update(),
+            gr.update(value={"Error": str(e)}, visible=True),
+            gr.update(value="❌ Error during embedding analysis"),
+            gr.update(visible=False)
+        )
 
-# --- 5. GRADIO UI LAYOUT WITH AUTHENTICATION ---
+# --- 6. GRADIO UI LAYOUT WITH AUTHENTICATION ---
 
-# Monkey patch for Gradio JSON schema bug
-import gradio_client.utils
+# Monkey patch for Gradio JSON schema bug in some versions
+# This prevents crashes when rendering complex components like gr.JSON
 original_get_type = gradio_client.utils.get_type
-
-def patched_get_type(schema):
+def patched_get_type(schema: Any) -> Any:
     if isinstance(schema, bool):
         return "any"
     return original_get_type(schema)
-
 gradio_client.utils.get_type = patched_get_type
+
 
 with gr.Blocks(
     theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="blue", neutral_hue="slate"), 
@@ -514,140 +605,89 @@ with gr.Blocks(
     """
 ) as demo:
     
-    # State variables for authentication
+    # --- State Variables ---
     current_user = gr.State("")
     login_message = gr.Textbox(label="Status", visible=False, interactive=False)
+    last_query = gr.Textbox(visible=False)
+    suggestions_store = gr.Textbox(visible=False)
+    selected_suggestion_index = gr.Number(label="Selected Index", visible=False)
+
     
-    # Login Interface
+    # --- Login Interface ---
     with gr.Group(visible=True) as login_form:
         gr.Markdown("# 🔐 Login Required")
         gr.Markdown("### Data Insights AI-Copilot (Bangladesh Data)")
         
         with gr.Row():
-            with gr.Column(scale=1):
-                gr.Markdown("")  # Spacer
+            with gr.Column(scale=1): gr.Markdown("")  # Spacer
             with gr.Column(scale=2):
                 with gr.Group():
                     gr.Markdown("**Please log in to access the system:**")
-                    username_input = gr.Textbox(
-                        label="Username", 
-                        placeholder="Enter your username",
-                        max_lines=1,
-                        interactive=True,
-                        container=True,
-                        value=""
-                    )
-                    password_input = gr.Textbox(
-                        label="Password", 
-                        placeholder="Enter your password",
-                        type="password",
-                        max_lines=1,
-                        interactive=True,
-                        container=True,
-                        value=""
-                    )
+                    username_input = gr.Textbox(label="Username", placeholder="Enter your username", max_lines=1, interactive=True, value="")
+                    password_input = gr.Textbox(label="Password", placeholder="Enter your password", type="password", max_lines=1, interactive=True, value="")
+                    
                     with gr.Row():
                         login_btn = gr.Button("Login", variant="primary", scale=2)
                         clear_btn = gr.Button("Clear", variant="secondary", scale=1)
                         
-                        # Fix the clear button functionality
-                        clear_btn.click(
-                            lambda: ("", ""), 
-                            outputs=[username_input, password_input]
-                        )
-            with gr.Column(scale=1):
-                gr.Markdown("")  # Spacer
+            with gr.Column(scale=1): gr.Markdown("")  # Spacer
     
-    # Main Application Interface (hidden by default)
+    
+    # --- Main Application Interface (Hidden by default) ---
     with gr.Group(visible=False) as main_interface:
-        # Header with user info and logout
+        
+        # Header
         with gr.Row():
-            gr.Markdown("# Data Insights AI-Copilot (Sierra Leone FHIR Training Data)")
+            gr.Markdown("# Data Insights AI-Copilot (Bangaldesh Data)")
             with gr.Column(scale=1, min_width=200):
                 user_display = gr.Markdown("", elem_classes=["user-info"])
                 logout_btn = gr.Button("Logout", variant="secondary", size="sm")
         
-        # Main chat interface
+        # Main Chat
         with gr.Row():
             with gr.Column(scale=1):
-                chatbot = gr.Chatbot(
-                    label="Chat History", 
-                    height=400
-                )
-                textbox = gr.Textbox(
-                    placeholder="Ask a question...", 
-                    container=False, 
-                    scale=7,
-                    max_lines=3
-                )
+                chatbot = gr.Chatbot(label="Chat History", height=400)
+                textbox = gr.Textbox(placeholder="Ask a question...", container=False, scale=7, max_lines=3)
                 submit_btn = gr.Button("Send", variant="primary")
             with gr.Column(scale=2):
                 plot = gr.Plot(label="Chart Visualization", visible=False)
                 with gr.Accordion("Show Agent's Reasoning", open=False):
-                    thinking_box = gr.Markdown(
-                        label="Agent's Thoughts", 
-                        value="*Waiting for a question...*"
-                    )
+                    thinking_box = gr.Markdown(label="Agent's Thoughts", value="*Waiting for a question...*")
 
-        # NEW: Real-time Embedding Analysis for Every Query
-        with gr.Accordion("🧠 Query Embedding Analysis", open=True):
+        # Live Embedding Analysis (for chat queries)
+        with gr.Accordion("🧠 Query Embedding Analysis", open=False):
             gr.Markdown("### Automatic embedding analysis for every query")
-            
             with gr.Row():
                 with gr.Column(scale=1):
-                    live_embedding_info = gr.JSON(
-                        label="Query Embedding Stats",
-                        value={},
-                        visible=False
-                    )
-                    embedding_method_info = gr.Markdown(
-                        value="*Ask a question to see embedding analysis*",
-                        label="Method Used"
-                    )
+                    live_embedding_info = gr.JSON(label="Query Embedding Stats", value={}, visible=False)
+                    embedding_method_info = gr.Markdown(value="*Ask a question to see embedding analysis*", label="Method Used")
                 with gr.Column(scale=2):
-                    live_embedding_viz = gr.Plot(
-                        label="Live Embedding Visualization", 
-                        visible=False
-                    )
+                    live_embedding_viz = gr.Plot(label="Live Embedding Visualization", visible=False)
 
-        # NEW: Embedding Explorer Section
-        with gr.Accordion("🧠 Embedding Explorer", open=False):
+        # Embedding Explorer (Manual tool)
+        with gr.Accordion("🔬 Embedding Explorer", open=False):
             gr.Markdown("### Explore how embeddings work in your RAG system")
-            
             with gr.Row():
-                embedding_query = gr.Textbox(
-                    label="Test Query for Embedding Analysis",
-                    placeholder="Enter any query to see its embedding...",
-                    scale=3
-                )
+                embedding_query = gr.Textbox(label="Test Query for Embedding Analysis", placeholder="Enter any query to see its embedding...", scale=3)
                 analyze_btn = gr.Button("Analyze Embeddings", variant="secondary", scale=1)
             
             with gr.Row():
                 with gr.Column(scale=1):
-                    embedding_info = gr.JSON(
-                        label="Embedding Statistics",
-                        value={}
-                    )
+                    embedding_info = gr.JSON(label="Embedding Statistics", value={})
                 with gr.Column(scale=2):
-                    embedding_viz = gr.Plot(
-                        label="Embedding Visualization",
-                        visible=False
-                    )
+                    embedding_viz = gr.Plot(label="Embedding Visualization", visible=False)
             
             with gr.Accordion("Retrieved Documents", open=False):
                 retrieved_docs = gr.Dataframe(
                     headers=["Rank", "Content", "Similarity"],
                     label="Documents Retrieved by RAG",
-                    visible=False
+                    visible=False,
+                    interactive=False
                 )
             
-            embedding_status = gr.Textbox(
-                label="Status",
-                visible=False,
-                interactive=False
-            )
+            embedding_status = gr.Textbox(label="Status", visible=False, interactive=False)
 
-        # Suggestions and feedback section
+        # Suggestions and Feedback
         with gr.Group(visible=True) as suggestions_box:
             with gr.Row():
                 suggestions_df = gr.Dataframe(
@@ -657,97 +697,96 @@ with gr.Blocks(
                            ["What are the top 5 most common conditions?"]],
                     col_count=(1, "fixed"), 
                     interactive=False, 
-                    label="Suggestions (Select a row below to give feedback)",
+                    label="Suggestions (Select a row to ask)",
                 )
             with gr.Row():
-                good_btn = gr.Button("Mark as Good 👍")
-                bad_btn = gr.Button("Mark as Bad 👎")
+                gr.Markdown("Rate the quality of the last suggestion you clicked:")
+                good_btn = gr.Button("Good 👍")
+                bad_btn = gr.Button("Bad 👎")
             feedback_toast = gr.Textbox(label="Feedback Status", interactive=False, visible=False)
 
-        # Hidden state variables
-        last_query = gr.Textbox(visible=False)
-        suggestions_store = gr.Textbox(visible=False)
-        selected_suggestion_index = gr.Number(label="Selected Index", visible=False)
     
-    # Login event handler
-    def handle_login(username, password):
+    # --- 7. GRADIO EVENT HANDLERS ---
+
+    # --- Authentication Handlers ---
+    
+    def handle_login(username: str, password: str) -> Tuple[gr.update, gr.update, gr.update, str, str, str, gr.update]:
+        """Handles the login button click event."""
         is_valid, message = authenticate_user(username, password)
-        
         if is_valid:
             return (
                 gr.update(visible=False),  # Hide login form
                 gr.update(visible=True),   # Show main interface
                 gr.update(value=f"**Logged in as:** {username}", visible=True),  # Update user display
-                username,  # Store current user
+                username,  # Store current user in state
                 "",  # Clear username field
                 "",  # Clear password field
-                gr.update(value="Login successful!", visible=False)  # Show success message
+                gr.update(value="Login successful!", visible=False)  # Hide login message
             )
         else:
             return (
                 gr.update(visible=True),   # Keep login form visible
                 gr.update(visible=False),  # Keep main interface hidden
                 gr.update(value="", visible=False),  # Clear user display
-                "",  # Clear current user
-                username,  # Keep username (don't clear on failed login)
-                "",  # Clear password
+                "",  # Clear current user state
+                username,  # Keep username in field
+                "",  # Clear password field
                 gr.update(value=message, visible=True)  # Show error message
             )
-    
-    # Logout event handler
-    def handle_logout():
+
+    def handle_logout() -> Tuple[gr.update, gr.update, gr.update, str, str, str, gr.update]:
+        """Handles the logout button click event."""
         return (
             gr.update(visible=True),   # Show login form
             gr.update(visible=False),  # Hide main interface
             gr.update(value="", visible=False),  # Clear user display
-            "",  # Clear current user
-            "",  # Clear username
-            "",  # Clear password
+            "",  # Clear current user state
+            "",  # Clear username field
+            "",  # Clear password field
             gr.update(value="Logged out successfully", visible=True)  # Show logout message
         )
-    
-    # Chat functionality (only works when logged in)
-    chat_outputs = [chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
-                   textbox, last_query, suggestions_store,
-                   # NEW: Add live embedding outputs
-                   live_embedding_info, embedding_method_info, live_embedding_viz]
-    
-    def submit_and_clear(message, history):
+
+    # --- Chat Handlers ---
+
+    def submit_and_clear(message: str, history: List[List[str]]) -> Generator[Tuple, None, None]:
+        """Wrapper for the chat updater generator."""
         for update in chat_ui_updater(message, history):
             yield update
 
+    # Define outputs for the chat UI
+    chat_outputs = [
+        chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
+        textbox, last_query, suggestions_store,
+        live_embedding_info, embedding_method_info, live_embedding_viz
+    ]
+    
     submit_btn.click(submit_and_clear, [textbox, chatbot], chat_outputs).then(lambda: "", None, textbox)
     textbox.submit(submit_and_clear, [textbox, chatbot], chat_outputs).then(lambda: "", None, textbox)
 
-    # FIXED: Suggestion handling - properly populate textbox when clicking suggestions
-    def handle_suggestion_select(evt: gr.SelectData):
-        print(f"DEBUG: Selection event data: {evt}")  # Debug line
-        print(f"DEBUG: evt.value: {evt.value}")
-        print(f"DEBUG: evt.index: {evt.index}")
-        
-        # Handle different ways Gradio might return the selection
+    # --- Suggestion & Feedback Handlers ---
+    
+    def handle_suggestion_select(evt: gr.SelectData) -> Tuple[str, int]:
+        """
+        Handles clicking on a suggested question.
+        Populates the textbox and stores the index for feedback.
+        """
         if evt.value:
-            if isinstance(evt.value, list) and len(evt.value) > 0:
-                selected_question = str(evt.value[0])
-            elif isinstance(evt.value, str):
-                selected_question = evt.value
-            else:
-                selected_question = str(evt.value)
-            
-            # Clean up the question text
-            selected_question = selected_question.strip()
-            
-            return selected_question, evt.index[0] if evt.index and len(evt.index) > 0 else 0
-        
+            # evt.value is the text of the first cell in the selected row
+            selected_question = str(evt.value).strip()
+            selected_index = evt.index[0]  # Row index
+            return selected_question, selected_index
         return "", 0
         
     suggestions_df.select(handle_suggestion_select, None, [textbox, selected_suggestion_index])
+    
+    # Bind feedback buttons
     good_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(1, visible=False)], [feedback_toast])
     bad_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(-1, visible=False)], [feedback_toast])
 
-    # NEW: Embedding Analysis Event Handler
-    def analyze_embeddings(query):
-        """Handle embedding analysis for the given query"""
+    # --- Embedding Explorer Handlers ---
+
+    def analyze_embeddings(query: str) -> Tuple[Dict, gr.update, gr.update, gr.update]:
+        """Handles the 'Analyze Embeddings' button click for the explorer."""
         if not query.strip():
             return (
                 {},
@@ -757,7 +796,6 @@ with gr.Blocks(
             )
         
         try:
-            # Perform enhanced RAG search with embedding analysis
             results = enhanced_rag_search(query)
             
             if "error" in results:
@@ -768,28 +806,22 @@ with gr.Blocks(
                     gr.update(value=f"Error: {results['error']}", visible=True)
                 )
             
-            # Prepare embedding info for JSON display
+            # Prepare JSON for display
             embedding_info_display = {
                 "Model": results["embedding_info"]["embedding_stats"]["model_name"],
                 "Dimensions": results["embedding_info"]["embedding_stats"]["dimensions"],
                 "Vector Norm": round(results["embedding_info"]["embedding_stats"]["vector_norm"], 4),
                 "Mean Value": round(results["embedding_info"]["embedding_stats"]["vector_mean"], 4),
                 "Std Deviation": round(results["embedding_info"]["embedding_stats"]["vector_std"], 4),
-                "Min Value": round(results["embedding_info"]["embedding_stats"]["vector_min"], 4),
-                "Max Value": round(results["embedding_info"]["embedding_stats"]["vector_max"], 4),
                 "Sample Vector (first 10)": results["embedding_info"]["vector_sample"]
             }
             
-            # Prepare retrieved documents for dataframe
-            docs_df = []
-            for doc_info in results["retrieved_docs"]:
-                docs_df.append([
-                    doc_info["index"],
-                    doc_info["content"][:200] + "..." if len(doc_info["content"]) > 200 else doc_info["content"],
-                    round(doc_info["similarity"], 4) if doc_info["similarity"] else "N/A"
-                ])
+            # Prepare dataframe
+            docs_df = [
+                [doc["index"], doc["content"], round(doc["similarity"], 4) if doc["similarity"] else "N/A"]
+                for doc in results["retrieved_docs"]
+            ]
             
-            # Get visualization
             viz = results["visualization"].get("visualization", None)
             viz_visible = viz is not None
             
@@ -797,10 +829,7 @@ with gr.Blocks(
                 embedding_info_display,
                 gr.update(value=viz, visible=viz_visible) if viz else gr.update(visible=False),
                 gr.update(value=docs_df, visible=len(docs_df) > 0),
-                gr.update(
-                    value=f"✅ Analysis complete! Found {results['total_docs_found']} relevant documents.", 
-                    visible=True
-                )
+                gr.update(value=f"✅ Analysis complete! Found {results['total_docs_found']} relevant documents.", visible=True)
             )
             
         except Exception as e:
@@ -811,47 +840,51 @@ with gr.Blocks(
                 gr.update(value=f"Error during analysis: {str(e)}", visible=True)
             )
     
-    # Bind embedding analysis functionality
+    # Bind embedding explorer events
     analyze_btn.click(
         analyze_embeddings,
         inputs=[embedding_query],
         outputs=[embedding_info, embedding_viz, retrieved_docs, embedding_status]
     )
-    
     embedding_query.submit(
         analyze_embeddings,
         inputs=[embedding_query],
         outputs=[embedding_info, embedding_viz, retrieved_docs, embedding_status]
     )
+    
+    # --- Login/Logout Event Bindings ---
+    
+    # Clear login fields button
+    clear_btn.click(lambda: ("", ""), outputs=[username_input, password_input])
 
-    # Event bindings for login/logout
-    login_outputs = [login_form, main_interface, user_display, current_user, 
-                    username_input, password_input, login_message]
+    # Define outputs for login/logout handlers
+    login_outputs = [
+        login_form, main_interface, user_display, current_user, 
+        username_input, password_input, login_message
+    ]
     
     login_btn.click(
         handle_login,
         inputs=[username_input, password_input],
         outputs=login_outputs
     )
-    
-    # Allow Enter key to submit login
     password_input.submit(
         handle_login,
         inputs=[username_input, password_input], 
         outputs=login_outputs
     )
-    
     logout_btn.click(
         handle_logout,
         outputs=login_outputs
     )
 
+# --- 8. LAUNCH APPLICATION ---
+
 if __name__ == "__main__":
-    # Fix for Gradio JSON schema issues and localhost access
     demo.launch(
-        share=False,
-        server_name="127.0.0.1",
-        inbrowser=True,
-        show_error=True,
-        quiet=False
+        share=False,  # Do not create a public link
+        server_name="127.0.0.1",  # Run on localhost
+        inbrowser=True,  # Open in browser automatically
+        show_error=True,  # Show errors in the browser
+        quiet=False  # Print Gradio logs to console
     )

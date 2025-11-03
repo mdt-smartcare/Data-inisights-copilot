@@ -741,3 +741,21 @@ cannot import name 'split_torch_state_dict_into_shards' from 'huggingface_hub' (
 2025-11-03 03:01:13,302 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
 2025-11-03 03:01:13,302 - __main__ - INFO - ✅ Advanced pipeline built successfully!
 2025-11-03 03:01:13,309 - src.db.connector - INFO - Database connection closed.
+2025-11-03 13:32:14,183 - __main__ - INFO - Connecting to database and extracting data...
+2025-11-03 13:32:14,183 - src.db.connector - INFO - Connecting to database...
+2025-11-03 13:32:14,244 - src.db.connector - INFO - Database connection successful.
+2025-11-03 13:32:14,257 - src.pipeline.extract - INFO - Found 95 tables to process.
+2025-11-03 13:32:15,265 - src.pipeline.extract - INFO - Successfully extracted data from 93 tables
+2025-11-03 13:32:15,265 - __main__ - INFO - Transforming data with parent-child chunking...
+2025-11-03 13:32:18,980 - src.pipeline.transform - INFO - Created 117690 initial documents from all tables.
+2025-11-03 13:32:18,980 - src.pipeline.transform - INFO - Applying parent-child chunking to all documents...
+2025-11-03 13:32:23,322 - src.pipeline.transform - INFO - Chunking complete. Created 315817 child documents.
+2025-11-03 13:32:23,322 - src.pipeline.embed - INFO - Initializing local embedding model from: ./models/bge-m3
+2025-11-03 13:32:23,322 - sentence_transformers.SentenceTransformer - INFO - Load pretrained SentenceTransformer: ./models/bge-m3
+2025-11-03 13:32:24,377 - sentence_transformers.SentenceTransformer - INFO - Use pytorch device_name: mps
+2025-11-03 13:32:25,367 - src.pipeline.embed - INFO - Embedding model loaded successfully.
+2025-11-03 13:32:25,368 - __main__ - INFO - Building and persisting advanced ChromaDB index and docstore...
+2025-11-03 13:32:25,368 - src.pipeline.build_index - INFO - Building Chroma index at './data/indexes/chroma_db_advanced' with 315817 documents.
+2025-11-03 14:21:51,158 - src.pipeline.build_index - INFO - Chroma index built and parent docstore saved to './data/indexes/chroma_db_advanced/parent_docstore.pkl'.
+2025-11-03 14:21:51,159 - __main__ - INFO -  Advanced pipeline built successfully!
+2025-11-03 14:21:51,168 - src.db.connector - INFO - Database connection closed.
