@@ -190,9 +190,13 @@ async def get_agent_response(message: str) -> Dict[str, Any]:
             parsed_output["text_answer"] += " (Note: Visualization data was malformed)"
     return parsed_output
 
-async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": ""})
+async def chat_ui_updater(message: str, history: List[List[str]]):
+    # Convert history to the correct format if needed
+    if history is None:
+        history = []
+    
+    # Add user message
+    history.append([message, ""])
     
     # The number of items yielded must match the number of outputs (8 items)
     yield (history, gr.update(visible=False), gr.update(value="*Agent is thinking...*"),
@@ -201,11 +205,13 @@ async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
 
     try:
         response = await get_agent_response(message)
-        history[-1]["content"] = ""
+        
+        # Start streaming the response
         bot_message_so_far = ""
         for char in response["text_answer"]:
             bot_message_so_far += char
-            history[-1]["content"] = bot_message_so_far
+            # Update the last message in history
+            history[-1][1] = bot_message_so_far
             yield (history, gr.update(), gr.update(), gr.update(), gr.update(),
                    "", gr.update(), gr.update())
 
@@ -223,7 +229,7 @@ async def chat_ui_updater(message: str, history: List[Dict[str, str]]):
                
     except Exception as e:
         print(f"An error occurred in chat_ui_updater: {e}")
-        history[-1]["content"] = "Sorry, an error occurred. Please check the logs."
+        history[-1][1] = "Sorry, an error occurred. Please check the logs."
         yield (history, gr.update(), gr.update(value=f"Error: {e}"),
                gr.update(), gr.update(visible=False),
                "", gr.update(), gr.update())
@@ -279,7 +285,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
         # Main chat interface
         with gr.Row():
             with gr.Column(scale=1):
-                chatbot = gr.Chatbot(label="Chat History", type="messages")
+                chatbot = gr.Chatbot(label="Chat History")
                 chat_progress = gr.Progress()
                 textbox = gr.Textbox(placeholder="Ask a question...", container=False, scale=7)
                 submit_btn = gr.Button("Send", variant="primary")
@@ -376,7 +382,7 @@ with gr.Blocks(theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="b
     
     async def submit_and_clear(message, history):
         async for update in chat_ui_updater(message, history):
-            if history[-1]["content"] == "":
+            if history[-1][1] == "":
                 chat_progress.visible = True
                 agent_progress.visible = True
             else:
