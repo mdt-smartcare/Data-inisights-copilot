@@ -31,6 +31,9 @@ from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
 
+# --- NEW: 1. IMPORT LANGFUSE ---
+from langfuse.langchain import CallbackHandler
+
 # --- Local/Project Imports ---
 from src.rag.retrieve import AdvancedRAGRetriever
 
@@ -125,6 +128,10 @@ tools: List[Tool] = [
         description="Use this ONLY when the user asks a question about a specific patient that requires searching through their unstructured notes or records for deeper context. Do NOT use for counting or listing general information."
     ),
 ]
+
+# --- NEW: 2. INITIALIZE LANGFUSE HANDLER ---
+# The handler automatically reads the environment variables you just set
+langfuse_handler = CallbackHandler()
 
 # --- Main Agent Executor ---
 main_agent = create_tool_calling_agent(llm, tools, prompt_template)
@@ -415,7 +422,12 @@ def get_agent_response(message: str) -> Dict[str, Any]:
     Runs the main agent executor and formats the output, including
     live embedding analysis for the query.
     """
-    result = main_agent_executor.invoke({"input": message})
+    # --- NEW: 3. ADD THE LANGFUSE CALLBACK TO YOUR INVOCATION ---
+    # This tells LangChain to send all trace data for this specific run to Langfuse
+    result = main_agent_executor.invoke(
+        {"input": message},
+        {"callbacks": [langfuse_handler]} # <-- THIS IS THE ONLY CHANGE NEEDED HERE
+    )
     full_response = result.get("output", "An error occurred.")
     
     # Always get embedding analysis for every query
