@@ -4,6 +4,10 @@ langchain-openai
 langchain-community
 langfuse
 huggingface-hub
+langchain-core
+langgraph
+neo4j
+langchain-neo4j
 
 # Vector Store
 chromadb
