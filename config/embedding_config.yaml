@@ -97,6 +97,8 @@ retriever:
   top_k_initial: 20
   # Number of final documents to return after reranking
   top_k_final: 5
+  # Model for the final reranking step
+  reranker_model_name: "BAAI/bge-reranker-base" 
 
 # Text processing
 text_processing:

@@ -25,6 +25,7 @@ from langchain.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceh
 from langchain.tools import Tool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.embeddings import Embeddings
+from langchain_core.documents import Document
 
 # --- LangChain Community/OpenAI Imports ---
 from langchain_community.utilities import SQLDatabase
@@ -293,7 +294,8 @@ def get_embedding_info(query: str) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Failed to generate embedding: {str(e)}"}
 
-def create_embedding_visualization(query: str, retrieved_docs: Optional[List[Any]] = None) -> Dict[str, Any]:
+# --- MODIFIED THIS FUNCTION ---
+def create_embedding_visualization(query: str, retrieved_docs_with_scores: Optional[List[Tuple[Document, float]]] = None) -> Dict[str, Any]:
     """
     Create visualizations for embedding analysis.
     - If docs are provided, shows a 2D PCA scatter plot of query vs. docs.
@@ -303,9 +305,14 @@ def create_embedding_visualization(query: str, retrieved_docs: Optional[List[Any
         # Get query embedding
         query_embedding = np.array(embedding_model.embed_query(query))
         
-        if retrieved_docs and len(retrieved_docs) > 0:
+        if retrieved_docs_with_scores and len(retrieved_docs_with_scores) > 0:
             # --- PCA 2D Scatter Plot ---
-            doc_texts = [doc.page_content[:200] for doc in retrieved_docs[:5]]  # Limit for visualization
+            
+            # Unpack the documents and scores
+            retrieved_docs = [doc for doc, score in retrieved_docs_with_scores]
+            reranker_scores = [score for doc, score in retrieved_docs_with_scores]
+            
+            doc_texts = [doc.page_content[:200] for doc in retrieved_docs[:5]] # Limit for visualization
             doc_embeddings = [embedding_model.embed_query(text) for text in doc_texts]
             
             all_embeddings = np.array([query_embedding] + doc_embeddings)
@@ -313,8 +320,8 @@ def create_embedding_visualization(query: str, retrieved_docs: Optional[List[Any
             pca = PCA(n_components=2)
             embeddings_2d = pca.fit_transform(all_embeddings)
             
-            similarities = [cosine_similarity([query_embedding], [doc_emb])[0][0] 
-                          for doc_emb in doc_embeddings]
+            # Use the reranker scores
+            similarities = reranker_scores[:5] # Make sure we only use scores for the docs we're plotting
             
             fig = go.Figure()
             
@@ -339,11 +346,10 @@ def create_embedding_visualization(query: str, retrieved_docs: Optional[List[Any
                         size=12, 
                         color=similarity,
                         colorscale='Viridis',
-                        colorbar=dict(title="Similarity"),
-                        cmin=0, cmax=1
+                        colorbar=dict(title="Re-Rank Score"), # <-- CHANGED TITLE
                     ),
                     name=f'Doc {i+1}',
-                    text=[f"Doc {i+1}: {doc_text[:50]}...<br>Similarity: {similarity:.3f}"],
+                    text=[f"Doc {i+1}: {doc_text[:50]}...<br>Re-Rank Score: {similarity:.3f}"], # <-- CHANGED TEXT
                     hovertemplate="<b>%{text}</b><extra></extra>"
                 ))
             
@@ -380,6 +386,7 @@ def create_embedding_visualization(query: str, retrieved_docs: Optional[List[Any
     except Exception as e:
         return {"error": f"Failed to create visualization: {str(e)}"}
 
+# --- MODIFIED THIS FUNCTION ---
 def enhanced_rag_search(query: str) -> Dict[str, Any]:
     """
     Performs a RAG search and bundles it with embedding info and visualizations.
@@ -391,34 +398,38 @@ def enhanced_rag_search(query: str) -> Dict[str, Any]:
         if "error" in embedding_info:
             return embedding_info
         
-        # 2. Perform RAG search
-        # Using _get_relevant_documents to bypass the full chain logic for analysis
-        retrieved_docs = rag_retriever._get_relevant_documents(query)
+        # 2. Perform RAG search *and get scores*
+        # --- CHANGED THIS LINE ---
+        retrieved_docs_with_scores = rag_retriever.retrieve_and_rerank_with_scores(query)
         
         # 3. Create visualization
-        viz_info = create_embedding_visualization(query, retrieved_docs)
+        # --- CHANGED THIS LINE ---
+        viz_info = create_embedding_visualization(query, retrieved_docs_with_scores)
         
         # 4. Format retrieved documents info
         docs_info = []
-        similarities = viz_info.get("similarities", [])
-        for i, doc in enumerate(retrieved_docs[:5]):  # Limit to 5 for display
+        # --- CHANGED THIS BLOCK ---
+        for i, (doc, score) in enumerate(retrieved_docs_with_scores[:5]): # Limit to 5 for display
             docs_info.append({
                 "index": i + 1,
                 "content": doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content,
                 "metadata": doc.metadata,
-                "similarity": similarities[i] if i < len(similarities) else 0
+                "reranker_score": score # Use the score from the reranker
             })
+        # --- END OF CHANGE ---
         
         return {
             "query": query,
             "embedding_info": embedding_info,
             "retrieved_docs": docs_info,
             "visualization": viz_info,
-            "total_docs_found": len(retrieved_docs)
+            "total_docs_found": len(retrieved_docs_with_scores)
         }
         
     except Exception as e:
         return {"error": f"Enhanced RAG search failed: {str(e)}"}
+# --- END OF MODIFICATIONS ---
+
 
 # --- 5. CORE AGENT AND UI LOGIC ---
 
@@ -502,20 +513,20 @@ def get_agent_response(message: str) -> Dict[str, Any]:
     
     # Check if semantic search was used by examining intermediate steps
     semantic_search_used = False
-    retrieved_docs = []
+    retrieved_docs_with_scores = []
     for action, observation in result.get("intermediate_steps", []):
         if action.tool == "semantic_patient_search":
             semantic_search_used = True
             try:
                 # Re-fetch docs for visualization (agent observation is just text)
-                retrieved_docs = rag_retriever._get_relevant_documents(message)
+                retrieved_docs_with_scores = rag_retriever.retrieve_and_rerank_with_scores(message)
             except Exception as e:
                 print(f"Could not re-fetch docs for viz: {e}")
-                retrieved_docs = []
+                retrieved_docs_with_scores = []
             break
     
     # Create visualization for the query's embedding
-    viz_info = create_embedding_visualization(message, retrieved_docs if semantic_search_used else None)
+    viz_info = create_embedding_visualization(message, retrieved_docs_with_scores if semantic_search_used else None)
     
     # Standardize the output format
     parsed_output = {
@@ -526,7 +537,7 @@ def get_agent_response(message: str) -> Dict[str, Any]:
         "embedding_info": embedding_analysis,
         "embedding_viz": viz_info.get("visualization", None),
         "semantic_search_used": semantic_search_used,
-        "retrieved_docs_count": len(retrieved_docs) if retrieved_docs else 0,
+        "retrieved_docs_count": len(retrieved_docs_with_scores),
         "trace_id": trace_id # Pass trace_id in the output
     }
     
@@ -597,7 +608,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
             
             # Determine which method was used
             if response.get("semantic_search_used", False):
-                embedding_method_text = f"🔍 **Semantic Search Used** - Retrieved {response.get('retrieved_docs_count', 0)} documents using BGE-M3 embeddings"
+                embedding_method_text = f"🔍 **Semantic Search Used** - Retrieved {response.get('retrieved_docs_count', 0)} re-ranked documents using BGE-M3 + BGE-Reranker"
                 if response.get("embedding_viz"):
                     embedding_viz_update = gr.update(value=response["embedding_viz"], visible=True)
             else:
@@ -764,7 +775,8 @@ with gr.Blocks(
             
             with gr.Accordion("Retrieved Documents", open=False):
                 retrieved_docs = gr.Dataframe(
-                    headers=["Rank", "Content", "Similarity"],
+                    # --- CHANGED THIS HEADER ---
+                    headers=["Rank", "Content", "Re-Ranker Score"],
                     label="Documents Retrieved by RAG",
                     visible=False,
                     interactive=False,
@@ -873,6 +885,7 @@ with gr.Blocks(
 
     # --- Embedding Explorer Handlers ---
 
+    # --- MODIFIED THIS FUNCTION ---
     def analyze_embeddings(query: str) -> Tuple[Dict, gr.update, gr.update, gr.update]:
         """Handles the 'Analyze Embeddings' button click for the explorer."""
         if not query.strip():
@@ -905,10 +918,12 @@ with gr.Blocks(
             }
             
             # Prepare dataframe
+            # --- CHANGED THIS BLOCK ---
             docs_df = [
-                [doc["index"], doc["content"], round(doc["similarity"], 4) if doc["similarity"] else "N/A"]
+                [doc["index"], doc["content"], round(doc["reranker_score"], 4)]
                 for doc in results["retrieved_docs"]
             ]
+            # --- END OF CHANGE ---
             
             viz = results["visualization"].get("visualization", None)
             viz_visible = viz is not None
@@ -917,7 +932,7 @@ with gr.Blocks(
                 embedding_info_display,
                 gr.update(value=viz, visible=viz_visible) if viz else gr.update(visible=False),
                 gr.update(value=docs_df, visible=len(docs_df) > 0),
-                gr.update(value=f"✅ Analysis complete! Found {results['total_docs_found']} relevant documents.", visible=True)
+                gr.update(value=f"✅ Analysis complete! Found {results['total_docs_found']} re-ranked documents.", visible=True)
             )
             
         except Exception as e:
@@ -927,6 +942,7 @@ with gr.Blocks(
                 gr.update(value=[], visible=False),
                 gr.update(value=f"Error during analysis: {str(e)}", visible=True)
             )
+    # --- END OF MODIFICATION ---
     
     # Bind embedding explorer events
     analyze_btn.click(
