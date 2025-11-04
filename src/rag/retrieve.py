@@ -15,9 +15,9 @@ from sentence_transformers import CrossEncoder
 logger = logging.getLogger(__name__)
 load_dotenv()
 
-# --- NEW: List of tables to prioritize ---
-# These are tables that contain queryable patient data.
-# We will filter out config/UI tables.
+# --- THIS IS THE FIX for the RAG EXPLORER ---
+# We remove "prescription" so the sparse (keyword) search
+# doesn't find irrelevant medication names.
 RELEVANT_TABLES = {
     "patient_tracker",
     "patient",
@@ -26,11 +26,12 @@ RELEVANT_TABLES = {
     "patient_diagnosis",
     "patient_comorbidity",
     "patient_complication",
-    "prescription",
+    # "prescription", # <-- REMOVED
     "call_register",
     "patient_vitals", # From notebook
     "patient_conditions", # From notebook
 }
+# --- END OF FIX ---
 
 
 class AdvancedRAGRetriever(BaseRetriever, BaseModel):
@@ -74,7 +75,8 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         
         # 1. Dense Retriever (for CHILD chunks from vector store)
         self.child_chunk_retriever = self.vector_store.as_retriever(
-            search_kwargs={"k": self.config['retriever']['top_k_initial']}
+            # Widen the net to find more child chunks
+            search_kwargs={"k": 50} 
         )
 
         # 2. Sparse Retriever (for PARENT documents)
@@ -84,15 +86,12 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         parent_documents = list(self.docstore.mget(all_parent_doc_keys))
         parent_documents = [doc for doc in parent_documents if doc is not None] # Clean up
         
-        # --- NEW: Filter documents for BM25 ---
-        # Build the sparse retriever ONLY on documents from relevant tables.
-        # This prevents it from finding keywords in UI config tables.
+        # Filter documents for BM25
         bm25_docs = [
             doc for doc in parent_documents 
             if doc.metadata.get("source_table") in RELEVANT_TABLES
         ]
         logger.info(f"Filtered to {len(bm25_docs)} documents from relevant tables for BM25 index.")
-        # --- END NEW ---
         
         if not bm25_docs:
             logger.error("No relevant parent documents found for BM25. Sparse retriever will not work.")
@@ -101,7 +100,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
 
         self.sparse_retriever = BM25Retriever.from_documents(
             bm25_docs,  # Use the filtered list
-            k=self.config['retriever']['top_k_initial']
+            k=self.config['retriever']['top_k_initial'] # Use config K
         )
         logger.info("BM25Retriever initialized on relevant tables.")
 
@@ -194,7 +193,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
         dense_parent_docs = self.docstore.mget(parent_ids)
         dense_parent_docs = [doc for doc in dense_parent_docs if doc is not None]
-        
+
         # --- 2. SPARSE (BM25) RETRIEVAL ---
         sparse_parent_docs = []
         if self.sparse_retriever:

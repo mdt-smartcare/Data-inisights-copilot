@@ -25,7 +25,7 @@ from langchain.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceh
 from langchain.tools import Tool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.embeddings import Embeddings
-from langchain_core.documents import Document
+from langchain_core.documents import Document  # <-- Import is here
 
 # --- LangChain Community/OpenAI Imports ---
 from langchain_community.utilities import SQLDatabase
@@ -126,7 +126,17 @@ tools: List[Tool] = [
     Tool(
         name="database_query_agent", 
         func=sql_agent.invoke, 
-        description="Use this to answer any question about the data in the database. This includes counting, listing, finding, or aggregating patient data, conditions, procedures, etc. This should be your default tool for any data-related query."
+        # --- THIS IS THE FIX for the SQL AGENT ---
+        # Give it specific instructions on which tables to query
+        description="""Use this to answer any question about the data in the database.
+This includes counting, listing, finding, or aggregating patient data.
+IMPORTANT:
+- For patient conditions or diagnoses, query the 'patient_diagnosis' table (e.g., 'diabetes_diagnosis' column).
+- For patient demographics (age, gender), query the 'patient_tracker' table.
+- For blood pressure or glucose, query 'bp_log' and 'glucose_log'.
+- For prescriptions, query the 'prescription' table.
+This should be your default tool for any data-related query."""
+        # --- END OF FIX ---
     ),
     Tool(
         name="semantic_patient_search", 
