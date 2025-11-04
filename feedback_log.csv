@@ -1,3 +1,2 @@
-timestamp,query,suggested_question,rating
-2025-11-03 13:29:36.545894,What is the total number of patients?,What is the gender distribution of the patients?,1
-2025-11-03 13:30:08.148513,What is the total number of patients?,What is the gender distribution of the patients?,1
+timestamp,query,suggested_question,rating,trace_id
+2025-11-04 11:20:01.314935,How does the patient count in this upazila compare to others?,How does the healthcare facility distribution correlate with patient counts?,1,f6c442353478b7a4df90a9cb2cd6d3f4

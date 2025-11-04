@@ -52,6 +52,11 @@ class Config:
     LLM_MODEL: str = "gpt-4o"
     FEEDBACK_LOG_FILE: str = "feedback_log.csv"
     
+    # Langfuse Configuration
+    LANGFUSE_PUBLIC_KEY: Optional[str] = os.getenv("LANGFUSE_PUBLIC_KEY")
+    LANGFUSE_SECRET_KEY: Optional[str] = os.getenv("LANGFUSE_SECRET_KEY")
+    LANGFUSE_HOST: Optional[str] = os.getenv("LANGFUSE_HOST")
+    
     # Authentication configuration
     USERS: Dict[str, str] = {
         "admin": "admin",
@@ -129,9 +134,8 @@ tools: List[Tool] = [
     ),
 ]
 
-# --- NEW: 2. INITIALIZE LANGFUSE HANDLER ---
-# The handler automatically reads the environment variables you just set
-langfuse_handler = CallbackHandler()
+# --- MODIFIED: REMOVED GLOBAL HANDLER ---
+# The handler will now be created locally inside get_agent_response
 
 # --- Main Agent Executor ---
 main_agent = create_tool_calling_agent(llm, tools, prompt_template)
@@ -187,7 +191,7 @@ def format_thinking_process(intermediate_steps: List[Tuple[Any, Any]]) -> str:
         log += f"**Output:**\n```\n{str(observation)}\n```\n---\n"
     return log
 
-def log_feedback(query: str, suggestions_json: str, selected_index: int, rating: float) -> gr.update:
+def log_feedback(query: str, suggestions_json: str, selected_index: int, rating: float, trace_id: str) -> gr.update:
     """Logs user feedback on suggested questions to a CSV file."""
     try:
         if not query or not suggestions_json or selected_index is None:
@@ -200,7 +204,8 @@ def log_feedback(query: str, suggestions_json: str, selected_index: int, rating:
             "timestamp": [pd.Timestamp.now()], 
             "query": [query], 
             "suggested_question": [selected_question], 
-            "rating": [rating]
+            "rating": [rating],
+            "trace_id": [trace_id] # <-- This column will now be populated
         }
         df = pd.DataFrame(feedback_data)
         
@@ -422,12 +427,74 @@ def get_agent_response(message: str) -> Dict[str, Any]:
     Runs the main agent executor and formats the output, including
     live embedding analysis for the query.
     """
-    # --- NEW: 3. ADD THE LANGFUSE CALLBACK TO YOUR INVOCATION ---
-    # This tells LangChain to send all trace data for this specific run to Langfuse
+    # --- MODIFIED: Create a NEW handler for each request with proper initialization ---
+    # Initialize Langfuse handler without passing credentials directly to constructor
+    # The credentials should be set via environment variables
+    local_langfuse_handler = CallbackHandler()
+
+    # --- MODIFIED: Pass the LOCAL handler to the invocation ---
     result = main_agent_executor.invoke(
         {"input": message},
-        {"callbacks": [langfuse_handler]} # <-- THIS IS THE ONLY CHANGE NEEDED HERE
+        {"callbacks": [local_langfuse_handler]} # Use the local handler
     )
+    
+    # --- MODIFIED: Correctly get the trace_id from the local handler ---
+    trace_id = None
+    try:
+        # Add comprehensive debugging to understand what's available
+        print(f"DEBUG: Handler type: {type(local_langfuse_handler)}")
+        print(f"DEBUG: Handler attributes: {[attr for attr in dir(local_langfuse_handler) if not attr.startswith('_')]}")
+        
+        # The correct way to get trace_id from Langfuse callback handler
+        # First check for last_trace_id attribute (this is the most reliable)
+        if hasattr(local_langfuse_handler, 'last_trace_id'):
+            trace_id = local_langfuse_handler.last_trace_id
+            print(f"Found trace_id via last_trace_id: {trace_id}")
+        
+        # Fallback: check the client attribute for trace information
+        elif hasattr(local_langfuse_handler, 'client') and local_langfuse_handler.client:
+            # Try to get trace from the client's state
+            client = local_langfuse_handler.client
+            print(f"DEBUG: Client type: {type(client)}")
+            if hasattr(client, 'trace_id'):
+                trace_id = client.trace_id
+                print(f"Found trace_id via client.trace_id: {trace_id}")
+            elif hasattr(client, '_state_client') and hasattr(client._state_client, 'trace_id'):
+                trace_id = client._state_client.trace_id
+                print(f"Found trace_id via client._state_client.trace_id: {trace_id}")
+        
+        # Additional fallback: check the runs attribute
+        elif hasattr(local_langfuse_handler, 'runs') and local_langfuse_handler.runs:
+            print(f"DEBUG: Found {len(local_langfuse_handler.runs)} runs")
+            # Get the first run and try to extract trace_id
+            first_run = next(iter(local_langfuse_handler.runs.values()), None)
+            if first_run and hasattr(first_run, 'trace_id'):
+                trace_id = first_run.trace_id
+                print(f"Found trace_id via runs: {trace_id}")
+        
+        print(f"Final trace ID extracted: {trace_id}")  # Debug logging
+        
+        # If still no trace_id, force create one manually using the client
+        if not trace_id and hasattr(local_langfuse_handler, 'client'):
+            try:
+                print("DEBUG: Attempting to create manual trace...")
+                # Create a manual trace to get an ID
+                trace = local_langfuse_handler.client.trace(name="chat_query", input=message)
+                if trace and hasattr(trace, 'id'):
+                    trace_id = trace.id
+                    print(f"Created manual trace ID: {trace_id}")
+                else:
+                    print(f"DEBUG: Manual trace creation failed, trace object: {trace}")
+            except Exception as e:
+                print(f"Could not create manual trace: {e}")
+        
+    except Exception as e:
+        print(f"Could not get trace_id from langfuse: {e}")
+        import traceback
+        traceback.print_exc()
+        trace_id = None
+    # --- End modification ---
+
     full_response = result.get("output", "An error occurred.")
     
     # Always get embedding analysis for every query
@@ -459,7 +526,8 @@ def get_agent_response(message: str) -> Dict[str, Any]:
         "embedding_info": embedding_analysis,
         "embedding_viz": viz_info.get("visualization", None),
         "semantic_search_used": semantic_search_used,
-        "retrieved_docs_count": len(retrieved_docs) if retrieved_docs else 0
+        "retrieved_docs_count": len(retrieved_docs) if retrieved_docs else 0,
+        "trace_id": trace_id # Pass trace_id in the output
     }
     
     # Try to parse the JSON block for charts and suggestions
@@ -501,6 +569,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
         "",  # textbox
         gr.Textbox(value=message),  # last_query
         gr.Textbox(),  # suggestions_store
+        gr.State(""), # <-- MODIFIED: Added state for current_trace_id_store
         gr.update(value={}, visible=False),  # live_embedding_info
         gr.update(value="*Analyzing embeddings...*"),  # embedding_method_info
         gr.update(visible=False)  # live_embedding_viz
@@ -546,6 +615,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
             yield (
                 history, gr.update(), gr.update(), gr.update(), gr.update(),
                 "", gr.update(), gr.update(),
+                gr.update(), # Keep trace_id static
                 gr.update(), gr.update(), gr.update() # Keep embedding info static
             )
 
@@ -567,6 +637,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
             "",  # Clear textbox
             gr.update(),  # last_query (already set)
             json.dumps(suggestions_list),  # suggestions_store
+            response.get("trace_id", ""), # <-- MODIFIED: Pass trace_id to state
             gr.update(value=embedding_display, visible=True),  # live_embedding_info
             gr.update(value=embedding_method_text),  # embedding_method_info
             embedding_viz_update  # live_embedding_viz
@@ -586,6 +657,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
             "", 
             gr.update(), 
             gr.update(),
+            gr.State(""), # <-- MODIFIED: Pass empty trace_id on error
             gr.update(value={"Error": str(e)}, visible=True),
             gr.update(value="❌ Error during embedding analysis"),
             gr.update(visible=False)
@@ -623,6 +695,7 @@ with gr.Blocks(
     last_query = gr.Textbox(visible=False)
     suggestions_store = gr.Textbox(visible=False)
     selected_suggestion_index = gr.Number(label="Selected Index", visible=False)
+    current_trace_id_store = gr.State("") # <-- MODIFIED: Added state for trace_id
 
     
     # --- Login Interface ---
@@ -694,7 +767,8 @@ with gr.Blocks(
                     headers=["Rank", "Content", "Similarity"],
                     label="Documents Retrieved by RAG",
                     visible=False,
-                    interactive=False
+                    interactive=False,
+                    value=[]
                 )
             
             embedding_status = gr.Textbox(label="Status", visible=False, interactive=False)
@@ -769,6 +843,7 @@ with gr.Blocks(
     chat_outputs = [
         chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
         textbox, last_query, suggestions_store,
+        current_trace_id_store, # <-- MODIFIED: Added trace_id state
         live_embedding_info, embedding_method_info, live_embedding_viz
     ]
     
@@ -792,8 +867,9 @@ with gr.Blocks(
     suggestions_df.select(handle_suggestion_select, None, [textbox, selected_suggestion_index])
     
     # Bind feedback buttons
-    good_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(1, visible=False)], [feedback_toast])
-    bad_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(-1, visible=False)], [feedback_toast])
+    # --- MODIFIED: Added current_trace_id_store as input ---
+    good_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(1, visible=False), current_trace_id_store], [feedback_toast])
+    bad_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(-1, visible=False), current_trace_id_store], [feedback_toast])
 
     # --- Embedding Explorer Handlers ---
 
