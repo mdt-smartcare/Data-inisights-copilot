@@ -1,5 +1,3 @@
-import logging
-import pickle
 from typing import List, Dict, Any, Tuple
 from langchain_core.documents import Document
 from langchain_community.retrievers.bm25 import BM25Retriever
@@ -9,16 +7,10 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
 from langchain_core.retrievers import BaseRetriever
 from pydantic import Field, BaseModel
+import logging
+import pickle
 from dotenv import load_dotenv
-from sentence_transformers import CrossEncoder
-
-# <-- NEW IMPORTS -->
-import json
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.output_parsers.json import JsonOutputParser
-# <-- END NEW IMPORTS -->
+from sentence_transformers import CrossEncoder 
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -41,36 +33,6 @@ RELEVANT_TABLES = {
 }
 # --- END OF FIX ---
 
-# <-- NEW: RAG-FUSION PROMPT (STEP 1) -->
-QUERY_GEN_TEMPLATE = """
-You are a helpful assistant that generates multiple search queries based on a single input query.
-Generate 4 search queries related to: {question}
-Output (4 queries):
-1.
-2.
-3.
-4.
-"""
-QUERY_GEN_PROMPT = ChatPromptTemplate.from_template(QUERY_GEN_TEMPLATE)
-
-# <-- NEW: CRAG GRADING PROMPT (STEP 2) -->
-GRADING_TEMPLATE = """
-You are a relevance grader. Given a user query and a retrieved document, you must determine if the document is relevant to the query.
-Your response must be a JSON object with two keys:
-1. "relevance": a string, either "yes" or "no".
-2. "reason": a brief justification for your decision.
-
-Query: {query}
-
-Document:
----
-{document}
----
-
-JSON Response:
-"""
-GRADING_PROMPT = ChatPromptTemplate.from_template(GRADING_TEMPLATE)
-
 
 class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     config: Dict = Field(default_factory=dict)
@@ -81,13 +43,9 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     child_chunk_retriever: Any = Field(default=None) # Renamed for clarity
     sparse_retriever: Any = Field(default=None)
     reranker: Any = Field(default=None) 
-    
-    # <-- NEW: LLM chains for advanced RAG steps -->
-    query_gen_llm: Any = Field(default=None)
-    grading_llm: Any = Field(default=None)
 
     def __init__(self, config: Dict, **kwargs):
-        """Initialize the hybrid retriever with all components."""
+        """Initialize the hybrid retriever with both dense and sparse components."""
         super().__init__(**kwargs)
         self.config = config
         self.embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
@@ -98,17 +56,6 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # Create a child splitter instance
         child_splitter_config = self.config['chunking']['child_splitter']
         self.child_splitter = RecursiveCharacterTextSplitter(**child_splitter_config)
-        
-        # <-- NEW: Initialize LLM chains -->
-        # 1. RAG-Fusion query generator
-        query_llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
-        self.query_gen_llm = QUERY_GEN_PROMPT | query_llm | StrOutputParser()
-        
-        # 2. CRAG document grader
-        # Use a fast, modern model that's good at JSON
-        grading_model = ChatOpenAI(model_name="gpt-4o-mini", temperature=0).with_structured_output(JsonOutputParser)
-        self.grading_llm = GRADING_PROMPT | grading_model
-        # <-- END NEW -->
         
         # Initialize retrievers
         self._setup_retrievers()
@@ -128,6 +75,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         
         # 1. Dense Retriever (for CHILD chunks from vector store)
         self.child_chunk_retriever = self.vector_store.as_retriever(
+            # Widen the net to find more child chunks
             search_kwargs={"k": 50} 
         )
 
@@ -151,62 +99,11 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
             return
 
         self.sparse_retriever = BM25Retriever.from_documents(
-            bm25_docs,
-            k=self.config['retriever']['top_k_initial']
+            bm25_docs,  # Use the filtered list
+            k=self.config['retriever']['top_k_initial'] # Use config K
         )
         logger.info("BM25Retriever initialized on relevant tables.")
 
-    # <-- NEW: RAG-FUSION (STEP 1) METHODS -->
-    def _generate_queries(self, query: str) -> List[str]:
-        """Generates multiple queries from the original query."""
-        logger.info(f"Generating expanded queries for: {query}")
-        try:
-            response = self.query_gen_llm.invoke({"question": query})
-            queries = [q.strip() for q in response.split('\n') if q.strip() and ". " in q]
-            queries = [q.split('. ', 1)[1] for q in queries if len(q.split('. ', 1)) > 1]
-            if not queries:
-                 logger.warning("Query generation failed to produce valid queries.")
-                 return [query]
-            queries.append(query) # Always include the original query
-            logger.info(f"Generated {len(queries)} unique queries.")
-            return list(set(queries)) # Return unique queries
-        except Exception as e:
-            logger.error(f"Failed to generate queries: {e}")
-            return [query] # Fallback to original query
-
-    def _reciprocal_rank_fusion(self, results_map: Dict[str, List[Document]], k=60) -> List[Document]:
-        """Fuses ranks from multiple query results."""
-        fused_scores = {}
-        
-        for query, docs in results_map.items():
-            for rank, doc in enumerate(docs):
-                # Use a stable key for each document
-                doc_key = (doc.metadata.get('source_table'), doc.metadata.get('source_id', doc.page_content))
-                if doc_key not in fused_scores:
-                    fused_scores[doc_key] = {'doc': doc, 'score': 0.0}
-                fused_scores[doc_key]['score'] += 1.0 / (rank + k)
-                
-        reranked_results = sorted(fused_scores.values(), key=lambda x: x['score'], reverse=True)
-        logger.info(f"Fused {len(reranked_results)} documents.")
-        return [item['doc'] for item in reranked_results]
-    # <-- END RAG-FUSION METHODS -->
-
-    # <-- NEW: CRAG (STEP 2) METHOD -->
-    def _grade_documents(self, query: str, documents: List[Document]) -> List[Document]:
-        """Grades documents for relevance and filters out irrelevant ones."""
-        logger.info(f"Grading {len(documents)} documents for relevance...")
-        relevant_docs = []
-        for doc in documents:
-            try:
-                result = self.grading_llm.invoke({"query": query, "document": doc.page_content})
-                if result and result.get("relevance") == "yes":
-                    relevant_docs.append(doc)
-            except Exception as e:
-                logger.warning(f"Failed to grade document (ID: {doc.metadata.get('source_id')}): {e}. Assuming irrelevant.")
-        
-        logger.info(f"Found {len(relevant_docs)} relevant documents after grading.")
-        return relevant_docs
-    # <-- END CRAG METHOD -->
 
     async def aget_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[Document]:
         """Async retrieval is not implemented."""
@@ -214,62 +111,49 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
 
     def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[Document]:
         """
-        Full retrieval pipeline with RAG-Fusion, CRAG, and Reranking:
-        1. Generate multiple queries from the original query (RAG-Fusion).
-        2. For each query, get docs from sparse (BM25) and dense (vector) retrievers.
-        3. Fuse all results using Reciprocal Rank Fusion (RRF).
-        4. Grade the fused documents for relevance (CRAG).
-        5. Rerank the final *relevant* docs to get the most relevant ones.
+        Full retrieval pipeline:
+        1. Get PARENT docs from sparse (BM25) retriever (already filtered to relevant tables).
+        2. Get PARENT docs from dense (small-to-big) retriever.
+        3. Merge and de-duplicate the results.
+        4. Rerank the merged list to get the final, most relevant docs.
         """
-        logger.info(f"Executing full advanced retrieval for: {query}")
+        logger.info(f"Executing query: {query}")
         
-        # --- 1. RAG-FUSION: GENERATE QUERIES ---
-        queries = self._generate_queries(query)
+        # --- 1. DENSE (small-to-big) RETRIEVAL ---
+        # Find child chunks
+        child_chunks = self.child_chunk_retriever._get_relevant_documents(query, run_manager=run_manager)
+        # Get unique parent IDs from child chunks
+        parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
+        # Retrieve the full parent documents
+        dense_parent_docs = self.docstore.mget(parent_ids)
+        dense_parent_docs = [doc for doc in dense_parent_docs if doc is not None] # Clean up
         
-        all_retrieved_docs_map = {} # To store results for RRF
-
-        for q in queries:
-            # --- 2. RETRIEVAL (for each query) ---
-            child_chunks = self.child_chunk_retriever._get_relevant_documents(q, run_manager=run_manager)
-            parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
-            dense_parent_docs = self.docstore.mget(parent_ids)
-            dense_parent_docs = [doc for doc in dense_parent_docs if doc is not None]
-            
-            sparse_parent_docs = []
-            if self.sparse_retriever:
-                sparse_parent_docs = self.sparse_retriever._get_relevant_documents(q, run_manager=run_manager)
-            
-            # Merge & De-duplicate (for this single query)
-            merged_docs_dict = { (doc.page_content, doc.metadata.get('source_id', '')): doc for doc in dense_parent_docs }
-            for doc in sparse_parent_docs:
-                key = (doc.page_content, doc.metadata.get('source_id', ''))
-                if key not in merged_docs_dict:
-                    merged_docs_dict[key] = doc
-            
-            all_retrieved_docs_map[q] = list(merged_docs_dict.values())
+        # --- 2. SPARSE (BM25) RETRIEVAL ---
+        sparse_parent_docs = []
+        if self.sparse_retriever:
+            sparse_parent_docs = self.sparse_retriever._get_relevant_documents(query, run_manager=run_manager)
         
-        # --- 3. RAG-FUSION: FUSE ALL RESULTS ---
-        fused_docs = self._reciprocal_rank_fusion(all_retrieved_docs_map)
+        # --- 3. MERGE & DE-DUPLICATE (both lists now contain PARENT docs) ---
+        merged_docs_dict = { (doc.page_content, doc.metadata.get('source_id', '')): doc for doc in dense_parent_docs }
+        for doc in sparse_parent_docs:
+            key = (doc.page_content, doc.metadata.get('source_id', ''))
+            if key not in merged_docs_dict:
+                merged_docs_dict[key] = doc
         
-        # --- 4. CRAG: GRADE DOCUMENTS ---
-        graded_docs = self._grade_documents(query, fused_docs)
-
-        if not graded_docs:
-            logger.warning("No relevant documents found after grading.")
-            return []
-
-        # --- 5. RERANK (Final Step) ---
-        if not self.reranker:
-            logger.info(f"Skipping reranking. Returning {len(graded_docs)} graded docs.")
-            return graded_docs[:self.config['retriever']['top_k_final']]
+        merged_docs = list(merged_docs_dict.values())
         
-        logger.info(f"Reranking {len(graded_docs)} graded documents for query: '{query}'")
+        # --- 4. RERANK ---
+        if not self.reranker or not merged_docs:
+            logger.info(f"Skipping reranking. Returning {len(merged_docs)} merged docs.")
+            # Return top_k_final from the *merged* list if no reranker
+            return merged_docs[:self.config['retriever']['top_k_final']]
         
-        # Rerank based on the *original* query
-        pairs = [[query, doc.page_content] for doc in graded_docs]
+        logger.info(f"Reranking {len(merged_docs)} documents for query: '{query}'")
+        
+        pairs = [[query, doc.page_content] for doc in merged_docs]
         scores = self.reranker.predict(pairs)
         
-        doc_score_pairs = list(zip(graded_docs, scores))
+        doc_score_pairs = list(zip(merged_docs, scores))
         sorted_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
         
         final_docs = [doc for doc, score in sorted_pairs[:self.config['retriever']['top_k_final']]]
@@ -300,51 +184,42 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     def retrieve_and_rerank_with_scores(self, query: str) -> List[Tuple[Document, float]]:
         """
         Special retrieval method for the Embedding Explorer.
-        Applies the full RAG-Fusion + CRAG + Rerank pipeline.
+        Returns documents AND their final reranker scores.
         """
         logger.info(f"Executing retrieve_and_rerank_with_scores for: {query}")
         
-        # --- 1. RAG-FUSION: GENERATE QUERIES ---
-        queries = self._generate_queries(query)
-        all_retrieved_docs_map = {}
-        
-        for q in queries:
-            # --- 2. RETRIEVAL ---
-            child_chunks = self.child_chunk_retriever._get_relevant_documents(q, run_manager=None)
-            parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
-            dense_parent_docs = self.docstore.mget(parent_ids)
-            dense_parent_docs = [doc for doc in dense_parent_docs if doc is not None]
+        # --- 1. DENSE (small-to-big) RETRIEVAL ---
+        child_chunks = self.child_chunk_retriever._get_relevant_documents(query, run_manager=None)
+        parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
+        dense_parent_docs = self.docstore.mget(parent_ids)
+        dense_parent_docs = [doc for doc in dense_parent_docs if doc is not None]
 
-            sparse_parent_docs = []
-            if self.sparse_retriever:
-                sparse_parent_docs = self.sparse_retriever._get_relevant_documents(q, run_manager=None)
+        # --- 2. SPARSE (BM25) RETRIEVAL ---
+        sparse_parent_docs = []
+        if self.sparse_retriever:
+            sparse_parent_docs = self.sparse_retriever._get_relevant_documents(query, run_manager=None)
 
-            # --- 3. MERGE ---
-            merged_docs_dict = { (doc.page_content, doc.metadata.get('source_id', '')): doc for doc in dense_parent_docs }
-            for doc in sparse_parent_docs:
-                key = (doc.page_content, doc.metadata.get('source_id', ''))
-                if key not in merged_docs_dict:
-                    merged_docs_dict[key] = doc
-            all_retrieved_docs_map[q] = list(merged_docs_dict.values())
+        # --- 3. MERGE & DE-DUPLICATE ---
+        merged_docs_dict = { (doc.page_content, doc.metadata.get('source_id', '')): doc for doc in dense_parent_docs }
+        for doc in sparse_parent_docs:
+            key = (doc.page_content, doc.metadata.get('source_id', ''))
+            if key not in merged_docs_dict:
+                merged_docs_dict[key] = doc
         
-        # --- 4. RAG-FUSION: FUSE ALL RESULTS ---
-        fused_docs = self._reciprocal_rank_fusion(all_retrieved_docs_map)
+        merged_docs = list(merged_docs_dict.values())
 
-        # --- 5. CRAG: GRADE DOCUMENTS ---
-        graded_docs = self._grade_documents(query, fused_docs)
-        
-        if not graded_docs:
+        if not merged_docs:
             return []
             
-        # --- 6. RERANK ---
+        # --- 4. RERANK ---
         if not self.reranker:
-            logger.warning("No reranker found. Returning graded docs with placeholder scores.")
-            return [(doc, 0.0) for doc in graded_docs[:self.config['retriever']['top_k_final']]]
+            logger.warning("No reranker found. Returning merged docs with placeholder scores.")
+            return [(doc, 0.0) for doc in merged_docs[:self.config['retriever']['top_k_final']]]
 
-        pairs = [[query, doc.page_content] for doc in graded_docs]
+        pairs = [[query, doc.page_content] for doc in merged_docs]
         scores = self.reranker.predict(pairs)
         
-        doc_score_pairs = list(zip(graded_docs, scores))
+        doc_score_pairs = list(zip(merged_docs, scores))
         sorted_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
         
         return sorted_pairs[:self.config['retriever']['top_k_final']]
