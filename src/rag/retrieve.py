@@ -43,6 +43,48 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     child_chunk_retriever: Any = Field(default=None) # Renamed for clarity
     sparse_retriever: Any = Field(default=None)
     reranker: Any = Field(default=None) 
+    
+    # Medical term mappings for query expansion
+    medical_synonyms: Dict[str, List[str]] = Field(default_factory=lambda: {
+        # Diabetes terms - expanded for better matching
+        'diabetes': ['diabetes mellitus', 'diabetic', 'dm type', 'blood sugar', 'glucose', 
+                     'is_diabetes_diagnosis', 'diabetes_diagnosis', 'confirm_diagnosis diabetes'],
+        'diabetic': ['diabetes', 'diabetes mellitus', 'dm'],
+        
+        # Hypertension terms - expanded
+        'hypertension': ['high blood pressure', 'htn', 'elevated blood pressure', 'bp',
+                        'is_htn_diagnosis', 'hypertension diagnosis'],
+        'blood pressure': ['hypertension', 'bp', 'systolic', 'diastolic'],
+        
+        # BMI and weight
+        'bmi': ['body mass index', 'weight status', 'obesity', 'overweight'],
+        'obese': ['obesity', 'overweight', 'high bmi', 'body mass index'],
+        
+        # Cardiovascular
+        'cvd': ['cardiovascular disease', 'heart disease', 'cardiac', 'cvd_risk_level', 'cvd_risk_score'],
+        'cardiovascular': ['cvd', 'heart disease', 'cardiac risk'],
+        'heart': ['cardiovascular', 'cardiac', 'cvd'],
+        
+        # Glucose
+        'glucose': ['blood sugar', 'bg', 'blood glucose level', 'glucose_value', 'glucose_type'],
+        'blood sugar': ['glucose', 'bg', 'glucose level'],
+        
+        # Medication
+        'medication': ['prescription', 'medicine', 'drug', 'treatment', 'is_medication_prescribed'],
+        'prescription': ['medication', 'medicine', 'drug'],
+        
+        # Screening and assessment
+        'screening': ['assessment', 'evaluation', 'test', 'check', 'is_screening'],
+        'assessment': ['screening', 'evaluation', 'test'],
+        
+        # Risk
+        'risk': ['risk_level', 'risk_score', 'high risk', 'is_red_risk_patient'],
+        'high risk': ['red risk', 'elevated risk', 'is_red_risk_patient'],
+        
+        # Mental health
+        'depression': ['phq9', 'phq-9', 'phq9_score', 'mental health'],
+        'anxiety': ['gad7', 'gad-7', 'gad7_score', 'mental health'],
+    })
 
     def __init__(self, config: Dict, **kwargs):
         """Initialize the hybrid retriever with both dense and sparse components."""
@@ -109,6 +151,18 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         """Async retrieval is not implemented."""
         raise NotImplementedError
 
+    def _expand_query(self, query: str) -> str:
+        """Expand query with medical synonyms for better retrieval."""
+        query_lower = query.lower()
+        expanded_terms = [query]
+        
+        for term, synonyms in self.medical_synonyms.items():
+            if term in query_lower:
+                # Add the most relevant synonym (first one)
+                expanded_terms.append(synonyms[0])
+        
+        return " ".join(expanded_terms)
+
     def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[Document]:
         """
         Full retrieval pipeline:
@@ -119,9 +173,12 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         """
         logger.info(f"Executing query: {query}")
         
+        # Expand the query with medical synonyms
+        expanded_query = self._expand_query(query)
+        
         # --- 1. DENSE (small-to-big) RETRIEVAL ---
         # Find child chunks
-        child_chunks = self.child_chunk_retriever._get_relevant_documents(query, run_manager=run_manager)
+        child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=run_manager)
         # Get unique parent IDs from child chunks
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
         # Retrieve the full parent documents
@@ -131,7 +188,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # --- 2. SPARSE (BM25) RETRIEVAL ---
         sparse_parent_docs = []
         if self.sparse_retriever:
-            sparse_parent_docs = self.sparse_retriever._get_relevant_documents(query, run_manager=run_manager)
+            sparse_parent_docs = self.sparse_retriever._get_relevant_documents(expanded_query, run_manager=run_manager)
         
         # --- 3. MERGE & DE-DUPLICATE (both lists now contain PARENT docs) ---
         merged_docs_dict = { (doc.page_content, doc.metadata.get('source_id', '')): doc for doc in dense_parent_docs }
@@ -188,8 +245,11 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         """
         logger.info(f"Executing retrieve_and_rerank_with_scores for: {query}")
         
+        # Expand the query with medical synonyms
+        expanded_query = self._expand_query(query)
+        
         # --- 1. DENSE (small-to-big) RETRIEVAL ---
-        child_chunks = self.child_chunk_retriever._get_relevant_documents(query, run_manager=None)
+        child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=None)
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
         dense_parent_docs = self.docstore.mget(parent_ids)
         dense_parent_docs = [doc for doc in dense_parent_docs if doc is not None]
@@ -197,7 +257,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # --- 2. SPARSE (BM25) RETRIEVAL ---
         sparse_parent_docs = []
         if self.sparse_retriever:
-            sparse_parent_docs = self.sparse_retriever._get_relevant_documents(query, run_manager=None)
+            sparse_parent_docs = self.sparse_retriever._get_relevant_documents(expanded_query, run_manager=None)
 
         # --- 3. MERGE & DE-DUPLICATE ---
         merged_docs_dict = { (doc.page_content, doc.metadata.get('source_id', '')): doc for doc in dense_parent_docs }

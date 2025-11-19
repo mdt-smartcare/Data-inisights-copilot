@@ -4,6 +4,7 @@ from tqdm import tqdm
 import json
 from typing import List, Dict, Any
 import hashlib
+import yaml
 
 def setup_logging(log_file="logs/pipeline.log"):
     """Setup logging configuration"""
@@ -72,3 +73,8 @@ def get_memory_usage():
     import psutil
     process = psutil.Process()
     return process.memory_info().rss / 1024 / 1024  # MB
+
+def load_config(config_path: str) -> dict:
+    """Load YAML configuration file"""
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)

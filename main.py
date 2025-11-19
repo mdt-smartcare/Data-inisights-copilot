@@ -3,6 +3,7 @@ import os
 import re
 import json
 import yaml
+import uuid
 from typing import List, Dict, Any, Tuple, Optional, Generator
 
 # --- Third-Party Core Imports ---
@@ -20,19 +21,19 @@ from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 
 # --- LangChain Core Imports ---
-from langchain.chains import RetrievalQA  # Kept as per "don't remove"
+from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate, ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import Tool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.embeddings import Embeddings
-from langchain_core.documents import Document  # <-- Import is here
+from langchain_core.documents import Document
 
 # --- LangChain Community/OpenAI Imports ---
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
 
-# --- NEW: 1. IMPORT LANGFUSE ---
+# --- Langfuse Imports ---
 from langfuse.langchain import CallbackHandler
 
 # --- Local/Project Imports ---
@@ -52,11 +53,6 @@ class Config:
     EMBEDDING_MODEL_PATH: str = "./models/bge-m3"
     LLM_MODEL: str = "gpt-4o"
     FEEDBACK_LOG_FILE: str = "feedback_log.csv"
-    
-    # Langfuse Configuration
-    LANGFUSE_PUBLIC_KEY: Optional[str] = os.getenv("LANGFUSE_PUBLIC_KEY")
-    LANGFUSE_SECRET_KEY: Optional[str] = os.getenv("LANGFUSE_SECRET_KEY")
-    LANGFUSE_HOST: Optional[str] = os.getenv("LANGFUSE_HOST")
     
     # Authentication configuration
     USERS: Dict[str, str] = {
@@ -99,54 +95,81 @@ with open("config/embedding_config.yaml", 'r') as f:
     rag_config = yaml.safe_load(f)
 
 # Initialize the advanced retriever for semantic search on unstructured notes
+# Initialize the advanced retriever for semantic search on unstructured notes
 rag_retriever = AdvancedRAGRetriever(config=rag_config)
 
-# --- Main Agent Prompt Template ---
+# --- Main Agent Prompt Template (NCD SPECIALIZED) ---
+system_prompt = """You are an advanced **NCD Clinical Data Intelligence Agent** specializing in Chronic Disease Management (Hypertension & Diabetes).
+You have access to a comprehensive patient database (Spice_BD) containing structured vitals, demographics, and unstructured clinical notes.
+
+**YOUR DECISION MATRIX:**
+
+1.  **Use `sql_query_tool` (Structured Data) when:**
+    * The user asks for **statistics**: Counts, averages, sums, or percentages.
+    * The user asks about **specific biomarkers**: `systolic`/`diastolic` BP, `glucose_value`, `hba1c`, `bmi`.
+    * The user filters by demographics: Age groups, gender, location.
+
+2.  **Use `rag_patient_context_tool` (Unstructured Data) when:**
+    * The user asks about **qualitative factors**: Symptoms ("dizziness", "blurred vision"), lifestyle ("smoker", "diet"), or adherence ("non-compliant", "refused meds").
+    * You need to find specific patient narratives, doctor's notes, or care plans.
+
+3.  **Use BOTH tools (Hybrid) when:**
+    * The user asks a complex question: "Find patients with 'poor adherence' notes [RAG] and calculate their average HbA1c [SQL]."
+
+4.  **Suggest Next Steps:** Always provide three relevant follow-up questions in the `suggested_questions` key.
+
+**NCD CLINICAL REASONING INSTRUCTIONS:**
+
+* **Synonym & Concept Expansion:**
+    * **Hypertension (HTN):** Map "High BP", "Pressure", or "Tension" to `systolic` > 140 or `diastolic` > 90. Look for "Stage 1", "Stage 2", or "Hypertensive Crisis".
+    * **Diabetes (DM):** Map "Sugar", "Glucose", "Sweet" to `glucose_value` (FBS/RBS) or `hba1c`. Distinguish between "Type 1" (T1DM) and "Type 2" (T2DM).
+    * **Comorbidities:** Actively look for patients with *both* HTN and DM, as they are high-risk.
+
+* **Contextualization (The "So What?"):**
+    * **Interpret Vitals:** Don't just say "Avg BP is 150/95". Say "Avg BP is 150/95, which indicates **uncontrolled Stage 2 Hypertension** in this cohort."
+    * **Interpret Glucose:** Don't just say "Avg Glucose is 12 mmol/L". Say "Avg Glucose is 12 mmol/L, indicating **poor glycemic control**."
+    * **Risk Stratification:** Highlight if a finding implies high cardiovascular risk (e.g., high BP + smoker).
+
+**RESPONSE FORMAT INSTRUCTIONS:**
+1.  **Direct Answer:** Start with the numbers or the finding.
+2.  **Clinical Interpretation:** Explain the NCD significance (Control status, Risk level).
+3.  **Visuals:** You MUST generate a JSON for a chart if comparing groups (e.g., "Controlled vs Uncontrolled").
+
+**JSON OUTPUT FORMAT:**
+Always append this JSON block at the end of your response:
+```json
+{{
+    "chart_json": {{ "title": "...", "type": "pie", "data": {{ "labels": ["A", "B"], "values": [1, 2] }} }},
+    "suggested_questions": ["Follow-up 1?", "Follow-up 2?", "Follow-up 3?"]
+}}
+```
+"""
+
 prompt_template = ChatPromptTemplate.from_messages([
-    ("system", """You are a senior data analyst. Your goal is to provide clear answers with valuable context and proactive suggestions.
-    **Core Instructions:**
-    1.  **Answer the User's Question Directly:** Always provide the direct answer first.
-    2.  **Add Context and Insight:** If the user asks for a count of a specific category (e.g., female patients), you must also provide the count of the contrasting category (e.g., male patients) and express the results as percentages of the total.
-    3.  **Be Proactive with Visuals:** Based on your contextual analysis, proactively generate a `chart_json` object that visualizes the comparison (e.g., a pie chart for gender distribution), even if the user didn't explicitly ask for a chart.
-    4.  **Suggest Next Steps:** Always provide three relevant follow-up questions in the `suggested_questions` key.
-    **JSON Output Format:**
-    Always provide a JSON block after your text answer with "chart_json" and "suggested_questions".
-    ```json
-    {{
-      "chart_json": {{ "title": "...", "type": "pie", "data": {{ "labels": ["A", "B"], "values": [1, 2] }} }},
-      "suggested_questions": ["Follow-up 1?", "Follow-up 2?", "Follow-up 3?"]
-    }}
-    ```"""),
+    ("system", system_prompt),
     ("user", "{input}"),
     MessagesPlaceholder(variable_name="agent_scratchpad"),
 ])
 
-# --- AGENT TOOLS ---
+# --- AGENT TOOLS (Refined Descriptions) ---
 tools: List[Tool] = [
     Tool(
-        name="database_query_agent", 
+        name="sql_query_tool", 
         func=sql_agent.invoke, 
-        # --- THIS IS THE FIX for the SQL AGENT ---
-        # Give it specific instructions on which tables to query
-        description="""Use this to answer any question about the data in the database.
-This includes counting, listing, finding, or aggregating patient data.
-IMPORTANT:
-- For patient conditions or diagnoses, query the 'patient_diagnosis' table (e.g., 'diabetes_diagnosis' column).
-- For patient demographics (age, gender), query the 'patient_tracker' table.
-- For blood pressure or glucose, query 'bp_log' and 'glucose_log'.
-- For prescriptions, query the 'prescription' table.
-This should be your default tool for any data-related query."""
-        # --- END OF FIX ---
+        description="""**PRIMARY TOOL FOR STATISTICS.** Use this to access the structured SQL database.
+- Tables: patient_tracker (demographics, bp, glucose), patient_diagnosis (conditions), prescription.
+- Capabilities: COUNT, AVG, GROUP BY, filtering by age/gender/date.
+- Use for: "How many patients...", "Average glucose...", "Distribution of..."."""
     ),
     Tool(
-        name="semantic_patient_search", 
-        func=rag_retriever.invoke,  # Use the new retriever's invoke method
-        description="Use this ONLY when the user asks a question about a specific patient that requires searching through their unstructured notes or records for deeper context. Do NOT use for counting or listing general information."
+        name="rag_patient_context_tool", 
+        func=rag_retriever.invoke, 
+        description="""**PRIMARY TOOL FOR CLINICAL CONTEXT.**
+Use this to search unstructured text, medical notes, and semantic descriptions.
+- Capabilities: Semantic search for symptoms, lifestyle, risk factors, and specific diagnoses.
+- Use for: "Find patients who complain of...", "Show me records regarding...", "Details about patient X..."."""
     ),
 ]
-
-# --- MODIFIED: REMOVED GLOBAL HANDLER ---
-# The handler will now be created locally inside get_agent_response
 
 # --- Main Agent Executor ---
 main_agent = create_tool_calling_agent(llm, tools, prompt_template)
@@ -157,7 +180,6 @@ main_agent_executor = AgentExecutor(
     handle_parsing_errors=True, 
     return_intermediate_steps=True
 )
-print("--- FHIR RAG Chatbot is Ready ---")
 
 # --- 3. HELPER AND LOGGING FUNCTIONS ---
 
@@ -185,12 +207,12 @@ def create_plotly_chart(chart_json: Dict[str, Any]) -> Optional[go.Figure]:
 
 def format_thinking_process(intermediate_steps: List[Tuple[Any, Any]]) -> str:
     """Formats the agent's intermediate steps into a readable markdown string."""
-    log = "### Agent Thinking Process\n\n"
+    log = "###  Clinical Reasoning Process\n\n"
     if not intermediate_steps: 
-        return log + "No intermediate steps."
+        return log + "Direct response generated."
     
     for action, observation in intermediate_steps:
-        log += f"**Thought:** {str(action.log)}\n\n**Tool:** `{action.tool}`\n\n"
+        log += f"**Step:** Executing `{action.tool}`\n"
         
         # Check if tool_input is a dict (like from sql_agent) or string
         if isinstance(action.tool_input, dict):
@@ -198,8 +220,8 @@ def format_thinking_process(intermediate_steps: List[Tuple[Any, Any]]) -> str:
         else:
             input_str = str(action.tool_input)
             
-        log += f"**Input:**\n```\n{input_str}\n```\n\n"
-        log += f"**Output:**\n```\n{str(observation)}\n```\n---\n"
+        log += f"**Query:** `{input_str}`\n"
+        log += f"**Finding:** {str(observation)[:200]}...\n\n"
     return log
 
 def log_feedback(query: str, suggestions_json: str, selected_index: int, rating: float, trace_id: str) -> gr.update:
@@ -209,14 +231,18 @@ def log_feedback(query: str, suggestions_json: str, selected_index: int, rating:
             return gr.update(value="Could not log feedback: Missing context.", visible=True)
         
         suggestions_list = json.loads(suggestions_json)
-        selected_question = suggestions_list[int(selected_index)]
+        # Safe access to list index
+        if 0 <= int(selected_index) < len(suggestions_list):
+            selected_question = suggestions_list[int(selected_index)]
+        else:
+            selected_question = ""
         
         feedback_data = {
             "timestamp": [pd.Timestamp.now()], 
             "query": [query], 
             "suggested_question": [selected_question], 
             "rating": [rating],
-            "trace_id": [trace_id] # <-- This column will now be populated
+            "trace_id": [trace_id]
         }
         df = pd.DataFrame(feedback_data)
         
@@ -230,10 +256,6 @@ def log_feedback(query: str, suggestions_json: str, selected_index: int, rating:
         return gr.update(value="Error logging feedback.", visible=True)
 
 # --- AUTHENTICATION FUNCTIONS ---
-# NOTE: The following two functions (login_interface, logout_user) define
-# logic that is re-implemented in the `handle_login` and `handle_logout`
-# functions within the `gr.Blocks` context. They are not directly
-# used by the final app's event handlers but are kept per request.
 
 def authenticate_user(username: str, password: str) -> Tuple[bool, str]:
     """Authenticate user credentials against the config."""
@@ -244,34 +266,6 @@ def authenticate_user(username: str, password: str) -> Tuple[bool, str]:
         return True, f"Welcome, {username}!"
     else:
         return False, "Invalid username or password"
-
-def login_interface(username: str, password: str) -> Tuple[gr.update, gr.update, gr.update, str]:
-    """Handle login form submission (Not used by final app handlers)."""
-    is_valid, message = authenticate_user(username, password)
-    
-    if is_valid:
-        return (
-            gr.update(visible=False),  # Hide login form
-            gr.update(visible=True),   # Show main interface  
-            gr.update(value=message, visible=True),  # Show welcome message
-            username  # Store current user
-        )
-    else:
-        return (
-            gr.update(visible=True),   # Keep login form visible
-            gr.update(visible=False),  # Keep main interface hidden
-            gr.update(value=message, visible=True),  # Show error message
-            ""  # Clear user
-        )
-
-def logout_user() -> Tuple[gr.update, gr.update, gr.update, str]:
-    """Handle logout (Not used by final app handlers)."""
-    return (
-        gr.update(visible=True),   # Show login form
-        gr.update(visible=False),  # Hide main interface
-        gr.update(value="Logged out successfully", visible=True),  # Show logout message
-        ""  # Clear current user
-    )
 
 # --- 4. NEW EMBEDDING VISUALIZATION FUNCTIONS ---
 
@@ -304,7 +298,6 @@ def get_embedding_info(query: str) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Failed to generate embedding: {str(e)}"}
 
-# --- MODIFIED THIS FUNCTION ---
 def create_embedding_visualization(query: str, retrieved_docs_with_scores: Optional[List[Tuple[Document, float]]] = None) -> Dict[str, Any]:
     """
     Create visualizations for embedding analysis.
@@ -364,7 +357,7 @@ def create_embedding_visualization(query: str, retrieved_docs_with_scores: Optio
                 ))
             
             fig.update_layout(
-                title="Embedding Space Visualization (PCA 2D)",
+                title="Semantic Space (Re-ranked)",
                 xaxis_title="PCA Component 1",
                 yaxis_title="PCA Component 2",
                 showlegend=True,
@@ -396,7 +389,6 @@ def create_embedding_visualization(query: str, retrieved_docs_with_scores: Optio
     except Exception as e:
         return {"error": f"Failed to create visualization: {str(e)}"}
 
-# --- MODIFIED THIS FUNCTION ---
 def enhanced_rag_search(query: str) -> Dict[str, Any]:
     """
     Performs a RAG search and bundles it with embedding info and visualizations.
@@ -408,25 +400,30 @@ def enhanced_rag_search(query: str) -> Dict[str, Any]:
         if "error" in embedding_info:
             return embedding_info
         
-        # 2. Perform RAG search *and get scores*
-        # --- CHANGED THIS LINE ---
-        retrieved_docs_with_scores = rag_retriever.retrieve_and_rerank_with_scores(query)
+        # 2. Perform RAG search *and get scores* using re-ranker
+        # Assumes rag_retriever has the new `retrieve_and_rerank_with_scores` method
+        # If not, this block needs to handle the fallback or ensure retrieve.py is updated.
+        if hasattr(rag_retriever, 'retrieve_and_rerank_with_scores'):
+             retrieved_docs_with_scores = rag_retriever.retrieve_and_rerank_with_scores(query)
+        else:
+             # Fallback if retrieve.py isn't updated yet (e.g. just returns docs)
+             # This prevents main.py from crashing if retrieve.py is old
+             docs = rag_retriever._get_relevant_documents(query)
+             # Fake score 1.0 if no reranker logic present
+             retrieved_docs_with_scores = [(doc, 1.0) for doc in docs]
         
         # 3. Create visualization
-        # --- CHANGED THIS LINE ---
         viz_info = create_embedding_visualization(query, retrieved_docs_with_scores)
         
         # 4. Format retrieved documents info
         docs_info = []
-        # --- CHANGED THIS BLOCK ---
         for i, (doc, score) in enumerate(retrieved_docs_with_scores[:5]): # Limit to 5 for display
             docs_info.append({
                 "index": i + 1,
                 "content": doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content,
                 "metadata": doc.metadata,
-                "reranker_score": score # Use the score from the reranker
+                "reranker_score": round(score, 4)
             })
-        # --- END OF CHANGE ---
         
         return {
             "query": query,
@@ -438,8 +435,6 @@ def enhanced_rag_search(query: str) -> Dict[str, Any]:
         
     except Exception as e:
         return {"error": f"Enhanced RAG search failed: {str(e)}"}
-# --- END OF MODIFICATIONS ---
-
 
 # --- 5. CORE AGENT AND UI LOGIC ---
 
@@ -448,95 +443,52 @@ def get_agent_response(message: str) -> Dict[str, Any]:
     Runs the main agent executor and formats the output, including
     live embedding analysis for the query.
     """
-    # --- MODIFIED: Create a NEW handler for each request with proper initialization ---
-    # Initialize Langfuse handler without passing credentials directly to constructor
-    # The credentials should be set via environment variables
-    local_langfuse_handler = CallbackHandler()
-
-    # --- MODIFIED: Pass the LOCAL handler to the invocation ---
+    # --- 1. Generate Trace ID Manually ---
+    trace_id = str(uuid.uuid4())
+    
+    # --- 2. Create Handler without parameters (Langfuse will auto-generate trace) ---
+    try:
+        local_langfuse_handler = CallbackHandler()
+    except Exception as e:
+        print(f"Warning: Could not initialize Langfuse handler: {e}")
+        local_langfuse_handler = None
+    
+    # --- 3. Invoke Agent with Handler ---
+    callbacks = [local_langfuse_handler] if local_langfuse_handler else []
     result = main_agent_executor.invoke(
         {"input": message},
-        {"callbacks": [local_langfuse_handler]} # Use the local handler
+        {"callbacks": callbacks} if callbacks else {}
     )
     
-    # --- MODIFIED: Correctly get the trace_id from the local handler ---
-    trace_id = None
-    try:
-        # Add comprehensive debugging to understand what's available
-        print(f"DEBUG: Handler type: {type(local_langfuse_handler)}")
-        print(f"DEBUG: Handler attributes: {[attr for attr in dir(local_langfuse_handler) if not attr.startswith('_')]}")
-        
-        # The correct way to get trace_id from Langfuse callback handler
-        # First check for last_trace_id attribute (this is the most reliable)
-        if hasattr(local_langfuse_handler, 'last_trace_id'):
-            trace_id = local_langfuse_handler.last_trace_id
-            print(f"Found trace_id via last_trace_id: {trace_id}")
-        
-        # Fallback: check the client attribute for trace information
-        elif hasattr(local_langfuse_handler, 'client') and local_langfuse_handler.client:
-            # Try to get trace from the client's state
-            client = local_langfuse_handler.client
-            print(f"DEBUG: Client type: {type(client)}")
-            if hasattr(client, 'trace_id'):
-                trace_id = client.trace_id
-                print(f"Found trace_id via client.trace_id: {trace_id}")
-            elif hasattr(client, '_state_client') and hasattr(client._state_client, 'trace_id'):
-                trace_id = client._state_client.trace_id
-                print(f"Found trace_id via client._state_client.trace_id: {trace_id}")
-        
-        # Additional fallback: check the runs attribute
-        elif hasattr(local_langfuse_handler, 'runs') and local_langfuse_handler.runs:
-            print(f"DEBUG: Found {len(local_langfuse_handler.runs)} runs")
-            # Get the first run and try to extract trace_id
-            first_run = next(iter(local_langfuse_handler.runs.values()), None)
-            if first_run and hasattr(first_run, 'trace_id'):
-                trace_id = first_run.trace_id
-                print(f"Found trace_id via runs: {trace_id}")
-        
-        print(f"Final trace ID extracted: {trace_id}")  # Debug logging
-        
-        # If still no trace_id, force create one manually using the client
-        if not trace_id and hasattr(local_langfuse_handler, 'client'):
-            try:
-                print("DEBUG: Attempting to create manual trace...")
-                # Create a manual trace to get an ID
-                trace = local_langfuse_handler.client.trace(name="chat_query", input=message)
-                if trace and hasattr(trace, 'id'):
-                    trace_id = trace.id
-                    print(f"Created manual trace ID: {trace_id}")
-                else:
-                    print(f"DEBUG: Manual trace creation failed, trace object: {trace}")
-            except Exception as e:
-                print(f"Could not create manual trace: {e}")
-        
-    except Exception as e:
-        print(f"Could not get trace_id from langfuse: {e}")
-        import traceback
-        traceback.print_exc()
-        trace_id = None
-    # --- End modification ---
-
     full_response = result.get("output", "An error occurred.")
     
     # Always get embedding analysis for every query
     embedding_analysis = get_embedding_info(message)
     
-    # Check if semantic search was used by examining intermediate steps
-    semantic_search_used = False
+    # Check if RAG search was used by examining intermediate steps
+    rag_search_used = False
     retrieved_docs_with_scores = []
-    for action, observation in result.get("intermediate_steps", []):
-        if action.tool == "semantic_patient_search":
-            semantic_search_used = True
-            try:
-                # Re-fetch docs for visualization (agent observation is just text)
-                retrieved_docs_with_scores = rag_retriever.retrieve_and_rerank_with_scores(message)
-            except Exception as e:
-                print(f"Could not re-fetch docs for viz: {e}")
-                retrieved_docs_with_scores = []
-            break
+    
+    # Check tool usage in intermediate steps
+    if result.get("intermediate_steps"):
+        for action, observation in result.get("intermediate_steps"):
+            if action.tool == "rag_patient_context_tool":
+                rag_search_used = True
+                try:
+                    # Re-fetch docs for visualization (agent observation is just text)
+                    # We re-run retrieval here solely for the visualization widget
+                    if hasattr(rag_retriever, 'retrieve_and_rerank_with_scores'):
+                        retrieved_docs_with_scores = rag_retriever.retrieve_and_rerank_with_scores(message)
+                    else:
+                        docs = rag_retriever._get_relevant_documents(message)
+                        retrieved_docs_with_scores = [(d, 1.0) for d in docs]
+                except Exception as e:
+                    print(f"Could not re-fetch docs for viz: {e}")
+                    retrieved_docs_with_scores = []
+                break
     
     # Create visualization for the query's embedding
-    viz_info = create_embedding_visualization(message, retrieved_docs_with_scores if semantic_search_used else None)
+    viz_info = create_embedding_visualization(message, retrieved_docs_with_scores if rag_search_used else None)
     
     # Standardize the output format
     parsed_output = {
@@ -546,21 +498,21 @@ def get_agent_response(message: str) -> Dict[str, Any]:
         "thinking_markdown": format_thinking_process(result.get("intermediate_steps", [])),
         "embedding_info": embedding_analysis,
         "embedding_viz": viz_info.get("visualization", None),
-        "semantic_search_used": semantic_search_used,
+        "rag_search_used": rag_search_used,
         "retrieved_docs_count": len(retrieved_docs_with_scores),
-        "trace_id": trace_id # Pass trace_id in the output
+        "trace_id": trace_id # Pass the manual trace_id
     }
     
     # Try to parse the JSON block for charts and suggestions
     json_match = re.search(r'```json\s*({.*?})\s*```', full_response, re.DOTALL)
     if json_match:
         try:
-            response_data = json.loads(json_match.group(1))
+            data = json.loads(json_match.group(1))
             parsed_output["text_answer"] = full_response[:json_match.start()].strip()
             
-            if chart_json := response_data.get("chart_json"):
+            if chart_json := data.get("chart_json"):
                 parsed_output["chart_figure"] = create_plotly_chart(chart_json)
-            if questions := response_data.get("suggested_questions"):
+            if questions := data.get("suggested_questions"):
                 parsed_output["suggested_questions"] = questions
                 
         except json.JSONDecodeError:
@@ -571,34 +523,49 @@ def get_agent_response(message: str) -> Dict[str, Any]:
 
 def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, None, None]:
     """
-    A generator function to handle the chat UI updates, including streaming.
+    A generator function to handle the chat UI updates with progress shown directly in chat.
     Yields tuples of gr.update objects for all outputs.
     """
     if not history:
         history = []
     
-    # Add user message to history
+    # Add user message to history with empty bot response
     history.append([message, ""])
     
-    # 1. First yield: Show user message and "thinking" status
-    yield (
-        history, 
-        gr.update(visible=False),  # plot
-        gr.update(value="*Agent is thinking...*"),  # thinking_box
-        gr.Dataframe(value=[]),  # suggestions_df
-        gr.update(visible=False),  # suggestions_box
-        "",  # textbox
-        gr.Textbox(value=message),  # last_query
-        gr.Textbox(),  # suggestions_store
-        gr.State(""), # <-- MODIFIED: Added state for current_trace_id_store
-        gr.update(value={}, visible=False),  # live_embedding_info
-        gr.update(value="*Analyzing embeddings...*"),  # embedding_method_info
-        gr.update(visible=False)  # live_embedding_viz
-    )
-
     try:
-        # 2. Get the full response from the agent
+        # 1. Show "Query received" status
+        history[-1][1] = "🔍 **Query received** - Analyzing your question..."
+        yield (
+            history, 
+            gr.update(visible=False),  # plot
+            gr.update(value="*Analyzing Clinical Data...*"),  # thinking_box
+            gr.Dataframe(value=[]),  # suggestions_df
+            gr.update(visible=False),  # suggestions_box
+            "",  # textbox
+            gr.Textbox(value=message),  # last_query
+            gr.Textbox(value="[]"),  # suggestions_store
+            gr.State(""), # current_trace_id_store
+            gr.update(value={}, visible=False),  # live_embedding_info
+            gr.update(value="*Selecting Query Strategy...*"),  # embedding_method_info
+            gr.update(visible=False)  # live_embedding_viz
+        )
+
+        # 2. Show "Thinking" status
+        history[-1][1] = " **Thinking...** "
+        yield (
+            history, gr.update(), gr.update(), gr.update(), gr.update(),
+            "", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        )
+        
+        # 3. Get the full response from the agent (this is where the actual work happens)
         response = get_agent_response(message)
+        
+        # 4. Show "Processing results" status
+        history[-1][1] = " **Processing results...** "
+        yield (
+            history, gr.update(), gr.update(), gr.update(), gr.update(),
+            "", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        )
         
         # Prepare embedding information for live display
         embedding_display = {}
@@ -617,16 +584,25 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
             }
             
             # Determine which method was used
-            if response.get("semantic_search_used", False):
-                embedding_method_text = f"🔍 **Semantic Search Used** - Retrieved {response.get('retrieved_docs_count', 0)} re-ranked documents using BGE-M3 + BGE-Reranker"
+            if response.get("rag_search_used", False):
+                embedding_method_text = f" **Hybrid Search Used** - Retrieved {response.get('retrieved_docs_count', 0)} re-ranked documents using BGE-M3 + Reranker"
+                # Show query complete status
+                history[-1][1] = f" **Query Complete** - Found {response.get('retrieved_docs_count', 0)} relevant documents. Generating response..."
                 if response.get("embedding_viz"):
                     embedding_viz_update = gr.update(value=response["embedding_viz"], visible=True)
             else:
-                embedding_method_text = f"🗄️ **SQL Query Used** - Direct database query (embeddings generated for analysis only)"
+                embedding_method_text = f" **Structured Query Used** - Direct SQL database query"
+                history[-1][1] = " **Query Complete** - Retrieved structured data. Generating response..."
                 if response.get("embedding_viz"):
                     embedding_viz_update = gr.update(value=response["embedding_viz"], visible=True)
         
-        # 3. Stream the text response
+        # Yield query complete status
+        yield (
+            history, gr.update(), gr.update(), gr.update(), gr.update(),
+            "", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        )
+        
+        # 5. Stream the text response
         bot_message_so_far = ""
         for char in response["text_answer"]:
             bot_message_so_far += char
@@ -637,10 +613,10 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
                 history, gr.update(), gr.update(), gr.update(), gr.update(),
                 "", gr.update(), gr.update(),
                 gr.update(), # Keep trace_id static
-                gr.update(), gr.update(), gr.update() # Keep embedding info static
+                gr.update(), gr.update(), gr.update()
             )
 
-        # 4. Final yield: Update with chart, suggestions, and full analysis
+        # 6. Final yield: Complete with all visualizations
         plot_update = gr.update(visible=False)
         if response["chart_figure"]:
             plot_update = gr.update(value=response["chart_figure"], visible=True)
@@ -658,7 +634,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
             "",  # Clear textbox
             gr.update(),  # last_query (already set)
             json.dumps(suggestions_list),  # suggestions_store
-            response.get("trace_id", ""), # <-- MODIFIED: Pass trace_id to state
+            response.get("trace_id", ""), # Pass trace_id to state
             gr.update(value=embedding_display, visible=True),  # live_embedding_info
             gr.update(value=embedding_method_text),  # embedding_method_info
             embedding_viz_update  # live_embedding_viz
@@ -666,7 +642,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
                
     except Exception as e:
         print(f"An error occurred in chat_ui_updater: {e}")
-        history[-1][1] = "Sorry, an error occurred. Please check the logs."
+        history[-1][1] = f" **Error occurred:** {str(e)}\n\nPlease try again or rephrase your question."
         
         # Yield error state
         yield (
@@ -678,327 +654,130 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
             "", 
             gr.update(), 
             gr.update(),
-            gr.State(""), # <-- MODIFIED: Pass empty trace_id on error
+            gr.State(""), 
             gr.update(value={"Error": str(e)}, visible=True),
-            gr.update(value="❌ Error during embedding analysis"),
+            gr.update(value=" Error during embedding analysis"),
             gr.update(visible=False)
         )
 
-# --- 6. GRADIO UI LAYOUT WITH AUTHENTICATION ---
-
-# Monkey patch for Gradio JSON schema bug in some versions
-# This prevents crashes when rendering complex components like gr.JSON
+# --- 6. GRADIO UI ---
+# Monkey patch for JSON bug
 original_get_type = gradio_client.utils.get_type
-def patched_get_type(schema: Any) -> Any:
-    if isinstance(schema, bool):
-        return "any"
-    return original_get_type(schema)
-gradio_client.utils.get_type = patched_get_type
-
-
-with gr.Blocks(
-    theme=gr.themes.Monochrome(primary_hue="indigo", secondary_hue="blue", neutral_hue="slate"), 
-    title="FHIR RAG Chatbot",
-    css="""
-    .user-info { 
-        text-align: right; 
-        padding: 10px; 
-        background-color: #f0f0f0; 
-        border-radius: 5px; 
-        margin: 5px 0; 
-    }
-    """
-) as demo:
+gradio_client.utils.get_type = lambda s: "any" if isinstance(s, bool) else original_get_type(s)
+theme = gr.themes.Citrus()
+with gr.Blocks(theme=theme, title="Data Insights AI-Copilot") as demo:
     
-    # --- State Variables ---
+    # State
     current_user = gr.State("")
     login_message = gr.Textbox(label="Status", visible=False, interactive=False)
     last_query = gr.Textbox(visible=False)
     suggestions_store = gr.Textbox(visible=False)
-    selected_suggestion_index = gr.Number(label="Selected Index", visible=False)
-    current_trace_id_store = gr.State("") # <-- MODIFIED: Added state for trace_id
+    selected_idx = gr.Number(label="Selected Index", visible=False)
+    trace_id_store = gr.State("") # Store trace_id here
 
-    
     # --- Login Interface ---
     with gr.Group(visible=True) as login_form:
-        gr.Markdown("# 🔐 Login Required")
-        gr.Markdown("### Data Insights AI-Copilot (Bangladesh Data)")
-        
+        gr.Markdown("#  Clinical Login")
         with gr.Row():
-            with gr.Column(scale=1): gr.Markdown("")  # Spacer
             with gr.Column(scale=2):
-                with gr.Group():
-                    gr.Markdown("**Please log in to access the system:**")
-                    username_input = gr.Textbox(label="Username", placeholder="Enter your username", max_lines=1, interactive=True, value="")
-                    password_input = gr.Textbox(label="Password", placeholder="Enter your password", type="password", max_lines=1, interactive=True, value="")
-                    
-                    with gr.Row():
-                        login_btn = gr.Button("Login", variant="primary", scale=2)
-                        clear_btn = gr.Button("Clear", variant="secondary", scale=1)
-                        
-            with gr.Column(scale=1): gr.Markdown("")  # Spacer
-    
-    
-    # --- Main Application Interface (Hidden by default) ---
+                user_input = gr.Textbox(label="Username")
+                pass_input = gr.Textbox(label="Password", type="password")
+                login_btn = gr.Button("Login", variant="primary")
+
+    # --- Main Interface ---
     with gr.Group(visible=False) as main_interface:
-        
-        # Header
         with gr.Row():
-            gr.Markdown("# Data Insights AI-Copilot (Bangaldesh Data)")
-            with gr.Column(scale=1, min_width=200):
-                user_display = gr.Markdown("", elem_classes=["user-info"])
-                logout_btn = gr.Button("Logout", variant="secondary", size="sm")
+            gr.Markdown("# Data Insights AI-Copilot (Bangladesh Data)")
+            logout_btn = gr.Button("Logout", size="sm")
         
-        # Main Chat
         with gr.Row():
             with gr.Column(scale=1):
-                chatbot = gr.Chatbot(label="Chat History", height=400)
-                textbox = gr.Textbox(placeholder="Ask a question...", container=False, scale=7, max_lines=3)
-                submit_btn = gr.Button("Send", variant="primary")
-            with gr.Column(scale=2):
-                plot = gr.Plot(label="Chart Visualization", visible=False)
-                with gr.Accordion("Show Agent's Reasoning", open=False):
-                    thinking_box = gr.Markdown(label="Agent's Thoughts", value="*Waiting for a question...*")
-
-        # Live Embedding Analysis (for chat queries)
-        with gr.Accordion("🧠 Query Embedding Analysis", open=False):
-            gr.Markdown("### Automatic embedding analysis for every query")
-            with gr.Row():
-                with gr.Column(scale=1):
-                    live_embedding_info = gr.JSON(label="Query Embedding Stats", value={}, visible=False)
-                    embedding_method_info = gr.Markdown(value="*Ask a question to see embedding analysis*", label="Method Used")
-                with gr.Column(scale=2):
-                    live_embedding_viz = gr.Plot(label="Live Embedding Visualization", visible=False)
-
-        # Embedding Explorer (Manual tool)
-        with gr.Accordion("🔬 Embedding Explorer", open=False):
-            gr.Markdown("### Explore how embeddings work in your RAG system")
-            with gr.Row():
-                embedding_query = gr.Textbox(label="Test Query for Embedding Analysis", placeholder="Enter any query to see its embedding...", scale=3)
-                analyze_btn = gr.Button("Analyze Embeddings", variant="secondary", scale=1)
+                chatbot = gr.Chatbot(height=500, label="Analyst Chat", avatar_images=(None, "https://cdn-icons-png.flaticon.com/512/387/387569.png"))
+                msg_box = gr.Textbox(placeholder="Ask a clinical question (e.g., 'Patients with hypertension over 50?')...", container=False)
+                with gr.Row():
+                    submit = gr.Button("Analyze", variant="primary")
+                    clear = gr.Button("Clear")
             
-            with gr.Row():
-                with gr.Column(scale=1):
-                    embedding_info = gr.JSON(label="Embedding Statistics", value={})
-                with gr.Column(scale=2):
-                    embedding_viz = gr.Plot(label="Embedding Visualization", visible=False)
-            
-            with gr.Accordion("Retrieved Documents", open=False):
-                retrieved_docs = gr.Dataframe(
-                    # --- CHANGED THIS HEADER ---
-                    headers=["Rank", "Content", "Re-Ranker Score"],
-                    label="Documents Retrieved by RAG",
-                    visible=False,
-                    interactive=False,
-                    value=[]
-                )
-            
-            embedding_status = gr.Textbox(label="Status", visible=False, interactive=False)
+            with gr.Column(scale=1):
+                plot = gr.Plot(label="Population Health Insights", visible=False)
+                with gr.Accordion(" Agent Reasoning", open=False):
+                    reasoning = gr.Markdown("*Waiting for query...*")
+                with gr.Accordion(" Embedding Analysis", open=False):
+                    emb_info = gr.JSON(label="Vector Stats")
+                    method_lbl = gr.Markdown()
+                    emb_plot = gr.Plot()
 
-        # Suggestions and Feedback
+        # Suggestions & Feedback
         with gr.Group(visible=True) as suggestions_box:
             with gr.Row():
-                suggestions_df = gr.Dataframe(
-                    headers=["Suggested Questions"],
-                    value=[["What is the total number of patients?"], 
-                           ["Show the patient distribution by gender."], 
-                           ["What are the top 5 most common conditions?"]],
-                    col_count=(1, "fixed"), 
-                    interactive=False, 
-                    label="Suggestions (Select a row to ask)",
-                )
+                sugg_df = gr.Dataframe(headers=["Follow-up Questions"], interactive=False, col_count=(1, "fixed"), label="Suggestions")
             with gr.Row():
-                gr.Markdown("Rate the quality of the last suggestion you clicked:")
-                good_btn = gr.Button("Good 👍")
-                bad_btn = gr.Button("Bad 👎")
-            feedback_toast = gr.Textbox(label="Feedback Status", interactive=False, visible=False)
-
-    
-    # --- 7. GRADIO EVENT HANDLERS ---
-
-    # --- Authentication Handlers ---
-    
-    def handle_login(username: str, password: str) -> Tuple[gr.update, gr.update, gr.update, str, str, str, gr.update]:
-        """Handles the login button click event."""
-        is_valid, message = authenticate_user(username, password)
-        if is_valid:
-            return (
-                gr.update(visible=False),  # Hide login form
-                gr.update(visible=True),   # Show main interface
-                gr.update(value=f"**Logged in as:** {username}", visible=True),  # Update user display
-                username,  # Store current user in state
-                "",  # Clear username field
-                "",  # Clear password field
-                gr.update(value="Login successful!", visible=False)  # Hide login message
-            )
-        else:
-            return (
-                gr.update(visible=True),   # Keep login form visible
-                gr.update(visible=False),  # Keep main interface hidden
-                gr.update(value="", visible=False),  # Clear user display
-                "",  # Clear current user state
-                username,  # Keep username in field
-                "",  # Clear password field
-                gr.update(value=message, visible=True)  # Show error message
-            )
-
-    def handle_logout() -> Tuple[gr.update, gr.update, gr.update, str, str, str, gr.update]:
-        """Handles the logout button click event."""
-        return (
-            gr.update(visible=True),   # Show login form
-            gr.update(visible=False),  # Hide main interface
-            gr.update(value="", visible=False),  # Clear user display
-            "",  # Clear current user state
-            "",  # Clear username field
-            "",  # Clear password field
-            gr.update(value="Logged out successfully", visible=True)  # Show logout message
-        )
-
-    # --- Chat Handlers ---
-
-    def submit_and_clear(message: str, history: List[List[str]]) -> Generator[Tuple, None, None]:
-        """Wrapper for the chat updater generator."""
-        for update in chat_ui_updater(message, history):
-            yield update
-
-    # Define outputs for the chat UI
-    chat_outputs = [
-        chatbot, plot, thinking_box, suggestions_df, suggestions_box, 
-        textbox, last_query, suggestions_store,
-        current_trace_id_store, # <-- MODIFIED: Added trace_id state
-        live_embedding_info, embedding_method_info, live_embedding_viz
-    ]
-    
-    submit_btn.click(submit_and_clear, [textbox, chatbot], chat_outputs).then(lambda: "", None, textbox)
-    textbox.submit(submit_and_clear, [textbox, chatbot], chat_outputs).then(lambda: "", None, textbox)
-
-    # --- Suggestion & Feedback Handlers ---
-    
-    def handle_suggestion_select(evt: gr.SelectData) -> Tuple[str, int]:
-        """
-        Handles clicking on a suggested question.
-        Populates the textbox and stores the index for feedback.
-        """
-        if evt.value:
-            # evt.value is the text of the first cell in the selected row
-            selected_question = str(evt.value).strip()
-            selected_index = evt.index[0]  # Row index
-            return selected_question, selected_index
-        return "", 0
+                gr.Markdown("Feedback:")
+                btn_good = gr.Button(" Accurate")
+                btn_bad = gr.Button(" Inaccurate")
+            toast = gr.Textbox(visible=False, label="Log Status")
         
-    suggestions_df.select(handle_suggestion_select, None, [textbox, selected_suggestion_index])
+        # Embedding Explorer Tab
+        with gr.Accordion("🛠️ Manual Explorer", open=False):
+            with gr.Row():
+                exp_query = gr.Textbox(label="Test Query")
+                exp_btn = gr.Button("Explore")
+            with gr.Row():
+                exp_json = gr.JSON(label="Stats")
+                exp_viz = gr.Plot()
+            exp_docs = gr.Dataframe(headers=["Rank", "Content", "Re-Ranker Score"], label="Results")
+            exp_status = gr.Textbox(label="Status")
+
+    # --- HANDLERS ---
     
-    # Bind feedback buttons
-    # --- MODIFIED: Added current_trace_id_store as input ---
-    good_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(1, visible=False), current_trace_id_store], [feedback_toast])
-    bad_btn.click(log_feedback, [last_query, suggestions_store, selected_suggestion_index, gr.Number(-1, visible=False), current_trace_id_store], [feedback_toast])
+    def on_login(u, p):
+        success, msg = authenticate_user(u, p)
+        if success:
+            return gr.update(visible=False), gr.update(visible=True), u
+        return gr.update(visible=True), gr.update(visible=False), ""
 
-    # --- Embedding Explorer Handlers ---
+    def on_logout():
+        return gr.update(visible=True), gr.update(visible=False), ""
 
-    # --- MODIFIED THIS FUNCTION ---
-    def analyze_embeddings(query: str) -> Tuple[Dict, gr.update, gr.update, gr.update]:
-        """Handles the 'Analyze Embeddings' button click for the explorer."""
-        if not query.strip():
-            return (
-                {},
-                gr.update(visible=False),
-                gr.update(value=[], visible=False),
-                gr.update(value="Please enter a query to analyze", visible=True)
-            )
+    def on_analyze(q):
+        res = enhanced_rag_search(q)
+        if "error" in res: 
+            return {}, None, [], f"Error: {res['error']}"
         
-        try:
-            results = enhanced_rag_search(query)
+        # Prepare table data correctly
+        table_data = []
+        for doc_info in res["retrieved_docs"]:
+            table_data.append([doc_info["index"], doc_info["content"], doc_info["reranker_score"]])
             
-            if "error" in results:
-                return (
-                    {"error": results["error"]},
-                    gr.update(visible=False),
-                    gr.update(value=[], visible=False),
-                    gr.update(value=f"Error: {results['error']}", visible=True)
-                )
-            
-            # Prepare JSON for display
-            embedding_info_display = {
-                "Model": results["embedding_info"]["embedding_stats"]["model_name"],
-                "Dimensions": results["embedding_info"]["embedding_stats"]["dimensions"],
-                "Vector Norm": round(results["embedding_info"]["embedding_stats"]["vector_norm"], 4),
-                "Mean Value": round(results["embedding_info"]["embedding_stats"]["vector_mean"], 4),
-                "Std Deviation": round(results["embedding_info"]["embedding_stats"]["vector_std"], 4),
-                "Sample Vector (first 10)": results["embedding_info"]["vector_sample"]
-            }
-            
-            # Prepare dataframe
-            # --- CHANGED THIS BLOCK ---
-            docs_df = [
-                [doc["index"], doc["content"], round(doc["reranker_score"], 4)]
-                for doc in results["retrieved_docs"]
-            ]
-            # --- END OF CHANGE ---
-            
-            viz = results["visualization"].get("visualization", None)
-            viz_visible = viz is not None
-            
-            return (
-                embedding_info_display,
-                gr.update(value=viz, visible=viz_visible) if viz else gr.update(visible=False),
-                gr.update(value=docs_df, visible=len(docs_df) > 0),
-                gr.update(value=f"✅ Analysis complete! Found {results['total_docs_found']} re-ranked documents.", visible=True)
-            )
-            
-        except Exception as e:
-            return (
-                {"error": str(e)},
-                gr.update(visible=False),
-                gr.update(value=[], visible=False),
-                gr.update(value=f"Error during analysis: {str(e)}", visible=True)
-            )
-    # --- END OF MODIFICATION ---
-    
-    # Bind embedding explorer events
-    analyze_btn.click(
-        analyze_embeddings,
-        inputs=[embedding_query],
-        outputs=[embedding_info, embedding_viz, retrieved_docs, embedding_status]
-    )
-    embedding_query.submit(
-        analyze_embeddings,
-        inputs=[embedding_query],
-        outputs=[embedding_info, embedding_viz, retrieved_docs, embedding_status]
-    )
-    
-    # --- Login/Logout Event Bindings ---
-    
-    # Clear login fields button
-    clear_btn.click(lambda: ("", ""), outputs=[username_input, password_input])
+        return res["embedding_info"], res["visualization"]["visualization"], table_data, f"Found {res['total_docs_found']} docs"
 
-    # Define outputs for login/logout handlers
-    login_outputs = [
-        login_form, main_interface, user_display, current_user, 
-        username_input, password_input, login_message
-    ]
-    
-    login_btn.click(
-        handle_login,
-        inputs=[username_input, password_input],
-        outputs=login_outputs
-    )
-    password_input.submit(
-        handle_login,
-        inputs=[username_input, password_input], 
-        outputs=login_outputs
-    )
-    logout_btn.click(
-        handle_logout,
-        outputs=login_outputs
-    )
+    # Wiring
+    login_btn.click(on_login, [user_input, pass_input], [login_form, main_interface, current_user])
+    pass_input.submit(on_login, [user_input, pass_input], [login_form, main_interface, current_user])
+    logout_btn.click(on_logout, None, [login_form, main_interface, current_user])
 
-# --- 8. LAUNCH APPLICATION ---
+    # Main Chat Wiring - progress now shown directly in chatbot
+    chat_outs = [chatbot, plot, reasoning, sugg_df, suggestions_box, msg_box, last_query, suggestions_store, trace_id_store, emb_info, method_lbl, emb_plot]
+    submit.click(chat_ui_updater, [msg_box, chatbot], chat_outs)
+    msg_box.submit(chat_ui_updater, [msg_box, chatbot], chat_outs)
+
+    # Suggestions & Feedback Wiring
+    def on_select_suggestion(evt: gr.SelectData):
+        return evt.value, evt.index[0]
+
+    sugg_df.select(on_select_suggestion, None, [msg_box, selected_idx])
+    btn_good.click(log_feedback, [last_query, suggestions_store, selected_idx, gr.Number(1, visible=False), trace_id_store], toast)
+    btn_bad.click(log_feedback, [last_query, suggestions_store, selected_idx, gr.Number(-1, visible=False), trace_id_store], toast)
+    
+    # Explorer Wiring
+    exp_btn.click(on_analyze, exp_query, [exp_json, exp_viz, exp_docs, exp_status])
+    exp_query.submit(on_analyze, exp_query, [exp_json, exp_viz, exp_docs, exp_status])
 
 if __name__ == "__main__":
     demo.launch(
-        share=False,  # Do not create a public link
-        server_name="127.0.0.1",  # Run on localhost
-        inbrowser=True,  # Open in browser automatically
-        show_error=True,  # Show errors in the browser
-        quiet=False  # Print Gradio logs to console
+        share=False,
+        server_name="127.0.0.1",
+        inbrowser=False,
+        show_error=True,
+        quiet=False
     )

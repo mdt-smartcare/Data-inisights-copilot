@@ -1,25 +1,5 @@
 # Table inclusion and exclusion rules
 tables:
-  # Tables to completely exclude
-  exclude_tables:
-    - "audit"
-    - "awsdms_ddl_audit" 
-    - "deleted_site_program"
-    - "duplicate_profile"
-    - "email_template"
-    - "flyway_schema_history"
-    - "form_meta_ui"
-    - "offline_log"
-    - "outbound_email"
-    - "outbound_sms"
-    - "screening_log"
-    - "shedlock"
-    - "site_report_log"
-    - "sms_template"
-    - "sms_template_values"
-    - "updated_duplicate_patient_profile"
-    - "user_token"
-
   # Global column exclusions (applied to all tables)
   global_exclude_columns:
     - "first_name"
@@ -35,6 +15,26 @@ tables:
     - "father_educational_qualification"
     - "password"
     - "username"
+
+  # Exclude entire tables (no medical/clinical value)
+  exclude_tables:
+    - "audit"                               # System audit logs
+    - "awsdms_ddl_audit"                    # AWS DMS migration logs
+    - "deleted_site_program"                # Soft-deleted records
+    - "duplicate_profile"                   # Data quality/deduplication
+    - "email_template"                      # Email templates (static)
+    - "flyway_schema_history"               # Database migration history
+    - "form_meta_ui"                        # UI metadata
+    - "offline_log"                         # Offline sync logs
+    - "outbound_email"                      # Email delivery logs
+    - "outbound_sms"                        # SMS delivery logs
+    - "screening_log"                       # Screening process logs
+    - "shedlock"                            # Distributed lock management
+    - "site_report_log"                     # Report generation logs
+    - "sms_template"                        # SMS templates (static)
+    - "sms_template_values"                 # SMS template variables
+    - "updated_duplicate_patient_profile"   # Data quality fixes
+    - "user_token"                          # Auth tokens (security risk)
 
   # Table-specific column exclusions (overrides global)
   table_specific_exclusions:
@@ -68,20 +68,19 @@ tables:
       - "username"
 
 # Embedding configuration
-# Embedding configuration
 embedding:
   model_name: "BAAI/bge-m3"
   model_path: "./models/bge-m3"
-  batch_size: 32
+  batch_size: 128
 
 # Advanced Chunking Configuration for Small-to-Big Retrieval
 chunking:
   parent_splitter:
-    chunk_size: 1000
-    chunk_overlap: 200
+    chunk_size: 800       # Reduced from 1000 - better for structured medical data
+    chunk_overlap: 150    # Reduced proportionally
   child_splitter:
-    chunk_size: 250
-    chunk_overlap: 30
+    chunk_size: 200       # Reduced from 250 - captures single medical concepts better
+    chunk_overlap: 50     # Increased from 30 - ensures key medical terms aren't split
 
 # Vector store configuration
 vector_store:
@@ -92,13 +91,13 @@ vector_store:
 # Advanced Retriever Configuration
 retriever:
   # Weights for combining dense (vector) and sparse (keyword) search
-  hybrid_search_weights: [0.7, 0.3] # Give more weight to semantic search
+  hybrid_search_weights: [0.75, 0.25] # Increased semantic weight - medical concepts are semantic
   # Number of initial documents to fetch before reranking
-  top_k_initial: 20
+  top_k_initial: 50      # Increased from 20 - cast wider net for medical data
   # Number of final documents to return after reranking
-  top_k_final: 5
+  top_k_final: 10        # Increased from 5 - provide richer context to LLM
   # Model for the final reranking step
-  reranker_model_name: "BAAI/bge-reranker-base" 
+  reranker_model_name: "BAAI/bge-reranker-base"
 
 # Text processing
 text_processing:

@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class DataExtractor:
     def __init__(self, config_path="config/embedding_config.yaml"):
         self.config = self._load_config(config_path)
-        self.excluded_tables = set(self.config['tables']['exclude_tables'])
+        self.excluded_tables = set(self.config['tables'].get('exclude_tables', []))
     
     def _load_config(self, config_path):
         with open(config_path, 'r') as file:

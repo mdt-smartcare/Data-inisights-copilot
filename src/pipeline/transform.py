@@ -34,6 +34,18 @@ class SimpleInMemoryStore(BaseStore[str, Document]):
 class AdvancedDataTransformer:
     def __init__(self, config: Dict):
         self.config = config
+        # Medical domain mappings for better semantic understanding
+        self.medical_context = {
+            'is_htn_diagnosis': 'Hypertension',
+            'is_diabetes_diagnosis': 'Diabetes',
+            'cvd_risk_level': 'Cardiovascular Disease Risk',
+            'bmi': 'Body Mass Index',
+            'avg_systolic': 'Systolic Blood Pressure',
+            'avg_diastolic': 'Diastolic Blood Pressure',
+            'glucose_value': 'Blood Glucose Level',
+            'phq9_score': 'Depression Screening (PHQ-9)',
+            'gad7_score': 'Anxiety Screening (GAD-7)',
+        }
 
     def _safe_format_value(self, value: Any) -> str | None:
         """
@@ -53,6 +65,20 @@ class AdvancedDataTransformer:
             return None
         
         return value_str
+
+    def _enrich_medical_content(self, col: str, val: Any) -> str:
+        """Enrich medical fields with human-readable context for better embeddings."""
+        # Add readable names for medical columns
+        if col in self.medical_context:
+            readable_name = self.medical_context[col]
+            return f"{readable_name} ({col}): {val}"
+        
+        # Convert boolean medical flags to descriptive text
+        if col.startswith('is_') and isinstance(val, bool):
+            condition = col.replace('is_', '').replace('_', ' ').title()
+            return f"{condition}: {'Yes' if val else 'No'}"
+        
+        return f"{col}: {val}"
 
     def _get_row_id(self, row: pd.Series) -> str:
         """
@@ -80,7 +106,8 @@ class AdvancedDataTransformer:
                 for col, val in row.items():
                     formatted_val = self._safe_format_value(val)
                     if formatted_val is not None:
-                        content_parts.append(f"{col}: {formatted_val}")
+                        enriched_content = self._enrich_medical_content(col, formatted_val)
+                        content_parts.append(enriched_content)
                 
                 if content_parts:
                     content = "\n".join(content_parts)
