@@ -1,0 +1,87 @@
+"""
+FastAPI application entrypoint for the RAG Chatbot Backend.
+"""
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from backend.config import get_settings
+from backend.core.logging import setup_logging, get_logger
+from backend.api.routes import auth, chat, feedback, health
+
+# Initialize settings and logging
+settings = get_settings()
+setup_logging()
+logger = get_logger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan context manager for startup and shutdown events.
+    """
+    # Startup
+    logger.info(f"Starting {settings.project_name} v{settings.version}")
+    logger.info(f"Debug mode: {settings.debug}")
+    logger.info(f"API prefix: {settings.api_v1_prefix}")
+    
+    yield
+    
+    # Shutdown
+    logger.info("Shutting down application")
+
+
+# Create FastAPI application
+app = FastAPI(
+    title=settings.project_name,
+    version=settings.version,
+    openapi_url=f"{settings.api_v1_prefix}/openapi.json",
+    docs_url=f"{settings.api_v1_prefix}/docs",
+    redoc_url=f"{settings.api_v1_prefix}/redoc",
+    lifespan=lifespan
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_methods_list,
+    allow_headers=["*"],
+)
+
+# Include routers
+app.include_router(auth.router, prefix=settings.api_v1_prefix)
+app.include_router(chat.router, prefix=settings.api_v1_prefix)
+app.include_router(feedback.router, prefix=settings.api_v1_prefix)
+app.include_router(health.router, prefix=settings.api_v1_prefix)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint with API information."""
+    return JSONResponse({
+        "message": "FHIR RAG Chatbot API",
+        "version": settings.version,
+        "docs": f"{settings.api_v1_prefix}/docs",
+        "health": f"{settings.api_v1_prefix}/health"
+    })
+
+
+@app.get("/health")
+async def root_health():
+    """Alternative health check at root level."""
+    return {"status": "healthy", "service": settings.project_name}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    uvicorn.run(
+        "backend.app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.debug,
+        log_level=settings.log_level.lower()
+    )
