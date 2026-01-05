@@ -1,15 +1,16 @@
 // API Base URL Configuration
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const API_VERSION_PATH = 'api/v1';
 
 // API Endpoints
 export const API_ENDPOINTS = {
-  CHAT: '/api/chat',
-  FEEDBACK: '/api/feedback',
-  HEALTH: '/api/health',
+  CHAT: `${API_VERSION_PATH}/chat`,
+  FEEDBACK: `${API_VERSION_PATH}/feedback`,
+  HEALTH: `${API_VERSION_PATH}/health`,
   AUTH: {
-    LOGIN: '/api/auth/login',
-    LOGOUT: '/api/auth/logout',
-    REGISTER: '/api/auth/register',
+    LOGIN: `${API_VERSION_PATH}/auth/login`,
+    LOGOUT: `${API_VERSION_PATH}/auth/logout`,
+    REGISTER: `${API_VERSION_PATH}/auth/register`,
   },
 } as const;
 

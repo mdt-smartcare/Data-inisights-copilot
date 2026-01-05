@@ -2,7 +2,7 @@ import { LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area, XAxis, 
 
 interface ChartData {
   type: 'line' | 'bar' | 'pie' | 'area';
-  data: any[];
+  data: any[] | { labels?: string[]; values?: any[] };
   xKey?: string;
   yKey?: string;
   title?: string;
@@ -16,10 +16,36 @@ interface ChartRendererProps {
 const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1'];
 
 export default function ChartRenderer({ chartData }: ChartRendererProps) {
-  const { type, data, xKey, yKey, title, colors = COLORS } = chartData;
+  const { type, data: rawData, xKey, yKey, title, colors = COLORS } = chartData;
 
-  if (!data || data.length === 0) {
+  if (!rawData) {
     return <div className="text-sm text-gray-500 italic">No data available for chart</div>;
+  }
+
+  // Transform data if it's in labels/values format (from backend)
+  let data: any[];
+  
+  if (Array.isArray(rawData)) {
+    // Already in array format
+    data = rawData;
+  } else if (rawData.labels && rawData.values) {
+    // Transform from backend format: {labels: [...], values: [...]}
+    // to Recharts format: [{name: ..., value: ...}, ...]
+    data = rawData.labels.map((label: string, index: number) => {
+      const value = rawData.values![index];
+      // Convert string values to 0 (e.g., "Other" -> 0)
+      const numericValue = typeof value === 'number' ? value : 0;
+      return {
+        name: label,
+        value: numericValue
+      };
+    }).filter(item => item.value > 0); // Filter out zero/invalid values
+  } else {
+    return <div className="text-sm text-gray-500 italic">Invalid chart data format</div>;
+  }
+
+  if (data.length === 0) {
+    return <div className="text-sm text-gray-500 italic">No valid data available for chart</div>;
   }
 
   const renderChart = () => {
@@ -65,7 +91,7 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
                 outerRadius={80}
                 label={(entry) => entry.name}
               >
-                {data.map((entry, index) => (
+                {data.map((_, index) => (
                   <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
                 ))}
               </Pie>
