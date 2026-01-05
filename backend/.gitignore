@@ -8,6 +8,8 @@ models/bge-m3/
 
 # Vector stores and indexes (large files)
 vector_stores/
+vector_stores/chroma_db_index
+vector_stores/chroma_db_index_bge_m3_full
 data/indexes/
 
 # Logs
