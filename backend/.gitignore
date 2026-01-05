@@ -1,9 +1,18 @@
 .env
-/__pycache__
-/models/bge-m3
+__pycache__/
 *.pyc
-/data/indexes/chroma_db_advanced
-/logs
+*.log
+
+# Models (large files)
+models/bge-m3/
+
+# Vector stores and indexes (large files)
+vector_stores/
+data/indexes/
+
+# Logs
+logs/
+
+# Legacy paths (can be removed if no longer needed)
 /chroma_db_index
 /chroma_db_index_bge_m3_full
-/backend/vector_stores/
