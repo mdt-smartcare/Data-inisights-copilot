@@ -32,7 +32,7 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/" element={<HomePage />} />
+          <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route
             path="/chat"
             element={
