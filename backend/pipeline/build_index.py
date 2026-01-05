@@ -221,10 +221,10 @@ def build_advanced_chroma_index(
 if __name__ == "__main__":
     import sys
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-    from src.pipeline.embed import LocalHuggingFaceEmbeddings
-    from src.pipeline.utils import load_config
-    from src.pipeline.extract import create_data_extractor
-    from src.pipeline.transform import AdvancedDataTransformer
+    from backend.pipeline.embed import LocalHuggingFaceEmbeddings
+    from backend.pipeline.utils import load_config
+    from backend.pipeline.extract import create_data_extractor
+    from backend.pipeline.transform import AdvancedDataTransformer
 
     # Set up logging
     logging.basicConfig(

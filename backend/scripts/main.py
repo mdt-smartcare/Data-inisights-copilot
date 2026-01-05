@@ -37,7 +37,7 @@ from langchain_openai import ChatOpenAI
 from langfuse.langchain import CallbackHandler
 
 # --- Local/Project Imports ---
-from src.rag.retrieve import AdvancedRAGRetriever
+from backend.rag.retrieve import AdvancedRAGRetriever
 
 # --- 1. CONFIGURATION ---
 

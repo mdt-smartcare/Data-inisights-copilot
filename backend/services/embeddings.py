@@ -3,6 +3,7 @@ Embedding service using HuggingFace SentenceTransformer.
 Wraps the BGE-M3 model for LangChain compatibility.
 """
 from typing import List
+from pathlib import Path
 from functools import lru_cache
 from sentence_transformers import SentenceTransformer
 from langchain_core.embeddings import Embeddings
@@ -28,6 +29,16 @@ class LocalHuggingFaceEmbeddings(Embeddings):
             model_path: Path to the local model directory or HuggingFace model ID
         """
         logger.info(f"Loading embedding model from {model_path}")
+        
+        # Resolve relative paths to absolute paths
+        resolved_path = Path(model_path)
+        if not resolved_path.is_absolute() and model_path.startswith('./'):
+            # Get the backend directory (go up from services to backend)
+            backend_root = Path(__file__).parent.parent
+            resolved_path = (backend_root / model_path.lstrip('./')).resolve()
+            logger.info(f"Resolved model path to: {resolved_path}")
+            model_path = str(resolved_path)
+        
         self.model = SentenceTransformer(model_path)
         logger.info(f"Embedding model loaded successfully. Dimension: {self.model.get_sentence_embedding_dimension()}")
     

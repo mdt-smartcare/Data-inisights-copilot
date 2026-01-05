@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional
 import logging
-from src.rag.retrieve import create_retriever
+from backend.rag.retrieve import create_retriever
 
 logger = logging.getLogger(__name__)
 

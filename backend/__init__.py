@@ -1,2 +1,3 @@
-"""Backend API package."""
-__version__ = "1.0.0"
+from .connector import db_connector
+
+__all__ = ["db_connector"]

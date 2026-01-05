@@ -3,7 +3,7 @@ import { API_ENDPOINTS } from '../config';
 import type { ChatRequest, ChatResponse } from '../types';
 
 // Mock mode flag - set to false when backend is ready
-const USE_MOCK_DATA = true;
+const USE_MOCK_DATA = false;
 
 // Mock responses for development
 const mockResponses: Record<string, ChatResponse> = {

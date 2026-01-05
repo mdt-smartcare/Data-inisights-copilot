@@ -1,8 +1,10 @@
 from typing import List, Dict, Any, Tuple
+from pathlib import Path
 from langchain_core.documents import Document
 from langchain_community.retrievers.bm25 import BM25Retriever
 from langchain_chroma import Chroma
-from src.pipeline.embed import LocalHuggingFaceEmbeddings
+from backend.pipeline.embed import LocalHuggingFaceEmbeddings
+from backend.rag.pickle_utils import load_with_remapping
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
 from langchain_core.retrievers import BaseRetriever
@@ -90,6 +92,10 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         """Initialize the hybrid retriever with both dense and sparse components."""
         super().__init__(**kwargs)
         self.config = config
+        
+        # Resolve paths in config to absolute paths
+        self._resolve_config_paths()
+        
         self.embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
         
         self.vector_store = self._load_vector_store()
@@ -111,6 +117,25 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
             self.reranker = None
 
         logger.info("Advanced RAG Retriever initialized successfully.")
+
+    def _resolve_config_paths(self):
+        """Resolve relative paths in config to absolute paths based on backend directory."""
+        # Get backend root directory (go up from rag to backend)
+        backend_root = Path(__file__).parent.parent
+        
+        # Resolve chroma_path
+        chroma_path = self.config['vector_store']['chroma_path']
+        if chroma_path.startswith('./'):
+            resolved_path = (backend_root / chroma_path.lstrip('./')).resolve()
+            self.config['vector_store']['chroma_path'] = str(resolved_path)
+            logger.info(f"Resolved chroma_path to: {resolved_path}")
+        
+        # Resolve model_path
+        model_path = self.config['embedding']['model_path']
+        if model_path.startswith('./'):
+            resolved_path = (backend_root / model_path.lstrip('./')).resolve()
+            self.config['embedding']['model_path'] = str(resolved_path)
+            logger.info(f"Resolved model_path to: {resolved_path}")
 
     def _setup_retrievers(self):
         """Initialize both dense and sparse retrievers."""
@@ -229,13 +254,18 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         )
 
     def _load_docstore(self):
-        """Load the parent document store from disk."""
+        """Load the parent document store from disk with module remapping."""
         docstore_path = f"{self.config['vector_store']['chroma_path']}/parent_docstore.pkl"
         try:
-            with open(docstore_path, "rb") as f:
-                return pickle.load(f)
+            logger.info(f"Loading docstore from {docstore_path} with module remapping")
+            docstore = load_with_remapping(docstore_path)
+            logger.info("Successfully loaded docstore with module remapping")
+            return docstore
         except FileNotFoundError:
             logger.critical(f"FATAL: Parent docstore not found at {docstore_path}. The RAG system cannot function.")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to load docstore: {e}", exc_info=True)
             raise
             
     def retrieve_and_rerank_with_scores(self, query: str) -> List[Tuple[Document, float]]:
