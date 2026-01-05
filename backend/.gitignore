@@ -1,0 +1,9 @@
+.env
+/__pycache__
+/models/bge-m3
+*.pyc
+/data/indexes/chroma_db_advanced
+/logs
+/chroma_db_index
+/chroma_db_index_bge_m3_full
+/backend/vector_stores/

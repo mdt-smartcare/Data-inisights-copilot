@@ -1,0 +1,17 @@
+database:
+  host: "localhost"
+  port: 5432
+  database: "Spice_BD"
+  username: "admin"  
+  password: "admin"
+  schema: "public"
+
+connection:
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  pool_recycle: 3600
+
+queries:
+  batch_size: 1000
+  table_limit: 50000  # Maximum rows per table to process

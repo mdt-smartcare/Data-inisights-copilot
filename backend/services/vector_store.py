@@ -12,7 +12,7 @@ import yaml
 # Add parent directory to path to import from src
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.rag.retrieve import AdvancedRAGRetriever
+from backend.rag.retrieve import AdvancedRAGRetriever
 from langchain_core.documents import Document
 
 from backend.config import get_settings
@@ -29,14 +29,14 @@ class VectorStoreService:
         """Initialize the vector store with advanced retrieval."""
         logger.info("Initializing vector store service")
         
-        # Load RAG configuration - resolve path relative to project root
+        # Load RAG configuration - resolve path relative to backend directory
         config_path = Path(settings.rag_config_path)
         if not config_path.is_absolute():
-            # If relative, resolve from project root (parent of backend directory)
-            project_root = Path(__file__).parent.parent.parent
+            # If relative, resolve from backend directory
+            backend_root = Path(__file__).parent.parent  # backend/services -> backend/
             # Remove leading './' if present
             config_rel_path = str(settings.rag_config_path).lstrip('./')
-            config_path = (project_root / config_rel_path).resolve()
+            config_path = (backend_root / config_rel_path).resolve()
         
         logger.info(f"Looking for RAG config at: {config_path}")
         
@@ -48,7 +48,7 @@ class VectorStoreService:
         with open(config_path, 'r') as f:
             self.rag_config = yaml.safe_load(f)
         
-        logger.info(f"Loaded RAG config successfully")
+        logger.info("Loaded RAG config successfully")
         
         # Initialize advanced retriever
         self.retriever = AdvancedRAGRetriever(config=self.rag_config)
