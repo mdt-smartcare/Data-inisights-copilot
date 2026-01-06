@@ -98,10 +98,21 @@ class AgentService:
             Tool(
                 name="sql_query_tool",
                 func=self.sql_service.query,
-                description="""**PRIMARY TOOL FOR STATISTICS.** Use this to access the structured SQL database.
-- Tables: patient_tracker (demographics, bp, glucose), patient_diagnosis (conditions), prescription.
-- Capabilities: COUNT, AVG, GROUP BY, filtering by age/gender/date.
-- Use for: "How many patients...", "Average glucose...", "Distribution of..."."""
+                description="""**PRIMARY TOOL FOR STATISTICS - Pass NATURAL LANGUAGE questions only.**
+
+This tool accepts natural language questions (NOT SQL queries) and automatically generates and executes SQL.
+
+When to use:
+- Counting: "How many patients...", "Total number of..."
+- Averages: "Average glucose level...", "Mean BMI of..."
+- Aggregations: "Sum of...", "Distribution of..."
+- Filtering: By age groups, gender, date ranges, biomarkers
+
+Input format: Natural language question ONLY
+Example: "Count patients with systolic BP > 140 in 2024"
+DO NOT generate SQL yourself - the tool handles that internally.
+
+Available data: patient_tracker (demographics, vitals), patient_diagnosis, prescription, lab_test results."""
             ),
             Tool(
                 name="rag_patient_context_tool",
