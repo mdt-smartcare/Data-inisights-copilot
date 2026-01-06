@@ -3,7 +3,7 @@ from pathlib import Path
 from langchain_core.documents import Document
 from langchain_community.retrievers.bm25 import BM25Retriever
 from langchain_chroma import Chroma
-from backend.pipeline.embed import LocalHuggingFaceEmbeddings
+from backend.services.embeddings import get_embedding_model
 from backend.rag.pickle_utils import load_with_remapping
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
@@ -96,7 +96,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # Resolve paths in config to absolute paths
         self._resolve_config_paths()
         
-        self.embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
+        self.embedding_function = get_embedding_model()
         
         self.vector_store = self._load_vector_store()
         self.docstore = self._load_docstore()

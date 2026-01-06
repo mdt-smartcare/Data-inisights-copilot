@@ -221,7 +221,7 @@ def build_advanced_chroma_index(
 if __name__ == "__main__":
     import sys
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-    from backend.pipeline.embed import LocalHuggingFaceEmbeddings
+    from backend.services.embeddings import get_embedding_model
     from backend.pipeline.utils import load_config
     from backend.pipeline.extract import create_data_extractor
     from backend.pipeline.transform import AdvancedDataTransformer
@@ -256,7 +256,7 @@ if __name__ == "__main__":
     child_docs, docstore = transformer.perform_parent_child_chunking(documents)
 
     print(f"\n Step 4/4: Building Chroma index with {len(child_docs):,} documents...")
-    embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_name'])
+    embedding_function = get_embedding_model()
     
     build_advanced_chroma_index(
         child_docs=child_docs,

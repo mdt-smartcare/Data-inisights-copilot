@@ -2,7 +2,7 @@ import pandas as pd
 import yaml
 from tqdm import tqdm
 import logging
-from backend.db.connector import db_connector
+from backend.connector import db_connector
 
 logger = logging.getLogger(__name__)
 

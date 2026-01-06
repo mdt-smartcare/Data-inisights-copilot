@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from backend.config import get_settings
 from backend.core.logging import setup_logging, get_logger
 from backend.api.routes import auth, chat, feedback, health
+from backend.services.embeddings import preload_embedding_model
 
 # Initialize settings and logging
 settings = get_settings()
@@ -23,6 +24,7 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     logger.info(f"Starting {settings.project_name} v{settings.version}")
+    preload_embedding_model()
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"API prefix: {settings.api_v1_prefix}")
     
