@@ -3,13 +3,12 @@ SQL service for structured database queries.
 Wraps LangChain SQL agent for database interactions.
 """
 from functools import lru_cache
-from typing import Optional
+from typing import Optional, Dict, Tuple, List
 import re
 
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
-from langchain.agents import AgentExecutor
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -18,25 +17,239 @@ settings = get_settings()
 logger = get_logger(__name__)
 
 
+# =============================================================================
+# FIX 2: DASHBOARD KPI TEMPLATES - Exact SQL for dashboard alignment
+# ORDERED BY PRIORITY - More specific patterns first!
+# =============================================================================
+DASHBOARD_KPI_TEMPLATES: List[Tuple[str, str, str]] = [
+    # Format: (pattern, SQL query, description)
+    # ORDER MATTERS - More specific patterns MUST come first!
+    
+    # ==========================================================================
+    # PRIORITY 1: Prevalence & Yield KPIs (most specific - check these first!)
+    # ==========================================================================
+    (
+        r"htn.*(prevalence|rate)|prevalence.*(htn|hypertension|bp)",
+        """SELECT 
+            ROUND(
+                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
+                    AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BP & BG') 
+                    THEN patient_track_id END)::numeric / 
+                 NULLIF(COUNT(DISTINCT CASE WHEN has_bp_reading = TRUE 
+                    THEN patient_track_id END), 0)) * 100, 
+                2
+            ) as htn_prevalence_pct
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD'""",
+        "HTN prevalence rate"
+    ),
+    (
+        r"hypertension.*(prevalence|rate)",
+        """SELECT 
+            ROUND(
+                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
+                    AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BP & BG') 
+                    THEN patient_track_id END)::numeric / 
+                 NULLIF(COUNT(DISTINCT CASE WHEN has_bp_reading = TRUE 
+                    THEN patient_track_id END), 0)) * 100, 
+                2
+            ) as htn_prevalence_pct
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD'""",
+        "HTN prevalence rate"
+    ),
+    (
+        r"dbm.*(prevalence|rate)|prevalence.*(dbm|diabetes|glucose|bg)",
+        """SELECT 
+            ROUND(
+                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
+                    AND referred_reason IN ('Due to Elevated BG', 'Due to Elevated BP & BG') 
+                    THEN patient_track_id END)::numeric / 
+                 NULLIF(COUNT(DISTINCT CASE WHEN has_bg_reading = TRUE 
+                    THEN patient_track_id END), 0)) * 100, 
+                2
+            ) as dbm_prevalence_pct
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD'""",
+        "DBM prevalence rate"
+    ),
+    (
+        r"diabetes.*(prevalence|rate)",
+        """SELECT 
+            ROUND(
+                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
+                    AND referred_reason IN ('Due to Elevated BG', 'Due to Elevated BP & BG') 
+                    THEN patient_track_id END)::numeric / 
+                 NULLIF(COUNT(DISTINCT CASE WHEN has_bg_reading = TRUE 
+                    THEN patient_track_id END), 0)) * 100, 
+                2
+            ) as dbm_prevalence_pct
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD'""",
+        "DBM prevalence rate"
+    ),
+    (
+        r"screening.*(yield|rate)",
+        """SELECT 
+            ROUND(
+                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
+                    AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BG', 'Due to Elevated BP & BG') 
+                    THEN patient_track_id END)::numeric / 
+                 NULLIF(COUNT(DISTINCT CASE WHEN has_bp_reading = TRUE 
+                    THEN patient_track_id END), 0)) * 100, 
+                2
+            ) as screening_yield_pct
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD'""",
+        "screening yield percentage"
+    ),
+    
+    # ==========================================================================
+    # PRIORITY 2: Referral KPIs (check before general screening)
+    # ==========================================================================
+    (
+        r"crisis.*(referral|refer)",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_screening 
+        WHERE crisis_referral_status = 'Crisis Referral'""",
+        "crisis referrals"
+    ),
+    (
+        r"referred.*(elevated|high).*(bp|blood pressure)",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD' 
+        AND is_referred = TRUE 
+        AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BP & BG')""",
+        "patients referred due to elevated blood pressure"
+    ),
+    (
+        r"referred.*(elevated|high).*(bg|glucose|sugar)",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD' 
+        AND is_referred = TRUE 
+        AND referred_reason IN ('Due to Elevated BG', 'Due to Elevated BP & BG')""",
+        "patients referred due to elevated blood glucose"
+    ),
+    (
+        r"(total|how many|count).*referred|people referred",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD' 
+        AND is_referred = TRUE""",
+        "total patients referred"
+    ),
+    
+    # ==========================================================================
+    # PRIORITY 3: Enrollment KPIs
+    # ==========================================================================
+    (
+        r"enrolled.*by.*condition|breakdown.*enrolled",
+        """SELECT enrolled_condition, COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_enrollment 
+        WHERE patient_status = 'ENROLLED' 
+        AND workflow_status = 'NCD'
+        AND enrolled_condition IS NOT NULL
+        GROUP BY enrolled_condition
+        ORDER BY count DESC""",
+        "enrollment breakdown by condition"
+    ),
+    (
+        r"enrolled.*(hypertension|htn)",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_enrollment 
+        WHERE patient_status = 'ENROLLED' 
+        AND workflow_status = 'NCD'
+        AND enrolled_condition = 'Hypertension'""",
+        "patients enrolled with Hypertension"
+    ),
+    (
+        r"enrolled.*(diabetes|dbm)",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_enrollment 
+        WHERE patient_status = 'ENROLLED' 
+        AND workflow_status = 'NCD'
+        AND enrolled_condition = 'Diabetes'""",
+        "patients enrolled with Diabetes"
+    ),
+    (
+        r"enrolled.*co-?morbid",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_enrollment 
+        WHERE patient_status = 'ENROLLED' 
+        AND workflow_status = 'NCD'
+        AND enrolled_condition = 'Co-morbid (DBM + HTN)'""",
+        "patients enrolled with co-morbid conditions"
+    ),
+    (
+        r"community.*(enrolled|enrollment)",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_enrollment 
+        WHERE patient_status = 'ENROLLED' 
+        AND is_screening = TRUE 
+        AND workflow_status = 'NCD'""",
+        "community enrolled patients"
+    ),
+    (
+        r"(total|how many|count).*enrolled|enrolled.*ncd",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_enrollment 
+        WHERE patient_status = 'ENROLLED' 
+        AND workflow_status = 'NCD'""",
+        "total enrolled NCD patients"
+    ),
+    
+    # ==========================================================================
+    # PRIORITY 4: Screening KPIs (most general - check last)
+    # ==========================================================================
+    (
+        r"screened.*(bp|blood pressure)|(bp|blood pressure).*screened",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD' 
+        AND has_bp_reading = TRUE""",
+        "patients screened for blood pressure"
+    ),
+    (
+        r"screened.*(bg|glucose|blood glucose)|(bg|glucose).*screened",
+        """SELECT COUNT(DISTINCT patient_track_id) as count
+        FROM v_analytics_screening 
+        WHERE workflow_status = 'NCD' 
+        AND has_bg_reading = TRUE""",
+        "patients screened for blood glucose"
+    ),
+]
+
+
 class SQLService:
     """Service for SQL database operations."""
     
     def __init__(self):
-        """Initialize SQL database connection and agent."""
         logger.info(f"Connecting to database at {settings.database_url}")
         
         try:
-            # Initialize database connection
-            self.db = SQLDatabase.from_uri(settings.database_url)
-            logger.info("Database connection established")
+            # Initialize database connection with views included
+            temp_db = SQLDatabase.from_uri(settings.database_url)
+            all_tables = list(temp_db.get_usable_table_names())
             
-            # Cache table names and schema on initialization
+            analytics_views = ['v_analytics_screening', 'v_analytics_enrollment']
+            for view in analytics_views:
+                if view not in all_tables:
+                    all_tables.append(view)
+            
+            self.db = SQLDatabase.from_uri(
+                settings.database_url,
+                include_tables=all_tables,
+                view_support=True
+            )
+            logger.info("Database connection established with view support")
+            
             self._cache_schema()
             
-            # Initialize TWO LLMs - fast one for SQL generation, powerful one for agent
             self.llm_fast = ChatOpenAI(
-                temperature=0,  # Deterministic for SQL
-                model_name="gpt-3.5-turbo",  # 10x faster than gpt-4o
+                temperature=0,
+                model_name="gpt-3.5-turbo",
                 api_key=settings.openai_api_key,
                 verbose=True
             )
@@ -45,19 +258,16 @@ class SQLService:
                 temperature=settings.openai_temperature,
                 model_name=settings.openai_model,
                 api_key=settings.openai_api_key,
-                verbose=True  # Enable verbose mode to see LLM calls
+                verbose=True
             )
             
-            # Create optimized SQL agent with pre-included context
             self.sql_agent = create_sql_agent(
                 llm=self.llm,
                 db=self.db,
                 agent_type="openai-tools",
                 verbose=True,
                 handle_parsing_errors=True,
-                # Reduce max iterations to prevent excessive calls
                 max_iterations=8,
-                # Include table info in prompt to reduce lookups
                 include_tables=self.relevant_tables
             )
             logger.info(f"SQL agent initialized successfully with {len(self.relevant_tables)} cached tables")
@@ -67,117 +277,31 @@ class SQLService:
             raise
     
     def _cache_schema(self):
-        """Cache database schema with enhanced context for better SQL generation."""
         try:
-            # Get all table names
             all_tables = self.db.get_usable_table_names()
             
-            # Filter to most relevant tables for patient data
             self.relevant_tables = [
                 table for table in all_tables 
                 if any(keyword in table.lower() for keyword in [
                     'patient', 'visit', 'tracker', 'diagnosis', 'medication',
                     'lab_test', 'assessment', 'vital', 'bp_log', 'glucose',
-                    'screening', 'enrollment', 'medical', 'notes'
+                    'screening', 'enrollment', 'medical', 'notes',
+                    'v_analytics'
                 ])
             ]
             
-            # Cache full schema for relevant tables
             base_schema = self.db.get_table_info(table_names=self.relevant_tables)
             
-            # ADD ENHANCED CONTEXT FOR BETTER SQL GENERATION
             schema_enhancements = """
-
 ==============================================================================
-CRITICAL DATABASE RELATIONSHIPS AND BUSINESS RULES:
-==============================================================================
-
-1. PATIENT DATA HIERARCHY:
-   patient (demographics: id, first_name, age, gender)
-   └─> patient_tracker (enrollment tracking: id, patient_id)
-       └─> patient_visit (visits: id, patient_track_id, visit_date)
-       └─> patient_diagnosis (diagnosis: id, patient_track_id, is_htn_diagnosis, htn_patient_type)
-       └─> bp_log (BP readings: id, patient_track_id, avg_systolic, avg_diastolic, is_latest)
-       └─> glucose_log (glucose: id, patient_track_id, glucose_value)
-
-   CORRECT JOIN PATTERN: 
-   patient.id = patient_tracker.patient_id
-   patient_tracker.id = patient_diagnosis.patient_track_id
-   patient_tracker.id = bp_log.patient_track_id
-   patient_tracker.id = patient_visit.patient_track_id
-
-    WRONG: patient.id = patient_diagnosis.patient_track_id (skips patient_tracker!)
-    RIGHT: patient.id = patient_tracker.patient_id = patient_diagnosis.patient_track_id
-
-2. HYPERTENSION (HTN) CLASSIFICATION:
-   patient_diagnosis.htn_patient_type possible values:
-   - "New Patient" = newly diagnosed hypertension (uncontrolled)
-   - "Known Patient" = existing HTN diagnosis (may be uncontrolled)
-   - "Controlled" = hypertension under medical control
-   - "N/A" = no hypertension diagnosis
-   
-   UNCONTROLLED HYPERTENSION criteria:
-   WHERE is_htn_diagnosis = TRUE 
-     AND htn_patient_type IN ('New Patient', 'Known Patient')
-     AND (avg_systolic > 140 OR avg_diastolic > 90)
-
-3. DIABETES CLASSIFICATION:
-   patient_diagnosis.diabetes_patient_type values:
-   - "New Patient" = newly diagnosed diabetes
-   - "Known Patient" = existing diabetes diagnosis
-   - "Type 1" or "Type 2" may appear in diabetes_diagnosis field
-   - "N/A" = no diabetes
-
-4. BLOOD PRESSURE READINGS:
-   bp_log stores multiple readings per patient over time
-   - Use is_latest = TRUE for most recent reading
-   - Normal BP: avg_systolic < 140 AND avg_diastolic < 90
-   - High BP (Stage 1): avg_systolic 140-159 OR avg_diastolic 90-99
-   - High BP (Stage 2): avg_systolic >= 160 OR avg_diastolic >= 100
-
-5. CLINICAL NOTES SEARCH:
-   Notes are stored in VARCHAR fields:
-   - bp_log.notes
-   - patient_medical_review.complaints
-   Use case-insensitive search: column ILIKE '%keyword%'
-
-6. DATE FILTERING:
-   - patient_visit.visit_date (DATE type)
-   - bp_log.bp_taken_on (TIMESTAMP)
-   Use: WHERE date_column >= '2024-01-01' AND date_column <= '2024-12-31'
-
-==============================================================================
-COMMON QUERY EXAMPLES:
+CRITICAL: USE ANALYTICS VIEWS FOR DASHBOARD KPIs (MANDATORY)
 ==============================================================================
 
-Example 1: Count patients with hypertension
-SELECT COUNT(DISTINCT pt.id)
-FROM patient_tracker pt
-JOIN patient_diagnosis pd ON pt.id = pd.patient_track_id
-WHERE pd.is_htn_diagnosis = TRUE;
+**RULE: For ANY statistics about screening, referrals, or enrollment, you MUST use:**
+- `v_analytics_screening` - For screening & referral KPIs
+- `v_analytics_enrollment` - For enrollment KPIs
 
-Example 2: Average age of uncontrolled hypertension patients
-SELECT AVG(p.age) AS avg_age
-FROM patient p
-JOIN patient_tracker pt ON p.id = pt.patient_id
-JOIN patient_diagnosis pd ON pt.id = pd.patient_track_id
-JOIN bp_log bp ON pt.id = bp.patient_track_id
-WHERE pd.is_htn_diagnosis = TRUE
-  AND pd.htn_patient_type IN ('New Patient', 'Known Patient')
-  AND bp.is_latest = TRUE
-  AND (bp.avg_systolic > 140 OR bp.avg_diastolic > 90);
-
-Example 3: Gender distribution
-SELECT gender, COUNT(*) as count
-FROM patient
-GROUP BY gender;
-
-Example 4: Search notes for keywords
-SELECT DISTINCT p.id, p.first_name, bp.notes
-FROM patient p
-JOIN patient_tracker pt ON p.id = pt.patient_id
-JOIN bp_log bp ON pt.id = bp.patient_track_id
-WHERE bp.notes ILIKE '%chest pain%';
+**NEVER query raw `patienttracker` or `screeninglog` tables for aggregate statistics.**
 
 ==============================================================================
 """
@@ -193,27 +317,21 @@ WHERE bp.notes ILIKE '%chest pain%';
             self.cached_schema = None
     
     def _get_relevant_schema(self, question: str) -> str:
-        """
-        Dynamically select relevant schema based on the question.
-        Reduces context size by including only relevant tables.
-        """
         try:
             question_lower = question.lower()
             
-            # Match tables mentioned in question
             relevant_tables = [
                 table for table in (self.relevant_tables or [])
                 if table.lower() in question_lower
             ]
             
-            # Add related tables based on keywords for better context
             keyword_to_tables = {
                 'glucose': ['glucose_log', 'patient_tracker', 'patient'],
                 'bp': ['bp_log', 'patient_tracker', 'patient'],
                 'blood pressure': ['bp_log', 'patient_tracker', 'patient'],
                 'hypertension': ['patient_diagnosis', 'bp_log', 'patient_tracker', 'patient'],
                 'diabetes': ['patient_diagnosis', 'glucose_log', 'patient_tracker', 'patient'],
-                'smoker': ['patient', 'patient_tracker'],  # is_regular_smoker is in patient table
+                'smoker': ['patient', 'patient_tracker'],
                 'smoking': ['patient', 'patient_tracker'],
                 'visit': ['patient_visit', 'patient_tracker', 'patient'],
                 'diagnosis': ['patient_diagnosis', 'patient_tracker', 'patient'],
@@ -221,28 +339,22 @@ WHERE bp.notes ILIKE '%chest pain%';
                 'lab': ['lab_test', 'lab_test_result', 'patient_tracker', 'patient'],
             }
             
-            # Add tables based on keywords
             for keyword, tables in keyword_to_tables.items():
                 if keyword in question_lower:
                     for table in tables:
                         if table in self.relevant_tables and table not in relevant_tables:
                             relevant_tables.append(table)
             
-            # If no tables matched, use full schema
             if not relevant_tables:
                 logger.info("No specific tables matched in question. Using full cached schema.")
                 return self.cached_schema
             
-            # Remove duplicates and get schema
-            relevant_tables = list(dict.fromkeys(relevant_tables))  # Preserve order, remove dupes
+            relevant_tables = list(dict.fromkeys(relevant_tables))
             logger.info(f"📋 Selected relevant tables for query: {', '.join(relevant_tables)}")
             
-            # Get base schema for selected tables
             base_schema = self.db.get_table_info(table_names=relevant_tables)
             
-            # Add the enhanced context that includes JOIN patterns
             schema_enhancements = """
-
 ==============================================================================
 CRITICAL: CORRECT JOIN PATTERNS
 ==============================================================================
@@ -251,14 +363,6 @@ patient.id → patient_tracker.patient_id → other tables
 patient_tracker.id → glucose_log.patient_track_id
 patient_tracker.id → bp_log.patient_track_id
 patient_tracker.id → patient_diagnosis.patient_track_id
-
-SMOKER DATA:
-- patient.is_regular_smoker (BOOLEAN)  Use this field!
-- NOT in patient_lifestyle table
-
-GLUCOSE DATA:
-- glucose_log.glucose_value (DOUBLE PRECISION)  Correct column name
-- NOT glucose_level
 
 ==============================================================================
 """
@@ -269,29 +373,35 @@ GLUCOSE DATA:
             logger.warning(f"Failed to get relevant schema: {e}. Falling back to full schema.")
             return self.cached_schema
 
-    def _is_simple_query(self, question: str) -> bool:
+    def _check_dashboard_kpi(self, question: str) -> Optional[Tuple[str, str]]:
         """
-        Detect if query is simple enough for direct execution.
-        Handles both natural language and pre-generated SQL.
+        Check if question matches a known dashboard KPI template.
+        Returns (sql_query, description) if matched, None otherwise.
+        
+        IMPORTANT: Templates are checked in priority order - more specific first!
         """
         question_lower = question.lower().strip()
         
-        # Check if it's already SQL - be more strict about accepting it
+        # Check templates in priority order (list maintains order)
+        for pattern, sql, description in DASHBOARD_KPI_TEMPLATES:
+            if re.search(pattern, question_lower):
+                logger.info(f"⚡ KPI Template Match: '{pattern}' -> {description}")
+                return (sql.strip(), description)
+        
+        return None
+
+    def _is_simple_query(self, question: str) -> bool:
+        question_lower = question.lower().strip()
+        
         if question_lower.startswith('select'):
             logger.info(" Analyzing pre-generated SQL query")
             
-            # IMPORTANT: Pre-generated SQL might have wrong column names
-            # Only accept it if we can validate the columns exist
             try:
-                # Try to extract table name and check if it's valid
-                # But DON'T trust column names from external sources
                 logger.info("  Pre-generated SQL detected, but will regenerate for safety")
-                # Treat it as natural language instead
-                return False  # Force regeneration with our cached schema
+                return False
             except Exception:
                 return False
         
-        # Natural language patterns
         logger.info("🔍 Analyzing natural language query")
         
         simple_patterns = [
@@ -302,19 +412,17 @@ GLUCOSE DATA:
             r'\bmean\b.*\b(bmi|age|glucose)\b',
             r'\bsum\b.*\b(patients?|visits?)\b',
             r'number of (patients?|visits?)',
-            r'(male|female|gender).*patients?.*with.*(hypertension|diabetes|htn|dm)',  # Gender + condition
-            r'(gender|age|bmi).*(distribution|breakdown)',  # Simple demographic distributions
-            r'distribution of (gender|age|patients?)',  # Distribution queries
+            r'(male|female|gender).*patients?.*with.*(hypertension|diabetes|htn|dm)',
+            r'(gender|age|bmi).*(distribution|breakdown)',
+            r'distribution of (gender|age|patients?)',
         ]
         
         has_simple_pattern = any(re.search(pattern, question_lower) for pattern in simple_patterns)
         
-        # Complex indicators - be more specific
-        # NOTE: "distribution" by itself is NOT complex if it's for simple demographics
         complex_indicators = [
             'compare', 'versus', 'vs', 'compared to',
             'trend', 'over time', 'by month', 'by year', 'by quarter',
-            'breakdown by site', 'breakdown by region',  # Geographic breakdowns are complex
+            'breakdown by site', 'breakdown by region',
             'categorize',
             'correlation', 'relationship',
             'most', 'least', 'top', 'bottom',
@@ -322,37 +430,36 @@ GLUCOSE DATA:
             'each', 'per', 'by site', 'by region',
             'percentage', 'proportion', 'ratio'
         ]
-        # Note: Removed generic 'distribution' and 'breakdown' - these are fine for demographics
         
         has_complexity = any(indicator in question_lower for indicator in complex_indicators)
         
-        # Check for multiple table references in natural language
         table_references = sum(1 for table in (self.relevant_tables or []) if table.lower() in question_lower)
-        references_multiple_tables = table_references > 1
+        
+        targets_analytics_view = 'v_analytics' in question_lower
+        if targets_analytics_view:
+            logger.info("📊 Query targets analytics view - treating as single source")
+            references_multiple_tables = False
+        else:
+            references_multiple_tables = table_references > 1
         
         is_simple = has_simple_pattern and not has_complexity and not references_multiple_tables
         
         if is_simple:
-            logger.info(f" Query classified as SIMPLE (natural language)")
+            logger.info("Query classified as SIMPLE (natural language)")
         else:
             logger.info(f" Query classified as COMPLEX (pattern={has_simple_pattern}, complexity={has_complexity}, multi_table={references_multiple_tables})")
         
         return is_simple
     
     def query(self, question: str) -> str:
-        """
-        Execute a natural language query against the database.
-        Uses optimized path for simple queries.
-        
-        Args:
-            question: Natural language question or SQL query
-        
-        Returns:
-            SQL agent response as string
-        """
         logger.info(f"Executing SQL query for: '{question[:100]}...'")
         
-        # Check if it's a simple query
+        kpi_match = self._check_dashboard_kpi(question)
+        if kpi_match:
+            sql_query, description = kpi_match
+            logger.info(f"⚡ Using pre-defined KPI template for: {description}")
+            return self._execute_kpi_template(sql_query, description, question)
+        
         if self._is_simple_query(question):
             logger.info(" Detected simple query - using optimized execution path")
             return self._execute_optimized(question)
@@ -360,12 +467,42 @@ GLUCOSE DATA:
             logger.info(" Complex query detected - using full agent")
             return self._execute_with_agent(question)
     
+    def _execute_kpi_template(self, sql_query: str, description: str, original_question: str) -> str:
+        logger.info("=" * 80)
+        logger.info("⚡ KPI TEMPLATE EXECUTION (1 API call):")
+        logger.info("=" * 80)
+        logger.info(f" Template: {description}")
+        logger.info(f" SQL: {sql_query[:200]}...")
+        
+        try:
+            result = self.db.run(sql_query)
+            logger.info(f" Query result: {result}")
+            
+            format_prompt = f"""Convert this database result into a clear, natural language answer.
+
+Dashboard KPI: {description}
+SQL Query: {sql_query}
+Result: {result}
+
+Original question: {original_question}
+
+Provide a concise, professional answer. Include the exact number(s) and briefly explain what they mean in the NCD program context."""
+
+            formatted_response = self.llm.invoke(format_prompt)
+            output = formatted_response.content.strip()
+            
+            logger.info("=" * 80)
+            logger.info("✅ KPI template execution completed with 1 API call")
+            logger.info(f" Final Answer: {output[:300]}...")
+            logger.info("=" * 80)
+            
+            return output
+            
+        except Exception as e:
+            logger.warning(f"⚠️ KPI template execution failed: {e}. Falling back to agent.")
+            return self._execute_with_agent(original_question)
+    
     def _execute_optimized(self, question: str) -> str:
-        """
-        Optimized execution for simple queries.
-        Handles both natural language and pre-generated SQL.
-        Reduces from 7 API calls to 1-2 calls.
-        """
         logger.info("=" * 80)
         logger.info("⚡ OPTIMIZED SQL EXECUTION:")
         logger.info("=" * 80)
@@ -374,19 +511,15 @@ GLUCOSE DATA:
             sql_query = None
             api_call_count = 0
             
-            # Check if question is already SQL
             if question.strip().lower().startswith('select'):
                 logger.info(" Input is already SQL format, using directly")
                 sql_query = question.strip()
-                # Remove any trailing comments or explanation
                 sql_query = sql_query.split('--')[0].strip()
                 sql_query = sql_query.rstrip(';') + ';'
             else:
-                # Generate SQL from natural language
                 logger.info(" API Call 1: Generate SQL query with targeted schema")
                 api_call_count += 1
                 
-                # Get only relevant tables for this specific query
                 relevant_schema = self._get_relevant_schema(question)
                 
                 prompt = f"""You are a PostgreSQL expert. Generate ONLY a SQL query to answer the question.
@@ -412,24 +545,20 @@ SQL Query:"""
                 response = self.llm_fast.invoke(prompt)
                 sql_query = response.content.strip()
                 
-                # Clean up SQL (remove markdown code blocks if present)
                 sql_query = re.sub(r'```sql\n?', '', sql_query)
                 sql_query = re.sub(r'```\n?', '', sql_query)
                 sql_query = sql_query.strip()
             
             logger.info(f" SQL to execute: {sql_query[:200]}...")
             
-            # Basic validation
             if not self._validate_sql_query(sql_query):
                 logger.warning("  SQL validation failed, falling back to agent")
                 return self._execute_with_agent(question)
             
-            # Execute the query directly
             logger.info(" Executing query against database (no API call)")
             result = self.db.run(sql_query)
             logger.info(f" Query result: {result}")
             
-            # Format the result
             logger.info(f" API Call {api_call_count + 1}: Format natural language response")
             api_call_count += 1
             
@@ -458,30 +587,23 @@ Provide a concise, natural language answer."""
             return self._execute_with_agent(question)
     
     def _validate_sql_query(self, sql_query: str) -> bool:
-        """
-        Basic validation of SQL query for safety and correctness.
-        """
         sql_lower = sql_query.lower().strip()
         
-        # Must start with SELECT
         if not sql_lower.startswith('select'):
             logger.warning("Query doesn't start with SELECT")
             return False
         
-        # Check for dangerous operations
         dangerous_keywords = ['drop', 'delete', 'truncate', 'alter', 'create', 'insert', 'update', 'exec']
         if any(keyword in sql_lower for keyword in dangerous_keywords):
-            logger.warning(f"Query contains dangerous keyword")
+            logger.warning("Query contains dangerous keyword")
             return False
         
-        # Check if query references known tables (if we have them)
         if self.relevant_tables:
             has_known_table = any(table.lower() in sql_lower for table in self.relevant_tables)
             if not has_known_table:
                 logger.warning("Query doesn't reference any known tables")
                 return False
         
-        # Basic syntax check
         if 'from' not in sql_lower:
             logger.warning("Query missing FROM clause")
             return False
@@ -489,23 +611,16 @@ Provide a concise, natural language answer."""
         return True
     
     def _execute_with_agent(self, question: str) -> str:
-        """
-        Full agent execution for complex queries.
-        Still optimized with cached schema.
-        """
         logger.info("=" * 80)
         logger.info(" SQL AGENT EXECUTION TRACE:")
         logger.info("=" * 80)
         
         try:
-            # The agent already has schema pre-loaded via include_tables
             result = self.sql_agent.invoke({"input": question})
             
-            # Extract output from agent result
             if isinstance(result, dict):
                 output = result.get("output", str(result))
                 
-                # Log intermediate steps if available
                 if "intermediate_steps" in result:
                     logger.info("\n Agent Intermediate Steps:")
                     for i, step in enumerate(result["intermediate_steps"], 1):
@@ -534,41 +649,21 @@ Provide a concise, natural language answer."""
             raise
     
     def health_check(self) -> bool:
-        """
-        Check if database is accessible.
-        
-        Returns:
-            True if healthy, False otherwise
-        """
         try:
-            # Execute a simple query
-            result = self.db.run("SELECT 1")
+            self.db.run("SELECT 1")
             return True
         except Exception as e:
             logger.error(f"Database health check failed: {e}")
             return False
     
     def get_table_info(self) -> str:
-        """
-        Get database schema information.
-        
-        Returns:
-            Table information as string
-        """
         try:
             return self.db.get_table_info()
         except Exception as e:
-            logger.error(f"Failed to get table info: {e}", exc_info=True)
+            logger.error(f"Failed to get table info: {e}")
             return "Error retrieving table information"
 
 
 @lru_cache()
 def get_sql_service() -> SQLService:
-    """
-    Get cached SQL service instance.
-    Singleton pattern to reuse database connections.
-    
-    Returns:
-        Cached SQL service
-    """
     return SQLService()

@@ -101,9 +101,30 @@ class AdvancedDataTransformer:
         """Converts raw table data into a flat list of LangChain Document objects."""
         all_docs = []
         for table_name, df in tqdm(table_data.items(), desc="Formatting documents from tables"):
+            
+            # --- NEW LOGIC START: Metadata Enrichment for Deduplication ---
+            # Default to True for tables that don't need deduplication
+            df = df.copy()  # Avoid modifying the original dataframe
+            df['is_latest'] = True 
+            
+            if table_name == 'patient_tracker' and 'patient_track_id' in df.columns and 'updated_at' in df.columns:
+                # Sort by patient and time, then mark the last one as latest
+                df = df.sort_values(['patient_track_id', 'updated_at'])
+                df['is_latest'] = ~df.duplicated(subset=['patient_track_id'], keep='last')
+                
+            elif table_name == 'screening_log' and 'screening_id' in df.columns and 'updated_at' in df.columns:
+                # Sort by screening_id and time (dashboard logic)
+                df = df.sort_values(['screening_id', 'updated_at'])
+                df['is_latest'] = ~df.duplicated(subset=['screening_id'], keep='last')
+            # --- NEW LOGIC END ---
+
             for _, row in df.iterrows():
                 content_parts = []
                 for col, val in row.items():
+                    # Skip the temp 'is_latest' column in the text content
+                    if col == 'is_latest':
+                        continue
+                        
                     formatted_val = self._safe_format_value(val)
                     if formatted_val is not None:
                         enriched_content = self._enrich_medical_content(col, formatted_val)
@@ -111,8 +132,14 @@ class AdvancedDataTransformer:
                 
                 if content_parts:
                     content = "\n".join(content_parts)
-                    source_id = self._get_row_id(row) # Use the smart ID finder
-                    metadata = {"source_table": table_name, "source_id": source_id}
+                    source_id = self._get_row_id(row)
+                    
+                    # Add the new flag to metadata
+                    metadata = {
+                        "source_table": table_name, 
+                        "source_id": source_id,
+                        "is_latest": row['is_latest']  # <--- Vital for RAG filtering
+                    }
                     all_docs.append(Document(page_content=content, metadata=metadata))
 
         logger.info(f"Created {len(all_docs)} initial documents from all tables.")
