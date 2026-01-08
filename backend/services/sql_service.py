@@ -33,7 +33,14 @@ class SQLService:
             # Cache table names and schema on initialization
             self._cache_schema()
             
-            # Initialize LLM with verbose mode
+            # Initialize TWO LLMs - fast one for SQL generation, powerful one for agent
+            self.llm_fast = ChatOpenAI(
+                temperature=0,  # Deterministic for SQL
+                model_name="gpt-3.5-turbo",  # 10x faster than gpt-4o
+                api_key=settings.openai_api_key,
+                verbose=True
+            )
+            
             self.llm = ChatOpenAI(
                 temperature=settings.openai_temperature,
                 model_name=settings.openai_model,
@@ -60,7 +67,7 @@ class SQLService:
             raise
     
     def _cache_schema(self):
-        """Cache database schema to avoid repeated lookups."""
+        """Cache database schema with enhanced context for better SQL generation."""
         try:
             # Get all table names
             all_tables = self.db.get_usable_table_names()
@@ -76,7 +83,106 @@ class SQLService:
             ]
             
             # Cache full schema for relevant tables
-            self.cached_schema = self.db.get_table_info(table_names=self.relevant_tables)
+            base_schema = self.db.get_table_info(table_names=self.relevant_tables)
+            
+            # ADD ENHANCED CONTEXT FOR BETTER SQL GENERATION
+            schema_enhancements = """
+
+==============================================================================
+CRITICAL DATABASE RELATIONSHIPS AND BUSINESS RULES:
+==============================================================================
+
+1. PATIENT DATA HIERARCHY:
+   patient (demographics: id, first_name, age, gender)
+   └─> patient_tracker (enrollment tracking: id, patient_id)
+       └─> patient_visit (visits: id, patient_track_id, visit_date)
+       └─> patient_diagnosis (diagnosis: id, patient_track_id, is_htn_diagnosis, htn_patient_type)
+       └─> bp_log (BP readings: id, patient_track_id, avg_systolic, avg_diastolic, is_latest)
+       └─> glucose_log (glucose: id, patient_track_id, glucose_value)
+
+   CORRECT JOIN PATTERN: 
+   patient.id = patient_tracker.patient_id
+   patient_tracker.id = patient_diagnosis.patient_track_id
+   patient_tracker.id = bp_log.patient_track_id
+   patient_tracker.id = patient_visit.patient_track_id
+
+    WRONG: patient.id = patient_diagnosis.patient_track_id (skips patient_tracker!)
+    RIGHT: patient.id = patient_tracker.patient_id = patient_diagnosis.patient_track_id
+
+2. HYPERTENSION (HTN) CLASSIFICATION:
+   patient_diagnosis.htn_patient_type possible values:
+   - "New Patient" = newly diagnosed hypertension (uncontrolled)
+   - "Known Patient" = existing HTN diagnosis (may be uncontrolled)
+   - "Controlled" = hypertension under medical control
+   - "N/A" = no hypertension diagnosis
+   
+   UNCONTROLLED HYPERTENSION criteria:
+   WHERE is_htn_diagnosis = TRUE 
+     AND htn_patient_type IN ('New Patient', 'Known Patient')
+     AND (avg_systolic > 140 OR avg_diastolic > 90)
+
+3. DIABETES CLASSIFICATION:
+   patient_diagnosis.diabetes_patient_type values:
+   - "New Patient" = newly diagnosed diabetes
+   - "Known Patient" = existing diabetes diagnosis
+   - "Type 1" or "Type 2" may appear in diabetes_diagnosis field
+   - "N/A" = no diabetes
+
+4. BLOOD PRESSURE READINGS:
+   bp_log stores multiple readings per patient over time
+   - Use is_latest = TRUE for most recent reading
+   - Normal BP: avg_systolic < 140 AND avg_diastolic < 90
+   - High BP (Stage 1): avg_systolic 140-159 OR avg_diastolic 90-99
+   - High BP (Stage 2): avg_systolic >= 160 OR avg_diastolic >= 100
+
+5. CLINICAL NOTES SEARCH:
+   Notes are stored in VARCHAR fields:
+   - bp_log.notes
+   - patient_medical_review.complaints
+   Use case-insensitive search: column ILIKE '%keyword%'
+
+6. DATE FILTERING:
+   - patient_visit.visit_date (DATE type)
+   - bp_log.bp_taken_on (TIMESTAMP)
+   Use: WHERE date_column >= '2024-01-01' AND date_column <= '2024-12-31'
+
+==============================================================================
+COMMON QUERY EXAMPLES:
+==============================================================================
+
+Example 1: Count patients with hypertension
+SELECT COUNT(DISTINCT pt.id)
+FROM patient_tracker pt
+JOIN patient_diagnosis pd ON pt.id = pd.patient_track_id
+WHERE pd.is_htn_diagnosis = TRUE;
+
+Example 2: Average age of uncontrolled hypertension patients
+SELECT AVG(p.age) AS avg_age
+FROM patient p
+JOIN patient_tracker pt ON p.id = pt.patient_id
+JOIN patient_diagnosis pd ON pt.id = pd.patient_track_id
+JOIN bp_log bp ON pt.id = bp.patient_track_id
+WHERE pd.is_htn_diagnosis = TRUE
+  AND pd.htn_patient_type IN ('New Patient', 'Known Patient')
+  AND bp.is_latest = TRUE
+  AND (bp.avg_systolic > 140 OR bp.avg_diastolic > 90);
+
+Example 3: Gender distribution
+SELECT gender, COUNT(*) as count
+FROM patient
+GROUP BY gender;
+
+Example 4: Search notes for keywords
+SELECT DISTINCT p.id, p.first_name, bp.notes
+FROM patient p
+JOIN patient_tracker pt ON p.id = pt.patient_id
+JOIN bp_log bp ON pt.id = bp.patient_track_id
+WHERE bp.notes ILIKE '%chest pain%';
+
+==============================================================================
+"""
+            
+            self.cached_schema = base_schema + schema_enhancements
             
             logger.info(f"Cached schema for {len(self.relevant_tables)} relevant tables out of {len(all_tables)} total")
             logger.info(f"Relevant tables: {', '.join(self.relevant_tables[:10])}...")
@@ -86,6 +192,83 @@ class SQLService:
             self.relevant_tables = None
             self.cached_schema = None
     
+    def _get_relevant_schema(self, question: str) -> str:
+        """
+        Dynamically select relevant schema based on the question.
+        Reduces context size by including only relevant tables.
+        """
+        try:
+            question_lower = question.lower()
+            
+            # Match tables mentioned in question
+            relevant_tables = [
+                table for table in (self.relevant_tables or [])
+                if table.lower() in question_lower
+            ]
+            
+            # Add related tables based on keywords for better context
+            keyword_to_tables = {
+                'glucose': ['glucose_log', 'patient_tracker', 'patient'],
+                'bp': ['bp_log', 'patient_tracker', 'patient'],
+                'blood pressure': ['bp_log', 'patient_tracker', 'patient'],
+                'hypertension': ['patient_diagnosis', 'bp_log', 'patient_tracker', 'patient'],
+                'diabetes': ['patient_diagnosis', 'glucose_log', 'patient_tracker', 'patient'],
+                'smoker': ['patient', 'patient_tracker'],  # is_regular_smoker is in patient table
+                'smoking': ['patient', 'patient_tracker'],
+                'visit': ['patient_visit', 'patient_tracker', 'patient'],
+                'diagnosis': ['patient_diagnosis', 'patient_tracker', 'patient'],
+                'medication': ['current_medication', 'patient_tracker', 'patient'],
+                'lab': ['lab_test', 'lab_test_result', 'patient_tracker', 'patient'],
+            }
+            
+            # Add tables based on keywords
+            for keyword, tables in keyword_to_tables.items():
+                if keyword in question_lower:
+                    for table in tables:
+                        if table in self.relevant_tables and table not in relevant_tables:
+                            relevant_tables.append(table)
+            
+            # If no tables matched, use full schema
+            if not relevant_tables:
+                logger.info("No specific tables matched in question. Using full cached schema.")
+                return self.cached_schema
+            
+            # Remove duplicates and get schema
+            relevant_tables = list(dict.fromkeys(relevant_tables))  # Preserve order, remove dupes
+            logger.info(f"📋 Selected relevant tables for query: {', '.join(relevant_tables)}")
+            
+            # Get base schema for selected tables
+            base_schema = self.db.get_table_info(table_names=relevant_tables)
+            
+            # Add the enhanced context that includes JOIN patterns
+            schema_enhancements = """
+
+==============================================================================
+CRITICAL: CORRECT JOIN PATTERNS
+==============================================================================
+
+patient.id → patient_tracker.patient_id → other tables
+patient_tracker.id → glucose_log.patient_track_id
+patient_tracker.id → bp_log.patient_track_id
+patient_tracker.id → patient_diagnosis.patient_track_id
+
+SMOKER DATA:
+- patient.is_regular_smoker (BOOLEAN)  Use this field!
+- NOT in patient_lifestyle table
+
+GLUCOSE DATA:
+- glucose_log.glucose_value (DOUBLE PRECISION)  Correct column name
+- NOT glucose_level
+
+==============================================================================
+"""
+            
+            return base_schema + schema_enhancements
+            
+        except Exception as e:
+            logger.warning(f"Failed to get relevant schema: {e}. Falling back to full schema.")
+            return self.cached_schema
+
     def _is_simple_query(self, question: str) -> bool:
         """
         Detect if query is simple enough for direct execution.
@@ -109,7 +292,7 @@ class SQLService:
                 return False
         
         # Natural language patterns
-        logger.info(" Analyzing natural language query")
+        logger.info("🔍 Analyzing natural language query")
         
         simple_patterns = [
             r'\bcount\b.*\bpatients?\b',
@@ -119,21 +302,27 @@ class SQLService:
             r'\bmean\b.*\b(bmi|age|glucose)\b',
             r'\bsum\b.*\b(patients?|visits?)\b',
             r'number of (patients?|visits?)',
+            r'(male|female|gender).*patients?.*with.*(hypertension|diabetes|htn|dm)',  # Gender + condition
+            r'(gender|age|bmi).*(distribution|breakdown)',  # Simple demographic distributions
+            r'distribution of (gender|age|patients?)',  # Distribution queries
         ]
         
         has_simple_pattern = any(re.search(pattern, question_lower) for pattern in simple_patterns)
         
-        # Complex indicators
+        # Complex indicators - be more specific
+        # NOTE: "distribution" by itself is NOT complex if it's for simple demographics
         complex_indicators = [
             'compare', 'versus', 'vs', 'compared to',
-            'trend', 'over time', 'by month', 'by year',
-            'group by', 'breakdown', 'categorize',
-            'join', 'combine', 'merge',
+            'trend', 'over time', 'by month', 'by year', 'by quarter',
+            'breakdown by site', 'breakdown by region',  # Geographic breakdowns are complex
+            'categorize',
             'correlation', 'relationship',
             'most', 'least', 'top', 'bottom',
-            'rank', 'order by', 'distribution',
-            'each', 'per', 'by site', 'by region'
+            'rank', 'order by',
+            'each', 'per', 'by site', 'by region',
+            'percentage', 'proportion', 'ratio'
         ]
+        # Note: Removed generic 'distribution' and 'breakdown' - these are fine for demographics
         
         has_complexity = any(indicator in question_lower for indicator in complex_indicators)
         
@@ -194,23 +383,25 @@ class SQLService:
                 sql_query = sql_query.rstrip(';') + ';'
             else:
                 # Generate SQL from natural language
-                logger.info(" API Call 1: Generate SQL query with pre-cached schema")
+                logger.info(" API Call 1: Generate SQL query with targeted schema")
                 api_call_count += 1
+                
+                # Get only relevant tables for this specific query
+                relevant_schema = self._get_relevant_schema(question)
                 
                 prompt = f"""You are a PostgreSQL expert. Generate ONLY a SQL query to answer the question.
 
 DATABASE SCHEMA:
-{self.cached_schema}
+{relevant_schema}
 
 IMPORTANT RULES:
 1. Use ONLY the exact column names shown in the schema above
 2. Use ONLY the exact table names shown in the schema above
 3. Study the sample rows to understand the data
-4. For patient visit data, use the 'patient_visit' table
-5. The patient_visit table links to patient_tracker via 'patient_track_id' (NOT patient_id)
-6. For counting visits, use COUNT(*) or COUNT(id) from patient_visit
-7. For counting unique patients from visits, use COUNT(DISTINCT patient_track_id)
-8. Use proper date filtering: WHERE visit_date >= '2024-01-01' AND visit_date <= '2024-12-31'
+4. For patient demographics (gender, age), use the 'patient' table
+5. For patient vitals (BP, glucose), use 'bp_log' or 'glucose_log'
+6. The patient_visit table links to patient_tracker via 'patient_track_id'
+7. Use proper date filtering: WHERE date_column >= 'YYYY-MM-DD' AND date_column <= 'YYYY-MM-DD'
 
 QUESTION: {question}
 
@@ -218,7 +409,7 @@ Return ONLY the SQL query, no markdown, no explanation, no comments.
 
 SQL Query:"""
 
-                response = self.llm.invoke(prompt)
+                response = self.llm_fast.invoke(prompt)
                 sql_query = response.content.strip()
                 
                 # Clean up SQL (remove markdown code blocks if present)
@@ -230,7 +421,7 @@ SQL Query:"""
             
             # Basic validation
             if not self._validate_sql_query(sql_query):
-                logger.warning("⚠️  SQL validation failed, falling back to agent")
+                logger.warning("  SQL validation failed, falling back to agent")
                 return self._execute_with_agent(question)
             
             # Execute the query directly

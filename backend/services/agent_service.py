@@ -83,7 +83,8 @@ class AgentService:
         
         # Initialize services
         self.sql_service = get_sql_service()
-        self.vector_store = get_vector_store()
+        # Don't load vector store on init - lazy load it when needed!
+        self._vector_store = None
         self.embedding_model = get_embedding_model()
         
         # Initialize LLM
@@ -143,9 +144,18 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
         
         logger.info("AgentService initialized successfully")
     
+    @property
+    def vector_store(self):
+        """Lazy load vector store only when needed."""
+        if self._vector_store is None:
+            logger.info("⚡ Lazy loading vector store on first use...")
+            self._vector_store = get_vector_store()
+            logger.info("✅ Vector store loaded")
+        return self._vector_store
+    
     def _rag_search(self, query: str) -> str:
         """RAG tool wrapper that returns string for agent."""
-        docs = self.vector_store.search(query)
+        docs = self.vector_store.search(query)  # Uses lazy-loaded property
         if not docs:
             return "No relevant documents found."
         
@@ -174,10 +184,7 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
         logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
         
         try:
-            # Get embedding info for query
-            embedding_info = self._get_embedding_info(query)
-            
-            # Execute agent
+            # Execute agent (don't get embedding info until we know we need it)
             result = self.agent_executor.invoke({"input": query})
             
             # Extract response
@@ -189,6 +196,12 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
                 action.tool == "rag_patient_context_tool"
                 for action, _ in intermediate_steps
             )
+            
+            # Only get embedding info if RAG was actually used
+            if rag_used:
+                embedding_info = self._get_embedding_info(query)
+            else:
+                embedding_info = {}
             
             # Parse JSON output from response
             chart_data, suggested_questions = self._parse_agent_output(full_response)
@@ -214,7 +227,7 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             )
             
             duration = (datetime.utcnow() - start_time).total_seconds()
-            logger.info(f"Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
+            logger.info(f" Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
             
             return response.model_dump()
             
