@@ -1,43 +1,71 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { apiClient, handleApiError } from '../services/api';
 import { API_ENDPOINTS } from '../config';
+import { useAuth } from '../contexts/AuthContext';
+import type { LoginResponse } from '../types';
 
-interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  username: string;
-  expires_in: number;
-}
-
+/**
+ * Login Page Component
+ * 
+ * Features:
+ * - Username/password authentication
+ * - JWT token storage with expiration tracking
+ * - Automatic redirect to chat page on success
+ * - Error display for failed login attempts
+ * - Link to registration page for new users
+ */
 export default function LoginPage() {
+  // Form state
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');          // Display error messages
+  const [isLoading, setIsLoading] = useState(false);  // Disable form during login
   const navigate = useNavigate();
+  const { setUser } = useAuth();  // Update global authentication state
 
+  /**
+   * Handle login form submission
+   * Authenticates user and stores JWT token with expiration time
+   */
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setIsLoading(true);
+    e.preventDefault();  // Prevent default form submission
+    setError('');        // Clear previous errors
+    setIsLoading(true);  // Disable submit button
 
     try {
+      // Send login request to backend
       const response = await apiClient.post<LoginResponse>(API_ENDPOINTS.AUTH.LOGIN, {
         username,
         password,
       });
 
-      // Store the token in localStorage
-      localStorage.setItem('auth_token', response.data.access_token);
-      localStorage.setItem('username', response.data.username);
+      // Calculate absolute expiration time (Unix timestamp)
+      // expires_in is in seconds, Date.now() is in milliseconds
+      const expiresAt = Math.floor(Date.now() / 1000) + response.data.expires_in;
 
-      // Redirect to chat page
+      // Store JWT token and expiration in localStorage
+      // This persists across page refreshes but not browser restarts (for security)
+      localStorage.setItem('auth_token', response.data.access_token);
+      localStorage.setItem('expiresAt', expiresAt.toString());
+
+      // Update global auth state with complete user object
+      // This includes username, email, full_name, and role from backend
+      // Use optional chaining for optional fields (email, full_name, role)
+      setUser({
+        username: response.data.user.username,
+        email: response.data.user?.email,
+        full_name: response.data.user?.full_name,
+        role: response.data.user?.role
+      });
+
+      // Redirect to chat page (protected route)
       navigate('/chat');
     } catch (err) {
+      // Display error message to user
       setError(handleApiError(err));
     } finally {
-      setIsLoading(false);
+      setIsLoading(false);  // Re-enable submit button
     }
   };
 
@@ -104,13 +132,13 @@ export default function LoginPage() {
             </button>
           </div>
 
-          <div className="text-sm text-gray-600 bg-gray-50 p-4 rounded-md">
-            <p className="font-medium mb-2">Demo Credentials:</p>
-            <ul className="space-y-1 text-xs">
-              <li>• <span className="font-mono">admin / admin</span></li>
-              <li>• <span className="font-mono">analyst / analyst2024</span></li>
-              <li>• <span className="font-mono">viewer / view123</span></li>
-            </ul>
+          <div className="text-center">
+            <p className="text-sm text-gray-600">
+              Don't have an account?{' '}
+              <Link to="/register" className="font-medium text-indigo-600 hover:text-indigo-500">
+                Sign up
+              </Link>
+            </p>
           </div>
         </form>
       </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 
 interface ChatInputProps {
   onSendMessage: (message: string) => void;
@@ -14,6 +14,7 @@ export default function ChatInput({
   maxLength = 2000
 }: ChatInputProps) {
   const [input, setInput] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,6 +24,11 @@ export default function ChatInput({
     
     onSendMessage(trimmedInput);
     setInput('');
+    
+    // Reset textarea height after sending
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -42,6 +48,7 @@ export default function ChatInput({
         <div className="flex flex-col gap-1.5">
           <div className="flex gap-2">
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}

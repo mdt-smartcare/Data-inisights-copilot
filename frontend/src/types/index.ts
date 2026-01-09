@@ -1,77 +1,25 @@
-// Chat Types
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-  sources?: Source[];
-  sqlQuery?: string;
-  suggestedQuestions?: string[];
-  chartData?: ChartData;
-  traceId?: string;
-  processingTime?: number;
-}
+/**
+ * Centralized type definitions barrel file
+ * 
+ * This file re-exports all types from their respective domain modules,
+ * providing a single, convenient import point for the entire application.
+ * 
+ * Usage:
+ *   import { User, Message, ChatRequest, FeedbackRequest } from '@/types';
+ *   // or
+ *   import { User, Message, ChatRequest, FeedbackRequest } from '../types';
+ * 
+ * Organization:
+ * - auth.ts: Authentication and user-related types
+ * - chat.ts: Chat messages, responses, and visualization types
+ * - feedback.ts: User feedback types
+ */
 
-export interface ChartData {
-  type: 'line' | 'bar' | 'pie' | 'area';
-  title?: string;
-  data: any[];
-  xKey?: string;
-  yKey?: string;
-  colors?: string[];
-}
+// Authentication types (User, LoginRequest, LoginResponse, etc.)
+export * from './auth';
 
-export interface Source {
-  id?: string;
-  content: string;
-  metadata?: Record<string, any>;
-  score?: number;
-}
+// Chat types (Message, ChatRequest, ChatResponse, ChartData, Source)
+export * from './chat';
 
-export interface ChatRequest {
-  query: string;
-  conversation_id?: string;
-}
-
-export interface ChatResponse {
-  answer: string;
-  sources?: Source[];
-  sql_query?: string;
-  suggested_questions?: string[];
-  chart_data?: ChartData;
-  conversation_id: string;
-  timestamp: string;
-  trace_id?: string;
-  processing_time?: number;
-}
-
-// Feedback Types
-export interface FeedbackRequest {
-  conversation_id: string;
-  message_id: string;
-  rating: number;
-  comment?: string;
-}
-
-// Auth Types
-export interface User {
-  id: string;
-  email: string;
-  name?: string;
-}
-
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-export interface RegisterRequest {
-  email: string;
-  password: string;
-  name?: string;
-}
-
-export interface AuthResponse {
-  user: User;
-  token: string;
-}
+// Feedback types (FeedbackRequest)
+export * from './feedback';

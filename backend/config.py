@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # ============================================
     secret_key: str = Field(..., min_length=32, description="JWT signing key")
     algorithm: str = Field(default="HS256")
-    access_token_expire_minutes: int = Field(default=30, gt=0)
+    access_token_expire_minutes: int = Field(default=720, gt=0)  # 12 hours
     refresh_token_expire_days: int = Field(default=7, gt=0)
     
     # ============================================

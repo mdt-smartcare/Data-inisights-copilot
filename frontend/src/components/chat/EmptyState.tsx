@@ -2,6 +2,7 @@ interface EmptyStateProps {
   title?: string;
   subtitle?: string;
   suggestions?: string[];
+  onSuggestedQuestionClick?: (suggestion: string) => void;  // Reuse same handler as assistant messages
 }
 
 export default function EmptyState({ 
@@ -11,7 +12,8 @@ export default function EmptyState({
     'What are the key components of a FHIR Patient resource?',
     'Explain FHIR resource references',
     'How do I implement FHIR search parameters?'
-  ]
+  ],
+  onSuggestedQuestionClick
 }: EmptyStateProps) {
   return (
     <div className="text-center text-gray-500 mt-4 px-4">
@@ -40,12 +42,13 @@ export default function EmptyState({
           <p className="text-xs font-medium text-gray-600 mb-2">Try asking:</p>
           <div className="space-y-1.5">
             {suggestions.map((suggestion, idx) => (
-              <div 
+              <button
                 key={idx}
-                className="text-xs text-left bg-white border border-gray-200 rounded-md p-2 hover:border-blue-300 hover:shadow-sm transition-all cursor-pointer"
+                onClick={() => onSuggestedQuestionClick?.(suggestion)}
+                className="w-full text-xs text-left bg-white border border-gray-200 rounded-md p-2 hover:border-blue-400 hover:bg-blue-50 hover:shadow-sm transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300"
               >
                 💡 {suggestion}
-              </div>
+              </button>
             ))}
           </div>
         </div>
