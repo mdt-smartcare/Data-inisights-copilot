@@ -1,4 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../contexts/AuthContext';
 
 interface ChatHeaderProps {
   title?: string;
@@ -10,11 +11,10 @@ export default function ChatHeader({
   showBackButton = false 
 }: ChatHeaderProps) {
   const navigate = useNavigate();
-  const username = localStorage.getItem('username');
+  const { user, logout } = useAuth();
 
   const handleLogout = () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('username');
+    logout();
     navigate('/login');
   };
 
@@ -46,9 +46,9 @@ export default function ChatHeader({
         </div>
 
         <div className="flex items-center gap-4">
-          {username && (
+          {user?.username && (
             <span className="text-sm text-gray-600">
-              Welcome, <span className="font-medium">{username}</span>
+              Welcome, <span className="font-medium">{user.username}</span>
             </span>
           )}
           <button
