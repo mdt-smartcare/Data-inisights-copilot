@@ -1,3 +1,4 @@
 .env
 /backend/indexes/chroma_db_advanced
 0.5.0”
+logs/backend.log
