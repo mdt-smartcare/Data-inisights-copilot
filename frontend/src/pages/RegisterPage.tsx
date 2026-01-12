@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { apiClient, handleApiError } from '../services/api';
-import { API_ENDPOINTS } from '../config';
+import { API_ENDPOINTS, APP_CONFIG } from '../config';
 import type { RegisterRequest, RegisterResponse } from '../types';
+import logo from '../assets/logo.svg';
 
 export default function RegisterPage() {
   const [formData, setFormData] = useState<RegisterRequest>({
@@ -103,11 +104,14 @@ export default function RegisterPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg">
         <div>
+          <div className="flex justify-center mb-4">
+            <img src={logo} alt="Logo" className="h-16" />
+          </div>
           <h2 className="text-center text-3xl font-bold text-gray-900">
             Create Account
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
-            Sign up to access the FHIR RAG Assistant
+            Sign up to access the {APP_CONFIG.APP_NAME}
           </p>
         </div>
 
