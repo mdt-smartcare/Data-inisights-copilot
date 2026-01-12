@@ -31,6 +31,15 @@ export const apiClient = axios.create({
  */
 apiClient.interceptors.request.use(
   (config) => {
+    // Skip authentication for public endpoints (login, register, health)
+    const publicEndpoints = ['/auth/login', '/auth/register', '/health'];
+    const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint));
+    
+    if (isPublicEndpoint) {
+      // Don't add auth headers or check token expiration for public endpoints
+      return config;
+    }
+    
     // Check token expiration before making request
     const expiresAt = localStorage.getItem('expiresAt');
     if (expiresAt) {
@@ -71,12 +80,18 @@ apiClient.interceptors.response.use(
   (error: AxiosError) => {
     // Handle authentication errors globally
     if (error.response?.status === 401) {
-      // 401 = Unauthorized (invalid/expired token)
-      // Clean up authentication state
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('expiresAt');
-      // Redirect to login page
-      window.location.href = '/login';
+      // Don't redirect if this is a login/register attempt (let the page handle the error)
+      const publicEndpoints = ['/auth/login', '/auth/register'];
+      const isPublicEndpoint = publicEndpoints.some(endpoint => error.config?.url?.includes(endpoint));
+      
+      if (!isPublicEndpoint) {
+        // 401 = Unauthorized (invalid/expired token)
+        // Clean up authentication state
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('expiresAt');
+        // Redirect to login page
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }
@@ -99,8 +114,9 @@ apiClient.interceptors.response.use(
  */
 export const handleApiError = (error: unknown): string => {
   if (axios.isAxiosError(error)) {
-    // Extract error message from API response, fallback to generic message
-    return error.response?.data?.message || error.message || 'An error occurred';
+    // Extract error message from API response
+    // FastAPI sends errors in 'detail' field, some APIs use 'message'
+    return error.response?.data?.detail || error.response?.data?.message || error.message || 'An error occurred';
   }
   return 'An unexpected error occurred';
 };
