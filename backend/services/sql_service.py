@@ -3,7 +3,7 @@ SQL service for structured database queries.
 Wraps LangChain SQL agent for database interactions.
 """
 from functools import lru_cache
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Tuple, List
 import re
 
 from langchain_community.utilities import SQLDatabase
@@ -24,6 +24,162 @@ logger = get_logger(__name__)
 DASHBOARD_KPI_TEMPLATES: List[Tuple[str, str, str]] = [
     # Format: (pattern, SQL query, description)
     # ORDER MATTERS - More specific patterns MUST come first!
+    
+    # ==========================================================================
+    # PRIORITY 0: COMBINED/COMPOUND QUERIES (most specific - check FIRST!)
+    # ==========================================================================
+    (
+        r"(critical|high).?risk.*smok|smok.*(critical|high).?risk",
+        """SELECT 
+            risk_category,
+            COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END) as smokers,
+            COUNT(DISTINCT CASE WHEN is_smoker = FALSE OR is_smoker IS NULL THEN patient_track_id END) as non_smokers,
+            COUNT(DISTINCT patient_track_id) as total
+        FROM v_high_risk_patients 
+        WHERE workflow_status = 'NCD'
+        GROUP BY risk_category
+        ORDER BY CASE risk_category 
+            WHEN 'Critical' THEN 1 
+            WHEN 'High' THEN 2 
+            WHEN 'Moderate' THEN 3 
+            ELSE 4 END""",
+        "high-risk patients by smoking status"
+    ),
+    (
+        r"smok.*(critical|high).?risk|(critical|high).?risk.*who.*smok",
+        """SELECT 
+            COUNT(DISTINCT patient_track_id) as critical_smokers
+        FROM v_high_risk_patients 
+        WHERE workflow_status = 'NCD' 
+        AND risk_category = 'Critical'
+        AND is_smoker = TRUE""",
+        "critical risk patients who are smokers"
+    ),
+    (
+        r"risk.*categor.*smok|smok.*risk.*categor",
+        """SELECT 
+            risk_category,
+            COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END) as smokers,
+            COUNT(DISTINCT patient_track_id) as total,
+            ROUND(COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END)::numeric / 
+                  NULLIF(COUNT(DISTINCT patient_track_id), 0) * 100, 2) as smoking_rate_pct
+        FROM v_high_risk_patients 
+        WHERE workflow_status = 'NCD'
+        GROUP BY risk_category
+        ORDER BY CASE risk_category 
+            WHEN 'Critical' THEN 1 
+            WHEN 'High' THEN 2 
+            WHEN 'Moderate' THEN 3 
+            ELSE 4 END""",
+        "smoking rate by risk category"
+    ),
+    
+    # ==========================================================================
+    # PRIORITY 1: High-Risk & Lifestyle Queries (specific but single-dimension)
+    # ==========================================================================
+    (
+        r"high.?risk.*patient|critical.*patient|risk.*(category|stratification)",
+        """SELECT risk_category, COUNT(DISTINCT patient_track_id) as count
+        FROM v_high_risk_patients 
+        WHERE workflow_status = 'NCD'
+        GROUP BY risk_category
+        ORDER BY CASE risk_category 
+            WHEN 'Critical' THEN 1 
+            WHEN 'High' THEN 2 
+            WHEN 'Moderate' THEN 3 
+            ELSE 4 END""",
+        "high-risk patient distribution by category"
+    ),
+    (
+        r"smoker|smoking.*patient",
+        """SELECT 
+            COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END) as smokers,
+            COUNT(DISTINCT CASE WHEN is_smoker = FALSE OR is_smoker IS NULL THEN patient_track_id END) as non_smokers,
+            ROUND(COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END)::numeric / 
+                  NULLIF(COUNT(DISTINCT patient_track_id), 0) * 100, 2) as smoking_rate_pct
+        FROM v_analytics_screening_enhanced 
+        WHERE workflow_status = 'NCD'""",
+        "smoking status among NCD patients"
+    ),
+    (
+        r"lifestyle.*risk|poor.*lifestyle",
+        """SELECT 
+            lifestyle_risk_score,
+            COUNT(DISTINCT patient_track_id) as patient_count
+        FROM v_analytics_screening_enhanced 
+        WHERE workflow_status = 'NCD' AND lifestyle_risk_score IS NOT NULL
+        GROUP BY lifestyle_risk_score
+        ORDER BY lifestyle_risk_score DESC""",
+        "lifestyle risk score distribution"
+    ),
+    (
+        r"glycemic.*control|hba1c.*control",
+        """SELECT 
+            glycemic_control_status,
+            COUNT(DISTINCT patient_track_id) as patient_count
+        FROM v_analytics_enrollment_enhanced 
+        WHERE patient_status = 'ENROLLED' AND workflow_status = 'NCD'
+        GROUP BY glycemic_control_status
+        ORDER BY CASE glycemic_control_status
+            WHEN 'Very Poorly Controlled' THEN 1
+            WHEN 'Poorly Controlled' THEN 2
+            WHEN 'Controlled Diabetic' THEN 3
+            WHEN 'Pre-Diabetic' THEN 4
+            WHEN 'Normal' THEN 5
+            ELSE 6 END""",
+        "glycemic control status distribution"
+    ),
+    (
+        r"abnormal.*lab|lab.*abnormal",
+        """SELECT 
+            CASE 
+                WHEN abnormal_result_count >= 3 THEN '3+ abnormal'
+                WHEN abnormal_result_count = 2 THEN '2 abnormal'
+                WHEN abnormal_result_count = 1 THEN '1 abnormal'
+                ELSE 'No abnormal'
+            END as abnormal_category,
+            COUNT(DISTINCT patient_track_id) as patient_count
+        FROM v_analytics_enrollment_enhanced 
+        WHERE patient_status = 'ENROLLED' AND workflow_status = 'NCD'
+        GROUP BY abnormal_category
+        ORDER BY abnormal_result_count DESC""",
+        "patients by abnormal lab result count"
+    ),
+    (
+        r"screener.*role|role.*screener|who.*screen",
+        """SELECT 
+            screener_role_name,
+            COUNT(DISTINCT patient_track_id) as patients_screened
+        FROM v_analytics_screening_enhanced 
+        WHERE workflow_status = 'NCD' AND screener_role_name IS NOT NULL
+        GROUP BY screener_role_name
+        ORDER BY patients_screened DESC""",
+        "screening counts by screener role"
+    ),
+    (
+        r"shasthya kormi|chcp|medical officer",
+        """SELECT 
+            screener_role_name,
+            COUNT(DISTINCT patient_track_id) as patients_screened,
+            COUNT(DISTINCT CASE WHEN is_referred = TRUE THEN patient_track_id END) as patients_referred
+        FROM v_analytics_screening_enhanced 
+        WHERE workflow_status = 'NCD' AND screener_role_name IS NOT NULL
+        GROUP BY screener_role_name
+        ORDER BY patients_screened DESC""",
+        "screening and referral by health worker role"
+    ),
+    (
+        r"symptom|headache|dizziness|fatigue",
+        """SELECT 
+            COUNT(DISTINCT CASE WHEN has_headache = TRUE THEN patient_track_id END) as with_headache,
+            COUNT(DISTINCT CASE WHEN has_dizziness = TRUE THEN patient_track_id END) as with_dizziness,
+            COUNT(DISTINCT CASE WHEN has_fatigue = TRUE THEN patient_track_id END) as with_fatigue,
+            COUNT(DISTINCT CASE WHEN has_vision_issues = TRUE THEN patient_track_id END) as with_vision_issues,
+            COUNT(DISTINCT CASE WHEN has_chest_pain = TRUE THEN patient_track_id END) as with_chest_pain
+        FROM v_analytics_screening_enhanced 
+        WHERE workflow_status = 'NCD'""",
+        "symptom prevalence among NCD patients"
+    ),
     
     # ==========================================================================
     # PRIORITY 1: Prevalence & Yield KPIs (most specific - check these first!)
@@ -233,7 +389,18 @@ class SQLService:
             temp_db = SQLDatabase.from_uri(settings.database_url)
             all_tables = list(temp_db.get_usable_table_names())
             
-            analytics_views = ['v_analytics_screening', 'v_analytics_enrollment']
+            # Include all analytics views (base + enhanced)
+            analytics_views = [
+                'v_analytics_screening', 
+                'v_analytics_enrollment',
+                'v_analytics_screening_enhanced',
+                'v_analytics_enrollment_enhanced',
+                'v_high_risk_patients',
+                'v_user_roles',
+                'v_patient_lifestyle',
+                'v_patient_symptoms',
+                'v_patient_lab_history'
+            ]
             for view in analytics_views:
                 if view not in all_tables:
                     all_tables.append(view)

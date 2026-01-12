@@ -3,44 +3,42 @@
 -- Purpose: Create materialized views that match Power BI dashboard logic
 -- Author: RAG System Alignment
 -- Date: 2026-01-08
+-- Updated: 2026-01-09 - Fixed to match actual DB schema structure
 -- ============================================================================
 
 -- Drop existing views if they exist
-DROP VIEW IF EXISTS v_analytics_screening CASCADE;
 DROP VIEW IF EXISTS v_analytics_enrollment CASCADE;
+DROP VIEW IF EXISTS v_analytics_screening CASCADE;
 
 -- ============================================================================
 -- VIEW: v_analytics_screening
--- Purpose: Pre-compute all screening & referral KPIs matching dashboard logic
--- Source: 1. Screening & Referral.txt
 -- ============================================================================
 CREATE OR REPLACE VIEW v_analytics_screening AS
 WITH workflow_details AS (
     SELECT
-        account_id,
-        STRING_AGG(clinical_workflow_name, ',' ORDER BY clinical_workflow_name) AS workflow_name
-    FROM accountclinicalworkflow_raw
-    WHERE account_id NOT IN (9)
-    GROUP BY account_id
+        acw.account_id,
+        STRING_AGG(cw.name, ',' ORDER BY cw.name) AS workflow_name
+    FROM account_clinical_workflow acw
+    JOIN clinical_workflow cw ON cw.id = acw.clinical_workflow_id
+    WHERE acw.account_id NOT IN (9)
+    GROUP BY acw.account_id
 ),
 cte_site AS (
-    SELECT DISTINCT ON (site_id)
-        site_id,
+    SELECT DISTINCT ON (id)
+        id AS site_id,
         name AS site_name,
-        country_name,
-        county_name,
-        sub_county_name,
+        country_id,
+        county_id,
+        sub_county_id,
         city,
-        account_name,
         account_id,
-        operating_unit_name,
         site_level
     FROM site
-    ORDER BY site_id, updated_at DESC
+    ORDER BY id, updated_at DESC
 ),
 latest_patient_tracker AS (
-    SELECT DISTINCT ON (patient_track_id)
-        patient_track_id,
+    SELECT DISTINCT ON (id)
+        id AS patient_track_id,
         gender,
         age,
         enrollment_at,
@@ -51,15 +49,14 @@ latest_patient_tracker AS (
         is_screening,
         patient_status,
         site_id,
-        referred_site_id,
-        union_id
-    FROM patienttracker
+        referred_site_id
+    FROM patient_tracker
     WHERE is_deleted = FALSE
-    ORDER BY patient_track_id, updated_at DESC
+    ORDER BY id, updated_at DESC
 ),
 latest_screening_log AS (
-    SELECT DISTINCT ON (screening_id)
-        screening_id,
+    SELECT DISTINCT ON (id)
+        id AS screening_id,
         avg_systolic,
         avg_diastolic,
         glucose_value,
@@ -71,8 +68,8 @@ latest_screening_log AS (
         site_id,
         created_at,
         created_by
-    FROM screeninglog
-    ORDER BY screening_id, updated_at DESC
+    FROM screening_log
+    ORDER BY id, updated_at DESC
 )
 SELECT
     pt.patient_track_id,
@@ -96,26 +93,19 @@ SELECT
     sl.is_before_diabetes_diagnosis,
     sl.category,
     sl.bmi,
+    sl.created_by,
     
     -- Site info
     s.site_name,
-    s.county_name,
-    s.sub_county_name,
-    s.city,
-    s.account_name,
     s.site_level,
-    
-    -- ========================================================================
-    -- DERIVED FIELDS: Match exact dashboard logic from references
-    -- ========================================================================
     
     -- Workflow Status (NCD vs Para Counselling)
     CASE
-        WHEN wd.workflow_name LIKE '%Para counselling%' THEN 'Para Counselling'
+        WHEN wd.workflow_name ILIKE '%Para counselling%' THEN 'Para Counselling'
         ELSE 'NCD'
     END AS workflow_status,
     
-    -- Referred Reason (exact thresholds from 1. Screening & Referral.txt)
+    -- Referred Reason
     CASE
         WHEN (
             (sl.avg_diastolic >= 90 OR sl.avg_systolic >= 140)
@@ -135,10 +125,9 @@ SELECT
         ELSE 'Others'
     END AS referred_reason,
     
-    -- Crisis Referral Status (exact thresholds from dashboard)
+    -- Crisis Referral Status
     CASE
-        WHEN (sl.avg_diastolic >= 110 OR sl.avg_systolic >= 180)
-             OR sl.glucose_value >= 18
+        WHEN (sl.avg_diastolic >= 110 OR sl.avg_systolic >= 180) OR sl.glucose_value >= 18
         THEN 'Crisis Referral'
         ELSE 'Others'
     END AS crisis_referral_status,
@@ -199,29 +188,28 @@ SELECT
 
 FROM latest_patient_tracker pt
 LEFT JOIN latest_screening_log sl ON sl.screening_id = pt.screening_id
-LEFT JOIN cte_site s ON s.site_id = sl.site_id
+LEFT JOIN cte_site s ON s.site_id = pt.site_id
 LEFT JOIN workflow_details wd ON wd.account_id = s.account_id;
 
 -- ============================================================================
 -- VIEW: v_analytics_enrollment  
--- Purpose: Pre-compute enrollment KPIs matching dashboard logic
--- Source: 2. Enrollment.txt
+-- Using is_htn_diagnosis/is_diabetes_diagnosis boolean flags
 -- ============================================================================
 CREATE OR REPLACE VIEW v_analytics_enrollment AS
 WITH confirm_diagnosis AS (
     SELECT 
         patient_track_id,
         CASE
-            WHEN bool_or(diagnosis IN ('Hypertension', 'Pre-Hypertension')) 
-                 AND bool_or(diagnosis IN ('Diabetes Mellitus Type 1', 'Diabetes Mellitus Type 2', 'Pre-Diabetes', 'Gestational Diabetes(GDM)'))
+            WHEN BOOL_OR(is_htn_diagnosis = TRUE) AND BOOL_OR(is_diabetes_diagnosis = TRUE)
             THEN 'Co-morbid (DBM + HTN)'
-            WHEN bool_or(diagnosis IN ('Hypertension', 'Pre-Hypertension'))
+            WHEN BOOL_OR(is_htn_diagnosis = TRUE)
             THEN 'Hypertension'
-            WHEN bool_or(diagnosis IN ('Diabetes Mellitus Type 1', 'Diabetes Mellitus Type 2', 'Pre-Diabetes', 'Gestational Diabetes(GDM)'))
+            WHEN BOOL_OR(is_diabetes_diagnosis = TRUE)
             THEN 'Diabetes'
             ELSE 'Provisional Diagnosis'
         END AS enrolled_condition
-    FROM patientconfirmdiagnosis
+    FROM patient_diagnosis
+    WHERE is_deleted = FALSE
     GROUP BY patient_track_id
 )
 SELECT
@@ -230,20 +218,5 @@ SELECT
 FROM v_analytics_screening vas
 LEFT JOIN confirm_diagnosis cd ON cd.patient_track_id = vas.patient_track_id;
 
--- ============================================================================
--- Add indexes for performance
--- ============================================================================
--- Note: Indexes cannot be created on views directly. 
--- If performance is critical, convert to MATERIALIZED VIEW and add:
--- CREATE INDEX idx_vas_workflow ON v_analytics_screening(workflow_status);
--- CREATE INDEX idx_vas_screening_date ON v_analytics_screening(screening_date);
--- CREATE INDEX idx_vas_patient_status ON v_analytics_screening(patient_status);
-
--- ============================================================================
--- GRANT permissions (adjust role names as needed)
--- ============================================================================
--- GRANT SELECT ON v_analytics_screening TO readonly_role;
--- GRANT SELECT ON v_analytics_enrollment TO readonly_role;
-
-COMMENT ON VIEW v_analytics_screening IS 'Pre-computed screening analytics matching Power BI dashboard logic. Source: 1. Screening & Referral.txt';
-COMMENT ON VIEW v_analytics_enrollment IS 'Pre-computed enrollment analytics matching Power BI dashboard logic. Source: 2. Enrollment.txt';
+COMMENT ON VIEW v_analytics_screening IS 'Pre-computed screening analytics matching Power BI dashboard logic';
+COMMENT ON VIEW v_analytics_enrollment IS 'Pre-computed enrollment analytics matching Power BI dashboard logic';

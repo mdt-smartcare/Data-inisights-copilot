@@ -36,6 +36,9 @@ You have access to a comprehensive patient database (Spice_BD) containing struct
    - NEVER query `patienttracker` or `screeninglog` raw tables for aggregate statistics.
    - ALWAYS use `v_analytics_screening` for screening & referral metrics.
    - ALWAYS use `v_analytics_enrollment` for enrollment metrics.
+   - Use `v_analytics_screening_enhanced` for lifestyle/symptom analysis.
+   - Use `v_analytics_enrollment_enhanced` for lab result trends.
+   - Use `v_high_risk_patients` for risk stratification queries.
 
 2. **"Screened Patients":** Rows from `v_analytics_screening` where:
    - `workflow_status = 'NCD'`
@@ -68,6 +71,28 @@ You have access to a comprehensive patient database (Spice_BD) containing struct
    - `site_level_filter`: 'Upazila Health Complex', 'Community Clinic', 'Others'
    - `enrolled_condition` (in v_analytics_enrollment): 'Hypertension', 'Diabetes', 'Co-morbid (DBM + HTN)'
 
+8. **Role Name Mappings (Use Bangla-friendly names):**
+   - `HEALTH_SCREENER` → 'SHASTHYA KORMI'
+   - `PHYSICIAN_PRESCRIBER` → 'MEDICAL OFFICER'
+   - `COMMUNITY_HEALTH_CARE_PROVIDER` → 'CHCP'
+   - `PROVIDER` → 'MEDICAL OFFICER'
+   - `FIELD_ORGANIZER` → 'FIELD ORGANIZER'
+   - `PROGRAM_ORGANIZER` → 'PROGRAM ORGANIZER'
+   - Use `screener_role_name` from `v_analytics_screening_enhanced` for role queries.
+
+9. **Enhanced Views for Lifestyle, Symptoms & Labs:**
+   - `v_patient_lifestyle`: `is_smoker`, `is_heavy_drinker`, `is_sedentary`, `has_poor_diet`, `lifestyle_risk_score`
+   - `v_patient_symptoms`: `symptoms_list`, `symptom_count`, `has_headache`, `has_dizziness`, `has_vision_issues`
+   - `v_patient_lab_history`: `latest_hba1c`, `latest_fbs`, `latest_creatinine`, `abnormal_result_count`
+   - `v_high_risk_patients`: `composite_risk_score`, `risk_category` ('Critical', 'High', 'Moderate', 'Low')
+
+10. **Glycemic Control Status (from v_analytics_enrollment_enhanced):**
+    - 'Normal': HbA1c < 5.7%
+    - 'Pre-Diabetic': HbA1c 5.7-6.4%
+    - 'Controlled Diabetic': HbA1c 6.5-7.9%
+    - 'Poorly Controlled': HbA1c 8.0-9.9%
+    - 'Very Poorly Controlled': HbA1c >= 10%
+
 **YOUR DECISION MATRIX:**
 
 1.  **Use `sql_query_tool` (Structured Data) when:**
@@ -75,6 +100,9 @@ You have access to a comprehensive patient database (Spice_BD) containing struct
     * The user asks for **KPIs**: Screening yield, prevalence rates, enrollment counts.
     * The user asks about **specific biomarkers**: `systolic`/`diastolic` BP, `glucose_value`, `hba1c`, `bmi`.
     * The user filters by demographics: Age groups, gender, location, site.
+    * The user asks about **lifestyle factors**: smokers, diet, physical activity.
+    * The user asks about **lab results**: HbA1c trends, abnormal results.
+    * The user asks about **risk stratification**: high-risk patients, composite risk scores.
 
 2.  **Use `rag_patient_context_tool` (Unstructured Data) when:**
     * The user asks about **qualitative factors**: Symptoms ("dizziness", "blurred vision"), lifestyle ("smoker", "diet"), or adherence ("non-compliant", "refused meds").
@@ -223,6 +251,50 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
         logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
         
         try:
+            # =================================================================
+            # FAST PATH: Check if query matches a KPI template BEFORE agent
+            # This prevents the agent from rewriting/losing important filters
+            # =================================================================
+            kpi_match = self.sql_service._check_dashboard_kpi(query)
+            if kpi_match:
+                sql_query, description = kpi_match
+                logger.info(f"⚡ FAST PATH: KPI template matched on original query: {description}")
+                
+                # Execute KPI template directly (bypasses agent rewriting)
+                sql_result = self.sql_service._execute_kpi_template(sql_query, description, query)
+                
+                # Generate suggestions based on the query type
+                suggested_questions = self._generate_kpi_suggestions(query, description)
+                
+                # Build response
+                response = ChatResponse(
+                    answer=sql_result,
+                    chart_data=None,  # Could enhance later to auto-generate charts
+                    suggested_questions=suggested_questions,
+                    reasoning_steps=[ReasoningStep(
+                        tool="sql_query_tool",
+                        input=f"KPI Template: {description}",
+                        output=sql_result[:200]
+                    )],
+                    embedding_info=EmbeddingInfo(
+                        model=settings.embedding_model_name,
+                        dimensions=self.embedding_model.dimension,
+                        search_method="kpi_template",
+                        vector_norm=None,
+                        docs_retrieved=0
+                    ),
+                    trace_id=trace_id,
+                    timestamp=start_time
+                )
+                
+                duration = (datetime.utcnow() - start_time).total_seconds()
+                logger.info(f"✅ KPI fast-path completed (trace_id={trace_id}, duration={duration:.2f}s)")
+                
+                return response.model_dump()
+            
+            # =================================================================
+            # STANDARD PATH: Use agent for complex queries
+            # =================================================================
             # Execute agent (don't get embedding info until we know we need it)
             result = self.agent_executor.invoke({"input": query})
             
@@ -274,6 +346,48 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
             raise
     
+    def _generate_kpi_suggestions(self, query: str, description: str) -> List[str]:
+        """Generate contextual follow-up suggestions for KPI queries."""
+        query_lower = query.lower()
+        
+        # Suggestions based on KPI type
+        if 'smok' in query_lower and 'risk' in query_lower:
+            return [
+                "What is the overall smoking rate among NCD patients?",
+                "Show high-risk patient distribution by category",
+                "How many patients have poor lifestyle scores?"
+            ]
+        elif 'smok' in query_lower:
+            return [
+                "How many high-risk patients are smokers?",
+                "What is the lifestyle risk score distribution?",
+                "Show symptom prevalence among NCD patients"
+            ]
+        elif 'risk' in query_lower or 'critical' in query_lower:
+            return [
+                "How many critical risk patients are smokers?",
+                "What is the glycemic control status distribution?",
+                "Show patients with abnormal lab results"
+            ]
+        elif 'enroll' in query_lower:
+            return [
+                "How many patients are enrolled by condition?",
+                "What is the community enrollment rate?",
+                "Show enrolled patients with co-morbid conditions"
+            ]
+        elif 'screen' in query_lower or 'referr' in query_lower:
+            return [
+                "What is the HTN prevalence rate?",
+                "How many crisis referrals occurred?",
+                "Show screening yield percentage"
+            ]
+        else:
+            return [
+                "How many patients are in each risk category?",
+                "What is the smoking rate among NCD patients?",
+                "Show enrollment breakdown by condition"
+            ]
+
     def _get_embedding_info(self, query: str) -> Dict[str, Any]:
         """Get embedding statistics for query."""
         try:
