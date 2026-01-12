@@ -16,7 +16,7 @@ export const API_ENDPOINTS = {
 
 // App Configuration
 export const APP_CONFIG = {
-  APP_NAME: 'FHIR RAG Assistant',
+  APP_NAME: 'Data Insights AI-Copilot',
   MAX_MESSAGE_LENGTH: 2000,
   CHAT_HISTORY_LIMIT: 50,
 } as const;

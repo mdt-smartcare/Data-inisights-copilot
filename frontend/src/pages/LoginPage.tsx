@@ -75,7 +75,7 @@ export default function LoginPage() {
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg">
         <div>
           <div className="flex justify-center mb-4">
-            <img src={logo} alt="Logo" className="h-16" />
+            <img src={logo} alt="Logo" className="h-12" />
           </div>
           <h2 className="text-center text-3xl font-bold text-gray-900">
             {APP_CONFIG.APP_NAME}
