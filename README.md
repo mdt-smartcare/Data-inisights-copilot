@@ -247,7 +247,7 @@ DEBUG=false
 
 # Security
 SECRET_KEY=your-secret-key-here
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+ACCESS_TOKEN_EXPIRE_MINUTES=720
 
 # CORS (comma-separated)
 CORS_ORIGINS=http://localhost:3000,http://localhost:5173

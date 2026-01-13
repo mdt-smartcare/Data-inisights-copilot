@@ -6,9 +6,10 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from backend.config import get_settings, DEFAULT_USERS
+from backend.config import get_settings
 from backend.core.security import get_token_username
 from backend.models.schemas import User
+from backend.sqliteDb.db import get_db_service
 
 settings = get_settings()
 security = HTTPBearer()
@@ -32,27 +33,26 @@ async def get_current_user(
     token = credentials.credentials
     username = get_token_username(token)
     
-    # Verify user exists in our system (temporary - will be DB later)
-    if username not in DEFAULT_USERS:
+    # Verify user exists in database
+    db_service = get_db_service()
+    user_data = db_service.get_user_by_username(username)
+    
+    if not user_data:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found in system"
         )
     
-    return User(username=username, role="user")
-
-
-async def get_optional_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))
-) -> Optional[User]:
-    """
-    Optional authentication dependency.
-    Returns user if authenticated, None otherwise.
-    """
-    if not credentials:
-        return None
+    if not user_data.get('is_active'):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is inactive"
+        )
     
-    try:
-        return await get_current_user(credentials)
-    except HTTPException:
-        return None
+    return User(
+        username=username,
+        role=user_data.get('role', 'user'),
+        id=user_data.get('id'),
+        email=user_data.get('email'),
+        full_name=user_data.get('full_name')
+    )

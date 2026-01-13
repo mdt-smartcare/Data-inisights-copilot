@@ -175,7 +175,7 @@ VECTOR_DB_PATH=./data/indexes/chroma_db_advanced
 # Security Configuration (Generate a new secret key!)
 SECRET_KEY=$(openssl rand -hex 32)
 ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=30
+ACCESS_TOKEN_EXPIRE_MINUTES=720
 
 # API Configuration
 API_V1_PREFIX=/api/v1

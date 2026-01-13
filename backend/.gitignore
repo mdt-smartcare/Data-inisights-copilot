@@ -17,6 +17,9 @@ data/indexes/*
 # Logs
 logs/
 
+#Sqlite DB
+sqliteDb/app.db
+
 # Legacy paths (can be removed if no longer needed)
 /chroma_db_index
 /chroma_db_index_bge_m3_full
