@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { apiClient, handleApiError } from '../services/api';
-import { API_ENDPOINTS } from '../config';
+import { API_ENDPOINTS, APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import type { LoginResponse } from '../types';
+import logo from '../assets/logo.svg';
 
 /**
  * Login Page Component
@@ -73,8 +74,11 @@ export default function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
       <div className="max-w-md w-full space-y-8 bg-white p-8 rounded-xl shadow-lg">
         <div>
+          <div className="flex justify-center mb-4">
+            <img src={logo} alt="Logo" className="h-12" />
+          </div>
           <h2 className="text-center text-3xl font-bold text-gray-900">
-            FHIR RAG Assistant
+            {APP_CONFIG.APP_NAME}
           </h2>
           <p className="mt-2 text-center text-sm text-gray-600">
             Sign in to access the medical data assistant

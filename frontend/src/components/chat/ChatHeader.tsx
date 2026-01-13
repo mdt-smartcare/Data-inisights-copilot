@@ -1,5 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { APP_CONFIG } from '../../config';
+import logo from '../../assets/logo.svg';
 
 interface ChatHeaderProps {
   title?: string;
@@ -7,7 +9,7 @@ interface ChatHeaderProps {
 }
 
 export default function ChatHeader({ 
-  title = 'FHIR RAG Chat',
+  title = APP_CONFIG.APP_NAME,
   showBackButton = false 
 }: ChatHeaderProps) {
   const navigate = useNavigate();
@@ -42,6 +44,7 @@ export default function ChatHeader({
               </svg>
             </Link>
           )}
+          <img src={logo} alt="Logo" className="h-8" />
           <h1 className="text-lg font-semibold text-gray-900">{title}</h1>
         </div>
 

@@ -65,7 +65,7 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
-      <ChatHeader title="FHIR RAG Chat" showBackButton />
+      <ChatHeader title="FHIR RAG Chat" />
       
       <MessageList 
         messages={messages}
