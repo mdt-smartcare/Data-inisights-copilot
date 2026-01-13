@@ -30,12 +30,79 @@ logger = get_logger(__name__)
 SYSTEM_PROMPT = """You are an advanced **NCD Clinical Data Intelligence Agent** specializing in Chronic Disease Management (Hypertension & Diabetes).
 You have access to a comprehensive patient database (Spice_BD) containing structured vitals, demographics, and unstructured clinical notes.
 
+**CRITICAL DATA RULES (STRICT - MUST FOLLOW):**
+
+1. **Source of Truth for KPIs:** 
+   - NEVER query `patienttracker` or `screeninglog` raw tables for aggregate statistics.
+   - ALWAYS use `v_analytics_screening` for screening & referral metrics.
+   - ALWAYS use `v_analytics_enrollment` for enrollment metrics.
+   - Use `v_analytics_screening_enhanced` for lifestyle/symptom analysis.
+   - Use `v_analytics_enrollment_enhanced` for lab result trends.
+   - Use `v_high_risk_patients` for risk stratification queries.
+
+2. **"Screened Patients":** Rows from `v_analytics_screening` where:
+   - `workflow_status = 'NCD'`
+   - `has_bp_reading = TRUE` (for BP screening) OR `has_bg_reading = TRUE` (for BG screening)
+
+3. **"Referred Patients":** Filter by `is_referred = TRUE`
+
+4. **"Crisis Referrals":** Filter by `crisis_referral_status = 'Crisis Referral'`
+
+5. **Key KPI Formulas:**
+   - **Screening Yield** = `(Screening Referrals / Total Screened) * 100`
+   - **HTN Prevalence** = `(Elevated BP Referrals / Screened for BP) * 100`
+   - **DBM Prevalence** = `(Elevated BG Referrals / Screened for BG) * 100`
+   - **% Community Enrolled** = `(is_screening=TRUE Enrolled / Total Enrolled) * 100`
+
+6. **Clinical Thresholds (EXACT VALUES):**
+   - Elevated BP: `systolic >= 140 OR diastolic >= 90`
+   - Crisis BP: `systolic >= 180 OR diastolic >= 110`
+   - Elevated FBS: `>= 7.0 mmol/L`
+   - Elevated RBS: `>= 11.1 mmol/L`
+   - Elevated HbA1c: `>= 5.7%`
+   - Crisis Glucose: `>= 18 mmol/L`
+
+7. **Pre-computed Fields in v_analytics_screening (USE THESE):**
+   - `workflow_status`: 'NCD' or 'Para Counselling'
+   - `referred_reason`: 'Due to Elevated BP', 'Due to Elevated BG', 'Due to Elevated BP & BG', 'Others'
+   - `crisis_referral_status`: 'Crisis Referral' or 'Others'
+   - `htn_new_vs_existing`: 'New Diagnoses' or 'Existing Diagnoses'
+   - `dbm_new_vs_existing`: 'New Diagnoses' or 'Existing Diagnoses'
+   - `site_level_filter`: 'Upazila Health Complex', 'Community Clinic', 'Others'
+   - `enrolled_condition` (in v_analytics_enrollment): 'Hypertension', 'Diabetes', 'Co-morbid (DBM + HTN)'
+
+8. **Role Name Mappings (Use Bangla-friendly names):**
+   - `HEALTH_SCREENER` → 'SHASTHYA KORMI'
+   - `PHYSICIAN_PRESCRIBER` → 'MEDICAL OFFICER'
+   - `COMMUNITY_HEALTH_CARE_PROVIDER` → 'CHCP'
+   - `PROVIDER` → 'MEDICAL OFFICER'
+   - `FIELD_ORGANIZER` → 'FIELD ORGANIZER'
+   - `PROGRAM_ORGANIZER` → 'PROGRAM ORGANIZER'
+   - Use `screener_role_name` from `v_analytics_screening_enhanced` for role queries.
+
+9. **Enhanced Views for Lifestyle, Symptoms & Labs:**
+   - `v_patient_lifestyle`: `is_smoker`, `is_heavy_drinker`, `is_sedentary`, `has_poor_diet`, `lifestyle_risk_score`
+   - `v_patient_symptoms`: `symptoms_list`, `symptom_count`, `has_headache`, `has_dizziness`, `has_vision_issues`
+   - `v_patient_lab_history`: `latest_hba1c`, `latest_fbs`, `latest_creatinine`, `abnormal_result_count`
+   - `v_high_risk_patients`: `composite_risk_score`, `risk_category` ('Critical', 'High', 'Moderate', 'Low')
+
+10. **Glycemic Control Status (from v_analytics_enrollment_enhanced):**
+    - 'Normal': HbA1c < 5.7%
+    - 'Pre-Diabetic': HbA1c 5.7-6.4%
+    - 'Controlled Diabetic': HbA1c 6.5-7.9%
+    - 'Poorly Controlled': HbA1c 8.0-9.9%
+    - 'Very Poorly Controlled': HbA1c >= 10%
+
 **YOUR DECISION MATRIX:**
 
 1.  **Use `sql_query_tool` (Structured Data) when:**
     * The user asks for **statistics**: Counts, averages, sums, or percentages.
+    * The user asks for **KPIs**: Screening yield, prevalence rates, enrollment counts.
     * The user asks about **specific biomarkers**: `systolic`/`diastolic` BP, `glucose_value`, `hba1c`, `bmi`.
-    * The user filters by demographics: Age groups, gender, location.
+    * The user filters by demographics: Age groups, gender, location, site.
+    * The user asks about **lifestyle factors**: smokers, diet, physical activity.
+    * The user asks about **lab results**: HbA1c trends, abnormal results.
+    * The user asks about **risk stratification**: high-risk patients, composite risk scores.
 
 2.  **Use `rag_patient_context_tool` (Unstructured Data) when:**
     * The user asks about **qualitative factors**: Symptoms ("dizziness", "blurred vision"), lifestyle ("smoker", "diet"), or adherence ("non-compliant", "refused meds").
@@ -49,13 +116,13 @@ You have access to a comprehensive patient database (Spice_BD) containing struct
 **NCD CLINICAL REASONING INSTRUCTIONS:**
 
 * **Synonym & Concept Expansion:**
-    * **Hypertension (HTN):** Map "High BP", "Pressure", or "Tension" to `systolic` > 140 or `diastolic` > 90. Look for "Stage 1", "Stage 2", or "Hypertensive Crisis".
+    * **Hypertension (HTN):** Map "High BP", "Pressure", or "Tension" to `systolic` >= 140 or `diastolic` >= 90. Look for "Stage 1", "Stage 2", or "Hypertensive Crisis".
     * **Diabetes (DM):** Map "Sugar", "Glucose", "Sweet" to `glucose_value` (FBS/RBS) or `hba1c`. Distinguish between "Type 1" (T1DM) and "Type 2" (T2DM).
-    * **Comorbidities:** Actively look for patients with *both* HTN and DM, as they are high-risk.
+    * **Comorbidities:** Actively look for patients with *both* HTN and DM, as they are high-risk. Use `enrolled_condition = 'Co-morbid (DBM + HTN)'`.
 
 * **Contextualization (The "So What?"):**
     * **Interpret Vitals:** Don't just say "Avg BP is 150/95". Say "Avg BP is 150/95, which indicates **uncontrolled Stage 2 Hypertension** in this cohort."
-    * **Interpret Glucose:** Don't just say "Avg Glucose is 12 mmol/L". Say "Avg Glucose is 12 mmol/L, indicating **poor glycemic control**."
+    * **Interpret Glucose:** Don't just say "Avg Glucose is 12 mmol/L". Say "Avg Glucose is 12 mmol/L, indicating **poor glycemic control** (target is <7 mmol/L fasting)."
     * **Risk Stratification:** Highlight if a finding implies high cardiovascular risk (e.g., high BP + smoker).
 
 **RESPONSE FORMAT INSTRUCTIONS:**
@@ -83,7 +150,8 @@ class AgentService:
         
         # Initialize services
         self.sql_service = get_sql_service()
-        self.vector_store = get_vector_store()
+        # Don't load vector store on init - lazy load it when needed!
+        self._vector_store = None
         self.embedding_model = get_embedding_model()
         
         # Initialize LLM
@@ -98,10 +166,21 @@ class AgentService:
             Tool(
                 name="sql_query_tool",
                 func=self.sql_service.query,
-                description="""**PRIMARY TOOL FOR STATISTICS.** Use this to access the structured SQL database.
-- Tables: patient_tracker (demographics, bp, glucose), patient_diagnosis (conditions), prescription.
-- Capabilities: COUNT, AVG, GROUP BY, filtering by age/gender/date.
-- Use for: "How many patients...", "Average glucose...", "Distribution of..."."""
+                description="""**PRIMARY TOOL FOR STATISTICS - Pass NATURAL LANGUAGE questions only.**
+
+This tool accepts natural language questions (NOT SQL queries) and automatically generates and executes SQL.
+
+When to use:
+- Counting: "How many patients...", "Total number of..."
+- Averages: "Average glucose level...", "Mean BMI of..."
+- Aggregations: "Sum of...", "Distribution of..."
+- Filtering: By age groups, gender, date ranges, biomarkers
+
+Input format: Natural language question ONLY
+Example: "Count patients with systolic BP > 140 in 2024"
+DO NOT generate SQL yourself - the tool handles that internally.
+
+Available data: patient_tracker (demographics, vitals), patient_diagnosis, prescription, lab_test results."""
             ),
             Tool(
                 name="rag_patient_context_tool",
@@ -132,9 +211,18 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
         
         logger.info("AgentService initialized successfully")
     
+    @property
+    def vector_store(self):
+        """Lazy load vector store only when needed."""
+        if self._vector_store is None:
+            logger.info("⚡ Lazy loading vector store on first use...")
+            self._vector_store = get_vector_store()
+            logger.info("✅ Vector store loaded")
+        return self._vector_store
+    
     def _rag_search(self, query: str) -> str:
         """RAG tool wrapper that returns string for agent."""
-        docs = self.vector_store.search(query)
+        docs = self.vector_store.search(query)  # Uses lazy-loaded property
         if not docs:
             return "No relevant documents found."
         
@@ -163,10 +251,51 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
         logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
         
         try:
-            # Get embedding info for query
-            embedding_info = self._get_embedding_info(query)
+            # =================================================================
+            # FAST PATH: Check if query matches a KPI template BEFORE agent
+            # This prevents the agent from rewriting/losing important filters
+            # =================================================================
+            kpi_match = self.sql_service._check_dashboard_kpi(query)
+            if kpi_match:
+                sql_query, description = kpi_match
+                logger.info(f"⚡ FAST PATH: KPI template matched on original query: {description}")
+                
+                # Execute KPI template directly (bypasses agent rewriting)
+                sql_result = self.sql_service._execute_kpi_template(sql_query, description, query)
+                
+                # Generate suggestions based on the query type
+                suggested_questions = self._generate_kpi_suggestions(query, description)
+                
+                # Build response
+                response = ChatResponse(
+                    answer=sql_result,
+                    chart_data=None,  # Could enhance later to auto-generate charts
+                    suggested_questions=suggested_questions,
+                    reasoning_steps=[ReasoningStep(
+                        tool="sql_query_tool",
+                        input=f"KPI Template: {description}",
+                        output=sql_result[:200]
+                    )],
+                    embedding_info=EmbeddingInfo(
+                        model=settings.embedding_model_name,
+                        dimensions=self.embedding_model.dimension,
+                        search_method="kpi_template",
+                        vector_norm=None,
+                        docs_retrieved=0
+                    ),
+                    trace_id=trace_id,
+                    timestamp=start_time
+                )
+                
+                duration = (datetime.utcnow() - start_time).total_seconds()
+                logger.info(f"✅ KPI fast-path completed (trace_id={trace_id}, duration={duration:.2f}s)")
+                
+                return response.model_dump()
             
-            # Execute agent
+            # =================================================================
+            # STANDARD PATH: Use agent for complex queries
+            # =================================================================
+            # Execute agent (don't get embedding info until we know we need it)
             result = self.agent_executor.invoke({"input": query})
             
             # Extract response
@@ -178,6 +307,12 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
                 action.tool == "rag_patient_context_tool"
                 for action, _ in intermediate_steps
             )
+            
+            # Only get embedding info if RAG was actually used
+            if rag_used:
+                embedding_info = self._get_embedding_info(query)
+            else:
+                embedding_info = {}
             
             # Parse JSON output from response
             chart_data, suggested_questions = self._parse_agent_output(full_response)
@@ -203,7 +338,7 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             )
             
             duration = (datetime.utcnow() - start_time).total_seconds()
-            logger.info(f"Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
+            logger.info(f" Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
             
             return response.model_dump()
             
@@ -211,6 +346,48 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
             raise
     
+    def _generate_kpi_suggestions(self, query: str, description: str) -> List[str]:
+        """Generate contextual follow-up suggestions for KPI queries."""
+        query_lower = query.lower()
+        
+        # Suggestions based on KPI type
+        if 'smok' in query_lower and 'risk' in query_lower:
+            return [
+                "What is the overall smoking rate among NCD patients?",
+                "Show high-risk patient distribution by category",
+                "How many patients have poor lifestyle scores?"
+            ]
+        elif 'smok' in query_lower:
+            return [
+                "How many high-risk patients are smokers?",
+                "What is the lifestyle risk score distribution?",
+                "Show symptom prevalence among NCD patients"
+            ]
+        elif 'risk' in query_lower or 'critical' in query_lower:
+            return [
+                "How many critical risk patients are smokers?",
+                "What is the glycemic control status distribution?",
+                "Show patients with abnormal lab results"
+            ]
+        elif 'enroll' in query_lower:
+            return [
+                "How many patients are enrolled by condition?",
+                "What is the community enrollment rate?",
+                "Show enrolled patients with co-morbid conditions"
+            ]
+        elif 'screen' in query_lower or 'referr' in query_lower:
+            return [
+                "What is the HTN prevalence rate?",
+                "How many crisis referrals occurred?",
+                "Show screening yield percentage"
+            ]
+        else:
+            return [
+                "How many patients are in each risk category?",
+                "What is the smoking rate among NCD patients?",
+                "Show enrollment breakdown by condition"
+            ]
+
     def _get_embedding_info(self, query: str) -> Dict[str, Any]:
         """Get embedding statistics for query."""
         try:

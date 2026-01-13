@@ -3,7 +3,7 @@ from pathlib import Path
 from langchain_core.documents import Document
 from langchain_community.retrievers.bm25 import BM25Retriever
 from langchain_chroma import Chroma
-from backend.pipeline.embed import LocalHuggingFaceEmbeddings
+from backend.services.embeddings import get_embedding_model
 from backend.rag.pickle_utils import load_with_remapping
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
@@ -32,6 +32,7 @@ RELEVANT_TABLES = {
     "call_register",
     "patient_vitals", # From notebook
     "patient_conditions", # From notebook
+    "screening_log",  # Contains raw BP/BG data, referral decisions, and crisis flags
 }
 # --- END OF FIX ---
 
@@ -55,7 +56,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         
         # Hypertension terms - expanded
         'hypertension': ['high blood pressure', 'htn', 'elevated blood pressure', 'bp',
-                        'is_htn_diagnosis', 'hypertension diagnosis'],
+                        'is_htn_diagnosis', 'hypertension diagnosis', 'elevated bp'],
         'blood pressure': ['hypertension', 'bp', 'systolic', 'diastolic'],
         
         # BMI and weight
@@ -68,24 +69,47 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         'heart': ['cardiovascular', 'cardiac', 'cvd'],
         
         # Glucose
-        'glucose': ['blood sugar', 'bg', 'blood glucose level', 'glucose_value', 'glucose_type'],
-        'blood sugar': ['glucose', 'bg', 'glucose level'],
+        'glucose': ['blood sugar', 'bg', 'blood glucose level', 'glucose_value', 'glucose_type', 'fbs', 'rbs'],
+        'blood sugar': ['glucose', 'bg', 'glucose level', 'fbs', 'rbs'],
+        'fbs': ['fasting blood sugar', 'fasting glucose', 'glucose_type fbs'],
+        'rbs': ['random blood sugar', 'random glucose', 'glucose_type rbs'],
+        'hba1c': ['glycated hemoglobin', 'a1c', 'hemoglobin a1c'],
         
         # Medication
         'medication': ['prescription', 'medicine', 'drug', 'treatment', 'is_medication_prescribed'],
         'prescription': ['medication', 'medicine', 'drug'],
         
-        # Screening and assessment
-        'screening': ['assessment', 'evaluation', 'test', 'check', 'is_screening'],
+        # Screening and assessment - NEW for dashboard alignment
+        'screening': ['assessment', 'evaluation', 'test', 'check', 'is_screening', 'screened', 'screening_log'],
+        'screened': ['screening', 'assessed', 'evaluated'],
         'assessment': ['screening', 'evaluation', 'test'],
+        
+        # Referral terms - NEW for dashboard alignment
+        'referral': ['referred', 'screening_referral', 'refer_assessment', 'referred_reason'],
+        'referred': ['referral', 'screening_referral', 'refer'],
+        'crisis': ['crisis_referral', 'crisis referral', 'emergency', 'urgent', 'crisis_referral_status'],
+        'elevated': ['high', 'raised', 'increased', 'above normal'],
+        
+        # Enrollment terms - NEW for dashboard alignment
+        'enrolled': ['enrollment', 'registered', 'patient_status enrolled', 'enrollment_at'],
+        'enrollment': ['enrolled', 'registration', 'onboarding'],
+        'community': ['is_screening', 'community screening', 'field screening'],
+        
+        # Diagnosis status
+        'new diagnosis': ['newly diagnosed', 'new patient', 'first diagnosis', 'htn_new_vs_existing'],
+        'existing diagnosis': ['known patient', 'prior diagnosis', 'previously diagnosed'],
         
         # Risk
         'risk': ['risk_level', 'risk_score', 'high risk', 'is_red_risk_patient'],
-        'high risk': ['red risk', 'elevated risk', 'is_red_risk_patient'],
+        'high risk': ['red risk', 'elevated risk', 'is_red_risk_patient', 'crisis'],
         
         # Mental health
         'depression': ['phq9', 'phq-9', 'phq9_score', 'mental health'],
         'anxiety': ['gad7', 'gad-7', 'gad7_score', 'mental health'],
+        
+        # Site/Location terms - NEW
+        'uhc': ['upazila health complex', 'level 1', 'referred to uhc'],
+        'community clinic': ['cc', 'level 6', 'referred to cc'],
     })
 
     def __init__(self, config: Dict, **kwargs):
@@ -96,7 +120,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # Resolve paths in config to absolute paths
         self._resolve_config_paths()
         
-        self.embedding_function = LocalHuggingFaceEmbeddings(model_id=config['embedding']['model_path'])
+        self.embedding_function = get_embedding_model()
         
         self.vector_store = self._load_vector_store()
         self.docstore = self._load_docstore()

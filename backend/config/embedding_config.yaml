@@ -14,7 +14,8 @@ tables:
     - "mother_educational_qualification"
     - "father_educational_qualification"
     - "password"
-    - "username"
+    - "national_id"
+
 
   # Exclude entire tables (no medical/clinical value)
   exclude_tables:
@@ -28,7 +29,6 @@ tables:
     - "offline_log"                         # Offline sync logs
     - "outbound_email"                      # Email delivery logs
     - "outbound_sms"                        # SMS delivery logs
-    - "screening_log"                       # Screening process logs
     - "shedlock"                            # Distributed lock management
     - "site_report_log"                     # Report generation logs
     - "sms_template"                        # SMS templates (static)
