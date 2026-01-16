@@ -7,6 +7,7 @@ import {
   MessageList, 
   ChatInput 
 } from '../components/chat';
+import { APP_CONFIG } from '../config';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -65,7 +66,7 @@ export default function ChatPage() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
-      <ChatHeader title="FHIR RAG Chat" />
+      <ChatHeader title={APP_CONFIG.APP_NAME} />
       
       <MessageList 
         messages={messages}
@@ -76,9 +77,9 @@ export default function ChatPage() {
           title: 'Ask me anything about FHIR healthcare data!',
           subtitle: 'Start a conversation by typing a message below',
           suggestions: [
-            'What are the key components of a FHIR Patient resource?',
-            'Explain FHIR resource references',
-            'How do I implement FHIR search parameters?'
+            "How many male patients are over the age of 50?",
+            "Which patients have a family history of heart disease mentioned in their records?",
+            "What is the average glucose level for patients who are described as 'smokers' in their clinical notes?"
           ]
         }}
       />

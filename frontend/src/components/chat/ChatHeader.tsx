@@ -1,6 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { APP_CONFIG } from '../../config';
 import logo from '../../assets/logo.svg';
 
 interface ChatHeaderProps {
@@ -9,7 +8,7 @@ interface ChatHeaderProps {
 }
 
 export default function ChatHeader({ 
-  title = APP_CONFIG.APP_NAME,
+  title,
   showBackButton = false 
 }: ChatHeaderProps) {
   const navigate = useNavigate();
