@@ -1,17 +1,44 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { chatService } from '../services/chatService';
+import { getActiveConfigMetadata } from '../services/api';
 import type { Message } from '../types';
-import { 
-  ChatHeader, 
-  MessageList, 
-  ChatInput 
+import {
+  ChatHeader,
+  MessageList,
+  ChatInput
 } from '../components/chat';
 import { APP_CONFIG } from '../config';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string>();
+  const [suggestions, setSuggestions] = useState<string[]>([
+    "How many male patients are over the age of 50?",
+    "Which patients have a family history of heart disease mentioned in their records?",
+    "What is the average glucose level for patients who are described as 'smokers' in their clinical notes?"
+  ]);
+
+  useEffect(() => {
+    const loadSuggestions = async () => {
+      try {
+        const config = await getActiveConfigMetadata();
+        if (config && config.example_questions) {
+          try {
+            const parsed = JSON.parse(config.example_questions);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setSuggestions(parsed);
+            }
+          } catch (e) {
+            console.warn("Failed to parse example questions", e);
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load active config for suggestions", err);
+      }
+    };
+    loadSuggestions();
+  }, []);
 
   const chatMutation = useMutation({
     mutationFn: chatService.sendMessage,
@@ -67,8 +94,8 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       <ChatHeader title={APP_CONFIG.APP_NAME} />
-      
-      <MessageList 
+
+      <MessageList
         messages={messages}
         isLoading={chatMutation.isPending}
         onSuggestedQuestionClick={handleSendMessage}
@@ -76,15 +103,13 @@ export default function ChatPage() {
         emptyStateProps={{
           title: 'Ask me anything about FHIR healthcare data!',
           subtitle: 'Start a conversation by typing a message below',
-          suggestions: [
-            "How many male patients are over the age of 50?",
-            "Which patients have a family history of heart disease mentioned in their records?",
-            "What is the average glucose level for patients who are described as 'smokers' in their clinical notes?"
-          ]
+          title: 'Ask me anything about FHIR healthcare data!',
+          subtitle: 'Start a conversation by typing a message below',
+          suggestions: suggestions
         }}
       />
 
-      <ChatInput 
+      <ChatInput
         onSendMessage={handleSendMessage}
         isDisabled={chatMutation.isPending}
         placeholder="Type your message..."
