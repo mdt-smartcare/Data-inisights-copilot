@@ -297,6 +297,53 @@ class DatabaseService:
             return row['prompt_text']
         return None
 
+    def publish_system_prompt(self, prompt_text: str, user_id: str) -> Dict[str, Any]:
+        """Publish a new version of the system prompt.
+        
+        Args:
+            prompt_text: Content of the prompt
+            user_id: ID of the creating user
+            
+        Returns:
+            Dictionary with the new prompt details
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # 1. Get the current max version
+            cursor.execute("SELECT MAX(version) FROM system_prompts")
+            result = cursor.fetchone()
+            current_max_version = result[0] if result and result[0] is not None else 0
+            new_version = current_max_version + 1
+
+            # 2. Deactivate all existing prompts
+            cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE is_active = 1")
+
+            # 3. Insert the new prompt
+            cursor.execute("""
+                INSERT INTO system_prompts (prompt_text, version, is_active, created_by)
+                VALUES (?, ?, 1, ?)
+            """, (prompt_text, new_version, user_id))
+            
+            prompt_id = cursor.lastrowid
+            conn.commit()
+            
+            # Return full object
+            return {
+                "id": prompt_id,
+                "prompt_text": prompt_text,
+                "version": new_version,
+                "is_active": 1
+            }
+            
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to publish prompt: {e}")
+            raise
+        finally:
+            conn.close()
+
     def get_all_prompts(self) -> list[Dict[str, Any]]:
         """Get all system prompt versions history.
         

@@ -46,35 +46,13 @@ class ConfigService:
         response = chain.invoke({})
         return response.content
 
-        conn = self.db_service.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # 1. Get the current max version
-            cursor.execute("SELECT MAX(version) FROM system_prompts")
-            result = cursor.fetchone()
-            current_max_version = result[0] if result and result[0] is not None else 0
-            new_version = current_max_version + 1
+    def publish_system_prompt(self, prompt_text: str, user_id: str):
+        """Publish a new version of the system prompt."""
+        return self.db_service.publish_system_prompt(prompt_text, user_id)
 
-            # 2. Deactivate all existing prompts
-            cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE is_active = 1")
-
-            # 3. Insert the new prompt
-            cursor.execute("""
-                INSERT INTO system_prompts (prompt_text, version, is_active, created_by)
-                VALUES (?, ?, 1, ?)
-            """, (prompt_text, new_version, user_id))
-            
-            conn.commit()
-            logger.info(f"Published new system prompt version {new_version} by user {user_id}")
-            return new_version
-            
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Failed to publish prompt: {e}")
-            raise
-        finally:
-            conn.close()
+    def get_prompt_history(self):
+        """Get history of all system prompts."""
+        return self.db_service.get_all_prompts()
 
 # Singleton instance pattern not strictly requested but good practice if needed.
 # For now, just the class is requested, but usually services are singletons or instantiated per request.
