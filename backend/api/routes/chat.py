@@ -29,7 +29,7 @@ async def chat(
     Returns comprehensive response with answer, charts, suggestions, and reasoning.
     
     **Authentication Required:** Bearer token in Authorization header.
-    **Requires Role:** User or above (Admin, Editor, User)
+    **Requires Role:** User or above (Super Admin, Editor, User)
     """
     user_id = request.user_id or current_user.username
     

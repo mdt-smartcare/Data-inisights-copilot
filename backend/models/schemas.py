@@ -23,7 +23,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(..., min_length=6, description="Password (minimum 6 characters)")
     email: Optional[str] = Field(None, description="Email address")
     full_name: Optional[str] = Field(None, max_length=100, description="Full name")
-    role: Optional[str] = Field(default="user", description="User role (admin or user)")
+    role: Optional[str] = Field(default="user", description="User role (super_admin, editor, user, viewer)")
 
 
 class TokenResponse(BaseModel):
@@ -41,7 +41,7 @@ class User(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     created_at: Optional[str] = None
-    role: str = Field(default="viewer", description="User role: admin, editor, or viewer")
+    role: str = Field(default="viewer", description="User role: super_admin, editor, user, or viewer")
 
 
 # ============================================

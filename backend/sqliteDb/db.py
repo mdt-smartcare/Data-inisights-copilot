@@ -139,7 +139,7 @@ class DatabaseService:
                 cursor.execute(
                     """INSERT INTO users (username, email, password_hash, full_name, role) 
                        VALUES (?, ?, ?, ?, ?)""",
-                    (admin_username, admin_email, admin_password_hash, "Administrator", "admin")
+                    (admin_username, admin_email, admin_password_hash, "Administrator", "super_admin")
                 )
                 logger.info(f"Default admin user '{admin_username}' created")
             
@@ -198,7 +198,7 @@ class DatabaseService:
             password: Plain text password (will be hashed before storage)
             email: Optional email address (must be unique if provided)
             full_name: Optional full name of the user
-            role: User role (default: 'user', can be 'admin' for elevated privileges)
+            role: User role (default: 'user', can be 'super_admin', 'editor', 'user', 'viewer')
             
         Returns:
             Dictionary containing created user information (without password)

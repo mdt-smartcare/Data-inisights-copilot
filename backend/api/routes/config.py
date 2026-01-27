@@ -6,7 +6,7 @@ from backend.services.config_service import ConfigService, get_config_service
 from backend.models.config import PromptGenerationRequest, PromptPublishRequest, PromptResponse
 from backend.sqliteDb.db import get_db_service, DatabaseService
 from backend.core.logging import get_logger
-from backend.core.permissions import require_editor, require_admin, get_current_user, User
+from backend.core.permissions import require_editor, require_super_admin, get_current_user, User
 
 logger = get_logger(__name__)
 
@@ -31,14 +31,14 @@ async def generate_prompt(
             detail=f"Failed to generate prompt: {str(e)}"
         )
 
-@router.post("/publish", response_model=PromptResponse, dependencies=[Depends(require_admin)])
+@router.post("/publish", response_model=PromptResponse, dependencies=[Depends(require_super_admin)])
 async def publish_prompt(
     request: PromptPublishRequest,
     service: ConfigService = Depends(get_config_service)
 ):
     """
     Publish a new system prompt.
-    Requires Admin role or above.
+    Requires Super Admin role.
     """
     try:
         result = service.publish_system_prompt(
@@ -95,15 +95,15 @@ async def get_active_prompt(
         )
 
 
-@router.post("/rollback/{version_id}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
+@router.post("/rollback/{version_id}", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
 async def rollback_to_version(
     version_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_super_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Rollback to a previous prompt version by making it the active version.
-    Requires Admin role or above.
+    Requires Super Admin role.
     """
     from backend.services.audit_service import get_audit_service, AuditAction
     

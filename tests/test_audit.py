@@ -17,7 +17,7 @@ def test_audit_trail():
         db = DatabaseService(temp_db_path)
         
         # Create test users
-        db.create_user("alice", "pass1", "alice@test.com", "Alice Admin", "admin")
+        db.create_user("alice", "pass1", "alice@test.com", "Alice Admin", "super_admin")
         db.create_user("bob", "pass2", "bob@test.com", "Bob Editor", "editor")
         
         conn = db.get_connection()

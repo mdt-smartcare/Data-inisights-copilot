@@ -61,17 +61,17 @@ async def run_verification():
     print("Verifying RBAC Implementation...")
     
     # 1. Create Users
-    admin_token = await register_user("test_admin", "password123", "admin")
+    super_admin_token = await register_user("test_super_admin", "password123", "super_admin")
     editor_token = await register_user("test_editor", "password123", "editor")
     viewer_token = await register_user("test_viewer", "password123", "viewer")
     
-    if not (admin_token and editor_token and viewer_token):
+    if not (super_admin_token and editor_token and viewer_token):
         print("Failed to get tokens for all users. Aborting.")
         return
 
-    # 2. Test Admin (Should be allowed)
-    print("\n--- Testing Admin (Should Allow All) ---")
-    await test_permission(admin_token, "ADMIN", "Generate Prompt", "POST", "/config/generate", {"data_dictionary": "test"}, 200)
+    # 2. Test Super Admin (Should be allowed)
+    print("\n--- Testing Super Admin (Should Allow All) ---")
+    await test_permission(super_admin_token, "SUPER_ADMIN", "Generate Prompt", "POST", "/config/generate", {"data_dictionary": "test"}, 200)
     
     # 3. Test Editor (Should be allowed)
     print("\n--- Testing Editor (Should Allow) ---")

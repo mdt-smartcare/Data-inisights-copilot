@@ -17,7 +17,6 @@ from backend.core.permissions import (
     require_role,
     require_at_least,
     require_super_admin,
-    require_admin,
     require_editor,
     require_user,
     get_current_user as get_current_user_from_token,

@@ -4,20 +4,20 @@ This system implements a 4-level role hierarchy to manage access to the applicat
 
 ## Roles & Permissions
 
-### 1. Super Admin (`admin`)
+### 1. Super Admin (`super_admin`)
 **Purpose:** System-wide governance and configuration.
-- **Can:** Manage connections, Edit/Publish prompts, Chat, View history.
+- **Can:** View all audit logs, Manage users, Manage connections, Edit/Publish prompts, Chat, View history.
 - **Cannot:** (No technical restrictions).
 
 ### 2. Editor (`editor`)
 **Purpose:** AI configuration and prompt engineering.
-- **Can:** Edit/Publish prompts, Chat, View history, View connections.
-- **Cannot:** Create/Delete connections.
+- **Can:** Edit prompts, Chat, View history, View connections.
+- **Cannot:** Publish prompts, Create/Delete connections, Manage users.
 
 ### 3. User (`user`)
 **Purpose:** Consumption of insights.
-- **Can:** Chat, View history, View connections (read-only).
-- **Cannot:** Edit prompts, Manage connections.
+- **Can:** Chat, Execute queries.
+- **Cannot:** Edit prompts, View history, Manage connections.
 
 ### 4. Viewer (`viewer`)
 **Purpose:** Compliance and audit.

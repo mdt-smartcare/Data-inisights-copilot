@@ -20,10 +20,9 @@ from backend.models.schemas import User
 class UserRole(str, Enum):
     """
     User roles with descending privilege levels.
-    SUPER_ADMIN > ADMIN > EDITOR > USER > VIEWER
+    SUPER_ADMIN > EDITOR > USER > VIEWER
     """
     SUPER_ADMIN = "super_admin"
-    ADMIN = "admin"
     EDITOR = "editor"
     USER = "user"
     VIEWER = "viewer"
@@ -33,7 +32,6 @@ class UserRole(str, Enum):
 # Role hierarchy for permission checks
 ROLE_HIERARCHY = [
     UserRole.SUPER_ADMIN.value,
-    UserRole.ADMIN.value,
     UserRole.EDITOR.value,
     UserRole.USER.value,
 ]
@@ -54,8 +52,8 @@ def role_at_least(user_role: str, required_role: str) -> bool:
 # ============================================
 
 def can_manage_users(role: str) -> bool:
-    """Super Admin and Admin can manage users."""
-    return role_at_least(role, UserRole.ADMIN.value)
+    """Super Admin can manage users."""
+    return role == UserRole.SUPER_ADMIN.value
 
 
 def can_view_all_audit_logs(role: str) -> bool:
@@ -64,8 +62,8 @@ def can_view_all_audit_logs(role: str) -> bool:
 
 
 def can_manage_connections(role: str) -> bool:
-    """Super Admin and Admin can manage database connections."""
-    return role_at_least(role, UserRole.ADMIN.value)
+    """Super Admin can manage database connections."""
+    return role == UserRole.SUPER_ADMIN.value
 
 
 def can_edit_config(role: str) -> bool:
@@ -74,8 +72,8 @@ def can_edit_config(role: str) -> bool:
 
 
 def can_publish_prompt(role: str) -> bool:
-    """Only Super Admin (and Admin) can publish prompts."""
-    return role_at_least(role, UserRole.ADMIN.value)
+    """Only Super Admin can publish prompts."""
+    return role == UserRole.SUPER_ADMIN.value
 
 
 def can_execute_queries(role: str) -> bool:
@@ -125,7 +123,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
 def require_role(allowed_roles: List[str]):
     """
     Dependency to enforce role-based access control.
-    Usage: Depends(require_role([UserRole.ADMIN.value, UserRole.EDITOR.value]))
+    Usage: Depends(require_role([UserRole.SUPER_ADMIN.value, UserRole.EDITOR.value]))
     """
     async def role_checker(current_user: User = Depends(get_current_user)):
         if current_user.role not in allowed_roles:
@@ -154,6 +152,5 @@ def require_at_least(min_role: str):
 
 # Convenience dependencies
 require_super_admin = require_role([UserRole.SUPER_ADMIN.value])
-require_admin = require_at_least(UserRole.ADMIN.value)
 require_editor = require_at_least(UserRole.EDITOR.value)
 require_user = require_at_least(UserRole.USER.value)

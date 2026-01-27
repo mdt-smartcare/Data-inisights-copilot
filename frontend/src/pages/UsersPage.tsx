@@ -225,7 +225,6 @@ const UsersPage: React.FC = () => {
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
                                             ${u.role === 'super_admin' ? 'bg-purple-100 text-purple-800' : ''}
-                                            ${u.role === 'admin' ? 'bg-blue-100 text-blue-800' : ''}
                                             ${u.role === 'editor' ? 'bg-green-100 text-green-800' : ''}
                                             ${u.role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
                                             ${u.role === 'viewer' ? 'bg-gray-100 text-gray-800' : ''}

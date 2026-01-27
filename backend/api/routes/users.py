@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from backend.sqliteDb.db import get_db_service, DatabaseService
-from backend.core.permissions import require_admin, User
+from backend.core.permissions import require_super_admin, User
 from backend.core.logging import get_logger
 from backend.services.audit_service import get_audit_service, AuditAction
 
@@ -20,7 +20,7 @@ class UserUpdateRequest(BaseModel):
     """Request to update a user."""
     email: Optional[str] = None
     full_name: Optional[str] = None
-    role: Optional[str] = Field(None, description="Role: super_admin, admin, editor, user, viewer")
+    role: Optional[str] = Field(None, description="Role: super_admin, editor, user, viewer")
     is_active: Optional[bool] = None
 
 
@@ -30,7 +30,7 @@ class UserCreateRequest(BaseModel):
     password: str
     email: Optional[str] = None
     full_name: Optional[str] = None
-    role: str = Field("user", description="Role: super_admin, admin, editor, user, viewer")
+    role: str = Field("user", description="Role: super_admin, editor, user, viewer")
 
 
 class UserResponse(BaseModel):
@@ -45,20 +45,20 @@ class UserResponse(BaseModel):
 
 
 
-@router.post("", response_model=UserResponse, dependencies=[Depends(require_admin)])
+@router.post("", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
 async def create_user(
     request: UserCreateRequest,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Create a new user.
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
     """
     try:
         # Validate role
-        valid_roles = ['super_admin', 'admin', 'editor', 'user', 'viewer']
+        valid_roles = ['super_admin', 'editor', 'user', 'viewer']
         if request.role not in valid_roles:
             raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
         
@@ -91,14 +91,14 @@ async def create_user(
         raise HTTPException(status_code=500, detail="Failed to create user")
 
 
-@router.get("", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
+@router.get("", response_model=List[UserResponse], dependencies=[Depends(require_super_admin)])
 async def list_users(
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     List all users in the system.
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -113,7 +113,7 @@ async def list_users(
     return [dict(zip(columns, row)) for row in rows]
 
 
-@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
+@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
 async def get_user(
     user_id: int,
     db_service: DatabaseService = Depends(get_db_service)
@@ -121,7 +121,7 @@ async def get_user(
     """
     Get a specific user by ID.
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -139,17 +139,17 @@ async def get_user(
     return dict(zip(columns, row))
 
 
-@router.patch("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
+@router.patch("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
 async def update_user(
     user_id: int,
     request: UserUpdateRequest,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Update a user's profile or role.
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -177,7 +177,7 @@ async def update_user(
     
     if request.role is not None:
         # Validate role
-        valid_roles = ['super_admin', 'admin', 'editor', 'user', 'viewer']
+        valid_roles = ['super_admin', 'editor', 'user', 'viewer']
         if request.role not in valid_roles:
             raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
         updates.append("role = ?")
@@ -212,16 +212,16 @@ async def update_user(
     return await get_user(user_id, db_service)
 
 
-@router.delete("/{user_id}", dependencies=[Depends(require_admin)])
+@router.delete("/{user_id}", dependencies=[Depends(require_super_admin)])
 async def delete_user(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Delete a user (soft delete by deactivating).
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()

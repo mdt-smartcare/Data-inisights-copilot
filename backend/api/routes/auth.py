@@ -35,7 +35,7 @@ async def register(
     - **password**: Password (minimum 6 characters) - will be hashed before storage
     - **email**: Optional email address (must be unique if provided)
     - **full_name**: Optional full name for display purposes
-    - **role**: Optional role (default: 'user', can be 'admin')
+    - **role**: Optional role (default: 'viewer', can be 'super_admin', 'editor', 'user', 'viewer')
     
     Returns:
         User object with id, username, email, full_name, created_at, role

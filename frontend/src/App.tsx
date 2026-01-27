@@ -102,7 +102,7 @@ function App() {
             <Route
               path="/config"
               element={
-                <ProtectedRoute allowedRoles={['editor', 'admin', 'super_admin']}>
+                <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
                   <ConfigPage />
                 </ProtectedRoute>
               }
@@ -111,7 +111,7 @@ function App() {
             <Route
               path="/users"
               element={
-                <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
+                <ProtectedRoute allowedRoles={['super_admin']}>
                   <UsersPage />
                 </ProtectedRoute>
               }
@@ -127,7 +127,7 @@ function App() {
             <Route
               path="/history"
               element={
-                <ProtectedRoute allowedRoles={['editor', 'admin', 'super_admin']}>
+                <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
                   <PromptHistoryPage />
                 </ProtectedRoute>
               }
@@ -135,7 +135,7 @@ function App() {
             <Route
               path="/insights"
               element={
-                <ProtectedRoute allowedRoles={['editor', 'admin', 'super_admin']}>
+                <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
                   <InsightsPage />
                 </ProtectedRoute>
               }

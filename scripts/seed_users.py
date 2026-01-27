@@ -14,7 +14,7 @@ def seed_users():
     db = get_db_service()
     
     users = [
-        {"username": "admin_user", "password": "password123", "role": "admin"},
+        {"username": "super_admin_user", "password": "password123", "role": "super_admin"},
         {"username": "editor_user", "password": "password123", "role": "editor"},
         {"username": "regular_user", "password": "password123", "role": "user"},
         {"username": "viewer_user", "password": "password123", "role": "viewer"},
