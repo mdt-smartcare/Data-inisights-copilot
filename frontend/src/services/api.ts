@@ -19,7 +19,7 @@ export const apiClient = axios.create({
   headers: {
     'Content-Type': 'application/json',     // Default content type for all requests
   },
-  timeout: 60*1000,                         // 60 seconds - important for AI model responses
+  timeout: 60 * 1000,                         // 60 seconds - important for AI model responses
 });
 
 /**
@@ -34,18 +34,18 @@ apiClient.interceptors.request.use(
     // Skip authentication for public endpoints (login, register, health)
     const publicEndpoints = ['/auth/login', '/auth/register', '/health'];
     const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint));
-    
+
     if (isPublicEndpoint) {
       // Don't add auth headers or check token expiration for public endpoints
       return config;
     }
-    
+
     // Check token expiration before making request
     const expiresAt = localStorage.getItem('expiresAt');
     if (expiresAt) {
       const currentTime = Math.floor(Date.now() / 1000);  // Current time in seconds
       const expirationTime = parseInt(expiresAt, 10);      // Token expiration in seconds
-      
+
       if (currentTime >= expirationTime) {
         // Token has expired - clean up and redirect
         localStorage.removeItem('auth_token');
@@ -54,7 +54,7 @@ apiClient.interceptors.request.use(
         return Promise.reject(new Error('Token expired'));
       }
     }
-    
+
     // Automatically add Authorization header if token exists
     const token = localStorage.getItem('auth_token');
     if (token) {
@@ -83,7 +83,7 @@ apiClient.interceptors.response.use(
       // Don't redirect if this is a login/register attempt (let the page handle the error)
       const publicEndpoints = ['/auth/login', '/auth/register'];
       const isPublicEndpoint = publicEndpoints.some(endpoint => error.config?.url?.includes(endpoint));
-      
+
       if (!isPublicEndpoint) {
         // 401 = Unauthorized (invalid/expired token)
         // Clean up authentication state
@@ -126,7 +126,7 @@ export const handleApiError = (error: unknown): string => {
 // ============================================================================
 
 export const generateSystemPrompt = async (dataDictionary: string): Promise<{ draft_prompt: string }> => {
-  const response = await apiClient.post('/config/generate', { data_dictionary: dataDictionary });
+  const response = await apiClient.post('/api/v1/config/generate', { data_dictionary: dataDictionary });
   return response.data;
 };
 
@@ -140,14 +140,14 @@ export const publishSystemPrompt = async (promptText: string): Promise<{ status:
   let userId = 'admin';
   if (user) {
     try {
-        const parsedUser = JSON.parse(user);
-        userId = parsedUser.id || parsedUser.username || 'admin';
+      const parsedUser = JSON.parse(user);
+      userId = parsedUser.id || parsedUser.username || 'admin';
     } catch (e) {
-        console.warn("Could not parse user from local storage", e);
+      console.warn("Could not parse user from local storage", e);
     }
   }
 
-  const response = await apiClient.post('/config/publish', { 
+  const response = await apiClient.post('/api/v1/config/publish', {
     prompt_text: promptText,
     user_id: userId
   });
@@ -155,7 +155,7 @@ export const publishSystemPrompt = async (promptText: string): Promise<{ status:
 };
 
 export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
-  const response = await apiClient.get('/config/active');
+  const response = await apiClient.get('/api/v1/config/active');
   return response.data;
 };
 
