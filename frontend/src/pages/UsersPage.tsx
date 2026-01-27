@@ -24,6 +24,16 @@ const UsersPage: React.FC = () => {
     const [editingUser, setEditingUser] = useState<UserData | null>(null);
     const [editForm, setEditForm] = useState({ role: '', is_active: true });
 
+    // Add User State
+    const [addingUser, setAddingUser] = useState(false);
+    const [newUserForm, setNewUserForm] = useState({
+        username: '',
+        email: '',
+        password: '',
+        full_name: '',
+        role: 'user'
+    });
+
     const hasAccess = canManageUsers(user);
 
     useEffect(() => {
@@ -75,6 +85,42 @@ const UsersPage: React.FC = () => {
         }
     };
 
+    const handleCreateUser = async () => {
+        if (!newUserForm.username || !newUserForm.password) {
+            setError('Username and password are required');
+            return;
+        }
+
+        try {
+            const token = getAuthToken();
+            const res = await fetch('/api/v1/users', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`
+                },
+                body: JSON.stringify(newUserForm)
+            });
+
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.detail || 'Failed to create user');
+            }
+
+            setAddingUser(false);
+            setNewUserForm({
+                username: '',
+                email: '',
+                password: '',
+                full_name: '',
+                role: 'user'
+            });
+            loadUsers();
+        } catch (err: any) {
+            setError(err.message || 'Failed to create user');
+        }
+    };
+
     const handleDeactivate = async (u: UserData) => {
         if (!window.confirm(`Deactivate user "${u.username}"?`)) return;
         try {
@@ -121,6 +167,12 @@ const UsersPage: React.FC = () => {
                             className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
                         >
                             Refresh
+                        </button>
+                        <button
+                            onClick={() => setAddingUser(true)}
+                            className="ml-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                        >
+                            + Add User
                         </button>
                     </div>
 
@@ -241,6 +293,84 @@ const UsersPage: React.FC = () => {
                                         className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
                                     >
                                         Save Changes
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    {/* Add User Modal */}
+                    {addingUser && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+                                <h3 className="text-lg font-semibold mb-4">Add New User</h3>
+
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Username *</label>
+                                        <input
+                                            type="text"
+                                            value={newUserForm.username}
+                                            onChange={(e) => setNewUserForm(f => ({ ...f, username: e.target.value }))}
+                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                                            placeholder="jdoe"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                                        <input
+                                            type="email"
+                                            value={newUserForm.email}
+                                            onChange={(e) => setNewUserForm(f => ({ ...f, email: e.target.value }))}
+                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                                            placeholder="john@example.com"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                                        <input
+                                            type="text"
+                                            value={newUserForm.full_name}
+                                            onChange={(e) => setNewUserForm(f => ({ ...f, full_name: e.target.value }))}
+                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                                            placeholder="John Doe"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
+                                        <input
+                                            type="password"
+                                            value={newUserForm.password}
+                                            onChange={(e) => setNewUserForm(f => ({ ...f, password: e.target.value }))}
+                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                                            placeholder="********"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                                        <select
+                                            value={newUserForm.role}
+                                            onChange={(e) => setNewUserForm(f => ({ ...f, role: e.target.value }))}
+                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                                        >
+                                            {ROLE_HIERARCHY.map(r => (
+                                                <option key={r} value={r}>{getRoleDisplayName(r)}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div className="mt-6 flex justify-end gap-3">
+                                    <button
+                                        onClick={() => setAddingUser(false)}
+                                        className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+                                    >
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleCreateUser}
+                                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                                    >
+                                        Create User
                                     </button>
                                 </div>
                             </div>
