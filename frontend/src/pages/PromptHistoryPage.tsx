@@ -30,6 +30,7 @@ const PromptHistoryPage: React.FC = () => {
     const [showCompare, setShowCompare] = useState(false);
     const [rollbackLoading, setRollbackLoading] = useState(false);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [rollbackConfirm, setRollbackConfirm] = useState<{ show: boolean; version: PromptVersion | null }>({ show: false, version: null });
 
     const canEdit = canEditPrompt(user);
 
@@ -74,14 +75,17 @@ const PromptHistoryPage: React.FC = () => {
             setError('You do not have permission to rollback prompts');
             return;
         }
-        if (!window.confirm(`Rollback to version ${version.version}? This will make it the active prompt.`)) {
-            return;
-        }
+        setRollbackConfirm({ show: true, version });
+    };
+
+    const confirmRollback = async () => {
+        if (!rollbackConfirm.version) return;
+
         setRollbackLoading(true);
         setError(null);
         try {
             const token = getAuthToken();
-            const res = await fetch(`/api/v1/config/rollback/${version.id}`, {
+            const res = await fetch(`/api/v1/config/rollback/${rollbackConfirm.version.id}`, {
                 method: 'POST',
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -91,6 +95,7 @@ const PromptHistoryPage: React.FC = () => {
             }
             const data = await res.json();
             setSuccessMessage(`Rolled back to version ${data.version}`);
+            setRollbackConfirm({ show: false, version: null });
             loadVersions();
             setTimeout(() => setSuccessMessage(null), 3000);
         } catch (err: any) {
@@ -294,6 +299,47 @@ const PromptHistoryPage: React.FC = () => {
                     )}
                 </div>
             </div>
+
+            {/* Rollback Confirmation Modal */}
+            {rollbackConfirm.show && rollbackConfirm.version && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center flex-shrink-0">
+                                <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">Rollback to v{rollbackConfirm.version.version}</h3>
+                                <p className="text-sm text-gray-500">Restore previous version</p>
+                            </div>
+                        </div>
+                        <p className="text-gray-600 mb-6">
+                            Are you sure you want to rollback to <strong>Version {rollbackConfirm.version.version}</strong>?
+                            This will make it the active system prompt for all new queries.
+                        </p>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setRollbackConfirm({ show: false, version: null })}
+                                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 font-medium"
+                                disabled={rollbackLoading}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmRollback}
+                                disabled={rollbackLoading}
+                                className="px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 font-medium disabled:opacity-50 flex items-center gap-2"
+                            >
+                                {rollbackLoading ? 'Rolling back...' : 'Confirm Rollback'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
