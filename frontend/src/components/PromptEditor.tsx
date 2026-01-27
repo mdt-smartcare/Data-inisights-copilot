@@ -85,7 +85,7 @@ const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange }) => {
             )}
 
             {/* Content Area */}
-            <div className="flex-1 flex overflow-hidden min-h-[500px] relative">
+            <div className="flex-1 flex overflow-hidden min-h-[700px] relative">
                 {activeTab === 'write' ? (
                     <textarea
                         ref={textareaRef}
