@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { generateSystemPrompt, publishSystemPrompt, handleApiError } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
+import DictionaryUploader from '../components/DictionaryUploader';
 
 const steps = [
     { id: 1, name: 'Connect Database' },
@@ -152,6 +153,11 @@ const ConfigPage: React.FC = () => {
                             <p className="text-gray-500 text-sm mb-4">
                                 Paste any additional context, column descriptions, or business rules here. This helps the AI understand your schema better.
                             </p>
+                            <div className="mb-4">
+                                <DictionaryUploader
+                                    onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
+                                />
+                            </div>
                             <textarea
                                 className="flex-1 p-4 border rounded-md font-mono text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                                 placeholder="e.g. 'users.role' values can be 'admin', 'viewer', 'editor'..."
