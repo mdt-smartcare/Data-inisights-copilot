@@ -5,10 +5,12 @@ interface SchemaSelectorProps {
     connectionId: number;
     // Map of TableName -> List of Selected Column Names
     onSelectionChange: (selection: Record<string, string[]>) => void;
+    onSelectionChange: (selection: Record<string, string[]>) => void;
     readOnly?: boolean;
+    reasoning?: Record<string, string>;
 }
 
-const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelectionChange, readOnly = false }) => {
+const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelectionChange, readOnly = false, reasoning = {} }) => {
     const [tables, setTables] = useState<string[]>([]);
     // details is Record<TableName, {name, type, nullable}[]>
     const [details, setDetails] = useState<Record<string, any[]>>({});
@@ -217,6 +219,11 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
                                     <span className="ml-2 text-xs text-gray-500">
                                         {selectedCols.size} / {tableCols.length} cols
                                     </span>
+                                    {reasoning && reasoning[table] && (
+                                        <span className="ml-2 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200" title={reasoning[table]}>
+                                            💡 AI Reason
+                                        </span>
+                                    )}
                                 </div>
 
                                 <div className="text-gray-400">

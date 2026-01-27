@@ -29,6 +29,7 @@ const ConfigPage: React.FC = () => {
     // Changed to map of Table -> Columns
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
+    const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [draftPrompt, setDraftPrompt] = useState('');
     const [history, setHistory] = useState<any[]>([]);
     const [showHistory, setShowHistory] = useState(false);
@@ -64,6 +65,15 @@ const ConfigPage: React.FC = () => {
                 }
                 if (config.data_dictionary) setDataDictionary(config.data_dictionary);
                 if (config.prompt_text) setDraftPrompt(config.prompt_text);
+                if (config.reasoning) {
+                    try {
+                        setReasoning(JSON.parse(config.reasoning));
+                    } catch (e) {
+                        // ignore if not json string or already obj?
+                        // config.reasoning might be string if coming from DB
+                        setReasoning(typeof config.reasoning === 'string' ? JSON.parse(config.reasoning) : config.reasoning);
+                    }
+                }
 
                 // If we have config, stay on Dashboard (Step 0)
                 // If not, go to Step 1
@@ -130,6 +140,7 @@ const ConfigPage: React.FC = () => {
 
             const result = await generateSystemPrompt(fullContext);
             setDraftPrompt(result.draft_prompt);
+            if (result.reasoning) setReasoning(result.reasoning);
             setCurrentStep(4); // Move to final step
         } catch (err) {
             setError(handleApiError(err));
@@ -298,6 +309,7 @@ const ConfigPage: React.FC = () => {
                                     connectionId={connectionId}
                                     onSelectionChange={setSelectedSchema}
                                     readOnly={!canEdit}
+                                    reasoning={reasoning}
                                 />
                             </div>
                         )}
