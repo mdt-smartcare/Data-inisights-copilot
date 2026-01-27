@@ -48,12 +48,12 @@ class ConfigService:
         instruction += (
             "\n\nAlso, at the end of your response, strictly separated by '---REASONING---', "
             "provide a JSON object with two keys: \n"
-            "1. 'selection_reasoning': mapping key schema elements to the reason they were selected.\n"
+            "1. 'selection_reasoning': mapping key schema elements (table names or table.column) to the reason they were selected.\n"
             "2. 'example_questions': a list of 3-5 representative questions this agent could answer.\n"
             "Example:\n"
             "Prompt Text...\n"
             "---REASONING---\n"
-            "{\"selection_reasoning\": {\"patients\": \"...\"}, \"example_questions\": [\"Count patients by gender\", \"...\"]}"
+            "{\"selection_reasoning\": {\"patients\": \"Contains core demographics needed for most queries\", \"visits.admission_date\": \"Required for timeline analysis\"}, \"example_questions\": [\"Count patients by gender\", \"What is the average length of stay?\"]}"
         )
 
         chain = prompt_template | self.llm
@@ -66,7 +66,7 @@ class ConfigService:
             prompt_content = parts[0].strip()
             try:
                 reasoning_json = parts[1].strip()
-                # fast cleanup if mardown code blocks are present
+                # fast cleanup if markdown code blocks are present
                 reasoning_json = reasoning_json.replace("```json", "").replace("```", "").strip()
                 try:
                     parsed = json.loads(reasoning_json)
@@ -78,10 +78,12 @@ class ConfigService:
                         # Fallback for simple dict
                         reasoning = parsed
                         questions = []
-                except:
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse reasoning JSON: Invalid JSON")
                     reasoning = {}
                     questions = []
-            except:
+            except Exception as e:
+                logger.warning(f"Error parsing reasoning section: {e}")
                 reasoning = {}
                 questions = []
         else:

@@ -401,11 +401,14 @@ const ConfigPage: React.FC = () => {
 
                                 {/* Example Questions Preview */}
                                 {exampleQuestions.length > 0 && (
-                                    <div className="mt-4 bg-gray-50 p-4 rounded-md border border-gray-200">
-                                        <h3 className="text-sm font-semibold text-gray-700 mb-2">Example Questions</h3>
+                                    <div className="mt-4 bg-gradient-to-r from-blue-50 to-indigo-50 p-5 rounded-lg border border-blue-100">
+                                        <h3 className="text-sm font-bold text-blue-900 mb-3 flex items-center">
+                                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                            Example Questions (Preview)
+                                        </h3>
                                         <div className="flex gap-2 flex-wrap">
                                             {exampleQuestions.map((q, idx) => (
-                                                <span key={idx} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                                <span key={idx} className="inline-flex items-center px-3 py-1.5 rounded-lg text-sm font-medium bg-white text-blue-700 shadow-sm border border-blue-100">
                                                     {q}
                                                 </span>
                                             ))}

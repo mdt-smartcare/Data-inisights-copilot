@@ -220,7 +220,7 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
                                     </span>
                                     {reasoning && reasoning[table] && (
                                         <span className="ml-2 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200" title={reasoning[table]}>
-                                            💡 AI Reason
+                                            💡 {reasoning[table]}
                                         </span>
                                     )}
                                 </div>
@@ -249,11 +249,16 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
                                             />
                                             <label
                                                 htmlFor={`${table}-${col.name}`}
-                                                className="text-xs text-gray-700 cursor-pointer flex-1 truncate hover:text-blue-700"
+                                                className="text-xs text-gray-700 cursor-pointer flex-1 truncate hover:text-blue-700 flex items-center"
                                                 title={`${col.name} (${col.type})`}
                                             >
-                                                <span className="font-medium">{col.name}</span>
-                                                <span className="ml-1 text-gray-400 text-[10px]">{col.type}</span>
+                                                <span className="font-medium mr-1">{col.name}</span>
+                                                <span className="text-gray-400 text-[10px] mr-2">{col.type}</span>
+                                                {reasoning && reasoning[`${table}.${col.name}`] && (
+                                                    <span className="text-[10px] text-amber-600 bg-amber-50 px-1.5 rounded border border-amber-100 truncate max-w-[150px]" title={reasoning[`${table}.${col.name}`]}>
+                                                        💡 {reasoning[`${table}.${col.name}`]}
+                                                    </span>
+                                                )}
                                             </label>
                                         </div>
                                     ))}
