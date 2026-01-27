@@ -69,6 +69,18 @@ class DatabaseService:
                 )
             """)
             
+            # Create system_prompts table for dynamic prompt management
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_prompts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    prompt_text TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    is_active INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT
+                )
+            """)
+            
             # Add role column if it doesn't exist (migration for existing databases)
             cursor.execute("PRAGMA table_info(users)")
             columns = [col[1] for col in cursor.fetchall()]
@@ -251,6 +263,26 @@ class DatabaseService:
         user.pop('password_hash', None)
         logger.info(f"Authentication successful: {username}")
         return user
+    
+    def get_latest_active_prompt(self) -> Optional[str]:
+        """Get the latest active system prompt.
+        
+        Returns:
+            The prompt text of the row where is_active=1 (ordered by version desc),
+            or None if no active prompt exists.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT prompt_text FROM system_prompts WHERE is_active = 1 ORDER BY version DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return row['prompt_text']
+        return None
 
 
 # Global database instance (Singleton pattern)
