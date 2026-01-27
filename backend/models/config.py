@@ -33,3 +33,5 @@ class PromptResponse(BaseModel):
 
     is_active: int
     reasoning: Optional[Dict[str, str]] = None  # New field for explainability
+    created_at: Optional[str] = None
+    created_by_username: Optional[str] = None
