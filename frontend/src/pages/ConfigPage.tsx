@@ -98,6 +98,8 @@ const ConfigPage: React.FC = () => {
             } else {
                 setCurrentStep(1);
             }
+            // Load history for total versions count
+            loadHistory();
         } catch (e) {
             console.error("Failed to load active config", e);
             setCurrentStep(1);
