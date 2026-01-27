@@ -198,7 +198,7 @@ const ConfigPage: React.FC = () => {
                                     <span className="text-xs text-gray-500">Editable • Markdown Supported</span>
                                 </div>
                                 <textarea
-                                    className="flex-1 p-4 border border-gray-300 rounded-md font-mono text-sm bg-gray-50 text-gray-800 resize-none focus:ring-2 focus:ring-green-500 focus:border-transparent shadow-inner"
+                                    className="flex-1 p-4 border border-gray-300 rounded-md font-mono text-sm bg-gray-50 text-gray-800 resize-none focus:ring-2 focus:ring-green-500 focus:border-transparent shadow-inner min-h-[600px]"
                                     value={draftPrompt}
                                     onChange={(e) => setDraftPrompt(e.target.value)}
                                     spellCheck={false}
