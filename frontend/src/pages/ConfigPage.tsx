@@ -149,33 +149,45 @@ const ConfigPage: React.FC = () => {
 
                     {currentStep === 3 && (
                         <div className="h-full flex flex-col">
-                            <h2 className="text-xl font-semibold mb-4">Add Data Dictionary (Optional)</h2>
+                            <h2 className="text-xl font-semibold mb-2">Add Data Dictionary</h2>
                             <p className="text-gray-500 text-sm mb-4">
-                                Paste any additional context, column descriptions, or business rules here. This helps the AI understand your schema better.
+                                Provide context to help the AI understand your data. Upload a file or paste definitions below.
                             </p>
-                            <div className="mb-4">
-                                <DictionaryUploader
-                                    onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
-                                />
+
+                            <div className="flex-1 flex flex-col gap-4 min-h-0">
+                                <div className="p-4 bg-gray-50 rounded border border-gray-200">
+                                    <h4 className="text-xs font-semibold text-gray-700 uppercase mb-2">Import from File</h4>
+                                    <DictionaryUploader
+                                        onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
+                                    />
+                                </div>
+
+                                <div className="flex-1 flex flex-col min-h-0">
+                                    <label className="text-sm font-medium text-gray-700 mb-1">Dictionary Content</label>
+                                    <textarea
+                                        className="flex-1 p-4 border rounded-md font-mono text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+                                        placeholder="# Users Table\n- role: 'admin' | 'user'\n- status: 1=active, 0=inactive..."
+                                        value={dataDictionary}
+                                        onChange={(e) => setDataDictionary(e.target.value)}
+                                    />
+                                </div>
                             </div>
-                            <textarea
-                                className="flex-1 p-4 border rounded-md font-mono text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                placeholder="e.g. 'users.role' values can be 'admin', 'viewer', 'editor'..."
-                                value={dataDictionary}
-                                onChange={(e) => setDataDictionary(e.target.value)}
-                            />
                         </div>
                     )}
 
                     {currentStep === 4 && (
                         <div className="h-full flex flex-col">
                             <h2 className="text-xl font-semibold mb-4">Review & Configuration</h2>
-                            <div className="flex-1 flex flex-col">
-                                <label className="text-sm font-medium text-gray-700 mb-2">Generated System Prompt</label>
+                            <div className="flex-1 flex flex-col min-h-0">
+                                <div className="flex justify-between items-center mb-2">
+                                    <label className="text-sm font-medium text-gray-700">Generated System Prompt</label>
+                                    <span className="text-xs text-gray-500">Editable • Markdown Supported</span>
+                                </div>
                                 <textarea
-                                    className="flex-1 p-4 border border-gray-300 rounded-md font-mono text-sm resize-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    className="flex-1 p-4 border border-gray-300 rounded-md font-mono text-sm bg-gray-50 text-gray-800 resize-none focus:ring-2 focus:ring-green-500 focus:border-transparent shadow-inner"
                                     value={draftPrompt}
                                     onChange={(e) => setDraftPrompt(e.target.value)}
+                                    spellCheck={false}
                                 />
                             </div>
                         </div>
