@@ -261,6 +261,7 @@ const ConfigPage: React.FC = () => {
                                     dataDictionary={activeConfig.data_dictionary || ''}
                                     activePromptVersion={activeConfig.version}
                                     totalPromptVersions={history.length} // This might need separate fetch if history not loaded
+                                    lastUpdatedBy={activeConfig.created_by_username}
                                 />
                             </div>
                         ) : (
@@ -440,62 +441,63 @@ const ConfigPage: React.FC = () => {
                                     dataDictionary={dataDictionary}
                                     activePromptVersion={history.find(p => p.is_active)?.version || null}
                                     totalPromptVersions={history.length}
+                                    lastUpdatedBy={history.find(p => p.is_active)?.created_by_username}
                                 />
                             </div>
                         )}
-
                     </div>
                 )}
             </div>
-            {/* Footer Navigation */}
-            {
-                currentStep > 0 && (
-                    <div className="mt-8 flex justify-between">
-                        <button
-                            onClick={handleBack}
-                            className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                            disabled={currentStep === 1}
-                        >
-                            Back
-                        </button>
+        </div>
+            {/* Footer Navigation */ }
+    {
+        currentStep > 0 && (
+            <div className="mt-8 flex justify-between">
+                <button
+                    onClick={handleBack}
+                    className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                    disabled={currentStep === 1}
+                >
+                    Back
+                </button>
 
-                        {currentStep === 3 ? (
-                            <button
-                                onClick={handleGenerate}
-                                disabled={generating || !canEdit}
-                                className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+                {currentStep === 3 ? (
+                    <button
+                        onClick={handleGenerate}
+                        disabled={generating || !canEdit}
+                        className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
                                 ${generating || !canEdit ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                                title={!canEdit ? "Read-only mode" : "Generate Prompt"}
-                            >
-                                {generating ? 'Generating...' : 'Generate Prompt'}
-                            </button>
-                        ) : currentStep === 4 ? (
-                            canEdit ? (
-                                <button
-                                    onClick={handlePublish}
-                                    disabled={publishing}
-                                    className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
-                                >
-                                    {publishing ? 'Publishing...' : 'Publish to Production'}
-                                </button>
-                            ) : (
-                                <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
-                                    Read-only mode: Cannot publish changes
-                                </div>
-                            )
-                        ) : (
-                            <button
-                                onClick={handleNext}
-                                disabled={generating || publishing || (currentStep === 1 && !connectionId)}
-                                className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+                        title={!canEdit ? "Read-only mode" : "Generate Prompt"}
+                    >
+                        {generating ? 'Generating...' : 'Generate Prompt'}
+                    </button>
+                ) : currentStep === 4 ? (
+                    canEdit ? (
+                        <button
+                            onClick={handlePublish}
+                            disabled={publishing}
+                            className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
+                        >
+                            {publishing ? 'Publishing...' : 'Publish to Production'}
+                        </button>
+                    ) : (
+                        <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
+                            Read-only mode: Cannot publish changes
+                        </div>
+                    )
+                ) : (
+                    <button
+                        onClick={handleNext}
+                        disabled={generating || publishing || (currentStep === 1 && !connectionId)}
+                        className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
                                 ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                            >
-                                {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
-                            </button>
-                        )}
-                    </div>
-                )
-            }
+                    >
+                        {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
+                    </button>
+                )}
+            </div>
+        )
+    }
         </div >
     );
 };

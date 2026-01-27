@@ -6,6 +6,7 @@ interface ConfigSummaryProps {
     dataDictionary: string;
     activePromptVersion: number | null;
     totalPromptVersions: number;
+    lastUpdatedBy?: string | null;
 }
 
 const ConfigSummary: React.FC<ConfigSummaryProps> = ({
@@ -13,7 +14,8 @@ const ConfigSummary: React.FC<ConfigSummaryProps> = ({
     schema,
     dataDictionary,
     activePromptVersion,
-    totalPromptVersions
+    totalPromptVersions,
+    lastUpdatedBy
 }) => {
     const tableCount = Object.keys(schema).length;
     const columnCount = Object.values(schema).reduce((acc, cols) => acc + cols.length, 0);
@@ -107,7 +109,10 @@ const ConfigSummary: React.FC<ConfigSummaryProps> = ({
                 <div className="flex-1 flex flex-col justify-center">
                     <div className="flex justify-between items-center bg-gray-50 p-3 rounded mb-2">
                         <span className="text-sm text-gray-600">Active Version</span>
-                        <span className="font-bold text-green-600">v{activePromptVersion || '-'}</span>
+                        <div className="text-right">
+                            <span className="font-bold text-green-600 block">v{activePromptVersion || '-'}</span>
+                            {lastUpdatedBy && <span className="text-[10px] text-gray-500">by {lastUpdatedBy}</span>}
+                        </div>
                     </div>
                     <div className="flex justify-between items-center bg-gray-50 p-3 rounded">
                         <span className="text-sm text-gray-600">Total Versions</span>

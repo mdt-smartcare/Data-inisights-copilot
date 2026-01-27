@@ -6,6 +6,7 @@ interface PromptVersion {
     created_at: string;
     prompt_text: string;
     is_active: number;
+    created_by_username?: string;
 }
 
 interface PromptHistoryProps {
@@ -36,9 +37,16 @@ const PromptHistory: React.FC<PromptHistoryProps> = ({ history, onSelect, curren
                                     }`}
                             >
                                 <div className="flex justify-between items-start mb-1">
-                                    <span className={`text-xs font-bold ${version.is_active ? 'text-green-600' : 'text-gray-700'}`}>
-                                        v{version.version} {version.is_active ? '(Active)' : ''}
-                                    </span>
+                                    <div className="flex flex-col">
+                                        <span className={`text-xs font-bold ${version.is_active ? 'text-green-600' : 'text-gray-700'}`}>
+                                            v{version.version} {version.is_active ? '(Active)' : ''}
+                                        </span>
+                                        {version.created_by_username && (
+                                            <span className="text-[9px] text-gray-500">
+                                                by {version.created_by_username}
+                                            </span>
+                                        )}
+                                    </div>
                                     <span className="text-[10px] text-gray-400">
                                         {new Date(version.created_at).toLocaleDateString()}
                                     </span>

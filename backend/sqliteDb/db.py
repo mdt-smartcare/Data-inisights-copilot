@@ -103,7 +103,7 @@ class DatabaseService:
                     reasoning TEXT, -- JSON string
                     example_questions TEXT, -- JSON string list
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
                     FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
                 )
             """)
@@ -399,8 +399,9 @@ class DatabaseService:
                 sp.id as prompt_id,
                 sp.version,
                 sp.prompt_text,
-                pc.connection_id,
-                pc.schema_selection,
+                sp.created_at,
+                sp.created_by,
+                u.username as created_by_username,
                 pc.connection_id,
                 pc.schema_selection,
                 pc.data_dictionary,
@@ -408,6 +409,7 @@ class DatabaseService:
                 pc.example_questions
             FROM system_prompts sp
             LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            LEFT JOIN users u ON sp.created_by = CAST(u.id AS TEXT)
             WHERE sp.is_active = 1
             LIMIT 1
         """
@@ -428,9 +430,19 @@ class DatabaseService:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT id, prompt_text, version, is_active, created_at, created_by FROM system_prompts ORDER BY version DESC"
-        )
+        cursor.execute("""
+            SELECT 
+                sp.id, 
+                sp.prompt_text, 
+                sp.version, 
+                sp.is_active, 
+                sp.created_at, 
+                sp.created_by,
+                u.username as created_by_username
+            FROM system_prompts sp
+            LEFT JOIN users u ON sp.created_by = CAST(u.id AS TEXT)
+            ORDER BY sp.version DESC
+        """)
         rows = cursor.fetchall()
         conn.close()
         
