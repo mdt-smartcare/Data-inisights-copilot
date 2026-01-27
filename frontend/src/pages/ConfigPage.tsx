@@ -6,6 +6,7 @@ import DictionaryUploader from '../components/DictionaryUploader';
 import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
+import Alert from '../components/Alert';
 import { ChatHeader } from '../components/chat';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
@@ -315,17 +316,19 @@ const ConfigPage: React.FC = () => {
                         ) : (
                             <div className="p-6 h-full flex flex-col">
                                 {successMessage && (
-                                    <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-md flex items-center justify-between">
-                                        <span>{successMessage}</span>
-                                        <button onClick={() => setSuccessMessage(null)} className="text-green-500 hover:text-green-700">&times;</button>
-                                    </div>
+                                    <Alert
+                                        type="success"
+                                        message={successMessage}
+                                        onDismiss={() => setSuccessMessage(null)}
+                                    />
                                 )}
 
                                 {error && (
-                                    <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md flex items-center justify-between">
-                                        <span>{error}</span>
-                                        <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">&times;</button>
-                                    </div>
+                                    <Alert
+                                        type="error"
+                                        message={error}
+                                        onDismiss={() => setError(null)}
+                                    />
                                 )}
                                 {currentStep === 1 && (
                                     <div className="max-w-2xl mx-auto">

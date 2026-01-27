@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import Alert from './Alert';
 
 interface DictionaryUploaderProps {
     onUpload: (content: string) => void;
@@ -68,7 +69,16 @@ const DictionaryUploader: React.FC<DictionaryUploaderProps> = ({ onUpload, disab
                 Import File
             </button>
 
-            {error && <span className="ml-2 text-xs text-red-500">{error}</span>}
+            {error && (
+                <div className="mt-2">
+                    <Alert
+                        type="error"
+                        message={error}
+                        onDismiss={() => setError(null)}
+                        className="!mb-0"
+                    />
+                </div>
+            )}
         </div>
     );
 };

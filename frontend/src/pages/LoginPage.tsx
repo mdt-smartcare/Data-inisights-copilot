@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom';
 import { apiClient, handleApiError } from '../services/api';
 import { API_ENDPOINTS, APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
+import Alert from '../components/Alert';
 import type { LoginResponse } from '../types';
 import logo from '../assets/logo.svg';
 
@@ -127,9 +128,11 @@ export default function LoginPage() {
           </div>
 
           {error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <p className="text-sm text-red-800">{error}</p>
-            </div>
+            <Alert
+              type="error"
+              message={error}
+              onDismiss={() => setError('')}
+            />
           )}
 
           <div>

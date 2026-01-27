@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { canManageUsers, getRoleDisplayName, ROLE_HIERARCHY } from '../utils/permissions';
 import { ChatHeader } from '../components/chat';
+import RefreshButton from '../components/RefreshButton';
+import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
 
 const getAuthToken = (): string | null => localStorage.getItem('auth_token');
@@ -165,39 +167,44 @@ const UsersPage: React.FC = () => {
             <ChatHeader title={APP_CONFIG.APP_NAME} />
             <div className="flex-1 overflow-auto">
                 <div className="max-w-6xl mx-auto py-8 px-4">
-                    <div className="flex justify-between items-center mb-8">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
                             <p className="text-gray-500 mt-1">Manage user accounts and roles</p>
                         </div>
-                        <button
-                            onClick={loadUsers}
-                            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-                        >
-                            Refresh
-                        </button>
-                        <button
-                            onClick={() => setAddingUser(true)}
-                            className="ml-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-                        >
-                            + Add User
-                        </button>
+                        <div className="flex items-center gap-3">
+                            <RefreshButton
+                                onClick={loadUsers}
+                                isLoading={loading}
+                            />
+                            <button
+                                onClick={() => setAddingUser(true)}
+                                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                                Add User
+                            </button>
+                        </div>
                     </div>
 
                     {error && (
-                        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md flex justify-between items-center">
-                            <span>{error}</span>
-                            <button onClick={() => setError(null)} className="text-red-500">&times;</button>
-                        </div>
+                        <Alert
+                            type="error"
+                            message={error}
+                            onDismiss={() => setError(null)}
+                        />
                     )}
 
                     {loading ? (
-                        <div className="flex items-center justify-center py-12">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                            <span className="ml-3 text-gray-500">Loading users...</span>
+                        <div className="flex flex-col items-center justify-center py-16">
+                            <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600"></div>
+                            <span className="mt-4 text-gray-600 font-medium">Loading users...</span>
+                            <span className="mt-1 text-sm text-gray-400">Please wait</span>
                         </div>
                     ) : (
-                        <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead className="bg-gray-50">
                                     <tr>
@@ -265,8 +272,9 @@ const UsersPage: React.FC = () => {
 
                                 <div className="space-y-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                                        <label htmlFor="edit-role-select" className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                                         <select
+                                            id="edit-role-select"
                                             value={editForm.role}
                                             onChange={(e) => setEditForm(f => ({ ...f, role: e.target.value }))}
                                             className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
@@ -353,8 +361,9 @@ const UsersPage: React.FC = () => {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Role</label>
+                                        <label htmlFor="new-role-select" className="block text-sm font-medium text-gray-700 mb-1">Role</label>
                                         <select
+                                            id="new-role-select"
                                             value={newUserForm.role}
                                             onChange={(e) => setNewUserForm(f => ({ ...f, role: e.target.value }))}
                                             className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"

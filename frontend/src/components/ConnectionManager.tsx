@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getConnections, saveConnection, deleteConnection, handleApiError } from '../services/api';
+import Alert from './Alert';
 import type { DbConnection } from '../services/api';
 
 interface ConnectionManagerProps {
@@ -85,7 +86,13 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                 )}
             </div>
 
-            {error && <div className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</div>}
+            {error && (
+                <Alert
+                    type="error"
+                    message={error}
+                    onDismiss={() => setError(null)}
+                />
+            )}
 
             {isAdding && (
                 <div className="bg-gray-50 p-4 rounded border border-gray-200 space-y-3">

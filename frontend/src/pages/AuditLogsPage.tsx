@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { canViewAllAuditLogs, getRoleDisplayName } from '../utils/permissions';
 import { ChatHeader } from '../components/chat';
+import RefreshButton from '../components/RefreshButton';
+import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
 
 const getAuthToken = (): string | null => localStorage.getItem('auth_token');
@@ -115,15 +117,19 @@ const AuditLogsPage: React.FC = () => {
             <ChatHeader title={APP_CONFIG.APP_NAME} />
             <div className="flex-1 overflow-auto">
                 <div className="max-w-7xl mx-auto py-8 px-4">
-                    <div className="flex justify-between items-center mb-8">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-900">Audit Logs</h1>
                             <p className="text-gray-500 mt-1">View all system activity and changes</p>
                         </div>
+                        <RefreshButton
+                            onClick={loadLogs}
+                            isLoading={loading}
+                        />
                     </div>
 
                     {/* Filters */}
-                    <form onSubmit={handleSearch} className="bg-white rounded-lg shadow border border-gray-200 p-4 mb-6">
+                    <form onSubmit={handleSearch} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Actor</label>
@@ -136,8 +142,9 @@ const AuditLogsPage: React.FC = () => {
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Action Type</label>
+                                <label htmlFor="action-filter-select" className="block text-sm font-medium text-gray-700 mb-1">Action Type</label>
                                 <select
+                                    id="action-filter-select"
                                     value={filters.action}
                                     onChange={(e) => setFilters(f => ({ ...f, action: e.target.value }))}
                                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
@@ -158,33 +165,47 @@ const AuditLogsPage: React.FC = () => {
                                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                                 />
                             </div>
-                            <div className="flex items-end">
-                                <button type="submit" className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                            <div className="flex items-end gap-2">
+                                <button 
+                                    type="submit" 
+                                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                >
                                     Search
                                 </button>
+                                <RefreshButton
+                                    onClick={loadLogs}
+                                    isLoading={loading}
+                                    size="md"
+                                    className="!px-4"
+                                />
                             </div>
                         </div>
                     </form>
 
                     {error && (
-                        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md flex justify-between items-center">
-                            <span>{error}</span>
-                            <button onClick={() => setError(null)} className="text-red-500">&times;</button>
-                        </div>
+                        <Alert
+                            type="error"
+                            message={error}
+                            onDismiss={() => setError(null)}
+                        />
                     )}
 
                     {loading ? (
-                        <div className="flex items-center justify-center py-12">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                            <span className="ml-3 text-gray-500">Loading audit logs...</span>
+                        <div className="flex flex-col items-center justify-center py-16">
+                            <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600"></div>
+                            <span className="mt-4 text-gray-600 font-medium">Loading audit logs...</span>
+                            <span className="mt-1 text-sm text-gray-400">Please wait</span>
                         </div>
                     ) : logs.length === 0 ? (
-                        <div className="text-center py-12 text-gray-500">
-                            <p className="text-lg">No audit logs found</p>
-                            <p className="text-sm mt-1">Logs will appear as actions are performed in the system</p>
+                        <div className="text-center py-16 bg-white rounded-lg shadow-sm border border-gray-200">
+                            <svg className="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <p className="text-lg font-medium text-gray-900">No audit logs found</p>
+                            <p className="text-sm text-gray-500 mt-1">Logs will appear as actions are performed in the system</p>
                         </div>
                     ) : (
-                        <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
+                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
                             <div className="overflow-x-auto">
                                 <table className="min-w-full divide-y divide-gray-200">
                                     <thead className="bg-gray-50">

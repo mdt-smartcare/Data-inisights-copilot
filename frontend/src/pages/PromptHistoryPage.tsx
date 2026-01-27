@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { canEditPrompt, canRollback } from '../utils/permissions';
 import { ChatHeader } from '../components/chat';
+import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
 
 const getAuthToken = (): string | null => localStorage.getItem('auth_token');
@@ -219,14 +220,22 @@ const PromptHistoryPage: React.FC = () => {
                 {/* Content Area */}
                 <div className="flex-1 flex flex-col overflow-hidden">
                     {error && (
-                        <div className="m-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md text-sm">
-                            {error}
+                        <div className="m-4">
+                            <Alert
+                                type="error"
+                                message={error}
+                                onDismiss={() => setError(null)}
+                            />
                         </div>
                     )}
 
                     {successMessage && (
-                        <div className="m-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
-                            ✓ {successMessage}
+                        <div className="m-4">
+                            <Alert
+                                type="success"
+                                message={successMessage}
+                                onDismiss={() => setSuccessMessage(null)}
+                            />
                         </div>
                     )}
 

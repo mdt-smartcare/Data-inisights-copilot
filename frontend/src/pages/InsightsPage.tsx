@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { canViewConfig } from '../utils/permissions';
 import { ChatHeader } from '../components/chat';
+import RefreshButton from '../components/RefreshButton';
+import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
 
 const getAuthToken = (): string | null => localStorage.getItem('auth_token');
@@ -76,34 +78,35 @@ const InsightsPage: React.FC = () => {
             <ChatHeader title={APP_CONFIG.APP_NAME} />
             <div className="flex-1 overflow-auto">
                 <div className="max-w-7xl mx-auto py-8 px-4">
-                    <div className="flex justify-between items-center mb-8">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-900">Insights</h1>
                             <p className="text-gray-500 mt-1">System overview and configuration status</p>
                         </div>
-                        <button
+                        <RefreshButton
                             onClick={loadData}
-                            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-                        >
-                            Refresh
-                        </button>
+                            isLoading={loading}
+                        />
                     </div>
 
                     {error && (
-                        <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md">
-                            {error}
-                        </div>
+                        <Alert
+                            type="error"
+                            message={error}
+                            onDismiss={() => setError(null)}
+                        />
                     )}
 
                     {loading ? (
-                        <div className="flex items-center justify-center py-12">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                            <span className="ml-3 text-gray-500">Loading insights...</span>
+                        <div className="flex flex-col items-center justify-center py-16">
+                            <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600"></div>
+                            <span className="mt-4 text-gray-600 font-medium">Loading insights...</span>
+                            <span className="mt-1 text-sm text-gray-400">Please wait</span>
                         </div>
                     ) : (
                         <div className="space-y-6">
                             {/* Active Configuration Status */}
-                            <div className="bg-white rounded-lg shadow border border-gray-200 p-6">
+                            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Active Configuration</h2>
                                 {activeConfig ? (
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -169,7 +172,7 @@ const InsightsPage: React.FC = () => {
 
                             {/* Prompt Preview */}
                             {activeConfig?.prompt_text && (
-                                <div className="bg-white rounded-lg shadow border border-gray-200 p-6">
+                                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                                     <h2 className="text-lg font-semibold text-gray-900 mb-4">Active Prompt Preview</h2>
                                     <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 p-4 rounded max-h-64 overflow-auto">
                                         {activeConfig.prompt_text.slice(0, 500)}
@@ -179,7 +182,7 @@ const InsightsPage: React.FC = () => {
                             )}
 
                             {/* Quick Links */}
-                            <div className="bg-white rounded-lg shadow border border-gray-200 p-6">
+                            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h2>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                     <a

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getConnectionSchema, handleApiError } from '../services/api';
+import Alert from './Alert';
 
 interface SchemaSelectorProps {
     connectionId: number;
@@ -155,9 +156,11 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
 
     if (error) {
         return (
-            <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded text-sm">
-                Error fetching schema: {error}
-            </div>
+            <Alert
+                type="error"
+                message={`Error fetching schema: ${error}`}
+                dismissible={false}
+            />
         );
     }
 
