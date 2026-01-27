@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from backend.config import get_settings
 from backend.core.logging import setup_logging, get_logger
-from backend.api.routes import auth, chat, feedback, health, config, data
+from backend.api.routes import auth, chat, feedback, health, config, data, audit
 from backend.services.embeddings import preload_embedding_model
 
 # Initialize settings and logging
@@ -60,6 +60,7 @@ app.include_router(feedback.router, prefix=settings.api_v1_prefix)
 app.include_router(health.router, prefix=settings.api_v1_prefix)
 app.include_router(config.router, prefix=settings.api_v1_prefix)
 app.include_router(data.router, prefix=settings.api_v1_prefix)
+app.include_router(audit.router, prefix=settings.api_v1_prefix)
 
 
 @app.get("/")
