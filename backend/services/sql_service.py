@@ -4,11 +4,15 @@ Wraps LangChain SQL agent for database interactions.
 """
 from functools import lru_cache
 from typing import Optional, Tuple, List
+from datetime import datetime
 import re
 
+from sqlalchemy import inspect
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -830,7 +834,43 @@ Provide a concise, natural language answer."""
             logger.error(f"Failed to get table info: {e}")
             return "Error retrieving table information"
 
+    def get_schema_info_for_connection(self, uri: str) -> Dict[str, Any]:
+        """
+        Connect to a database URI and retrieve its schema (tables and columns).
+        Used for the frontend Schema Explorer.
+        """
+        try:
+            # Create a temporary connection
+            temp_db = SQLDatabase.from_uri(uri)
+            table_names = temp_db.get_usable_table_names()
+            
+            schema_info = {}
+            for table in table_names:
+                # Get column info
+                # LangChain's SQLDatabase doesn't expose raw columns easily, 
+                # but we can use the underlying engine inspector if needed.
+                # Or parsing get_table_info([table]). 
+                # For a cleaner approach, let's use the sqlalchemy inspector directly via the engine.
+                inspector = inspect(temp_db._engine)
+                columns = inspector.get_columns(table)
+                
+                column_details = []
+                for col in columns:
+                    column_details.append({
+                        "name": col["name"],
+                        "type": str(col["type"]),
+                        "nullable": col.get("nullable", True)
+                    })
+                
+                schema_info[table] = column_details
+                
+            return {"tables": table_names, "details": schema_info}
+            
+        except Exception as e:
+            logger.error(f"Failed to inspect schema for URI {uri}: {e}")
+            raise ValueError(f"Could not connect or inspect database: {str(e)}")
 
 @lru_cache()
 def get_sql_service() -> SQLService:
     return SQLService()
+

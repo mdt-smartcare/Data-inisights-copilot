@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Any
 
 from backend.sqliteDb.db import get_db_service, DatabaseService
+from backend.services.sql_service import get_sql_service, SQLService
 from backend.models.data import DbConnectionCreate, DbConnectionResponse
 from backend.core.logging import get_logger
 
@@ -58,17 +59,23 @@ async def delete_connection(
         logger.error(f"Error deleting connection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Placeholder for Schema Explorer (Phase 7)
 @router.get("/connections/{connection_id}/schema")
 async def get_connection_schema(
     connection_id: int,
-    db_service: DatabaseService = Depends(get_db_service)
+    db_service: DatabaseService = Depends(get_db_service),
+    sql_service: SQLService = Depends(get_sql_service)
 ):
-    """Fetch schema for a specific connection (To be implemented)."""
+    """Fetch schema for a specific connection."""
     # Verify connection exists
     conn = db_service.get_db_connection_by_id(connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
     
-    # TODO: Implement connection testing and schema fetch in SQLService
-    return {"message": "Schema fetching not implemented yet", "connection": conn["name"]}
+    try:
+        uri = conn["uri"]
+        # Use SQL Service to inspect the remote database
+        schema_info = sql_service.get_schema_info_for_connection(uri)
+        return {"status": "success", "connection": conn["name"], "schema": schema_info}
+    except Exception as e:
+        logger.error(f"Error fetching schema for connection {connection_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch schema: {str(e)}")
