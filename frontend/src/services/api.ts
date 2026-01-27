@@ -22,6 +22,9 @@ export const apiClient = axios.create({
   timeout: 60 * 1000,                         // 60 seconds - important for AI model responses
 });
 
+// Import User type
+import type { User } from '../types';
+
 /**
  * Request Interceptor
  * Runs before every API request to:
@@ -178,6 +181,11 @@ export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
 // ============================================================================
 // DATA SETUP & CONNECTION API (Phase 6 & 7)
 // ============================================================================
+
+export const getUserProfile = async (): Promise<User> => {
+  const response = await apiClient.get('/auth/me');
+  return response.data;
+};
 
 export interface DbConnection {
   id: number;

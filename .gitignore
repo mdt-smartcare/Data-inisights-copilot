@@ -4,3 +4,4 @@
 logs/backend.log
 node_modules/
 logs/backend.log
+*.log

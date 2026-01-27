@@ -4,7 +4,8 @@ Role-based access control dependencies.
 from enum import Enum
 from typing import List
 from fastapi import Depends, HTTPException, status
-from backend.core.security import oauth2_scheme, SECRET_KEY, ALGORITHM
+from backend.core.security import oauth2_scheme
+from backend.config import get_settings
 from jose import JWTError, jwt
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import User
@@ -12,6 +13,7 @@ from backend.models.schemas import User
 class UserRole(str, Enum):
     ADMIN = "admin"
     EDITOR = "editor"
+    USER = "user"
     VIEWER = "viewer"
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
@@ -23,8 +25,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    settings = get_settings()
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception

@@ -9,6 +9,7 @@ from backend.core.security import create_access_token
 from backend.models.schemas import LoginRequest, RegisterRequest, TokenResponse, User
 from backend.core.logging import get_logger
 from backend.sqliteDb.db import get_db_service, DatabaseService
+from backend.core.permissions import get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
@@ -142,3 +143,13 @@ async def login(
         ),
         expires_in=settings.access_token_expire_minutes * 60  # Convert minutes to seconds for client
     )
+
+
+@router.get("/me", response_model=User)
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Get the current authenticated user's profile.
+    """
+    return current_user

@@ -1,12 +1,6 @@
-import { createContext, useContext, useState, type ReactNode } from 'react';
-
-// Define User type locally or import from types if centralized
-export interface User {
-  username: string;
-  email?: string;
-  full_name?: string;
-  role: 'admin' | 'editor' | 'viewer' | string;
-}
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { getUserProfile } from '../services/api';
+import type { User } from '../types';
 
 
 /**
@@ -37,6 +31,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // User state stored in memory (not persisted across page refreshes)
   // Actual authentication persistence is handled by localStorage tokens
   const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const restoreSession = async () => {
+      const token = localStorage.getItem('auth_token');
+      if (token && !user) {
+        try {
+          const profile = await getUserProfile();
+          // Map backend user to frontend user type if needed, but they should match
+          setUser(profile);
+        } catch (error) {
+          console.error("Failed to restore session", error);
+          // If token is invalid, clear it
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('expiresAt');
+        }
+      }
+    };
+
+    restoreSession();
+  }, []); // Run once on mount
 
   /**
    * Logout function

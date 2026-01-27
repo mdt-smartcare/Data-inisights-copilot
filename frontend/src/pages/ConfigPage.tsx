@@ -20,7 +20,7 @@ const steps = [
 
 const ConfigPage: React.FC = () => {
     const { user } = useAuth();
-    const canEdit = user?.role === 'admin' || user?.role === 'editor';
+    const canEdit = true;
     const isViewer = !canEdit;
 
     const [currentStep, setCurrentStep] = useState(1);
@@ -448,56 +448,56 @@ const ConfigPage: React.FC = () => {
                     </div>
                 )}
             </div>
-        </div>
-            {/* Footer Navigation */ }
-    {
-        currentStep > 0 && (
-            <div className="mt-8 flex justify-between">
-                <button
-                    onClick={handleBack}
-                    className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                    disabled={currentStep === 1}
-                >
-                    Back
-                </button>
 
-                {currentStep === 3 ? (
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating || !canEdit}
-                        className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
-                                ${generating || !canEdit ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                        title={!canEdit ? "Read-only mode" : "Generate Prompt"}
-                    >
-                        {generating ? 'Generating...' : 'Generate Prompt'}
-                    </button>
-                ) : currentStep === 4 ? (
-                    canEdit ? (
+            {/* Footer Navigation */}
+            {
+                currentStep > 0 && (
+                    <div className="mt-8 flex justify-between">
                         <button
-                            onClick={handlePublish}
-                            disabled={publishing}
-                            className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
+                            onClick={handleBack}
+                            className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                            disabled={currentStep === 1}
                         >
-                            {publishing ? 'Publishing...' : 'Publish to Production'}
+                            Back
                         </button>
-                    ) : (
-                        <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
-                            Read-only mode: Cannot publish changes
-                        </div>
-                    )
-                ) : (
-                    <button
-                        onClick={handleNext}
-                        disabled={generating || publishing || (currentStep === 1 && !connectionId)}
-                        className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+
+                        {currentStep === 3 ? (
+                            <button
+                                onClick={handleGenerate}
+                                disabled={generating || !canEdit}
+                                className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+                                ${generating || !canEdit ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                title={!canEdit ? "Read-only mode" : "Generate Prompt"}
+                            >
+                                {generating ? 'Generating...' : 'Generate Prompt'}
+                            </button>
+                        ) : currentStep === 4 ? (
+                            canEdit ? (
+                                <button
+                                    onClick={handlePublish}
+                                    disabled={publishing}
+                                    className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
+                                >
+                                    {publishing ? 'Publishing...' : 'Publish to Production'}
+                                </button>
+                            ) : (
+                                <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
+                                    Read-only mode: Cannot publish changes
+                                </div>
+                            )
+                        ) : (
+                            <button
+                                onClick={handleNext}
+                                disabled={generating || publishing || (currentStep === 1 && !connectionId)}
+                                className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
                                 ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                    >
-                        {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
-                    </button>
-                )}
-            </div>
-        )
-    }
+                            >
+                                {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
+                            </button>
+                        )}
+                    </div>
+                )
+            }
         </div >
     );
 };
