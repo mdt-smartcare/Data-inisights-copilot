@@ -153,42 +153,42 @@ Use this to search unstructured text, notes, and semantic descriptions.
             # FAST PATH: Check if query matches a KPI template BEFORE agent
             # This prevents the agent from rewriting/losing important filters
             # =================================================================
-            kpi_match = self.sql_service._check_dashboard_kpi(query)
-            if kpi_match:
-                sql_query, description = kpi_match
-                logger.info(f"⚡ FAST PATH: KPI template matched on original query: {description}")
+            # kpi_match = self.sql_service._check_dashboard_kpi(query)
+            # if kpi_match:
+            #     sql_query, description = kpi_match
+            #     logger.info(f"⚡ FAST PATH: KPI template matched on original query: {description}")
                 
-                # Execute KPI template directly (bypasses agent rewriting)
-                sql_result = self.sql_service._execute_kpi_template(sql_query, description, query)
+            #     # Execute KPI template directly (bypasses agent rewriting)
+            #     sql_result = self.sql_service._execute_kpi_template(sql_query, description, query)
                 
-                # Generate suggestions based on the query type
-                suggested_questions = self._generate_kpi_suggestions(query, description)
+            #     # Generate suggestions based on the query type
+            #     suggested_questions = self._generate_kpi_suggestions(query, description)
                 
-                # Build response
-                response = ChatResponse(
-                    answer=sql_result,
-                    chart_data=None,  # Could enhance later to auto-generate charts
-                    suggested_questions=suggested_questions,
-                    reasoning_steps=[ReasoningStep(
-                        tool="sql_query_tool",
-                        input=f"KPI Template: {description}",
-                        output=sql_result[:200]
-                    )],
-                    embedding_info=EmbeddingInfo(
-                        model=settings.embedding_model_name,
-                        dimensions=self.embedding_model.dimension,
-                        search_method="kpi_template",
-                        vector_norm=None,
-                        docs_retrieved=0
-                    ),
-                    trace_id=trace_id,
-                    timestamp=start_time
-                )
+            #     # Build response
+            #     response = ChatResponse(
+            #         answer=sql_result,
+            #         chart_data=None,  # Could enhance later to auto-generate charts
+            #         suggested_questions=suggested_questions,
+            #         reasoning_steps=[ReasoningStep(
+            #             tool="sql_query_tool",
+            #             input=f"KPI Template: {description}",
+            #             output=sql_result[:200]
+            #         )],
+            #         embedding_info=EmbeddingInfo(
+            #             model=settings.embedding_model_name,
+            #             dimensions=self.embedding_model.dimension,
+            #             search_method="kpi_template",
+            #             vector_norm=None,
+            #             docs_retrieved=0
+            #         ),
+            #         trace_id=trace_id,
+            #         timestamp=start_time
+            #     )
                 
-                duration = (datetime.utcnow() - start_time).total_seconds()
-                logger.info(f"✅ KPI fast-path completed (trace_id={trace_id}, duration={duration:.2f}s)")
+            #     duration = (datetime.utcnow() - start_time).total_seconds()
+            #     logger.info(f"✅ KPI fast-path completed (trace_id={trace_id}, duration={duration:.2f}s)")
                 
-                return response.model_dump()
+            #     return response.model_dump()
             
             # =================================================================
             # STANDARD PATH: Use agent for complex queries
@@ -209,7 +209,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
 
             # Execute agent (don't get embedding info until we know we need it)
             # Pass system_prompt variable to the agent, creating a combined prompt
-            final_prompt = f"{system_prompt}\n{formatted_examples}"
+            final_prompt = f"{active_prompt}\n{formatted_examples}"
             
             result = self.agent_executor.invoke({
                 "input": query,

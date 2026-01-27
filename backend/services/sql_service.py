@@ -16,6 +16,7 @@ from langchain_core.outputs import LLMResult
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
+from backend.services.reflection_service import get_critique_service
 
 
 settings = get_settings()
