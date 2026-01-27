@@ -18,7 +18,7 @@ const steps = [
     { id: 5, name: 'Summary' }
 ];
 
-import { canEditPrompt, canManageConnections } from '../utils/permissions';
+import { canEditPrompt, canManageConnections, getRoleDisplayName } from '../utils/permissions';
 
 const ConfigPage: React.FC = () => {
     const { user, isLoading } = useAuth();
@@ -202,7 +202,7 @@ const ConfigPage: React.FC = () => {
                     <div className="flex justify-between items-center mb-6">
                         <h1 className="text-2xl font-bold text-gray-900">
                             Configure AI Agent
-                            <span className="ml-2 text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded">Role: {user?.role || 'None'}</span>
+                            <span className="ml-2 text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded">Role: {getRoleDisplayName(user?.role)}</span>
                         </h1>
                         <span className="text-sm text-gray-500">Step {currentStep} of 5</span>
                     </div>
