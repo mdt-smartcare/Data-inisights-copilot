@@ -2,32 +2,80 @@ import type { User } from '../types';
 
 /**
  * RBAC Permission Utilities
+ * 
+ * Role Hierarchy (descending privilege):
+ * SUPER_ADMIN > ADMIN > EDITOR > USER > VIEWER
  */
 
-// Role Hierarchy/Definitions (for reference)
-// ADMIN: Super Admin
-// EDITOR: Editor
-// USER: User
-// VIEWER: Viewer
+export const ROLE_HIERARCHY = ['super_admin', 'admin', 'editor', 'user', 'viewer'] as const;
+export type UserRole = typeof ROLE_HIERARCHY[number];
+
+/**
+ * Check if user's role is at least the required level.
+ */
+export const roleAtLeast = (userRole: string | undefined, requiredRole: UserRole): boolean => {
+    if (!userRole) return false;
+    const userIdx = ROLE_HIERARCHY.indexOf(userRole as UserRole);
+    const reqIdx = ROLE_HIERARCHY.indexOf(requiredRole);
+    if (userIdx === -1 || reqIdx === -1) return false;
+    return userIdx <= reqIdx;
+};
+
+// ============================================
+// Permission Checks
+// ============================================
+
+export const canManageUsers = (user: User | null): boolean => {
+    return user?.role === 'super_admin';
+};
+
+export const canViewAllAuditLogs = (user: User | null): boolean => {
+    return user?.role === 'super_admin';
+};
 
 export const canManageConnections = (user: User | null): boolean => {
-    return user?.role === 'admin';
+    return roleAtLeast(user?.role, 'admin');
+};
+
+export const canEditConfig = (user: User | null): boolean => {
+    return roleAtLeast(user?.role, 'editor');
 };
 
 export const canEditPrompt = (user: User | null): boolean => {
-    return user?.role === 'admin' || user?.role === 'editor';
+    return roleAtLeast(user?.role, 'editor');
+};
+
+export const canPublishPrompt = (user: User | null): boolean => {
+    return roleAtLeast(user?.role, 'editor');
 };
 
 export const canExecuteQuery = (user: User | null): boolean => {
-    return user?.role === 'admin' || user?.role === 'editor' || user?.role === 'user';
+    return roleAtLeast(user?.role, 'user');
 };
 
 export const canViewHistory = (user: User | null): boolean => {
-    // All roles can view history/config (read-only for some)
+    return !!user;
+};
+
+export const canViewConfig = (user: User | null): boolean => {
     return !!user;
 };
 
 // Helper for UI disabled states
 export const isReadOnly = (user: User | null): boolean => {
     return !canEditPrompt(user);
+};
+
+// Role display name mapping
+export const ROLE_DISPLAY_NAMES: Record<UserRole, string> = {
+    super_admin: 'Super Admin',
+    admin: 'Admin',
+    editor: 'Editor',
+    user: 'User',
+    viewer: 'Viewer',
+};
+
+export const getRoleDisplayName = (role: string | undefined): string => {
+    if (!role) return 'Unknown';
+    return ROLE_DISPLAY_NAMES[role as UserRole] || role;
 };
