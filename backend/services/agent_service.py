@@ -18,6 +18,7 @@ from backend.core.logging import get_logger
 from backend.services.sql_service import get_sql_service
 from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
+from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import (
     ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
 )
@@ -26,8 +27,9 @@ settings = get_settings()
 logger = get_logger(__name__)
 
 
-# NCD-specialized system prompt
-SYSTEM_PROMPT = """You are an advanced **NCD Clinical Data Intelligence Agent** specializing in Chronic Disease Management (Hypertension & Diabetes).
+
+# Default NCD-specialized system prompt (fallback)
+DEFAULT_SYSTEM_PROMPT = """You are an advanced **NCD Clinical Data Intelligence Agent** specializing in Chronic Disease Management (Hypertension & Diabetes).
 You have access to a comprehensive patient database (Spice_BD) containing structured vitals, demographics, and unstructured clinical notes.
 
 **CRITICAL DATA RULES (STRICT - MUST FOLLOW):**
@@ -150,6 +152,7 @@ class AgentService:
         
         # Initialize services
         self.sql_service = get_sql_service()
+        self.db_service = get_db_service()
         # Don't load vector store on init - lazy load it when needed!
         self._vector_store = None
         self.embedding_model = get_embedding_model()
@@ -193,8 +196,9 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
         ]
         
         # Create prompt template
+        # Use a placeholder for system_prompt to allow dynamic injection per request
         prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
+            ("system", "{system_prompt}"),
             ("user", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
@@ -295,8 +299,16 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             # =================================================================
             # STANDARD PATH: Use agent for complex queries
             # =================================================================
+            # Fetch prompt fresh on every request
+            active_prompt = self.db_service.get_latest_active_prompt()
+            system_prompt = active_prompt if active_prompt else DEFAULT_SYSTEM_PROMPT
+
             # Execute agent (don't get embedding info until we know we need it)
-            result = self.agent_executor.invoke({"input": query})
+            # Pass system_prompt variable to the agent
+            result = self.agent_executor.invoke({
+                "input": query,
+                "system_prompt": system_prompt
+            })
             
             # Extract response
             full_response = result.get("output", "An error occurred.")
