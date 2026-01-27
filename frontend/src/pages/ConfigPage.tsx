@@ -30,6 +30,7 @@ const ConfigPage: React.FC = () => {
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
+    const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
     const [history, setHistory] = useState<any[]>([]);
     const [showHistory, setShowHistory] = useState(false);
@@ -141,6 +142,7 @@ const ConfigPage: React.FC = () => {
             const result = await generateSystemPrompt(fullContext);
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
+            if (result.example_questions) setExampleQuestions(result.example_questions);
             setCurrentStep(4); // Move to final step
         } catch (err) {
             setError(handleApiError(err));
@@ -392,6 +394,20 @@ const ConfigPage: React.FC = () => {
                                         </div>
                                     )}
                                 </div>
+
+                                {/* Example Questions Preview */}
+                                {exampleQuestions.length > 0 && (
+                                    <div className="mt-4 bg-gray-50 p-4 rounded-md border border-gray-200">
+                                        <h3 className="text-sm font-semibold text-gray-700 mb-2">Example Questions</h3>
+                                        <div className="flex gap-2 flex-wrap">
+                                            {exampleQuestions.map((q, idx) => (
+                                                <span key={idx} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                                    {q}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
 

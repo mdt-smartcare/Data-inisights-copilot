@@ -125,7 +125,7 @@ export const handleApiError = (error: unknown): string => {
 // SYSTEM PROMPT CONFIGURATION API
 // ============================================================================
 
-export const generateSystemPrompt = async (dataDictionary: string): Promise<{ draft_prompt: string; reasoning?: Record<string, string> }> => {
+export const generateSystemPrompt = async (dataDictionary: string): Promise<{ draft_prompt: string; reasoning?: Record<string, string>; example_questions?: string[] }> => {
   const response = await apiClient.post('/api/v1/config/generate', { data_dictionary: dataDictionary });
   return response.data;
 };
