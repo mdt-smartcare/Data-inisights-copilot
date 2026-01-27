@@ -26,7 +26,7 @@ export const roleAtLeast = (userRole: string | undefined, requiredRole: UserRole
 // ============================================
 
 export const canManageUsers = (user: User | null): boolean => {
-    return user?.role === 'super_admin';
+    return roleAtLeast(user?.role, 'admin');
 };
 
 export const canViewAllAuditLogs = (user: User | null): boolean => {
