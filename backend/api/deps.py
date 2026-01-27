@@ -10,7 +10,18 @@ from backend.config import get_settings
 from backend.core.security import get_token_username
 from backend.models.schemas import User
 from backend.sqliteDb.db import get_db_service
-from backend.core.roles import UserRole
+
+# Re-export from core.permissions for convenience
+from backend.core.permissions import (
+    UserRole,
+    require_role,
+    require_at_least,
+    require_super_admin,
+    require_admin,
+    require_editor,
+    require_user,
+    get_current_user as get_current_user_from_token,
+)
 
 settings = get_settings()
 security = HTTPBearer()
@@ -57,29 +68,3 @@ async def get_current_user(
         email=user_data.get('email'),
         full_name=user_data.get('full_name')
     )
-
-def require_role(allowed_roles: list[UserRole]):
-    """
-    Factory for role-based access control dependency.
-    
-    Usage:
-        @router.post("/endpoint", dependencies=[Depends(require_role([UserRole.ADMIN]))])
-    """
-    def role_checker(user: User = Depends(get_current_user)):
-        # Normalize role string to enum or string comparison
-        # DB might store 'admin', 'user' etc.
-        if user.role not in allowed_roles and user.role != UserRole.ADMIN: 
-            # Admin should generally have access to everything, but let's be strict for now 
-            # unless allowed_roles explicitly includes it.
-            # Actually, let's keep it simple: strict check against allowed list.
-            pass
-
-        # Check if user role is in allowed roles
-        # allowed_roles is a list of Enum values. user.role is a string.
-        if user.role not in [r.value for r in allowed_roles]:
-             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Operation not permitted for role '{user.role}'"
-            )
-        return user
-    return role_checker

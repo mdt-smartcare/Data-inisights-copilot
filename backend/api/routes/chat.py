@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.models.schemas import ChatRequest, ChatResponse, User, ErrorResponse
 from backend.services.agent_service import get_agent_service
-from backend.api.deps import get_current_user, require_role, UserRole
+from backend.core.permissions import require_user, get_current_user
 from backend.core.logging import get_logger
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 })
 async def chat(
     request: ChatRequest,
-    current_user: User = Depends(require_role([UserRole.ADMIN, UserRole.EDITOR, UserRole.USER]))
+    current_user: User = Depends(require_user)
 ):
     """
     Process a chat query through the RAG pipeline.
@@ -29,6 +29,7 @@ async def chat(
     Returns comprehensive response with answer, charts, suggestions, and reasoning.
     
     **Authentication Required:** Bearer token in Authorization header.
+    **Requires Role:** User or above (Admin, Editor, User)
     """
     user_id = request.user_id or current_user.username
     
