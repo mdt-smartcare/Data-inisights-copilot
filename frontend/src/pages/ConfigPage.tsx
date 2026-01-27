@@ -154,23 +154,37 @@ const ConfigPage: React.FC = () => {
                                 Provide context to help the AI understand your data. Upload a file or paste definitions below.
                             </p>
 
-                            <div className="flex-1 flex flex-col gap-4 min-h-0">
-                                <div className="p-4 bg-gray-50 rounded border border-gray-200">
-                                    <h4 className="text-xs font-semibold text-gray-700 uppercase mb-2">Import from File</h4>
-                                    <DictionaryUploader
-                                        onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
-                                    />
+                            <div className="flex-1 flex flex-col min-h-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm">
+                                {/* Toolbar */}
+                                <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex justify-between items-center">
+                                    <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                                        Context Editor
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <DictionaryUploader
+                                            onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
+                                        />
+                                        {dataDictionary && (
+                                            <button
+                                                onClick={() => {
+                                                    if (window.confirm('Clear dictionary content?')) setDataDictionary('');
+                                                }}
+                                                className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50"
+                                            >
+                                                Clear
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
 
-                                <div className="flex-1 flex flex-col min-h-0">
-                                    <label className="text-sm font-medium text-gray-700 mb-1">Dictionary Content</label>
-                                    <textarea
-                                        className="flex-1 p-4 border rounded-md font-mono text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
-                                        placeholder="# Users Table\n- role: 'admin' | 'user'\n- status: 1=active, 0=inactive..."
-                                        value={dataDictionary}
-                                        onChange={(e) => setDataDictionary(e.target.value)}
-                                    />
-                                </div>
+                                {/* Editor Area */}
+                                <textarea
+                                    className="flex-1 p-4 font-mono text-sm leading-relaxed resize-none focus:outline-none"
+                                    placeholder="# Users Table\n- role: 'admin' | 'user'\n- status: 1=active, 0=inactive..."
+                                    value={dataDictionary}
+                                    onChange={(e) => setDataDictionary(e.target.value)}
+                                    spellCheck={false}
+                                />
                             </div>
                         </div>
                     )}
