@@ -23,6 +23,8 @@ class PromptPublishRequest(BaseModel):
     connection_id: Optional[int] = None
     schema_selection: Optional[str] = None # JSON string
     data_dictionary: Optional[str] = None
+    reasoning: Optional[str] = None # JSON string
+    example_questions: Optional[str] = None  # JSON string list
 
 class PromptResponse(BaseModel):
     id: int

@@ -130,7 +130,7 @@ export const generateSystemPrompt = async (dataDictionary: string): Promise<{ dr
   return response.data;
 };
 
-export const publishSystemPrompt = async (promptText: string): Promise<{ status: string; version: number }> => {
+export const publishSystemPrompt = async (promptText: string, reasoning?: Record<string, string>, exampleQuestions?: string[]): Promise<{ status: string; version: number }> => {
   // We need to fetch the user_id from the token or some auth context.
   // For now, let's decode the token or just send a dummy ID if the backend parses the token.
   // Looking at backend/api/routes/config.py, it expects `user_id` in the body.
@@ -152,7 +152,9 @@ export const publishSystemPrompt = async (promptText: string): Promise<{ status:
     user_id: userId,
     connection_id: (window as any).__config_connectionId,
     schema_selection: (window as any).__config_schema ? JSON.stringify((window as any).__config_schema) : null,
-    data_dictionary: (window as any).__config_dictionary
+    data_dictionary: (window as any).__config_dictionary,
+    reasoning: reasoning ? JSON.stringify(reasoning) : null,
+    example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null
   });
   return response.data;
 };

@@ -44,9 +44,11 @@ async def publish_prompt(
         result = service.publish_system_prompt(
             request.prompt_text, 
             request.user_id,
-            request.connection_id,
-            request.schema_selection,
-            request.data_dictionary
+            connection_id=request.connection_id,
+            schema_selection=request.schema_selection,
+            data_dictionary=request.data_dictionary,
+            reasoning=request.reasoning,
+            example_questions=request.example_questions
         )
         return result
     except Exception as e:

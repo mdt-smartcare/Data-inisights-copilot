@@ -156,7 +156,7 @@ const ConfigPage: React.FC = () => {
         setPublishing(true);
         setError(null);
         try {
-            const result = await publishSystemPrompt(draftPrompt);
+            const result = await publishSystemPrompt(draftPrompt, reasoning, exampleQuestions);
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
             loadHistory(); // Refresh history
             loadDashboard(); // Refresh config metadata

@@ -98,9 +98,22 @@ class ConfigService:
     def publish_system_prompt(self, prompt_text: str, user_id: str, 
                               connection_id: Optional[int] = None, 
                               schema_selection: Optional[str] = None, 
-                              data_dictionary: Optional[str] = None):
-        """Publish a new version of the system prompt."""
-        return self.db_service.publish_system_prompt(prompt_text, user_id, connection_id, schema_selection, data_dictionary)
+                              data_dictionary: Optional[str] = None,
+                              reasoning: Optional[str] = None,
+                              example_questions: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Publishes a drafted system prompt as the new active version.
+        Includes optional configuration metadata for reproducibility and explainability.
+        """
+        return self.db_service.publish_system_prompt(
+            prompt_text, 
+            user_id, 
+            connection_id, 
+            schema_selection, 
+            data_dictionary,
+            reasoning,
+            example_questions
+        )
 
     def get_prompt_history(self):
         """Get history of all system prompts."""
