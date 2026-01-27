@@ -5,12 +5,14 @@ import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
 import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
+import ConfigSummary from '../components/ConfigSummary';
 
 const steps = [
     { id: 1, name: 'Connect Database' },
     { id: 2, name: 'Select Schema' },
     { id: 3, name: 'Data Dictionary' },
-    { id: 4, name: 'Review & Publish' }
+    { id: 4, name: 'Review & Publish' },
+    { id: 5, name: 'Summary' }
 ];
 
 const ConfigPage: React.FC = () => {
@@ -39,7 +41,7 @@ const ConfigPage: React.FC = () => {
             return;
         }
         setError(null);
-        if (currentStep < 4) setCurrentStep(currentStep + 1);
+        if (currentStep < 5) setCurrentStep(currentStep + 1);
     };
 
     const handleBack = () => {
@@ -79,6 +81,7 @@ const ConfigPage: React.FC = () => {
             const result = await publishSystemPrompt(draftPrompt);
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
             loadHistory(); // Refresh history
+            setCurrentStep(5); // Move to Summary
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -243,6 +246,19 @@ const ConfigPage: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+                        </div>
+                    )}
+
+                    {currentStep === 5 && (
+                        <div className="h-full flex flex-col">
+                            <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
+                            <ConfigSummary
+                                connectionId={connectionId}
+                                schema={selectedSchema}
+                                dataDictionary={dataDictionary}
+                                activePromptVersion={history.find(p => p.is_active)?.version || null}
+                                totalPromptVersions={history.length}
+                            />
                         </div>
                     )}
                 </div>
