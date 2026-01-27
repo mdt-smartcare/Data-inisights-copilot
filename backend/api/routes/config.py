@@ -22,8 +22,8 @@ async def generate_prompt(
     Requires Editor role or above.
     """
     try:
-        draft_prompt = config_service.generate_draft_prompt(request.data_dictionary)
-        return {"draft_prompt": draft_prompt}
+        result = config_service.generate_draft_prompt(request.data_dictionary)
+        return result  # Already returns {"draft_prompt": ..., "reasoning": ..., "example_questions": ...}
     except Exception as e:
         logger.error(f"Error generating prompt: {e}")
         raise HTTPException(
