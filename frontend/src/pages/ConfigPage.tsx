@@ -203,7 +203,7 @@ const ConfigPage: React.FC = () => {
         <div className="flex flex-col h-screen bg-gray-50">
             <ChatHeader title={APP_CONFIG.APP_NAME} />
             <div className="flex-1 overflow-auto">
-                <div className="max-w-5xl mx-auto py-8 px-4 flex flex-col">
+                <div className="max-w-7xl mx-auto py-8 px-4 flex flex-col">
                     {/* Header & Steps - Hide steps on Dashboard */}
                     {currentStep > 0 && (
                         <div className="mb-8">
