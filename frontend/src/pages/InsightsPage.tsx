@@ -124,10 +124,21 @@ const InsightsPage: React.FC = () => {
                                         <div className="bg-purple-50 rounded-lg p-4 border border-purple-200">
                                             <p className="text-sm text-purple-600 font-medium">Schema Tables</p>
                                             <p className="text-2xl font-bold text-purple-700">
-                                                {activeConfig.schema_selection ?
-                                                    JSON.parse(activeConfig.schema_selection).length :
-                                                    0
-                                                }
+                                                {(() => {
+                                                    try {
+                                                        if (!activeConfig.schema_selection) return 0;
+                                                        // It might be an object already or string
+                                                        const parsed = typeof activeConfig.schema_selection === 'string'
+                                                            ? JSON.parse(activeConfig.schema_selection)
+                                                            : activeConfig.schema_selection;
+
+                                                        // It could be an array or object keys
+                                                        if (Array.isArray(parsed)) return parsed.length;
+                                                        return Object.keys(parsed).length;
+                                                    } catch (e) {
+                                                        return 0;
+                                                    }
+                                                })()}
                                             </p>
                                             <p className="text-xs text-purple-500 mt-1">tables selected</p>
                                         </div>
