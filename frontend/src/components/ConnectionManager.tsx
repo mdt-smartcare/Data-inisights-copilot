@@ -5,9 +5,10 @@ import type { DbConnection } from '../services/api';
 interface ConnectionManagerProps {
     onSelect: (connectionId: number) => void;
     selectedId: number | null;
+    readOnly?: boolean;
 }
 
-const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selectedId }) => {
+const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selectedId, readOnly = false }) => {
     const [connections, setConnections] = useState<DbConnection[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -74,12 +75,14 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
         <div className="space-y-4">
             <div className="flex justify-between items-center">
                 <h3 className="text-lg font-medium text-gray-900">Database Connections</h3>
-                <button
-                    onClick={() => setIsAdding(!isAdding)}
-                    className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-                >
-                    {isAdding ? 'Cancel' : '+ New Connection'}
-                </button>
+                {!readOnly && (
+                    <button
+                        onClick={() => setIsAdding(!isAdding)}
+                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                    >
+                        {isAdding ? 'Cancel' : '+ New Connection'}
+                    </button>
+                )}
             </div>
 
             {error && <div className="text-red-600 text-sm bg-red-50 p-2 rounded">{error}</div>}
@@ -137,18 +140,20 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                         {selectedId === conn.id && (
                             <div className="flex items-center gap-2">
                                 <span className="text-xs text-blue-600 font-semibold">Selected</span>
-                                <button
-                                    onClick={(e) => handleDelete(conn.id, e)}
-                                    className="text-gray-400 hover:text-red-600 p-1"
-                                    title="Delete"
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                </button>
+                                {!readOnly && (
+                                    <button
+                                        onClick={(e) => handleDelete(conn.id, e)}
+                                        className="text-gray-400 hover:text-red-600 p-1"
+                                        title="Delete"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                        </svg>
+                                    </button>
+                                )}
                             </div>
                         )}
-                        {selectedId !== conn.id && (
+                        {selectedId !== conn.id && !readOnly && (
                             <button
                                 onClick={(e) => handleDelete(conn.id, e)}
                                 className="text-gray-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100"

@@ -5,9 +5,10 @@ import remarkGfm from 'remark-gfm';
 interface PromptEditorProps {
     value: string;
     onChange: (value: string) => void;
+    readOnly?: boolean;
 }
 
-const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange }) => {
+const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange, readOnly = false }) => {
     const [activeTab, setActiveTab] = useState<'write' | 'preview'>('write');
     const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -71,8 +72,8 @@ const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange }) => {
                 </div>
             </div>
 
-            {/* Toolbar (Visible only in Write mode) */}
-            {activeTab === 'write' && (
+            {/* Toolbar (Visible only in Write mode and not readOnly) */}
+            {activeTab === 'write' && !readOnly && (
                 <div className="bg-white border-b border-gray-100 flex items-center px-2 py-1 gap-1">
                     <ToolbarButton onClick={() => insertFormat('**', '**')} label="B" title="Bold" />
                     <ToolbarButton onClick={() => insertFormat('*', '*')} label="I" title="Italic" />
@@ -93,6 +94,7 @@ const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange }) => {
                         placeholder="Enter your prompt here..."
                         value={value}
                         onChange={(e) => onChange(e.target.value)}
+                        readOnly={readOnly}
                         spellCheck={false}
                     />
                 ) : (
