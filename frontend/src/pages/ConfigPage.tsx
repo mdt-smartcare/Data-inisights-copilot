@@ -361,8 +361,9 @@ const ConfigPage: React.FC = () => {
                                                         onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
                                                         disabled={!canEdit}
                                                     />
-                                                    {dataDictionary && !canEdit === false && (
+                                                    {dataDictionary && canEdit && (
                                                         <button
+                                                            type="button"
                                                             onClick={() => {
                                                                 if (window.confirm('Clear dictionary content?')) setDataDictionary('');
                                                             }}
