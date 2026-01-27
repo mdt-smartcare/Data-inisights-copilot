@@ -26,6 +26,7 @@ export default function ChatHeader({
   const navLinks = [
     { path: '/chat', label: 'Chat', show: true },
     { path: '/config', label: 'Config', show: true },
+    { path: '/history', label: 'History', show: true },
     { path: '/users', label: 'Users', show: canManageUsers(user) },
     { path: '/audit', label: 'Audit', show: canViewAllAuditLogs(user) },
   ];

@@ -9,6 +9,7 @@ import RegisterPage from './pages/RegisterPage';
 import ConfigPage from './pages/ConfigPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
+import PromptHistoryPage from './pages/PromptHistoryPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Create a client
@@ -104,6 +105,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <AuditLogsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/history"
+              element={
+                <ProtectedRoute>
+                  <PromptHistoryPage />
                 </ProtectedRoute>
               }
             />
