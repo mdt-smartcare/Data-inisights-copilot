@@ -7,11 +7,14 @@ from backend.models.config import PromptGenerationRequest, PromptPublishRequest,
 from backend.sqliteDb.db import get_db_service, DatabaseService
 from backend.core.logging import get_logger
 
+from backend.core.logging import get_logger
+from backend.api.deps import require_role, UserRole, User, get_current_user
+
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/config", tags=["Configuration"])
 
-@router.post("/generate", response_model=Dict[str, str])
+@router.post("/generate", response_model=Dict[str, Any], dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR]))])
 async def generate_prompt(
     request: PromptGenerationRequest,
     config_service: ConfigService = Depends(get_config_service)
@@ -29,7 +32,7 @@ async def generate_prompt(
             detail=f"Failed to generate prompt: {str(e)}"
         )
 
-@router.post("/publish", response_model=PromptResponse)
+@router.post("/publish", response_model=PromptResponse, dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR]))])
 async def publish_prompt(
     request: PromptPublishRequest,
     service: ConfigService = Depends(get_config_service)

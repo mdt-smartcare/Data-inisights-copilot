@@ -1,5 +1,6 @@
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+import json
 from langchain.prompts import ChatPromptTemplate
 from backend.services.sql_service import get_sql_service
 from backend.services.agent_service import get_agent_service
@@ -14,7 +15,7 @@ class ConfigService:
         self.llm = get_agent_service().llm
         self.db_service = get_db_service()
 
-    def generate_draft_prompt(self, data_dictionary: str) -> str:
+    def generate_draft_prompt(self, data_dictionary: str) -> Dict[str, Any]:
         """
         Generates a draft system prompt based on the provided data dictionary / context.
         
@@ -42,9 +43,57 @@ class ConfigService:
         ])
 
         # Invoke the LLM
+        # Invoke the LLM
+        # We want the LLM to explain WHY it prioritized certain tables
+        instruction += (
+            "\n\nAlso, at the end of your response, strictly separated by '---REASONING---', "
+            "provide a JSON object with two keys: \n"
+            "1. 'selection_reasoning': mapping key schema elements to the reason they were selected.\n"
+            "2. 'example_questions': a list of 3-5 representative questions this agent could answer.\n"
+            "Example:\n"
+            "Prompt Text...\n"
+            "---REASONING---\n"
+            "{\"selection_reasoning\": {\"patients\": \"...\"}, \"example_questions\": [\"Count patients by gender\", \"...\"]}"
+        )
+
         chain = prompt_template | self.llm
         response = chain.invoke({})
-        return response.content
+        full_text = response.content
+        
+        # Parse output
+        if "---REASONING---" in full_text:
+            parts = full_text.split("---REASONING---")
+            prompt_content = parts[0].strip()
+            try:
+                reasoning_json = parts[1].strip()
+                # fast cleanup if mardown code blocks are present
+                reasoning_json = reasoning_json.replace("```json", "").replace("```", "").strip()
+                try:
+                    parsed = json.loads(reasoning_json)
+                    # Handle both old format (direct dict) and new format (nested keys)
+                    if "selection_reasoning" in parsed:
+                        reasoning = parsed.get("selection_reasoning", {})
+                        questions = parsed.get("example_questions", [])
+                    else:
+                        # Fallback for simple dict
+                        reasoning = parsed
+                        questions = []
+                except:
+                    reasoning = {}
+                    questions = []
+            except:
+                reasoning = {}
+                questions = []
+        else:
+            prompt_content = full_text
+            reasoning = {}
+            questions = []
+
+        return {
+            "draft_prompt": prompt_content, 
+            "reasoning": reasoning,
+            "example_questions": questions
+        }
 
     def publish_system_prompt(self, prompt_text: str, user_id: str, 
                               connection_id: Optional[int] = None, 

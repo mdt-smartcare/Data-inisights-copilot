@@ -5,6 +5,7 @@ from backend.sqliteDb.db import get_db_service, DatabaseService
 from backend.services.sql_service import get_sql_service, SQLService
 from backend.models.data import DbConnectionCreate, DbConnectionResponse
 from backend.core.logging import get_logger
+from backend.api.deps import require_role, UserRole
 
 logger = get_logger(__name__)
 
@@ -22,7 +23,7 @@ async def list_connections(
         logger.error(f"Error listing connections: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/connections", response_model=Dict[str, Any])
+@router.post("/connections", response_model=Dict[str, Any], dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR]))])
 async def create_connection(
     connection: DbConnectionCreate,
     db_service: DatabaseService = Depends(get_db_service)
@@ -42,7 +43,7 @@ async def create_connection(
         logger.error(f"Error adding connection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/connections/{connection_id}")
+@router.delete("/connections/{connection_id}", dependencies=[Depends(require_role([UserRole.ADMIN]))])
 async def delete_connection(
     connection_id: int,
     db_service: DatabaseService = Depends(get_db_service)

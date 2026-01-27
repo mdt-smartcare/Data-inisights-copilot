@@ -28,7 +28,6 @@ class PromptResponse(BaseModel):
     id: int
     prompt_text: str
     version: int
-    prompt_text: str
-    version: int
+
     is_active: int
     reasoning: Optional[Dict[str, str]] = None  # New field for explainability

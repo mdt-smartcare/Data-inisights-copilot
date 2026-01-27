@@ -100,6 +100,7 @@ class DatabaseService:
                     connection_id INTEGER,
                     schema_selection TEXT, -- JSON string
                     data_dictionary TEXT,
+                    reasoning TEXT, -- JSON string
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
                 )
@@ -112,6 +113,13 @@ class DatabaseService:
             if 'role' not in columns:
                 cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
                 logger.info("Added role column to users table")
+
+            # Add reasoning column to prompt_configs if it doesn't exist
+            cursor.execute("PRAGMA table_info(prompt_configs)")
+            pc_columns = [col[1] for col in cursor.fetchall()]
+            if 'reasoning' not in pc_columns:
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN reasoning TEXT")
+                logger.info("Added reasoning column to prompt_configs table")
             
             # Get admin credentials from environment variables
             admin_username = os.getenv('ADMIN_USERNAME', 'admin')
@@ -312,15 +320,18 @@ class DatabaseService:
     def publish_system_prompt(self, prompt_text: str, user_id: str, 
                               connection_id: Optional[int] = None, 
                               schema_selection: Optional[str] = None, 
-                              data_dictionary: Optional[str] = None) -> Dict[str, Any]:
+                              data_dictionary: Optional[str] = None,
+                              reasoning: Optional[str] = None) -> Dict[str, Any]:
         """Publish a new version of the system prompt with optional config metadata.
         
         Args:
             prompt_text: Content of the prompt
             user_id: ID of the creating user
             connection_id: ID of the database connection used
+            connection_id: ID of the database connection used
             schema_selection: JSON string of selected schema
             data_dictionary: Content of data dictionary
+            reasoning: JSON string of reasoning metadata
             
         Returns:
             Dictionary with the new prompt details
@@ -349,9 +360,9 @@ class DatabaseService:
             # 4. Insert config metadata if available
             if connection_id is not None:
                 cursor.execute("""
-                    INSERT INTO prompt_configs (prompt_id, connection_id, schema_selection, data_dictionary)
-                    VALUES (?, ?, ?, ?)
-                """, (prompt_id, connection_id, schema_selection, data_dictionary))
+                    INSERT INTO prompt_configs (prompt_id, connection_id, schema_selection, data_dictionary, reasoning)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (prompt_id, connection_id, schema_selection, data_dictionary, reasoning))
             
             conn.commit()
             
@@ -382,7 +393,10 @@ class DatabaseService:
                 sp.prompt_text,
                 pc.connection_id,
                 pc.schema_selection,
-                pc.data_dictionary
+                pc.connection_id,
+                pc.schema_selection,
+                pc.data_dictionary,
+                pc.reasoning
             FROM system_prompts sp
             LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
             WHERE sp.is_active = 1
