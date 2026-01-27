@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { getConnections, saveConnection, deleteConnection, handleApiError } from '../services/api';
 import Alert from './Alert';
+import ConfirmationModal from './ConfirmationModal';
+import { CONFIRMATION_MESSAGES } from '../config';
 import type { DbConnection } from '../services/api';
 
 interface ConnectionManagerProps {
@@ -18,6 +20,9 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
     const [isAdding, setIsAdding] = useState(false);
     const [newName, setNewName] = useState('');
     const [newUri, setNewUri] = useState('');
+
+    // Deletion Modal
+    const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
 
     const fetchConnections = async () => {
         setLoading(true);
@@ -56,9 +61,16 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
         }
     };
 
-    const handleDelete = async (id: number, e: React.MouseEvent) => {
+    const handleDeleteClick = (id: number, e: React.MouseEvent) => {
         e.stopPropagation();
-        if (!window.confirm("Are you sure you want to delete this connection?")) return;
+        setDeleteConfirm({ show: true, id });
+    };
+
+    const confirmDelete = async () => {
+        if (deleteConfirm.id === null) return;
+
+        const id = deleteConfirm.id;
+        setDeleteConfirm({ show: false, id: null });
 
         setLoading(true);
         try {
@@ -149,7 +161,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                                 <span className="text-xs text-blue-600 font-semibold">Selected</span>
                                 {!readOnly && (
                                     <button
-                                        onClick={(e) => handleDelete(conn.id, e)}
+                                        onClick={(e) => handleDeleteClick(conn.id, e)}
                                         className="text-gray-400 hover:text-red-600 p-1"
                                         title="Delete"
                                     >
@@ -162,8 +174,8 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                         )}
                         {selectedId !== conn.id && !readOnly && (
                             <button
-                                onClick={(e) => handleDelete(conn.id, e)}
-                                className="text-gray-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100"
+                                onClick={(e) => handleDeleteClick(conn.id, e)}
+                                className="text-gray-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 font-bold text-[10px]"
                             >
                                 DELETE
                             </button>
@@ -171,6 +183,18 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                     </div>
                 ))}
             </div>
+
+            {/* Confirmation Modal */}
+            <ConfirmationModal
+                show={deleteConfirm.show}
+                title="Delete Connection"
+                message={CONFIRMATION_MESSAGES.DELETE_CONNECTION}
+                confirmText="Delete"
+                onConfirm={confirmDelete}
+                onCancel={() => setDeleteConfirm({ show: false, id: null })}
+                isLoading={loading}
+                type="danger"
+            />
         </div>
     );
 };
