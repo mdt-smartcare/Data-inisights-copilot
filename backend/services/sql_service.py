@@ -219,16 +219,14 @@ patient_tracker.id → patient_diagnosis.patient_track_id
         logger.info("Analyzing natural language query")
         
         simple_patterns = [
-            r'\bcount\b.*\bpatients?\b',
-            r'\bhow many\b.*\bpatients?\b',
+            r'\bcount\b',
+            r'\bhow many\b',
             r'\btotal\b.*\bnumber\b',
-            r'\baverage\b.*\b(bmi|age|glucose|systolic|diastolic|bp|blood pressure)\b',
-            r'\bmean\b.*\b(bmi|age|glucose)\b',
-            r'\bsum\b.*\b(patients?|visits?)\b',
-            r'number of (patients?|visits?)',
-            r'(male|female|gender).*patients?.*with.*(hypertension|diabetes|htn|dm)',
-            r'(gender|age|bmi).*(distribution|breakdown)',
-            r'distribution of (gender|age|patients?)',
+            r'\baverage\b',
+            r'\bmean\b',
+            r'\bsum\b',
+            r'number of',
+            r'distribution of',
         ]
         
         has_simple_pattern = any(re.search(pattern, question_lower) for pattern in simple_patterns)
