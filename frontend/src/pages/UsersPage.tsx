@@ -22,22 +22,13 @@ const UsersPage: React.FC = () => {
     const [editingUser, setEditingUser] = useState<UserData | null>(null);
     const [editForm, setEditForm] = useState({ role: '', is_active: true });
 
-    // Check access
-    if (!canManageUsers(user)) {
-        return (
-            <div className="h-full flex items-center justify-center">
-                <div className="text-center">
-                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
-                    <p className="text-gray-500">You don't have permission to access this page.</p>
-                    <p className="text-sm text-gray-400 mt-2">Only Super Admin can manage users.</p>
-                </div>
-            </div>
-        );
-    }
+    const hasAccess = canManageUsers(user);
 
     useEffect(() => {
-        loadUsers();
-    }, []);
+        if (hasAccess) {
+            loadUsers();
+        }
+    }, [hasAccess]);
 
     const loadUsers = async () => {
         setLoading(true);
@@ -96,6 +87,19 @@ const UsersPage: React.FC = () => {
             setError(err.message || 'Failed to deactivate user');
         }
     };
+
+    // Access check AFTER all hooks
+    if (!hasAccess) {
+        return (
+            <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
+                    <p className="text-gray-500">You don't have permission to access this page.</p>
+                    <p className="text-sm text-gray-400 mt-2">Only Super Admin can manage users.</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="max-w-6xl mx-auto py-8 px-4">

@@ -29,23 +29,14 @@ const AuditLogsPage: React.FC = () => {
     });
     const [actionTypes, setActionTypes] = useState<string[]>([]);
 
-    // Check access
-    if (!canViewAllAuditLogs(user)) {
-        return (
-            <div className="h-full flex items-center justify-center">
-                <div className="text-center">
-                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
-                    <p className="text-gray-500">You don't have permission to access this page.</p>
-                    <p className="text-sm text-gray-400 mt-2">Only Super Admin can view audit logs.</p>
-                </div>
-            </div>
-        );
-    }
+    const hasAccess = canViewAllAuditLogs(user);
 
     useEffect(() => {
-        loadLogs();
-        loadActionTypes();
-    }, []);
+        if (hasAccess) {
+            loadLogs();
+            loadActionTypes();
+        }
+    }, [hasAccess]);
 
     const loadLogs = async () => {
         setLoading(true);
@@ -100,6 +91,19 @@ const AuditLogsPage: React.FC = () => {
         if (action.includes('publish')) return 'text-purple-600 bg-purple-50';
         return 'text-gray-600 bg-gray-50';
     };
+
+    // Access check AFTER all hooks
+    if (!hasAccess) {
+        return (
+            <div className="h-full flex items-center justify-center">
+                <div className="text-center">
+                    <h2 className="text-2xl font-bold text-gray-900 mb-2">Access Denied</h2>
+                    <p className="text-gray-500">You don't have permission to access this page.</p>
+                    <p className="text-sm text-gray-400 mt-2">Only Super Admin can view audit logs.</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="max-w-7xl mx-auto py-8 px-4">
@@ -169,7 +173,7 @@ const AuditLogsPage: React.FC = () => {
             ) : logs.length === 0 ? (
                 <div className="text-center py-12 text-gray-500">
                     <p className="text-lg">No audit logs found</p>
-                    <p className="text-sm mt-1">Try adjusting your filters</p>
+                    <p className="text-sm mt-1">Logs will appear as actions are performed in the system</p>
                 </div>
             ) : (
                 <div className="bg-white rounded-lg shadow border border-gray-200 overflow-hidden">
