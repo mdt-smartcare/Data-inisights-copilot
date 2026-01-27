@@ -18,6 +18,7 @@ from backend.config import get_settings
 from backend.core.logging import get_logger
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import MetricDefinition
+from backend.services.reflection_service import get_critique_service
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -46,6 +47,9 @@ class SQLService:
             self.metrics: List[MetricDefinition] = []
             self.db_service = get_db_service()
             self._load_metrics()
+            
+            # Initialize critique service
+            self.critique_service = get_critique_service()
 
             # Initialize database connection with views included
             temp_db = SQLDatabase.from_uri(settings.database_url)
@@ -393,14 +397,69 @@ SQL Query:"""
                 response = self.llm_fast.invoke(prompt)
                 sql_query = response.content.strip()
                 
-                sql_query = re.sub(r'```sql\n?', '', sql_query)
                 sql_query = re.sub(r'```\n?', '', sql_query)
                 sql_query = sql_query.strip()
             
+            # =================================================================
+            # REFLECTION LOOP: Validate and Fix SQL Algorithm
+            # =================================================================
+            logger.info(f"🤔 Initial SQL generated: {sql_query[:100]}...")
+            
+            max_retries = 2
+            current_try = 0
+            is_valid = False
+            critique_feedback = ""
+            
+            while current_try <= max_retries:
+                if current_try > 0:
+                    logger.warning(f"🔄 Retry attempt {current_try}/{max_retries} due to critique: {critique_feedback}")
+                    
+                    # Fix SQL based on critique
+                    fix_prompt = f"""The previous SQL query was invalid. Fix it based on the critique.
+                    
+DATABASE SCHEMA:
+{relevant_schema}
+
+CRITIQUE:
+{critique_feedback}
+
+ORIGINAL QUESTION: {question}
+
+PREVIOUS SQL: {sql_query}
+
+Return ONLY the corrected SQL query."""
+                    
+                    response = self.llm_fast.invoke(fix_prompt)
+                    sql_query = response.content.strip()
+                    sql_query = re.sub(r'```sql\n?', '', sql_query)
+                    sql_query = re.sub(r'```\n?', '', sql_query)
+                    sql_query = sql_query.strip()
+                    logger.info(f"🛠️ Fixed SQL: {sql_query[:100]}...")
+
+                # Validate with Critique Service
+                # We need the full schema context for critique, or at least the relevant part
+                critique = self.critique_service.critique_sql(
+                    question=question,
+                    sql_query=sql_query,
+                    schema_context=relevant_schema
+                )
+                
+                if critique.is_valid:
+                    logger.info("✅ SQL validated successfully via reflection")
+                    is_valid = True
+                    break
+                else:
+                    critique_feedback = "; ".join(critique.issues)
+                    current_try += 1
+            
+            if not is_valid:
+                logger.warning("❌ SQL failed validation after retries. Executing strict safety check fallback.")
+            
             logger.info(f" SQL to execute: {sql_query[:200]}...")
             
+            # Still run the regex safety check as a final fail-safe
             if not self._validate_sql_query(sql_query):
-                logger.warning("  SQL validation failed, falling back to agent")
+                logger.warning("  Final SQL validation failed, falling back to agent")
                 return self._execute_with_agent(question)
             
             logger.info(" Executing query against database (no API call)")

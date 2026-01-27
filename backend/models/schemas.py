@@ -171,6 +171,22 @@ class SQLExample(BaseModel):
         }
     })
 
+class CritiqueResponse(BaseModel):
+    """Output from the SQL critique agent."""
+    is_valid: bool = Field(..., description="Whether the SQL is valid and safe")
+    issues: List[str] = Field(default_factory=list, description="List of identified issues")
+    corrected_sql: Optional[str] = Field(default=None, description="Suggested fix if applicable")
+    reasoning: str = Field(..., description="Explanation of the critique")
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "is_valid": False,
+            "issues": ["Column 'p_id' does not exist in table 'patients'"],
+            "corrected_sql": "SELECT count(*) FROM patient_tracker",
+            "reasoning": "Schema mismatch identified."
+        }
+    })
+
 
 # ============================================
 # Feedback Schemas
