@@ -1,57 +1,68 @@
-import React, { useState, useEffect } from 'react';
-import { generateSystemPrompt, publishSystemPrompt, getActivePrompt, handleApiError } from '../services/api';
+import React, { useState } from 'react';
+import { generateSystemPrompt, publishSystemPrompt, handleApiError } from '../services/api';
+import ConnectionManager from '../components/ConnectionManager';
+import SchemaSelector from '../components/SchemaSelector';
+
+const steps = [
+    { id: 1, name: 'Connect Database' },
+    { id: 2, name: 'Select Schema' },
+    { id: 3, name: 'Data Dictionary' },
+    { id: 4, name: 'Review & Publish' }
+];
 
 const ConfigPage: React.FC = () => {
+    const [currentStep, setCurrentStep] = useState(1);
+    const [connectionId, setConnectionId] = useState<number | null>(null);
+    const [selectedTables, setSelectedTables] = useState<string[]>([]);
     const [dataDictionary, setDataDictionary] = useState('');
     const [draftPrompt, setDraftPrompt] = useState('');
-    const [loading, setLoading] = useState(false);
+
+    // Status
+    const [generating, setGenerating] = useState(false);
     const [publishing, setPublishing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-    // Fetch active prompt on mount
-    useEffect(() => {
-        const fetchActive = async () => {
-            try {
-                const result = await getActivePrompt();
-                if (result.prompt_text) {
-                    setDraftPrompt(result.prompt_text); // Pre-fill with active prompt
-                }
-            } catch (err) {
-                console.error("Failed to fetch active prompt", err);
-                // Don't block the UI, just log it
-            }
-        };
-        fetchActive();
-    }, []);
-
-    const handleGenerate = async () => {
-        if (!dataDictionary.trim()) {
-            setError('Please enter a Data Dictionary first.');
+    const handleNext = () => {
+        if (currentStep === 1 && !connectionId) {
+            setError("Please select a database connection.");
             return;
         }
-        setLoading(true);
+        if (currentStep === 2 && selectedTables.length === 0) {
+            setError("Please select at least one table.");
+            return;
+        }
         setError(null);
-        setSuccessMessage(null);
+        if (currentStep < 4) setCurrentStep(currentStep + 1);
+    };
+
+    const handleBack = () => {
+        setError(null);
+        if (currentStep > 1) setCurrentStep(currentStep - 1);
+    };
+
+    const handleGenerate = async () => {
+        setGenerating(true);
+        setError(null);
         try {
-            const result = await generateSystemPrompt(dataDictionary);
+            // Create a context string that includes selected schema
+            const schemaContext = `Selected Tables: ${selectedTables.join(', ')}\n\n`;
+            const fullContext = schemaContext + dataDictionary;
+
+            const result = await generateSystemPrompt(fullContext);
             setDraftPrompt(result.draft_prompt);
-            setSuccessMessage('Draft prompt generated successfully!');
+            setCurrentStep(4); // Move to final step
         } catch (err) {
             setError(handleApiError(err));
         } finally {
-            setLoading(false);
+            setGenerating(false);
         }
     };
 
     const handlePublish = async () => {
-        if (!draftPrompt.trim()) {
-            setError('Cannot publish an empty prompt.');
-            return;
-        }
+        if (!draftPrompt.trim()) return;
         setPublishing(true);
         setError(null);
-        setSuccessMessage(null);
         try {
             const result = await publishSystemPrompt(draftPrompt);
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
@@ -63,73 +74,143 @@ const ConfigPage: React.FC = () => {
     };
 
     return (
-        <div className="p-6 h-full flex flex-col">
-            <h1 className="text-2xl font-bold mb-6 text-gray-800">System Prompt Configuration</h1>
-
-            {error && (
-                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4" role="alert">
-                    <span className="block sm:inline">{error}</span>
+        <div className="max-w-5xl mx-auto py-8 px-4 h-full flex flex-col">
+            {/* Header & Steps */}
+            <div className="mb-8">
+                <h1 className="text-2xl font-bold text-gray-900 mb-6">Data Setup Wizard</h1>
+                <div className="flex items-center justify-between relative">
+                    <div className="absolute left-0 top-1/2 w-full h-0.5 bg-gray-200 -z-10"></div>
+                    {steps.map((step) => (
+                        <div key={step.id} className="flex flex-col items-center bg-white px-2">
+                            <div
+                                className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors ${currentStep >= step.id
+                                        ? 'bg-blue-600 text-white'
+                                        : 'bg-gray-200 text-gray-500'
+                                    }`}
+                            >
+                                {step.id}
+                            </div>
+                            <span className={`text-xs mt-2 font-medium ${currentStep >= step.id ? 'text-blue-600' : 'text-gray-500'}`}>
+                                {step.name}
+                            </span>
+                        </div>
+                    ))}
                 </div>
-            )}
+            </div>
 
-            {successMessage && (
-                <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded mb-4" role="alert">
-                    <span className="block sm:inline">{successMessage}</span>
+            {/* Main Content Area */}
+            <div className="flex-1 bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6 flex flex-col overflow-hidden">
+                {error && (
+                    <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-4" role="alert">
+                        <p>{error}</p>
+                    </div>
+                )}
+
+                {successMessage && (
+                    <div className="bg-green-50 border-l-4 border-green-500 text-green-700 p-4 mb-4" role="alert">
+                        <p>{successMessage}</p>
+                    </div>
+                )}
+
+                <div className="flex-1 overflow-y-auto">
+                    {currentStep === 1 && (
+                        <div className="max-w-2xl mx-auto">
+                            <h2 className="text-xl font-semibold mb-4">Select Database Connection</h2>
+                            <p className="text-gray-500 text-sm mb-6">
+                                Choose the database you want to generate insights from. You can add multiple connections (e.g., Staging, Production).
+                            </p>
+                            <ConnectionManager
+                                onSelect={setConnectionId}
+                                selectedId={connectionId}
+                            />
+                        </div>
+                    )}
+
+                    {currentStep === 2 && connectionId && (
+                        <div className="max-w-4xl mx-auto">
+                            <h2 className="text-xl font-semibold mb-4">Select Tables</h2>
+                            <p className="text-gray-500 text-sm mb-6">
+                                Select which tables contain relevant data for analysis. The AI will only be aware of the tables you select.
+                            </p>
+                            <SchemaSelector
+                                connectionId={connectionId}
+                                onSelectionChange={setSelectedTables}
+                            />
+                        </div>
+                    )}
+
+                    {currentStep === 3 && (
+                        <div className="h-full flex flex-col">
+                            <h2 className="text-xl font-semibold mb-4">Add Data Dictionary (Optional)</h2>
+                            <p className="text-gray-500 text-sm mb-4">
+                                Paste any additional context, column descriptions, or business rules here. This helps the AI understand your schema better.
+                            </p>
+                            <textarea
+                                className="flex-1 p-4 border rounded-md font-mono text-sm resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                placeholder="e.g. 'users.role' values can be 'admin', 'viewer', 'editor'..."
+                                value={dataDictionary}
+                                onChange={(e) => setDataDictionary(e.target.value)}
+                            />
+                        </div>
+                    )}
+
+                    {currentStep === 4 && (
+                        <div className="h-full flex flex-col">
+                            <h2 className="text-xl font-semibold mb-4">Review & Configuration</h2>
+                            <div className="flex-1 flex flex-col">
+                                <label className="text-sm font-medium text-gray-700 mb-2">Generated System Prompt</label>
+                                <textarea
+                                    className="flex-1 p-4 border border-gray-300 rounded-md font-mono text-sm resize-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                                    value={draftPrompt}
+                                    onChange={(e) => setDraftPrompt(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    )}
                 </div>
-            )}
+            </div>
 
-            <div className="flex flex-col lg:flex-row gap-6 h-[calc(100vh-12rem)]">
-                {/* Left Panel: Data Dictionary Input */}
-                <div className="flex-1 flex flex-col bg-white rounded-lg shadow-md p-4">
-                    <label className="text-sm font-semibold text-gray-700 mb-2">Data Dictionary / Schema Info</label>
-                    <textarea
-                        className="flex-1 p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-sm resize-none"
-                        placeholder="Paste your database schema, column descriptions, or rules here..."
-                        value={dataDictionary}
-                        onChange={(e) => setDataDictionary(e.target.value)}
-                    />
+            {/* Footer / Actions */}
+            <div className="flex justify-between items-center py-4 border-t border-gray-100">
+                <button
+                    onClick={handleBack}
+                    disabled={currentStep === 1}
+                    className="px-6 py-2 border border-gray-300 rounded-md text-gray-700 font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    Back
+                </button>
+
+                {currentStep < 3 && (
+                    <button
+                        onClick={handleNext}
+                        disabled={!connectionId}
+                        className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 disabled:opacity-50"
+                    >
+                        Next Step
+                    </button>
+                )}
+
+                {currentStep === 3 && (
                     <button
                         onClick={handleGenerate}
-                        disabled={loading}
-                        className={`mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors font-medium flex items-center justify-center ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        disabled={generating}
+                        className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center"
                     >
-                        {loading ? (
-                            <>
-                                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                Generating...
-                            </>
-                        ) : 'Generate Draft Prompt'}
+                        {generating ? (
+                            <>Generating...</>
+                        ) : 'Generate Prompt'}
                     </button>
-                </div>
+                )}
 
-                {/* Right Panel: Prompt Editor */}
-                <div className="flex-1 flex flex-col bg-white rounded-lg shadow-md p-4">
-                    <label className="text-sm font-semibold text-gray-700 mb-2">System Prompt (Draft)</label>
-                    <textarea
-                        className="flex-1 p-3 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-transparent font-mono text-sm resize-none"
-                        placeholder="Generated prompt will appear here. You can edit it manually."
-                        value={draftPrompt}
-                        onChange={(e) => setDraftPrompt(e.target.value)}
-                    />
+                {currentStep === 4 && (
                     <button
                         onClick={handlePublish}
                         disabled={publishing}
-                        className={`mt-4 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors font-medium flex items-center justify-center ${publishing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
                     >
-                        {publishing ? (
-                            <>
-                                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                Publishing...
-                            </>
-                        ) : 'Publish to Production'}
+                        {publishing ? 'Publishing...' : 'Publish to Production'}
                     </button>
-                </div>
+                )}
             </div>
         </div>
     );

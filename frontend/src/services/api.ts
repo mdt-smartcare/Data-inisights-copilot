@@ -159,3 +159,52 @@ export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
   return response.data;
 };
 
+
+// ============================================================================
+// DATA SETUP & CONNECTION API (Phase 6 & 7)
+// ============================================================================
+
+export interface DbConnection {
+  id: number;
+  name: string;
+  uri: string;
+  engine_type: string;
+  created_at: string;
+}
+
+export const getConnections = async (): Promise<DbConnection[]> => {
+  const response = await apiClient.get('/api/v1/data/connections');
+  return response.data;
+};
+
+export const saveConnection = async (name: string, uri: string, engine_type: string = 'postgresql'): Promise<{ status: string; id: number }> => {
+  // Get user ID similar to publishSystemPrompt
+  const user = localStorage.getItem('user');
+  let userId = 'admin';
+  if (user) {
+    try {
+      const parsedUser = JSON.parse(user);
+      userId = parsedUser.id || parsedUser.username || 'admin';
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  const response = await apiClient.post('/api/v1/data/connections', {
+    name,
+    uri,
+    engine_type,
+    created_by: userId
+  });
+  return response.data;
+};
+
+export const deleteConnection = async (id: number): Promise<{ status: string }> => {
+  const response = await apiClient.delete(`/api/v1/data/connections/${id}`);
+  return response.data;
+};
+
+export const getConnectionSchema = async (id: number): Promise<{ status: string; connection: string; schema: { tables: string[]; details: any } }> => {
+  const response = await apiClient.get(`/api/v1/data/connections/${id}/schema`);
+  return response.data;
+};
