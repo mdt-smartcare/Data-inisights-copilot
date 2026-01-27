@@ -54,8 +54,8 @@ def role_at_least(user_role: str, required_role: str) -> bool:
 # ============================================
 
 def can_manage_users(role: str) -> bool:
-    """Only Super Admin can manage users."""
-    return role == UserRole.SUPER_ADMIN.value
+    """Super Admin and Admin can manage users."""
+    return role_at_least(role, UserRole.ADMIN.value)
 
 
 def can_view_all_audit_logs(role: str) -> bool:
