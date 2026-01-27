@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from backend.sqliteDb.db import get_db_service, DatabaseService
-from backend.core.permissions import require_super_admin, User
+from backend.core.permissions import require_admin, User
 from backend.core.logging import get_logger
 from backend.services.audit_service import get_audit_service, AuditAction
 
@@ -45,16 +45,16 @@ class UserResponse(BaseModel):
 
 
 
-@router.post("", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
+@router.post("", response_model=UserResponse, dependencies=[Depends(require_admin)])
 async def create_user(
     request: UserCreateRequest,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Create a new user.
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     try:
         # Validate role
@@ -91,14 +91,14 @@ async def create_user(
         raise HTTPException(status_code=500, detail="Failed to create user")
 
 
-@router.get("", response_model=List[UserResponse], dependencies=[Depends(require_super_admin)])
+@router.get("", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
 async def list_users(
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     List all users in the system.
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -113,7 +113,7 @@ async def list_users(
     return [dict(zip(columns, row)) for row in rows]
 
 
-@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
+@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
 async def get_user(
     user_id: int,
     db_service: DatabaseService = Depends(get_db_service)
@@ -121,7 +121,7 @@ async def get_user(
     """
     Get a specific user by ID.
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -139,17 +139,17 @@ async def get_user(
     return dict(zip(columns, row))
 
 
-@router.patch("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
+@router.patch("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
 async def update_user(
     user_id: int,
     request: UserUpdateRequest,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Update a user's profile or role.
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -212,16 +212,16 @@ async def update_user(
     return await get_user(user_id, db_service)
 
 
-@router.delete("/{user_id}", dependencies=[Depends(require_super_admin)])
+@router.delete("/{user_id}", dependencies=[Depends(require_admin)])
 async def delete_user(
     user_id: int,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Delete a user (soft delete by deactivating).
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
