@@ -132,6 +132,31 @@ class ChatResponse(BaseModel):
 
 
 # ============================================
+# Metric & Configuration Schemas
+# ============================================
+
+class MetricDefinition(BaseModel):
+    """Configuration for dynamic SQL metrics."""
+    id: Optional[int] = None
+    name: str = Field(..., description="Unique metric name")
+    description: Optional[str] = None
+    regex_pattern: str = Field(..., description="Regex pattern to match user questions")
+    sql_template: str = Field(..., description="SQL query template")
+    priority: int = Field(default=0, description="Match priority (lower is checked first)")
+    is_active: bool = Field(default=True)
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "name": "htn_prevalence",
+            "regex_pattern": "htn.*prevalence",
+            "sql_template": "SELECT count(*) FROM ...",
+            "priority": 1
+        }
+    })
+
+
+# ============================================
 # Feedback Schemas
 # ============================================
 
