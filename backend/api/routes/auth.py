@@ -53,7 +53,7 @@ async def register(
             password=request.password,  # Plain text password - will be hashed
             email=request.email,
             full_name=request.full_name,
-            role=request.role or "user"  # Default to 'user' role if not specified
+            role=request.role or "viewer"  # Default to 'viewer' role if not specified
         )
         
         logger.info(f"User registered successfully: {request.username}")

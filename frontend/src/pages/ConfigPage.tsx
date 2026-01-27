@@ -21,8 +21,7 @@ const steps = [
 const ConfigPage: React.FC = () => {
     const { user } = useAuth();
     const canEdit = user?.role === 'admin' || user?.role === 'editor';
-    // For now, simplify roles: Admin/Editor = Edit, Viewer/User = ReadOnly
-    // const isViewer = !canEdit;
+    const isViewer = !canEdit;
 
     const [currentStep, setCurrentStep] = useState(1);
     const [connectionId, setConnectionId] = useState<number | null>(null);
@@ -230,6 +229,11 @@ const ConfigPage: React.FC = () => {
                             <div>
                                 <h1 className="text-3xl font-bold text-gray-900">AI Agent Dashboard</h1>
                                 <p className="text-gray-500 mt-1">Manage your Data Intelligence Agent configuration</p>
+                                {isViewer && (
+                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mt-2">
+                                        Read-Only Mode
+                                    </span>
+                                )}
                             </div>
                             <div className="flex gap-3">
                                 {canEdit && (

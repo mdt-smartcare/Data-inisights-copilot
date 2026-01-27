@@ -1,5 +1,13 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import type { User } from '../types';
+
+// Define User type locally or import from types if centralized
+export interface User {
+  username: string;
+  email?: string;
+  full_name?: string;
+  role: 'admin' | 'editor' | 'viewer' | string;
+}
+
 
 /**
  * Authentication context interface

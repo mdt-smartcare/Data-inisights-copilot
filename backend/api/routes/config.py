@@ -8,7 +8,8 @@ from backend.sqliteDb.db import get_db_service, DatabaseService
 from backend.core.logging import get_logger
 
 from backend.core.logging import get_logger
-from backend.api.deps import require_role, UserRole, User, get_current_user
+from backend.core.logging import get_logger
+from backend.core.permissions import require_role, UserRole, User, get_current_user
 
 logger = get_logger(__name__)
 

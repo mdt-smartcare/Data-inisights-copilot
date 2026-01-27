@@ -41,7 +41,7 @@ class User(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     created_at: Optional[str] = None
-    role: Optional[str] = None
+    role: str = Field(default="viewer", description="User role: admin, editor, or viewer")
 
 
 # ============================================

@@ -90,7 +90,7 @@ const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange, readOnly =
                 {activeTab === 'write' ? (
                     <textarea
                         ref={textareaRef}
-                        className="flex-1 flex overflow-hidden min-h-[700px] relative"
+                        className="flex-1 p-4 font-mono text-sm leading-relaxed resize-none focus:outline-none w-full h-full"
                         placeholder="Enter your prompt here..."
                         value={value}
                         onChange={(e) => onChange(e.target.value)}
