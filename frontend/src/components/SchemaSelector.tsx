@@ -5,7 +5,6 @@ interface SchemaSelectorProps {
     connectionId: number;
     // Map of TableName -> List of Selected Column Names
     onSelectionChange: (selection: Record<string, string[]>) => void;
-    onSelectionChange: (selection: Record<string, string[]>) => void;
     readOnly?: boolean;
     reasoning?: Record<string, string>;
 }
