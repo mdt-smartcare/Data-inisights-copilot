@@ -80,6 +80,19 @@ class DatabaseService:
                     created_by TEXT
                 )
             """)
+
+            # Create db_connections table for managing database endpoints
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS db_connections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    uri TEXT NOT NULL,
+                    engine_type TEXT DEFAULT 'postgresql',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT
+                )
+            """)
+
             
             # Add role column if it doesn't exist (migration for existing databases)
             cursor.execute("PRAGMA table_info(users)")
@@ -283,6 +296,61 @@ class DatabaseService:
         if row:
             return row['prompt_text']
         return None
+
+    def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None) -> int:
+        """Add a new database connection.
+        
+        Args:
+            name: Friendly name for the connection
+            uri: Connection string (e.g., postgresql://user:pass@host/db)
+            engine_type: Database type (postgresql, mysql, sqlite)
+            created_by: User ID creating the connection
+            
+        Returns:
+            The ID of the newly created connection
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO db_connections (name, uri, engine_type, created_by) VALUES (?, ?, ?, ?)",
+                (name, uri, engine_type, created_by)
+            )
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Connection with name '{name}' already exists")
+        finally:
+            conn.close()
+
+    def get_db_connections(self) -> list[Dict[str, Any]]:
+        """Get all saved database connections."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, uri, engine_type, created_at FROM db_connections ORDER BY created_at DESC")
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def delete_db_connection(self, connection_id: int) -> bool:
+        """Delete a database connection by ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM db_connections WHERE id = ?", (connection_id,))
+        conn.commit()
+        deleted = cursor.rowcount > 0
+        conn.close()
+        return deleted
+
+    def get_db_connection_by_id(self, connection_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific database connection by ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, uri, engine_type FROM db_connections WHERE id = ?", (connection_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
 
 
 # Global database instance (Singleton pattern)
