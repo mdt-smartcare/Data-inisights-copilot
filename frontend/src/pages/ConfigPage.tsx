@@ -7,7 +7,7 @@ import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
 import { useAuth } from '../contexts/AuthContext';
-import { UserRole } from '../types';
+import type { UserRole } from '../types';
 
 const steps = [
     { id: 0, name: 'Dashboard' },
@@ -218,7 +218,6 @@ const ConfigPage: React.FC = () => {
                                 <h1 className="text-3xl font-bold text-gray-900">AI Agent Dashboard</h1>
                                 <p className="text-gray-500 mt-1">Manage your Data Intelligence Agent configuration</p>
                             </div>
-                            </div>
                             <div className="flex gap-3">
                                 {canEdit && (
                                     <button
@@ -237,232 +236,232 @@ const ConfigPage: React.FC = () => {
                             </div>
                         </header>
 
-            {activeConfig ? (
-                <div className="flex-1">
-                    <ConfigSummary
-                        connectionId={activeConfig.connection_id}
-                        schema={activeConfig.schema_selection ? JSON.parse(activeConfig.schema_selection) : {}}
-                        dataDictionary={activeConfig.data_dictionary || ''}
-                        activePromptVersion={activeConfig.version}
-                        totalPromptVersions={history.length} // This might need separate fetch if history not loaded
-                    />
-                </div>
-            ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 rounded-xl">
-                    <p className="text-lg font-medium mb-2">No active configuration found</p>
-                    <p className="text-sm">Get started by creating a new configuration</p>
-                    <button
-                        onClick={handleStartNew}
-                        className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-                    >
-                        Start Setup Wizard
-                    </button>
-                </div>
-            )}
-        </div>
-    ) : (
-        <div className="p-6 h-full flex flex-col">
-            {successMessage && (
-                <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-md flex items-center justify-between">
-                    <span>{successMessage}</span>
-                    <button onClick={() => setSuccessMessage(null)} className="text-green-500 hover:text-green-700">&times;</button>
-                </div>
-            )}
-
-            {error && (
-                <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md flex items-center justify-between">
-                    <span>{error}</span>
-                    <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">&times;</button>
-                </div>
-            )}
-            {currentStep === 1 && (
-                <div className="max-w-2xl mx-auto">
-                    <h2 className="text-xl font-semibold mb-4">Select Database Connection</h2>
-                    <p className="text-gray-500 text-sm mb-6">
-                        Choose the database you want to generate insights from. You can add multiple connections (e.g., Staging, Production).
-                    </p>
-                    <ConnectionManager
-                        onSelect={setConnectionId}
-                        selectedId={connectionId}
-                        readOnly={!canEdit}
-                    />
-                </div>
-            )}
-
-            {currentStep === 2 && connectionId && (
-                <div className="max-w-4xl mx-auto">
-                    <h2 className="text-xl font-semibold mb-4">Select Tables</h2>
-                    <p className="text-gray-500 text-sm mb-6">
-                        Select which tables contain relevant data for analysis. The AI will only be aware of the tables you select.
-                    </p>
-                    <SchemaSelector
-                        connectionId={connectionId}
-                        onSelectionChange={setSelectedSchema}
-                        readOnly={!canEdit}
-                    />
-                </div>
-            )}
-
-            {currentStep === 3 && (
-                <div className="h-full flex flex-col">
-                    <h2 className="text-xl font-semibold mb-2">Add Data Dictionary</h2>
-                    <p className="text-gray-500 text-sm mb-4">
-                        Provide context to help the AI understand your data. Upload a file or paste definitions below.
-                    </p>
-
-                    <div className="flex-1 flex flex-col min-h-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm">
-                        {/* Toolbar */}
-                        <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex justify-between items-center">
-                            <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                                Context Editor
-                            </span>
-                            <div className="flex items-center gap-2">
-                                <DictionaryUploader
-                                    onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
-                                    disabled={!canEdit}
+                        {activeConfig ? (
+                            <div className="flex-1">
+                                <ConfigSummary
+                                    connectionId={activeConfig.connection_id}
+                                    schema={activeConfig.schema_selection ? JSON.parse(activeConfig.schema_selection) : {}}
+                                    dataDictionary={activeConfig.data_dictionary || ''}
+                                    activePromptVersion={activeConfig.version}
+                                    totalPromptVersions={history.length} // This might need separate fetch if history not loaded
                                 />
-                                {dataDictionary && !canEdit === false && (
-                                    <button
-                                        onClick={() => {
-                                            if (window.confirm('Clear dictionary content?')) setDataDictionary('');
-                                        }}
-                                        className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50"
-                                    >
-                                        Clear
-                                    </button>
-                                )}
                             </div>
-                        </div>
-
-                        {/* Editor Area */}
-                        <textarea
-                            className="flex-1 p-4 font-mono text-sm leading-relaxed resize-none focus:outline-none disabled:bg-gray-50 disabled:text-gray-500"
-                            placeholder="# Users Table\n- role: 'admin' | 'user'\n- status: 1=active, 0=inactive..."
-                            value={dataDictionary}
-                            onChange={(e) => setDataDictionary(e.target.value)}
-                            spellCheck={false}
-                            disabled={!canEdit}
-                        />
-                    </div>
-                </div>
-            )}
-
-            {currentStep === 4 && (
-                <div className="h-full flex flex-col">
-                    <h2 className="text-xl font-semibold mb-4 flex justify-between items-center">
-                        <span>Review & Configuration</span>
-                        <button
-                            onClick={() => setShowHistory(!showHistory)}
-                            className={`text-sm px-3 py-1 rounded border ${showHistory ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-                        >
-                            {showHistory ? 'Hide History' : 'Show History'}
-                        </button>
-                    </h2>
-                    <div className="flex-1 flex gap-4 min-h-0">
-                        <div className="flex-1 min-h-0">
-                            <PromptEditor
-                                value={draftPrompt}
-                                onChange={setDraftPrompt}
-                                readOnly={!canEdit}
-                            />
-                        </div>
-
-                        {showHistory && (
-                            <div className="w-64 min-w-[250px] h-full">
-                                <PromptHistory
-                                    history={history}
-                                    onSelect={(item) => {
-                                        const shouldLoad = !draftPrompt.trim() || window.confirm("Replace current content with this version?");
-                                        if (shouldLoad) {
-                                            setDraftPrompt(item.prompt_text);
-                                        }
-                                    }}
-                                />
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 rounded-xl">
+                                <p className="text-lg font-medium mb-2">No active configuration found</p>
+                                <p className="text-sm">Get started by creating a new configuration</p>
+                                <button
+                                    onClick={handleStartNew}
+                                    className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                                >
+                                    Start Setup Wizard
+                                </button>
                             </div>
                         )}
                     </div>
-                </div>
-            )}
+                ) : (
+                    <div className="p-6 h-full flex flex-col">
+                        {successMessage && (
+                            <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-md flex items-center justify-between">
+                                <span>{successMessage}</span>
+                                <button onClick={() => setSuccessMessage(null)} className="text-green-500 hover:text-green-700">&times;</button>
+                            </div>
+                        )}
 
-            {currentStep === 5 && (
-                <div className="h-full flex flex-col">
-                    <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
-                    <div className="bg-blue-50 p-4 rounded-md mb-6 border border-blue-100 flex justify-between items-center">
-                        <div>
-                            <h3 className="font-bold text-blue-900">Setup Complete!</h3>
-                            <p className="text-sm text-blue-700">Your agent is now configured with this prompt version.</p>
-                        </div>
-                        <button
-                            onClick={() => setCurrentStep(0)}
-                            className="px-4 py-2 bg-white text-blue-600 border border-blue-200 rounded font-medium shadow-sm hover:bg-gray-50"
-                        >
-                            Go to Dashboard
-                        </button>
+                        {error && (
+                            <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md flex items-center justify-between">
+                                <span>{error}</span>
+                                <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">&times;</button>
+                            </div>
+                        )}
+                        {currentStep === 1 && (
+                            <div className="max-w-2xl mx-auto">
+                                <h2 className="text-xl font-semibold mb-4">Select Database Connection</h2>
+                                <p className="text-gray-500 text-sm mb-6">
+                                    Choose the database you want to generate insights from. You can add multiple connections (e.g., Staging, Production).
+                                </p>
+                                <ConnectionManager
+                                    onSelect={setConnectionId}
+                                    selectedId={connectionId}
+                                    readOnly={!canEdit}
+                                />
+                            </div>
+                        )}
+
+                        {currentStep === 2 && connectionId && (
+                            <div className="max-w-4xl mx-auto">
+                                <h2 className="text-xl font-semibold mb-4">Select Tables</h2>
+                                <p className="text-gray-500 text-sm mb-6">
+                                    Select which tables contain relevant data for analysis. The AI will only be aware of the tables you select.
+                                </p>
+                                <SchemaSelector
+                                    connectionId={connectionId}
+                                    onSelectionChange={setSelectedSchema}
+                                    readOnly={!canEdit}
+                                />
+                            </div>
+                        )}
+
+                        {currentStep === 3 && (
+                            <div className="h-full flex flex-col">
+                                <h2 className="text-xl font-semibold mb-2">Add Data Dictionary</h2>
+                                <p className="text-gray-500 text-sm mb-4">
+                                    Provide context to help the AI understand your data. Upload a file or paste definitions below.
+                                </p>
+
+                                <div className="flex-1 flex flex-col min-h-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm">
+                                    {/* Toolbar */}
+                                    <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex justify-between items-center">
+                                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                                            Context Editor
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <DictionaryUploader
+                                                onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
+                                                disabled={!canEdit}
+                                            />
+                                            {dataDictionary && !canEdit === false && (
+                                                <button
+                                                    onClick={() => {
+                                                        if (window.confirm('Clear dictionary content?')) setDataDictionary('');
+                                                    }}
+                                                    className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50"
+                                                >
+                                                    Clear
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Editor Area */}
+                                    <textarea
+                                        className="flex-1 p-4 font-mono text-sm leading-relaxed resize-none focus:outline-none disabled:bg-gray-50 disabled:text-gray-500"
+                                        placeholder="# Users Table\n- role: 'admin' | 'user'\n- status: 1=active, 0=inactive..."
+                                        value={dataDictionary}
+                                        onChange={(e) => setDataDictionary(e.target.value)}
+                                        spellCheck={false}
+                                        disabled={!canEdit}
+                                    />
+                                </div>
+                            </div>
+                        )}
+
+                        {currentStep === 4 && (
+                            <div className="h-full flex flex-col">
+                                <h2 className="text-xl font-semibold mb-4 flex justify-between items-center">
+                                    <span>Review & Configuration</span>
+                                    <button
+                                        onClick={() => setShowHistory(!showHistory)}
+                                        className={`text-sm px-3 py-1 rounded border ${showHistory ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                                    >
+                                        {showHistory ? 'Hide History' : 'Show History'}
+                                    </button>
+                                </h2>
+                                <div className="flex-1 flex gap-4 min-h-0">
+                                    <div className="flex-1 min-h-0">
+                                        <PromptEditor
+                                            value={draftPrompt}
+                                            onChange={setDraftPrompt}
+                                            readOnly={!canEdit}
+                                        />
+                                    </div>
+
+                                    {showHistory && (
+                                        <div className="w-64 min-w-[250px] h-full">
+                                            <PromptHistory
+                                                history={history}
+                                                onSelect={(item) => {
+                                                    const shouldLoad = !draftPrompt.trim() || window.confirm("Replace current content with this version?");
+                                                    if (shouldLoad) {
+                                                        setDraftPrompt(item.prompt_text);
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {currentStep === 5 && (
+                            <div className="h-full flex flex-col">
+                                <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
+                                <div className="bg-blue-50 p-4 rounded-md mb-6 border border-blue-100 flex justify-between items-center">
+                                    <div>
+                                        <h3 className="font-bold text-blue-900">Setup Complete!</h3>
+                                        <p className="text-sm text-blue-700">Your agent is now configured with this prompt version.</p>
+                                    </div>
+                                    <button
+                                        onClick={() => setCurrentStep(0)}
+                                        className="px-4 py-2 bg-white text-blue-600 border border-blue-200 rounded font-medium shadow-sm hover:bg-gray-50"
+                                    >
+                                        Go to Dashboard
+                                    </button>
+                                </div>
+
+                                <ConfigSummary
+                                    connectionId={connectionId}
+                                    schema={selectedSchema}
+                                    dataDictionary={dataDictionary}
+                                    activePromptVersion={history.find(p => p.is_active)?.version || null}
+                                    totalPromptVersions={history.length}
+                                />
+                            </div>
+                        )}
+
                     </div>
 
-                    <ConfigSummary
-                        connectionId={connectionId}
-                        schema={selectedSchema}
-                        dataDictionary={dataDictionary}
-                        activePromptVersion={history.find(p => p.is_active)?.version || null}
-                        totalPromptVersions={history.length}
-                    />
-                </div>
-            )}
+            {/* Footer Navigation */}
+                {
+                    currentStep > 0 && (
+                        <div className="mt-8 flex justify-between">
+                            <button
+                                onClick={handleBack}
+                                className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                                disabled={currentStep === 1}
+                            >
+                                Back
+                            </button>
 
-        </div>
-
-            {/* Footer Navigation */ }
-    {
-        currentStep > 0 && (
-            <div className="mt-8 flex justify-between">
-                <button
-                    onClick={handleBack}
-                    className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
-                    disabled={currentStep === 1}
-                >
-                    Back
-                </button>
-
-                {currentStep === 3 ? (
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating || !canEdit}
-                        className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+                            {currentStep === 3 ? (
+                                <button
+                                    onClick={handleGenerate}
+                                    disabled={generating || !canEdit}
+                                    className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
                                 ${generating || !canEdit ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                        title={!canEdit ? "Read-only mode" : "Generate Prompt"}
-                    >
-                        {generating ? 'Generating...' : 'Generate Prompt'}
-                    </button>
-                ) : currentStep === 4 ? (
-                    canEdit ? (
-                        <button
-                            onClick={handlePublish}
-                            disabled={publishing}
-                            className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
-                        >
-                            {publishing ? 'Publishing...' : 'Publish to Production'}
-                        </button>
-                    ) : (
-                        <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
-                            Read-only mode: Cannot publish changes
+                                    title={!canEdit ? "Read-only mode" : "Generate Prompt"}
+                                >
+                                    {generating ? 'Generating...' : 'Generate Prompt'}
+                                </button>
+                            ) : currentStep === 4 ? (
+                                canEdit ? (
+                                    <button
+                                        onClick={handlePublish}
+                                        disabled={publishing}
+                                        className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
+                                    >
+                                        {publishing ? 'Publishing...' : 'Publish to Production'}
+                                    </button>
+                                ) : (
+                                    <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
+                                        Read-only mode: Cannot publish changes
+                                    </div>
+                                )
+                            ) : (
+                                <button
+                                    onClick={handleNext}
+                                    disabled={generating || publishing || (currentStep === 1 && !connectionId)}
+                                    className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+                                ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                >
+                                    {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
+                                </button>
+                            )}
                         </div>
                     )
-                ) : (
-                    <button
-                        onClick={handleNext}
-                        disabled={generating || publishing || (currentStep === 1 && !connectionId)}
-                        className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
-                                ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                    >
-                        {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
-                    </button>
-                )}
-            </div>
-        )
-    }
-        </div >
-    );
+                }
+            </div >
+            );
 };
 
-export default ConfigPage;
+            export default ConfigPage;
