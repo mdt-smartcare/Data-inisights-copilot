@@ -3,13 +3,20 @@ import { getConnectionSchema, handleApiError } from '../services/api';
 
 interface SchemaSelectorProps {
     connectionId: number;
-    onSelectionChange: (selectedTables: string[]) => void;
+    // Map of TableName -> List of Selected Column Names
+    onSelectionChange: (selection: Record<string, string[]>) => void;
 }
 
 const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelectionChange }) => {
     const [tables, setTables] = useState<string[]>([]);
+    // details is Record<TableName, {name, type, nullable}[]>
     const [details, setDetails] = useState<Record<string, any[]>>({});
-    const [selected, setSelected] = useState<Set<string>>(new Set());
+
+    // Selected state: Record<TableName, Set<ColumnName>>
+    // We use Sets internally for O(1) lookups, convert to arrays for prop output.
+    const [selected, setSelected] = useState<Record<string, Set<string>>>({});
+
+    const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -23,11 +30,19 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
                 const data = await getConnectionSchema(connectionId);
                 setTables(data.schema.tables);
                 setDetails(data.schema.details);
-                // Default: Select all tables initially? Or none?
-                // Let's select all by default for convenience
-                const all = new Set(data.schema.tables);
-                setSelected(all);
-                onSelectionChange(Array.from(all));
+
+                // Default: Select ALL columns for ALL tables
+                const initialSelection: Record<string, Set<string>> = {};
+
+                data.schema.tables.forEach((table) => {
+                    const tableCols = data.schema.details[table] || [];
+                    // Create a set of all column names for this table
+                    initialSelection[table] = new Set(tableCols.map((c: any) => c.name));
+                });
+
+                setSelected(initialSelection);
+                emitSelection(initialSelection);
+
             } catch (err) {
                 setError(handleApiError(err));
                 setTables([]);
@@ -39,27 +54,90 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
         fetchSchema();
     }, [connectionId]);
 
-    const toggleTable = (table: string) => {
-        const newSelected = new Set(selected);
-        if (newSelected.has(table)) {
-            newSelected.delete(table);
-        } else {
-            newSelected.add(table);
-        }
-        setSelected(newSelected);
-        onSelectionChange(Array.from(newSelected));
+    const emitSelection = (currentSelection: Record<string, Set<string>>) => {
+        const output: Record<string, string[]> = {};
+        Object.entries(currentSelection).forEach(([table, colSet]) => {
+            if (colSet.size > 0) {
+                output[table] = Array.from(colSet);
+            }
+        });
+        onSelectionChange(output);
     };
 
-    const toggleAll = () => {
-        if (selected.size === tables.length) {
-            setSelected(new Set());
-            onSelectionChange([]);
+    const toggleTableExpansion = (table: string) => {
+        const newExpanded = new Set(expandedTables);
+        if (newExpanded.has(table)) {
+            newExpanded.delete(table);
         } else {
-            const all = new Set(tables);
-            setSelected(all);
-            onSelectionChange(tables);
+            newExpanded.add(table);
         }
+        setExpandedTables(newExpanded);
     };
+
+    // Toggle all columns for a specific table
+    const toggleTableSelection = (table: string) => {
+        const allCols = details[table]?.map(c => c.name) || [];
+        const currentSet = selected[table] || new Set();
+
+        const newSelection = { ...selected };
+
+        if (currentSet.size === allCols.length) {
+            // Deselect all
+            newSelection[table] = new Set();
+        } else {
+            // Select all
+            newSelection[table] = new Set(allCols);
+        }
+
+        setSelected(newSelection);
+        emitSelection(newSelection);
+    };
+
+    // Toggle single column
+    const toggleColumn = (table: string, column: string) => {
+        const currentSet = new Set(selected[table] || []);
+        if (currentSet.has(column)) {
+            currentSet.delete(column);
+        } else {
+            currentSet.add(column);
+        }
+
+        const newSelection = { ...selected, [table]: currentSet };
+        setSelected(newSelection);
+        emitSelection(newSelection);
+    };
+
+    const toggleAllGlobal = () => {
+        // Check if completely everything is selected
+        let allSelected = true;
+        for (const table of tables) {
+            const tableCols = details[table] || [];
+            const currentSet = selected[table];
+            if (!currentSet || currentSet.size !== tableCols.length) {
+                allSelected = false;
+                break;
+            }
+        }
+
+        const newSelection: Record<string, Set<string>> = {};
+        if (allSelected) {
+            // Deselect everything
+            tables.forEach(t => newSelection[t] = new Set());
+        } else {
+            // Select everything
+            tables.forEach(t => {
+                const cols = details[t]?.map(c => c.name) || [];
+                newSelection[t] = new Set(cols);
+            });
+        }
+
+        setSelected(newSelection);
+        emitSelection(newSelection);
+    };
+
+    // Helper to count total selected columns
+    const totalSelectedCount = Object.values(selected).reduce((acc, set) => acc + (set ? set.size : 0), 0);
+    const totalTablesSelected = Object.values(selected).filter(set => set && set.size > 0).length;
 
     if (loading) {
         return (
@@ -88,52 +166,91 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
     return (
         <div className="space-y-4">
             <div className="flex justify-between items-center bg-gray-50 p-2 rounded">
-                <span className="text-sm font-medium text-gray-700">{selected.size} tables selected</span>
+                <div className="flex flex-col">
+                    <span className="text-sm font-medium text-gray-700">
+                        {totalTablesSelected} tables ({totalSelectedCount} columns) selected
+                    </span>
+                    <span className="text-xs text-gray-500">Expand tables to select individual columns</span>
+                </div>
                 <button
-                    onClick={toggleAll}
+                    onClick={toggleAllGlobal}
                     className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-100"
                 >
-                    {selected.size === tables.length ? 'Deselect All' : 'Select All'}
+                    Select/Deselect All
                 </button>
             </div>
 
-            <div className="border rounded-md max-h-[400px] overflow-y-auto">
-                <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50 sticky top-0">
-                        <tr>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
-                                <input
-                                    type="checkbox"
-                                    checked={selected.size === tables.length && tables.length > 0}
-                                    onChange={toggleAll}
-                                    className="rounded text-blue-600 focus:ring-blue-500"
-                                />
-                            </th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Table Name</th>
-                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Columns</th>
-                        </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                        {tables.map((table) => (
-                            <tr key={table} className={selected.has(table) ? 'bg-blue-50' : 'hover:bg-gray-50'}>
-                                <td className="px-4 py-2 whitespace-nowrap">
+            <div className="border rounded-md h-[500px] overflow-y-auto bg-white">
+                {tables.map(table => {
+                    const tableCols = details[table] || [];
+                    const selectedCols = selected[table] || new Set();
+                    const isExpanded = expandedTables.has(table);
+                    const isAllSelected = selectedCols.size === tableCols.length && tableCols.length > 0;
+                    const isIndeterminate = selectedCols.size > 0 && selectedCols.size < tableCols.length;
+
+                    return (
+                        <div key={table} className="border-b last:border-b-0 border-gray-100">
+                            {/* Table Header Row */}
+                            <div
+                                className={`flex items-center px-4 py-3 hover:bg-gray-50 cursor-pointer ${selectedCols.size > 0 ? 'bg-blue-50/50' : ''}`}
+                                onClick={() => toggleTableExpansion(table)}
+                            >
+                                <div
+                                    className="mr-3"
+                                    onClick={(e) => { e.stopPropagation(); toggleTableSelection(table); }}
+                                >
                                     <input
                                         type="checkbox"
-                                        checked={selected.has(table)}
-                                        onChange={() => toggleTable(table)}
-                                        className="rounded text-blue-600 focus:ring-blue-500"
+                                        className="rounded text-blue-600 focus:ring-blue-500 h-4 w-4"
+                                        checked={isAllSelected}
+                                        ref={input => { if (input) input.indeterminate = isIndeterminate; }}
+                                        onChange={() => { }} // Handle click instead
                                     />
-                                </td>
-                                <td className="px-4 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
-                                    {table}
-                                </td>
-                                <td className="px-4 py-2 text-sm text-gray-500 max-w-xs truncate" title={details[table]?.map(c => c.name).join(', ')}>
-                                    {details[table]?.length || 0} columns ({details[table]?.slice(0, 3).map(c => c.name).join(', ')}...)
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
+                                </div>
+
+                                <div className="flex-1">
+                                    <span className="text-sm font-medium text-gray-900">{table}</span>
+                                    <span className="ml-2 text-xs text-gray-500">
+                                        {selectedCols.size} / {tableCols.length} cols
+                                    </span>
+                                </div>
+
+                                <div className="text-gray-400">
+                                    {isExpanded ? (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                    ) : (
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Column List (Collapsible) */}
+                            {isExpanded && (
+                                <div className="bg-gray-50 px-4 py-2 border-t border-gray-100 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {tableCols.map((col: any) => (
+                                        <div key={col.name} className="flex items-center group">
+                                            <input
+                                                type="checkbox"
+                                                id={`${table}-${col.name}`}
+                                                className="rounded text-blue-600 focus:ring-blue-500 h-3 w-3 mr-2"
+                                                checked={selectedCols.has(col.name)}
+                                                onChange={() => toggleColumn(table, col.name)}
+                                            />
+                                            <label
+                                                htmlFor={`${table}-${col.name}`}
+                                                className="text-xs text-gray-700 cursor-pointer flex-1 truncate hover:text-blue-700"
+                                                title={`${col.name} (${col.type})`}
+                                            >
+                                                <span className="font-medium">{col.name}</span>
+                                                <span className="ml-1 text-gray-400 text-[10px]">{col.type}</span>
+                                            </label>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
