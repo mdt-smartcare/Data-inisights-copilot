@@ -1,3 +1,6 @@
+from pydantic import BaseModel
+from typing import Optional
+
 class PromptGenerationRequest(BaseModel):
     data_dictionary: str
     # Schema selection could be passed here, but frontend currently packs it into data_dictionary for simplicity

@@ -3,7 +3,7 @@ SQL service for structured database queries.
 Wraps LangChain SQL agent for database interactions.
 """
 from functools import lru_cache
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, Dict, Any
 from datetime import datetime
 import re
 
