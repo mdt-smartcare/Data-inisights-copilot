@@ -93,6 +93,18 @@ class DatabaseService:
                 )
             """)
 
+            # Create prompt_configs table to link prompts to their configuration source
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prompt_configs (
+                    prompt_id INTEGER PRIMARY KEY,
+                    connection_id INTEGER,
+                    schema_selection TEXT, -- JSON string
+                    data_dictionary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
+                )
+            """)
+
             
             # Add role column if it doesn't exist (migration for existing databases)
             cursor.execute("PRAGMA table_info(users)")
@@ -297,12 +309,18 @@ class DatabaseService:
             return row['prompt_text']
         return None
 
-    def publish_system_prompt(self, prompt_text: str, user_id: str) -> Dict[str, Any]:
-        """Publish a new version of the system prompt.
+    def publish_system_prompt(self, prompt_text: str, user_id: str, 
+                              connection_id: Optional[int] = None, 
+                              schema_selection: Optional[str] = None, 
+                              data_dictionary: Optional[str] = None) -> Dict[str, Any]:
+        """Publish a new version of the system prompt with optional config metadata.
         
         Args:
             prompt_text: Content of the prompt
             user_id: ID of the creating user
+            connection_id: ID of the database connection used
+            schema_selection: JSON string of selected schema
+            data_dictionary: Content of data dictionary
             
         Returns:
             Dictionary with the new prompt details
@@ -327,6 +345,14 @@ class DatabaseService:
             """, (prompt_text, new_version, user_id))
             
             prompt_id = cursor.lastrowid
+            
+            # 4. Insert config metadata if available
+            if connection_id is not None:
+                cursor.execute("""
+                    INSERT INTO prompt_configs (prompt_id, connection_id, schema_selection, data_dictionary)
+                    VALUES (?, ?, ?, ?)
+                """, (prompt_id, connection_id, schema_selection, data_dictionary))
+            
             conn.commit()
             
             # Return full object
@@ -343,6 +369,32 @@ class DatabaseService:
             raise
         finally:
             conn.close()
+
+    def get_active_config(self) -> Optional[Dict[str, Any]]:
+        """Get the configuration metadata for the currently active prompt."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        query = """
+            SELECT 
+                sp.id as prompt_id,
+                sp.version,
+                sp.prompt_text,
+                pc.connection_id,
+                pc.schema_selection,
+                pc.data_dictionary
+            FROM system_prompts sp
+            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            WHERE sp.is_active = 1
+            LIMIT 1
+        """
+        cursor.execute(query)
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return dict(row)
+        return None
 
     def get_all_prompts(self) -> list[Dict[str, Any]]:
         """Get all system prompt versions history.
