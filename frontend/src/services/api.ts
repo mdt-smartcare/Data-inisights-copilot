@@ -154,6 +154,11 @@ export const publishSystemPrompt = async (promptText: string): Promise<{ status:
   return response.data;
 };
 
+export const getPromptHistory = async (): Promise<any> => { // Assuming backend returns an array of prompt history items
+  const response = await apiClient.get('/api/v1/config/history');
+  return response.data;
+};
+
 export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
   const response = await apiClient.get('/api/v1/config/active');
   return response.data;

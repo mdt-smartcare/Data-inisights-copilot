@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { generateSystemPrompt, publishSystemPrompt, handleApiError } from '../services/api';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, handleApiError } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
 import PromptEditor from '../components/PromptEditor';
+import PromptHistory from '../components/PromptHistory';
 
 const steps = [
     { id: 1, name: 'Connect Database' },
@@ -19,6 +20,8 @@ const ConfigPage: React.FC = () => {
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
     const [draftPrompt, setDraftPrompt] = useState('');
+    const [history, setHistory] = useState<any[]>([]);
+    const [showHistory, setShowHistory] = useState(false);
 
     // Status
     const [generating, setGenerating] = useState(false);
@@ -75,12 +78,29 @@ const ConfigPage: React.FC = () => {
         try {
             const result = await publishSystemPrompt(draftPrompt);
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
+            loadHistory(); // Refresh history
         } catch (err) {
             setError(handleApiError(err));
         } finally {
             setPublishing(false);
         }
     };
+
+    const loadHistory = async () => {
+        try {
+            const data = await getPromptHistory();
+            setHistory(data);
+        } catch (err) {
+            console.error("Failed to load history", err);
+        }
+    };
+
+    // Load history when entering step 4
+    React.useEffect(() => {
+        if (currentStep === 4) {
+            loadHistory();
+        }
+    }, [currentStep]);
 
     return (
         <div className="max-w-5xl mx-auto py-8 px-4 h-full flex flex-col">
@@ -192,12 +212,35 @@ const ConfigPage: React.FC = () => {
 
                     {currentStep === 4 && (
                         <div className="h-full flex flex-col">
-                            <h2 className="text-xl font-semibold mb-4">Review & Configuration</h2>
-                            <div className="flex-1 min-h-0">
-                                <PromptEditor
-                                    value={draftPrompt}
-                                    onChange={setDraftPrompt}
-                                />
+                            <h2 className="text-xl font-semibold mb-4 flex justify-between items-center">
+                                <span>Review & Configuration</span>
+                                <button
+                                    onClick={() => setShowHistory(!showHistory)}
+                                    className={`text-sm px-3 py-1 rounded border ${showHistory ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                                >
+                                    {showHistory ? 'Hide History' : 'Show History'}
+                                </button>
+                            </h2>
+                            <div className="flex-1 flex gap-4 min-h-0">
+                                <div className="flex-1 min-h-0">
+                                    <PromptEditor
+                                        value={draftPrompt}
+                                        onChange={setDraftPrompt}
+                                    />
+                                </div>
+
+                                {showHistory && (
+                                    <div className="w-64 min-w-[250px] h-full">
+                                        <PromptHistory
+                                            history={history}
+                                            onSelect={(item) => {
+                                                if (window.confirm("Replace current content with this version?")) {
+                                                    setDraftPrompt(item.prompt_text);
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}

@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Dict, Any, List, Optional
 
 from backend.services.config_service import ConfigService, get_config_service
 from backend.models.config import PromptGenerationRequest, PromptPublishRequest, PromptResponse
