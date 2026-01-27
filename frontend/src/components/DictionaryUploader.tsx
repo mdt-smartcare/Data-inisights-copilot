@@ -2,9 +2,10 @@ import React, { useRef, useState } from 'react';
 
 interface DictionaryUploaderProps {
     onUpload: (content: string) => void;
+    disabled?: boolean;
 }
 
-const DictionaryUploader: React.FC<DictionaryUploaderProps> = ({ onUpload }) => {
+const DictionaryUploader: React.FC<DictionaryUploaderProps> = ({ onUpload, disabled = false }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [error, setError] = useState<string | null>(null);
 
@@ -57,8 +58,9 @@ const DictionaryUploader: React.FC<DictionaryUploaderProps> = ({ onUpload }) => 
             />
 
             <button
-                onClick={() => fileInputRef.current?.click()}
-                className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-100 flex items-center gap-1"
+                onClick={() => !disabled && fileInputRef.current?.click()}
+                disabled={disabled}
+                className={`text-xs font-medium px-2 py-1 rounded flex items-center gap-1 ${disabled ? 'text-gray-400 cursor-not-allowed' : 'text-blue-600 hover:text-blue-800 hover:bg-blue-100'}`}
             >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />

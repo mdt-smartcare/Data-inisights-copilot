@@ -3,7 +3,7 @@ import { getConnections, saveConnection, deleteConnection, handleApiError } from
 import type { DbConnection } from '../services/api';
 
 interface ConnectionManagerProps {
-    onSelect: (connectionId: number) => void;
+    onSelect: (connectionId: number | null) => void;
     selectedId: number | null;
     readOnly?: boolean;
 }

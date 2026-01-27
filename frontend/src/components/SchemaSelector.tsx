@@ -5,9 +5,10 @@ interface SchemaSelectorProps {
     connectionId: number;
     // Map of TableName -> List of Selected Column Names
     onSelectionChange: (selection: Record<string, string[]>) => void;
+    readOnly?: boolean;
 }
 
-const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelectionChange }) => {
+const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelectionChange, readOnly = false }) => {
     const [tables, setTables] = useState<string[]>([]);
     // details is Record<TableName, {name, type, nullable}[]>
     const [details, setDetails] = useState<Record<string, any[]>>({});
@@ -172,12 +173,14 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
                     </span>
                     <span className="text-xs text-gray-500">Expand tables to select individual columns</span>
                 </div>
-                <button
-                    onClick={toggleAllGlobal}
-                    className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-100"
-                >
-                    Select/Deselect All
-                </button>
+                {!readOnly && (
+                    <button
+                        onClick={toggleAllGlobal}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-1 rounded hover:bg-blue-100"
+                    >
+                        Select/Deselect All
+                    </button>
+                )}
             </div>
 
             <div className="border rounded-md h-[500px] overflow-y-auto bg-white">
@@ -205,6 +208,7 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
                                         checked={isAllSelected}
                                         ref={input => { if (input) input.indeterminate = isIndeterminate; }}
                                         onChange={() => { }} // Handle click instead
+                                        disabled={readOnly}
                                     />
                                 </div>
 
@@ -234,7 +238,8 @@ const SchemaSelector: React.FC<SchemaSelectorProps> = ({ connectionId, onSelecti
                                                 id={`${table}-${col.name}`}
                                                 className="rounded text-blue-600 focus:ring-blue-500 h-3 w-3 mr-2"
                                                 checked={selectedCols.has(col.name)}
-                                                onChange={() => toggleColumn(table, col.name)}
+                                                onChange={() => !readOnly && toggleColumn(table, col.name)}
+                                                disabled={readOnly}
                                             />
                                             <label
                                                 htmlFor={`${table}-${col.name}`}
