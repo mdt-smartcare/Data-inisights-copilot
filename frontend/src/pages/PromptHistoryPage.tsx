@@ -174,7 +174,15 @@ const PromptHistoryPage: React.FC = () => {
                                                     ) : null}
                                                 </div>
                                                 <span className="text-xs text-gray-400">
-                                                    {new Date(version.created_at).toLocaleDateString()}
+                                                    {(() => {
+                                                        try {
+                                                            // Handle SQLite timestamp format "YYYY-MM-DD HH:MM:SS"
+                                                            const dateStr = version.created_at.replace(' ', 'T') + 'Z';
+                                                            return new Date(dateStr).toLocaleDateString();
+                                                        } catch (e) {
+                                                            return version.created_at;
+                                                        }
+                                                    })()}
                                                 </span>
                                             </div>
                                             {version.created_by_username && (
@@ -224,7 +232,14 @@ const PromptHistoryPage: React.FC = () => {
                                         )}
                                     </h3>
                                     <p className="text-sm text-gray-500">
-                                        Created {new Date(selectedVersion.created_at).toLocaleString()}
+                                        Created {(() => {
+                                            try {
+                                                const dateStr = selectedVersion.created_at.replace(' ', 'T') + 'Z';
+                                                return new Date(dateStr).toLocaleString();
+                                            } catch (e) {
+                                                return selectedVersion.created_at;
+                                            }
+                                        })()}
                                         {selectedVersion.created_by_username && ` by ${selectedVersion.created_by_username}`}
                                     </p>
                                 </div>
