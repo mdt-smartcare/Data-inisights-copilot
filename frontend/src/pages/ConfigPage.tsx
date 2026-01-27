@@ -13,7 +13,8 @@ const steps = [
 const ConfigPage: React.FC = () => {
     const [currentStep, setCurrentStep] = useState(1);
     const [connectionId, setConnectionId] = useState<number | null>(null);
-    const [selectedTables, setSelectedTables] = useState<string[]>([]);
+    // Changed to map of Table -> Columns
+    const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
     const [draftPrompt, setDraftPrompt] = useState('');
 
@@ -28,8 +29,8 @@ const ConfigPage: React.FC = () => {
             setError("Please select a database connection.");
             return;
         }
-        if (currentStep === 2 && selectedTables.length === 0) {
-            setError("Please select at least one table.");
+        if (currentStep === 2 && Object.keys(selectedSchema).length === 0) {
+            setError("Please select at least one table/column.");
             return;
         }
         setError(null);
@@ -46,7 +47,13 @@ const ConfigPage: React.FC = () => {
         setError(null);
         try {
             // Create a context string that includes selected schema
-            const schemaContext = `Selected Tables: ${selectedTables.join(', ')}\n\n`;
+            // Create a context string that includes selected schema
+            let schemaContext = "Selected Tables and Columns:\n";
+            Object.entries(selectedSchema).forEach(([table, cols]) => {
+                schemaContext += `- ${table}: [${cols.join(', ')}]\n`;
+            });
+            schemaContext += "\n";
+
             const fullContext = schemaContext + dataDictionary;
 
             const result = await generateSystemPrompt(fullContext);
@@ -134,7 +141,7 @@ const ConfigPage: React.FC = () => {
                             </p>
                             <SchemaSelector
                                 connectionId={connectionId}
-                                onSelectionChange={setSelectedTables}
+                                onSelectionChange={setSelectedSchema}
                             />
                         </div>
                     )}
