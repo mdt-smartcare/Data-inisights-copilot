@@ -34,18 +34,8 @@ class SimpleInMemoryStore(BaseStore[str, Document]):
 class AdvancedDataTransformer:
     def __init__(self, config: Dict):
         self.config = config
-        # Medical domain mappings for better semantic understanding
-        self.medical_context = {
-            'is_htn_diagnosis': 'Hypertension',
-            'is_diabetes_diagnosis': 'Diabetes',
-            'cvd_risk_level': 'Cardiovascular Disease Risk',
-            'bmi': 'Body Mass Index',
-            'avg_systolic': 'Systolic Blood Pressure',
-            'avg_diastolic': 'Diastolic Blood Pressure',
-            'glucose_value': 'Blood Glucose Level',
-            'phq9_score': 'Depression Screening (PHQ-9)',
-            'gad7_score': 'Anxiety Screening (GAD-7)',
-        }
+        # Context mappings should be injected via config in the future
+        self.medical_context = {}
 
     def _safe_format_value(self, value: Any) -> str | None:
         """
@@ -107,15 +97,8 @@ class AdvancedDataTransformer:
             df = df.copy()  # Avoid modifying the original dataframe
             df['is_latest'] = True 
             
-            if table_name == 'patient_tracker' and 'patient_track_id' in df.columns and 'updated_at' in df.columns:
-                # Sort by patient and time, then mark the last one as latest
-                df = df.sort_values(['patient_track_id', 'updated_at'])
-                df['is_latest'] = ~df.duplicated(subset=['patient_track_id'], keep='last')
-                
-            elif table_name == 'screening_log' and 'screening_id' in df.columns and 'updated_at' in df.columns:
-                # Sort by screening_id and time (dashboard logic)
-                df = df.sort_values(['screening_id', 'updated_at'])
-                df['is_latest'] = ~df.duplicated(subset=['screening_id'], keep='last')
+            # Generic deduplication logic could be implemented here based on config
+            
             # --- NEW LOGIC END ---
 
             for _, row in df.iterrows():

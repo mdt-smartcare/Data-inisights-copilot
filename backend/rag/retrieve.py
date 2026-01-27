@@ -17,24 +17,8 @@ from sentence_transformers import CrossEncoder
 logger = logging.getLogger(__name__)
 load_dotenv()
 
-# --- THIS IS THE FIX for the RAG EXPLORER ---
-# We remove "prescription" so the sparse (keyword) search
-# doesn't find irrelevant medication names.
-RELEVANT_TABLES = {
-    "patient_tracker",
-    "patient",
-    "bp_log",
-    "glucose_log",
-    "patient_diagnosis",
-    "patient_comorbidity",
-    "patient_complication",
-    # "prescription", # <-- REMOVED
-    "call_register",
-    "patient_vitals", # From notebook
-    "patient_conditions", # From notebook
-    "screening_log",  # Contains raw BP/BG data, referral decisions, and crisis flags
-}
-# --- END OF FIX ---
+# RELEVANT_TABLES removed for generic white-labeling
+# The system now indexes all documents found in the docstore.
 
 
 class AdvancedRAGRetriever(BaseRetriever, BaseModel):
@@ -47,70 +31,8 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     sparse_retriever: Any = Field(default=None)
     reranker: Any = Field(default=None) 
     
-    # Medical term mappings for query expansion
-    medical_synonyms: Dict[str, List[str]] = Field(default_factory=lambda: {
-        # Diabetes terms - expanded for better matching
-        'diabetes': ['diabetes mellitus', 'diabetic', 'dm type', 'blood sugar', 'glucose', 
-                     'is_diabetes_diagnosis', 'diabetes_diagnosis', 'confirm_diagnosis diabetes'],
-        'diabetic': ['diabetes', 'diabetes mellitus', 'dm'],
-        
-        # Hypertension terms - expanded
-        'hypertension': ['high blood pressure', 'htn', 'elevated blood pressure', 'bp',
-                        'is_htn_diagnosis', 'hypertension diagnosis', 'elevated bp'],
-        'blood pressure': ['hypertension', 'bp', 'systolic', 'diastolic'],
-        
-        # BMI and weight
-        'bmi': ['body mass index', 'weight status', 'obesity', 'overweight'],
-        'obese': ['obesity', 'overweight', 'high bmi', 'body mass index'],
-        
-        # Cardiovascular
-        'cvd': ['cardiovascular disease', 'heart disease', 'cardiac', 'cvd_risk_level', 'cvd_risk_score'],
-        'cardiovascular': ['cvd', 'heart disease', 'cardiac risk'],
-        'heart': ['cardiovascular', 'cardiac', 'cvd'],
-        
-        # Glucose
-        'glucose': ['blood sugar', 'bg', 'blood glucose level', 'glucose_value', 'glucose_type', 'fbs', 'rbs'],
-        'blood sugar': ['glucose', 'bg', 'glucose level', 'fbs', 'rbs'],
-        'fbs': ['fasting blood sugar', 'fasting glucose', 'glucose_type fbs'],
-        'rbs': ['random blood sugar', 'random glucose', 'glucose_type rbs'],
-        'hba1c': ['glycated hemoglobin', 'a1c', 'hemoglobin a1c'],
-        
-        # Medication
-        'medication': ['prescription', 'medicine', 'drug', 'treatment', 'is_medication_prescribed'],
-        'prescription': ['medication', 'medicine', 'drug'],
-        
-        # Screening and assessment - NEW for dashboard alignment
-        'screening': ['assessment', 'evaluation', 'test', 'check', 'is_screening', 'screened', 'screening_log'],
-        'screened': ['screening', 'assessed', 'evaluated'],
-        'assessment': ['screening', 'evaluation', 'test'],
-        
-        # Referral terms - NEW for dashboard alignment
-        'referral': ['referred', 'screening_referral', 'refer_assessment', 'referred_reason'],
-        'referred': ['referral', 'screening_referral', 'refer'],
-        'crisis': ['crisis_referral', 'crisis referral', 'emergency', 'urgent', 'crisis_referral_status'],
-        'elevated': ['high', 'raised', 'increased', 'above normal'],
-        
-        # Enrollment terms - NEW for dashboard alignment
-        'enrolled': ['enrollment', 'registered', 'patient_status enrolled', 'enrollment_at'],
-        'enrollment': ['enrolled', 'registration', 'onboarding'],
-        'community': ['is_screening', 'community screening', 'field screening'],
-        
-        # Diagnosis status
-        'new diagnosis': ['newly diagnosed', 'new patient', 'first diagnosis', 'htn_new_vs_existing'],
-        'existing diagnosis': ['known patient', 'prior diagnosis', 'previously diagnosed'],
-        
-        # Risk
-        'risk': ['risk_level', 'risk_score', 'high risk', 'is_red_risk_patient'],
-        'high risk': ['red risk', 'elevated risk', 'is_red_risk_patient', 'crisis'],
-        
-        # Mental health
-        'depression': ['phq9', 'phq-9', 'phq9_score', 'mental health'],
-        'anxiety': ['gad7', 'gad-7', 'gad7_score', 'mental health'],
-        
-        # Site/Location terms - NEW
-        'uhc': ['upazila health complex', 'level 1', 'referred to uhc'],
-        'community clinic': ['cc', 'level 6', 'referred to cc'],
-    })
+    # Synonyms now sourced from configuration or empty by default
+    medical_synonyms: Dict[str, List[str]] = Field(default_factory=dict)
 
     def __init__(self, config: Dict, **kwargs):
         """Initialize the hybrid retriever with both dense and sparse components."""
@@ -178,10 +100,8 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         parent_documents = [doc for doc in parent_documents if doc is not None] # Clean up
         
         # Filter documents for BM25
-        bm25_docs = [
-            doc for doc in parent_documents 
-            if doc.metadata.get("source_table") in RELEVANT_TABLES
-        ]
+        # For Generic Mode: We invoke all documents, or filtering should be injected via config
+        bm25_docs = parent_documents
         logger.info(f"Filtered to {len(bm25_docs)} documents from relevant tables for BM25 index.")
         
         if not bm25_docs:

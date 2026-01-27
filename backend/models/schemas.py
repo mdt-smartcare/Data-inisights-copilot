@@ -55,7 +55,7 @@ class ChatRequest(BaseModel):
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "query": "How many patients have hypertension?",
+            "query": "How many active users are there?",
             "user_id": "admin"
         }
     })
@@ -69,10 +69,10 @@ class ChartData(BaseModel):
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "title": "Hypertension Distribution",
+            "title": "User Distribution",
             "type": "pie",
             "data": {
-                "labels": ["Stage 1", "Stage 2"],
+                "labels": ["Active", "Inactive"],
                 "values": [120, 125]
             }
         }
@@ -107,18 +107,18 @@ class ChatResponse(BaseModel):
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "answer": "There are 245 patients with diagnosed hypertension in the database.",
+            "answer": "There are 245 active users in the database.",
             "chart_data": {
-                "title": "HTN Distribution",
+                "title": "User Status",
                 "type": "pie",
-                "data": {"labels": ["Stage 1", "Stage 2"], "values": [120, 125]}
+                "data": {"labels": ["Active", "Inactive"], "values": [120, 125]}
             },
             "suggested_questions": [
-                "What is the average age of hypertensive patients?",
-                "Show glucose levels for diabetic patients"
+                "What is the average age of users?",
+                "Show active users by region"
             ],
             "reasoning_steps": [
-                {"tool": "sql_query_tool", "input": "SELECT COUNT(*) FROM patients WHERE diagnosis='HTN'", "output": "245"}
+                {"tool": "sql_query_tool", "input": "SELECT COUNT(*) FROM users WHERE status='active'", "output": "245"}
             ],
             "embedding_info": {
                 "model": "bge-m3",
@@ -148,8 +148,8 @@ class MetricDefinition(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "name": "htn_prevalence",
-            "regex_pattern": "htn.*prevalence",
+            "name": "metric_name",
+            "regex_pattern": ".*metric.*",
             "sql_template": "SELECT count(*) FROM ...",
             "priority": 1
         }
@@ -165,9 +165,9 @@ class SQLExample(BaseModel):
 
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "question": "How many patients have hypertension?",
-            "sql_query": "SELECT count(*) FROM v_analytics_enrollment WHERE enrolled_condition = 'Hypertension'",
-            "description": "Simple count of hypertension patients"
+            "question": "How many users are active?",
+            "sql_query": "SELECT count(*) FROM users WHERE status = 'active'",
+            "description": "Simple count of users"
         }
     })
 
@@ -203,8 +203,8 @@ class FeedbackRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "trace_id": "550e8400-e29b-41d4-a716-446655440000",
-            "query": "How many patients have hypertension?",
-            "selected_suggestion": "What is the average age of hypertensive patients?",
+            "query": "How many users are active?",
+            "selected_suggestion": "What is the average age of users?",
             "rating": 1,
             "comment": "Very helpful suggestion"
         }
