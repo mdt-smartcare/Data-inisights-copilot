@@ -534,7 +534,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
     
     try:
         # 1. Show "Query received" status
-        history[-1][1] = "🔍 **Query received** - Analyzing your question..."
+        history[-1][1] = "**Query received** - Analyzing your question..."
         yield (
             history, 
             gr.update(visible=False),  # plot
@@ -718,7 +718,7 @@ with gr.Blocks(theme=theme, title="Data Insights AI-Copilot") as demo:
             toast = gr.Textbox(visible=False, label="Log Status")
         
         # Embedding Explorer Tab
-        with gr.Accordion("🛠️ Manual Explorer", open=False):
+        with gr.Accordion("Manual Explorer", open=False):
             with gr.Row():
                 exp_query = gr.Textbox(label="Test Query")
                 exp_btn = gr.Button("Explore")

@@ -34,7 +34,7 @@ class ProgressTracker:
                     data = json.load(f)
                     self.processed_docs = data.get('processed_docs', 0)
                     self.last_checkpoint = self.processed_docs
-                    logger.info(f"📂 Resuming from checkpoint: {self.processed_docs}/{self.total_docs} docs ({self.get_percentage():.1f}%)")
+                    logger.info(f"Resuming from checkpoint: {self.processed_docs}/{self.total_docs} docs ({self.get_percentage():.1f}%)")
             except Exception as e:
                 logger.warning(f"Could not load checkpoint: {e}")
     
@@ -94,11 +94,11 @@ class ProgressTracker:
         elapsed_time = timedelta(seconds=int(elapsed))
         
         print("\n" + "="*80)
-        print("📊 INDEX BUILD COMPLETE!")
+        print("INDEX BUILD COMPLETE!")
         print("="*80)
-        print(f"✅ Total Documents Processed: {self.processed_docs:,}")
-        print(f"⏱️  Total Time Taken: {elapsed_time}")
-        print(f"⚡ Average Speed: {self.get_speed():.2f} docs/second")
+        print(f"Total Documents Processed: {self.processed_docs:,}")
+        print(f"Total Time Taken: {elapsed_time}")
+        print(f"Average Speed: {self.get_speed():.2f} docs/second")
         print("="*80 + "\n")
         
         # Clean up checkpoint file
@@ -127,7 +127,7 @@ def build_advanced_chroma_index(
     # Check if resuming
     start_idx = progress.processed_docs
     if start_idx > 0:
-        logger.info(f"🔄 Resuming from document {start_idx:,}")
+        logger.info(f"Resuming from document {start_idx:,}")
         remaining_docs = child_docs[start_idx:]
     else:
         remaining_docs = child_docs
@@ -140,10 +140,10 @@ def build_advanced_chroma_index(
     
     try:
         collection = client.get_collection(name=collection_name)
-        logger.info(f"📂 Found existing collection with {collection.count()} documents")
+        logger.info(f"Found existing collection with {collection.count()} documents")
     except:
         collection = None
-        logger.info("🆕 Creating new collection")
+        logger.info("Creating new collection")
     
     # Print initial status
     print("\n" + "="*80)
@@ -237,7 +237,7 @@ if __name__ == "__main__":
     )
 
     print("\n" + "="*80)
-    print("🔧 FHIR RAG INDEX BUILDER")
+    print("FHIR RAG INDEX BUILDER")
     print("="*80)
     print(f" Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80 + "\n")

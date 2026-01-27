@@ -55,7 +55,7 @@ class SQLCritiqueService:
         """
         Analyze SQL query for correctness and safety.
         """
-        logger.info(f"🤔 Critiquing SQL for: '{question[:50]}...'")
+        logger.info(f"Critiquing SQL for: '{question[:50]}...'")
         
         try:
             # Format inputs
@@ -80,9 +80,9 @@ class SQLCritiqueService:
                 response = self.parser.parse(output.content)
             
             if not response.is_valid:
-                logger.warning(f"❌ Critique Found Issues: {response.issues}")
+                logger.warning(f"Critique Found Issues: {response.issues}")
             else:
-                logger.info("✅ SQL Critique Passed")
+                logger.info("SQL Critique Passed")
                 
             return response
             

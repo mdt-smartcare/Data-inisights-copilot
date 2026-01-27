@@ -178,7 +178,7 @@ CRITICAL: USE ANALYTICS VIEWS FOR DASHBOARD KPIs (MANDATORY)
                 return self.cached_schema
             
             relevant_tables = list(dict.fromkeys(relevant_tables))
-            logger.info(f"📋 Selected relevant tables for query: {', '.join(relevant_tables)}")
+            logger.info(f"Selected relevant tables for query: {', '.join(relevant_tables)}")
             
             base_schema = self.db.get_table_info(table_names=relevant_tables)
             
@@ -215,7 +215,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
             except Exception:
                 return False
         
-        logger.info("🔍 Analyzing natural language query")
+        logger.info("Analyzing natural language query")
         
         simple_patterns = [
             r'\bcount\b.*\bpatients?\b',
@@ -250,7 +250,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
         
         targets_analytics_view = 'v_analytics' in question_lower
         if targets_analytics_view:
-            logger.info("📊 Query targets analytics view - treating as single source")
+            logger.info("Query targets analytics view - treating as single source")
             references_multiple_tables = False
         else:
             references_multiple_tables = table_references > 1
@@ -271,7 +271,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
         # kpi_match = self._check_dashboard_kpi(question)
         # if kpi_match:
         #     sql_query, description = kpi_match
-        #     logger.info(f"⚡ Using pre-defined KPI template for: {description}")
+        #     logger.info(f"Using pre-defined KPI template for: {description}")
         #     return self._execute_kpi_template(sql_query, description, question)
         
         if self._is_simple_query(question):
@@ -285,7 +285,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
     
     def _execute_optimized(self, question: str) -> str:
         logger.info("=" * 80)
-        logger.info("⚡ OPTIMIZED SQL EXECUTION:")
+        logger.info("OPTIMIZED SQL EXECUTION:")
         logger.info("=" * 80)
         
         try:
@@ -332,7 +332,7 @@ SQL Query:"""
             # =================================================================
             # REFLECTION LOOP: Validate and Fix SQL Algorithm
             # =================================================================
-            logger.info(f"🤔 Initial SQL generated: {sql_query[:100]}...")
+            logger.info(f"Initial SQL generated: {sql_query[:100]}...")
             
             max_retries = 2
             current_try = 0
@@ -341,7 +341,7 @@ SQL Query:"""
             
             while current_try <= max_retries:
                 if current_try > 0:
-                    logger.warning(f"🔄 Retry attempt {current_try}/{max_retries} due to critique: {critique_feedback}")
+                    logger.warning(f"Retry attempt {current_try}/{max_retries} due to critique: {critique_feedback}")
                     
                     # Fix SQL based on critique
                     fix_prompt = f"""The previous SQL query was invalid. Fix it based on the critique.
@@ -363,7 +363,7 @@ Return ONLY the corrected SQL query."""
                     sql_query = re.sub(r'```sql\n?', '', sql_query)
                     sql_query = re.sub(r'```\n?', '', sql_query)
                     sql_query = sql_query.strip()
-                    logger.info(f"🛠️ Fixed SQL: {sql_query[:100]}...")
+                    logger.info(f"Fixed SQL: {sql_query[:100]}...")
 
                 # Validate with Critique Service
                 # We need the full schema context for critique, or at least the relevant part
@@ -374,7 +374,7 @@ Return ONLY the corrected SQL query."""
                 )
                 
                 if critique.is_valid:
-                    logger.info("✅ SQL validated successfully via reflection")
+                    logger.info("SQL validated successfully via reflection")
                     is_valid = True
                     break
                 else:
@@ -382,7 +382,7 @@ Return ONLY the corrected SQL query."""
                     current_try += 1
             
             if not is_valid:
-                logger.warning("❌ SQL failed validation after retries. Executing strict safety check fallback.")
+                logger.warning("SQL failed validation after retries. Executing strict safety check fallback.")
             
             logger.info(f" SQL to execute: {sql_query[:200]}...")
             
