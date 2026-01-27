@@ -27,21 +27,9 @@ const ConfigPage: React.FC = () => {
     const canEdit = canEditPrompt(user);
     const isViewer = !canEdit;
 
-    if (isLoading) {
-        return (
-            <div className="flex flex-col h-screen bg-gray-50">
-                <ChatHeader title={APP_CONFIG.APP_NAME} />
-                <div className="flex-1 flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    <span className="ml-3 text-gray-500">Loading user profile...</span>
-                </div>
-            </div>
-        );
-    }
-
+    // MOVED HOOKS UP BEFORE CONDITIONAL RETURN
     const [currentStep, setCurrentStep] = useState(1);
     const [connectionId, setConnectionId] = useState<number | null>(null);
-    // Changed to map of Table -> Columns
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
@@ -55,6 +43,19 @@ const ConfigPage: React.FC = () => {
     // Config Metadata for Dashboard
     const [activeConfig, setActiveConfig] = useState<any>(null);
 
+    // Status
+    const [generating, setGenerating] = useState(false);
+    const [publishing, setPublishing] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+    // Initial Load - moved into effect
+    React.useEffect(() => {
+        if (!isLoading) {
+            loadDashboard();
+        }
+    }, [isLoading]);
+
     // Sync state to window for API use (temporary solution for simple passing)
     React.useEffect(() => {
         (window as any).__config_connectionId = connectionId;
@@ -62,10 +63,26 @@ const ConfigPage: React.FC = () => {
         (window as any).__config_dictionary = dataDictionary;
     }, [connectionId, selectedSchema, dataDictionary]);
 
-    // Initial Load
+    // Load history when entering step 4
     React.useEffect(() => {
-        loadDashboard();
-    }, []);
+        if (currentStep === 4) {
+            loadHistory();
+        }
+    }, [currentStep]);
+
+    if (isLoading) {
+        return (
+            <div className="flex flex-col h-screen bg-gray-50">
+                <ChatHeader title={APP_CONFIG.APP_NAME} />
+                <div className="flex-1 flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <span className="ml-3 text-gray-500">Loading user profile...</span>
+                </div>
+            </div>
+        );
+    }
+
+
 
     const loadDashboard = async () => {
         try {
@@ -107,11 +124,7 @@ const ConfigPage: React.FC = () => {
         }
     };
 
-    // Status
-    const [generating, setGenerating] = useState(false);
-    const [publishing, setPublishing] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
 
     const handleNext = () => {
         if (currentStep === 1 && !connectionId) {
@@ -196,12 +209,7 @@ const ConfigPage: React.FC = () => {
         }
     };
 
-    // Load history when entering step 4
-    React.useEffect(() => {
-        if (currentStep === 4) {
-            loadHistory();
-        }
-    }, [currentStep]);
+
 
     return (
         <div className="flex flex-col h-screen bg-gray-50">
