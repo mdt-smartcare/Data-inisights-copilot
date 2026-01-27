@@ -80,9 +80,10 @@ export default function ChatHeader({
 
         <div className="flex items-center gap-4">
           {user && (
-            <span className="text-sm text-gray-600">
-              {user.username} <span className="text-gray-400">({getRoleDisplayName(user.role)})</span>
-            </span>
+            <div className="text-right">
+              <div className="text-sm font-medium text-gray-700">{user.username}</div>
+              <div className="text-xs text-gray-500">{getRoleDisplayName(user.role)}</div>
+            </div>
           )}
           <button
             onClick={handleLogout}
