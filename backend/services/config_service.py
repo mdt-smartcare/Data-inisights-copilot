@@ -46,16 +46,6 @@ class ConfigService:
         response = chain.invoke({})
         return response.content
 
-    def publish_prompt(self, prompt_text: str, user_id: str) -> int:
-        """
-        Publishes a new system prompt.
-        - Inserts into system_prompts table.
-        - Increments version.
-        - Sets is_active=1 for the new row and 0 for all others.
-        
-        Returns:
-            The version number of the newly published prompt.
-        """
         conn = self.db_service.get_connection()
         cursor = conn.cursor()
         

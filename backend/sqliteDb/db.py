@@ -297,6 +297,23 @@ class DatabaseService:
             return row['prompt_text']
         return None
 
+    def get_all_prompts(self) -> list[Dict[str, Any]]:
+        """Get all system prompt versions history.
+        
+        Returns:
+            List of prompt dictionaries ordered by version desc
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT id, prompt_text, version, is_active, created_at, created_by FROM system_prompts ORDER BY version DESC"
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
+
     def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None) -> int:
         """Add a new database connection.
         

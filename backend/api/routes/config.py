@@ -29,23 +29,31 @@ async def generate_prompt(
             detail=f"Failed to generate prompt: {str(e)}"
         )
 
-@router.post("/publish", response_model=Dict[str, Any])
+@router.post("/publish", response_model=PromptResponse)
 async def publish_prompt(
     request: PromptPublishRequest,
-    config_service: ConfigService = Depends(get_config_service)
+    service: ConfigService = Depends(get_config_service)
 ):
     """
     Publish a new system prompt.
     """
     try:
-        version = config_service.publish_prompt(request.prompt_text, request.user_id)
-        return {"status": "success", "version": version}
+        result = service.publish_system_prompt(request.prompt_text, request.user_id)
+        return result
     except Exception as e:
         logger.error(f"Error publishing prompt: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to publish prompt: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to publish prompt: {str(e)}")
+
+@router.get("/history", response_model=List[PromptResponse])
+async def get_prompt_history(
+    service: ConfigService = Depends(get_config_service)
+):
+    """Get all historical versions of the system prompt."""
+    try:
+        return service.get_prompt_history()
+    except Exception as e:
+        logger.error(f"Error fetching prompt history: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to fetch prompt history: {str(e)}")
 
 @router.get("/active", response_model=Dict[str, Optional[str]])
 async def get_active_prompt(
