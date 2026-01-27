@@ -29,6 +29,14 @@ logger = get_logger(__name__)
 
 
 
+DEFAULT_SYSTEM_PROMPT = """You are a helpful Data Insights Assistant.
+You have access to a SQL database and a Vector Store for unstructured documents.
+
+Your primary source of truth is the Data Dictionary provided in the context.
+- If the user asks for a metric, check the database schema and dictionary definitions.
+- If you cannot answer based on the available data, state that clearly.
+- Do not assume any specific medical or business domain unless explicitly defined in the table schema.
+"""
 class AgentService:
     """Main RAG agent service for processing user queries."""
     
@@ -60,24 +68,24 @@ class AgentService:
 This tool accepts natural language questions (NOT SQL queries) and automatically generates and executes SQL.
 
 When to use:
-- Counting: "How many patients...", "Total number of..."
-- Averages: "Average glucose level...", "Mean BMI of..."
+- Counting: "How many entities...", "Total number of..."
+- Averages: "Average value of...", "Mean of..."
 - Aggregations: "Sum of...", "Distribution of..."
-- Filtering: By age groups, gender, date ranges, biomarkers
+- Filtering: By attributes, date ranges, categories
 
 Input format: Natural language question ONLY
-Example: "Count patients with systolic BP > 140 in 2024"
+Example: "Count records with status 'active' in 2024"
 DO NOT generate SQL yourself - the tool handles that internally.
 
-Available data: patient_tracker (demographics, vitals), patient_diagnosis, prescription, lab_test results."""
+Available data: structured tables in the database."""
             ),
             Tool(
                 name="rag_patient_context_tool",
                 func=self._rag_search,
-                description="""**PRIMARY TOOL FOR CLINICAL CONTEXT.**
-Use this to search unstructured text, medical notes, and semantic descriptions.
-- Capabilities: Semantic search for symptoms, lifestyle, risk factors, and specific diagnoses.
-- Use for: "Find patients who complain of...", "Show me records regarding...", "Details about patient X..."."""
+                description="""**PRIMARY TOOL FOR UNSTRUCTURED CONTEXT.**
+Use this to search unstructured text, notes, and semantic descriptions.
+- Capabilities: Semantic search for concepts, logs, and specific records.
+- Use for: "Find records related to...", "Show me details about..."."""
             ),
         ]
         
@@ -189,9 +197,8 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             active_prompt = self.db_service.get_latest_active_prompt()
             
             if not active_prompt:
-                error_msg = "System Not Configured: No active system prompt found. Please configure the system via the Dashboard."
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+                logger.warning("No active system prompt found in DB. Using default generic prompt.")
+                active_prompt = DEFAULT_SYSTEM_PROMPT
                 
             # Retrieve relevant few-shot examples
             few_shot_examples = self._get_relevant_examples(query)
@@ -263,45 +270,12 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
     
     def _generate_kpi_suggestions(self, query: str, description: str) -> List[str]:
         """Generate contextual follow-up suggestions for KPI queries."""
-        query_lower = query.lower()
-        
-        # Suggestions based on KPI type
-        if 'smok' in query_lower and 'risk' in query_lower:
-            return [
-                "What is the overall smoking rate among NCD patients?",
-                "Show high-risk patient distribution by category",
-                "How many patients have poor lifestyle scores?"
-            ]
-        elif 'smok' in query_lower:
-            return [
-                "How many high-risk patients are smokers?",
-                "What is the lifestyle risk score distribution?",
-                "Show symptom prevalence among NCD patients"
-            ]
-        elif 'risk' in query_lower or 'critical' in query_lower:
-            return [
-                "How many critical risk patients are smokers?",
-                "What is the glycemic control status distribution?",
-                "Show patients with abnormal lab results"
-            ]
-        elif 'enroll' in query_lower:
-            return [
-                "How many patients are enrolled by condition?",
-                "What is the community enrollment rate?",
-                "Show enrolled patients with co-morbid conditions"
-            ]
-        elif 'screen' in query_lower or 'referr' in query_lower:
-            return [
-                "What is the HTN prevalence rate?",
-                "How many crisis referrals occurred?",
-                "Show screening yield percentage"
-            ]
-        else:
-            return [
-                "How many patients are in each risk category?",
-                "What is the smoking rate among NCD patients?",
-                "Show enrollment breakdown by condition"
-            ]
+        # Generic suggestions since domain logic is removed
+        return [
+            "Show distribution by category",
+            "Compare with previous period",
+            "Show breakdown by status"
+        ]
 
     def _get_relevant_examples(self, query: str) -> List[str]:
         """
