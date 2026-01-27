@@ -193,8 +193,6 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
                 logger.error(error_msg)
                 raise ValueError(error_msg)
                 
-            system_prompt = active_prompt
-
             # Retrieve relevant few-shot examples
             few_shot_examples = self._get_relevant_examples(query)
             formatted_examples = ""
@@ -210,6 +208,10 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
                 "input": query,
                 "system_prompt": final_prompt
             })
+            
+            # Extract response
+            full_response = result.get("output", "An error occurred.")
+            intermediate_steps = result.get("intermediate_steps", [])
             
             # Extract response
             full_response = result.get("output", "An error occurred.")
