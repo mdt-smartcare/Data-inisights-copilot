@@ -6,6 +6,7 @@ import ChatPage from './pages/ChatPage';
 import AboutPage from './pages/AboutPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ConfigPage from './pages/ConfigPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Create a client
@@ -23,24 +24,24 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { logout } = useAuth();
   const token = localStorage.getItem('auth_token');
   const expiresAt = localStorage.getItem('expiresAt');
-  
+
   // Check if token exists
   if (!token) {
     return <Navigate to="/login" replace />;
   }
-  
+
   // Check if token has expired
   if (expiresAt) {
     const currentTime = Math.floor(Date.now() / 1000);
     const expirationTime = parseInt(expiresAt, 10);
-    
+
     if (currentTime >= expirationTime) {
       // Token has expired, clear auth data
       logout();
       return <Navigate to="/login" replace />;
     }
   }
-  
+
   return <>{children}</>;
 }
 
@@ -76,6 +77,14 @@ function App() {
               element={
                 <ProtectedRoute>
                   <ChatPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/config"
+              element={
+                <ProtectedRoute>
+                  <ConfigPage />
                 </ProtectedRoute>
               }
             />

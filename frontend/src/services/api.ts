@@ -120,3 +120,42 @@ export const handleApiError = (error: unknown): string => {
   }
   return 'An unexpected error occurred';
 };
+
+// ============================================================================
+// SYSTEM PROMPT CONFIGURATION API
+// ============================================================================
+
+export const generateSystemPrompt = async (dataDictionary: string): Promise<{ draft_prompt: string }> => {
+  const response = await apiClient.post('/config/generate', { data_dictionary: dataDictionary });
+  return response.data;
+};
+
+export const publishSystemPrompt = async (promptText: string): Promise<{ status: string; version: number }> => {
+  // We need to fetch the user_id from the token or some auth context.
+  // For now, let's decode the token or just send a dummy ID if the backend parses the token.
+  // Looking at backend/api/routes/config.py, it expects `user_id` in the body.
+  // In a real app, this should come from the user context. 
+  // I'll grab it from localStorage if available, or use a placeholder "admin_user".
+  const user = localStorage.getItem('user'); // Assuming user info might be stored
+  let userId = 'admin';
+  if (user) {
+    try {
+        const parsedUser = JSON.parse(user);
+        userId = parsedUser.id || parsedUser.username || 'admin';
+    } catch (e) {
+        console.warn("Could not parse user from local storage", e);
+    }
+  }
+
+  const response = await apiClient.post('/config/publish', { 
+    prompt_text: promptText,
+    user_id: userId
+  });
+  return response.data;
+};
+
+export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
+  const response = await apiClient.get('/config/active');
+  return response.data;
+};
+
