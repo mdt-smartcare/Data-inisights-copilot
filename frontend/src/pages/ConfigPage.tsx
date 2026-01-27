@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, handleApiError } from '../services/api';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
@@ -8,6 +8,7 @@ import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
 
 const steps = [
+    { id: 0, name: 'Dashboard' },
     { id: 1, name: 'Connect Database' },
     { id: 2, name: 'Select Schema' },
     { id: 3, name: 'Data Dictionary' },
@@ -24,6 +25,50 @@ const ConfigPage: React.FC = () => {
     const [draftPrompt, setDraftPrompt] = useState('');
     const [history, setHistory] = useState<any[]>([]);
     const [showHistory, setShowHistory] = useState(false);
+
+    // Config Metadata for Dashboard
+    const [activeConfig, setActiveConfig] = useState<any>(null);
+
+    // Sync state to window for API use (temporary solution for simple passing)
+    React.useEffect(() => {
+        (window as any).__config_connectionId = connectionId;
+        (window as any).__config_schema = selectedSchema;
+        (window as any).__config_dictionary = dataDictionary;
+    }, [connectionId, selectedSchema, dataDictionary]);
+
+    // Initial Load
+    React.useEffect(() => {
+        loadDashboard();
+    }, []);
+
+    const loadDashboard = async () => {
+        try {
+            const config = await getActiveConfigMetadata();
+            if (config) {
+                setActiveConfig(config);
+                // Pre-fill state
+                if (config.connection_id) setConnectionId(config.connection_id);
+                if (config.schema_selection) {
+                    try {
+                        setSelectedSchema(JSON.parse(config.schema_selection));
+                    } catch (e) {
+                        console.error("Failed to parse schema", e);
+                    }
+                }
+                if (config.data_dictionary) setDataDictionary(config.data_dictionary);
+                if (config.prompt_text) setDraftPrompt(config.prompt_text);
+
+                // If we have config, stay on Dashboard (Step 0)
+                // If not, go to Step 1
+                setCurrentStep(0);
+            } else {
+                setCurrentStep(1);
+            }
+        } catch (e) {
+            console.error("Failed to load active config", e);
+            setCurrentStep(1);
+        }
+    };
 
     // Status
     const [generating, setGenerating] = useState(false);
@@ -45,8 +90,21 @@ const ConfigPage: React.FC = () => {
     };
 
     const handleBack = () => {
-        setError(null);
-        if (currentStep > 1) setCurrentStep(currentStep - 1);
+        if (currentStep > 0) setCurrentStep(currentStep - 1);
+    };
+
+    const handleStartNew = () => {
+        // Reset state for fresh config
+        setConnectionId(null);
+        setSelectedSchema({});
+        setDataDictionary('');
+        setDraftPrompt('');
+        setCurrentStep(1);
+    };
+
+    const handleEditCurrent = () => {
+        // State is already pre-filled from loadDashboard
+        setCurrentStep(1);
     };
 
     const handleGenerate = async () => {
@@ -81,7 +139,8 @@ const ConfigPage: React.FC = () => {
             const result = await publishSystemPrompt(draftPrompt);
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
             loadHistory(); // Refresh history
-            setCurrentStep(5); // Move to Summary
+            loadDashboard(); // Refresh config metadata
+            setCurrentStep(5); // Move to Summary (which is visually same as Dashboard but in flow context)
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -107,205 +166,278 @@ const ConfigPage: React.FC = () => {
 
     return (
         <div className="max-w-5xl mx-auto py-8 px-4 h-full flex flex-col">
-            {/* Header & Steps */}
-            <div className="mb-8">
-                <h1 className="text-2xl font-bold text-gray-900 mb-6">Data Setup Wizard</h1>
-                <div className="flex items-center justify-between relative">
-                    <div className="absolute left-0 top-1/2 w-full h-0.5 bg-gray-200 -z-10"></div>
-                    {steps.map((step) => (
-                        <div key={step.id} className="flex flex-col items-center bg-white px-2">
-                            <div
-                                className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors ${currentStep >= step.id
-                                    ? 'bg-blue-600 text-white'
-                                    : 'bg-gray-200 text-gray-500'
-                                    }`}
-                            >
-                                {step.id}
-                            </div>
-                            <span className={`text-xs mt-2 font-medium ${currentStep >= step.id ? 'text-blue-600' : 'text-gray-500'}`}>
-                                {step.name}
-                            </span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-
-            {/* Main Content Area */}
-            <div className="flex-1 bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6 flex flex-col overflow-hidden">
-                {error && (
-                    <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-4" role="alert">
-                        <p>{error}</p>
+            {/* Header & Steps - Hide steps on Dashboard */}
+            {currentStep > 0 && (
+                <div className="mb-8">
+                    <div className="flex justify-between items-center mb-6">
+                        <h1 className="text-2xl font-bold text-gray-900">Configure AI Agent</h1>
+                        <span className="text-sm text-gray-500">Step {currentStep} of 5</span>
                     </div>
-                )}
 
-                {successMessage && (
-                    <div className="bg-green-50 border-l-4 border-green-500 text-green-700 p-4 mb-4" role="alert">
-                        <p>{successMessage}</p>
+                    {/* Progress Bar */}
+                    <div className="w-full bg-gray-200 rounded-full h-2 mb-6">
+                        <div
+                            className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                            style={{ width: `${(currentStep / 5) * 100}%` }}
+                        ></div>
                     </div>
-                )}
 
-                <div className="flex-1 overflow-y-auto">
-                    {currentStep === 1 && (
-                        <div className="max-w-2xl mx-auto">
-                            <h2 className="text-xl font-semibold mb-4">Select Database Connection</h2>
-                            <p className="text-gray-500 text-sm mb-6">
-                                Choose the database you want to generate insights from. You can add multiple connections (e.g., Staging, Production).
-                            </p>
-                            <ConnectionManager
-                                onSelect={setConnectionId}
-                                selectedId={connectionId}
-                            />
-                        </div>
-                    )}
-
-                    {currentStep === 2 && connectionId && (
-                        <div className="max-w-4xl mx-auto">
-                            <h2 className="text-xl font-semibold mb-4">Select Tables</h2>
-                            <p className="text-gray-500 text-sm mb-6">
-                                Select which tables contain relevant data for analysis. The AI will only be aware of the tables you select.
-                            </p>
-                            <SchemaSelector
-                                connectionId={connectionId}
-                                onSelectionChange={setSelectedSchema}
-                            />
-                        </div>
-                    )}
-
-                    {currentStep === 3 && (
-                        <div className="h-full flex flex-col">
-                            <h2 className="text-xl font-semibold mb-2">Add Data Dictionary</h2>
-                            <p className="text-gray-500 text-sm mb-4">
-                                Provide context to help the AI understand your data. Upload a file or paste definitions below.
-                            </p>
-
-                            <div className="flex-1 flex flex-col min-h-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm">
-                                {/* Toolbar */}
-                                <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex justify-between items-center">
-                                    <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
-                                        Context Editor
-                                    </span>
-                                    <div className="flex items-center gap-2">
-                                        <DictionaryUploader
-                                            onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
-                                        />
-                                        {dataDictionary && (
-                                            <button
-                                                onClick={() => {
-                                                    if (window.confirm('Clear dictionary content?')) setDataDictionary('');
-                                                }}
-                                                className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50"
-                                            >
-                                                Clear
-                                            </button>
-                                        )}
-                                    </div>
+                    {/* Step Indicators */}
+                    <div className="flex justify-between relative">
+                        {steps.filter(s => s.id > 0).map((step) => (
+                            <div key={step.id} className="flex flex-col items-center z-10">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors duration-200 
+                                    ${currentStep >= step.id ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-300 text-gray-400'}`}>
+                                    {step.id}
                                 </div>
+                                <span className={`text-xs mt-2 font-medium ${currentStep >= step.id ? 'text-blue-600' : 'text-gray-400'}`}>
+                                    {step.name}
+                                </span>
+                            </div>
+                        ))}
+                        {/* Connecting Line */}
+                        <div className="absolute top-4 left-0 w-full h-0.5 bg-gray-200 -z-0"></div>
+                    </div>
+                </div>
+            )}
 
-                                {/* Editor Area */}
-                                <textarea
-                                    className="flex-1 p-4 font-mono text-sm leading-relaxed resize-none focus:outline-none"
-                                    placeholder="# Users Table\n- role: 'admin' | 'user'\n- status: 1=active, 0=inactive..."
-                                    value={dataDictionary}
-                                    onChange={(e) => setDataDictionary(e.target.value)}
-                                    spellCheck={false}
+            {/* Content Area */}
+            <div className={`flex-1 min-h-0 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden ${currentStep === 0 ? 'bg-gray-50 border-none shadow-none' : ''}`}>
+                {currentStep === 0 ? (
+                    // DASHBOARD VIEW
+                    <div className="h-full flex flex-col">
+                        <header className="flex justify-between items-center mb-8 px-1">
+                            <div>
+                                <h1 className="text-3xl font-bold text-gray-900">AI Agent Dashboard</h1>
+                                <p className="text-gray-500 mt-1">Manage your Data Intelligence Agent configuration</p>
+                            </div>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={handleStartNew}
+                                    className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium shadow-sm"
+                                >
+                                    New Configuration
+                                </button>
+                                <button
+                                    onClick={handleEditCurrent}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm"
+                                >
+                                    Edit Active Config
+                                </button>
+                            </div>
+                        </header>
+
+                        {activeConfig ? (
+                            <div className="flex-1">
+                                <ConfigSummary
+                                    connectionId={activeConfig.connection_id}
+                                    schema={activeConfig.schema_selection ? JSON.parse(activeConfig.schema_selection) : {}}
+                                    dataDictionary={activeConfig.data_dictionary || ''}
+                                    activePromptVersion={activeConfig.version}
+                                    totalPromptVersions={history.length} // This might need separate fetch if history not loaded
                                 />
                             </div>
-                        </div>
-                    )}
-
-                    {currentStep === 4 && (
-                        <div className="h-full flex flex-col">
-                            <h2 className="text-xl font-semibold mb-4 flex justify-between items-center">
-                                <span>Review & Configuration</span>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 rounded-xl">
+                                <p className="text-lg font-medium mb-2">No active configuration found</p>
+                                <p className="text-sm">Get started by creating a new configuration</p>
                                 <button
-                                    onClick={() => setShowHistory(!showHistory)}
-                                    className={`text-sm px-3 py-1 rounded border ${showHistory ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                                    onClick={handleStartNew}
+                                    className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
                                 >
-                                    {showHistory ? 'Hide History' : 'Show History'}
+                                    Start Setup Wizard
                                 </button>
-                            </h2>
-                            <div className="flex-1 flex gap-4 min-h-0">
-                                <div className="flex-1 min-h-0">
-                                    <PromptEditor
-                                        value={draftPrompt}
-                                        onChange={setDraftPrompt}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div className="p-6 h-full flex flex-col">
+                        {successMessage && (
+                            <div className="mb-4 p-4 bg-green-50 border border-green-200 text-green-700 rounded-md flex items-center justify-between">
+                                <span>{successMessage}</span>
+                                <button onClick={() => setSuccessMessage(null)} className="text-green-500 hover:text-green-700">&times;</button>
+                            </div>
+                        )}
+
+                        {error && (
+                            <div className="mb-4 p-4 bg-red-50 border border-red-200 text-red-700 rounded-md flex items-center justify-between">
+                                <span>{error}</span>
+                                <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">&times;</button>
+                            </div>
+                        )}
+                        {currentStep === 1 && (
+                            <div className="max-w-2xl mx-auto">
+                                <h2 className="text-xl font-semibold mb-4">Select Database Connection</h2>
+                                <p className="text-gray-500 text-sm mb-6">
+                                    Choose the database you want to generate insights from. You can add multiple connections (e.g., Staging, Production).
+                                </p>
+                                <ConnectionManager
+                                    onSelect={setConnectionId}
+                                    selectedId={connectionId}
+                                />
+                            </div>
+                        )}
+
+                        {currentStep === 2 && connectionId && (
+                            <div className="max-w-4xl mx-auto">
+                                <h2 className="text-xl font-semibold mb-4">Select Tables</h2>
+                                <p className="text-gray-500 text-sm mb-6">
+                                    Select which tables contain relevant data for analysis. The AI will only be aware of the tables you select.
+                                </p>
+                                <SchemaSelector
+                                    connectionId={connectionId}
+                                    onSelectionChange={setSelectedSchema}
+                                />
+                            </div>
+                        )}
+
+                        {currentStep === 3 && (
+                            <div className="h-full flex flex-col">
+                                <h2 className="text-xl font-semibold mb-2">Add Data Dictionary</h2>
+                                <p className="text-gray-500 text-sm mb-4">
+                                    Provide context to help the AI understand your data. Upload a file or paste definitions below.
+                                </p>
+
+                                <div className="flex-1 flex flex-col min-h-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm">
+                                    {/* Toolbar */}
+                                    <div className="bg-gray-50 border-b border-gray-200 px-4 py-2 flex justify-between items-center">
+                                        <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">
+                                            Context Editor
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <DictionaryUploader
+                                                onUpload={(content) => setDataDictionary(prev => prev ? prev + "\n\n" + content : content)}
+                                            />
+                                            {dataDictionary && (
+                                                <button
+                                                    onClick={() => {
+                                                        if (window.confirm('Clear dictionary content?')) setDataDictionary('');
+                                                    }}
+                                                    className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50"
+                                                >
+                                                    Clear
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Editor Area */}
+                                    <textarea
+                                        className="flex-1 p-4 font-mono text-sm leading-relaxed resize-none focus:outline-none"
+                                        placeholder="# Users Table\n- role: 'admin' | 'user'\n- status: 1=active, 0=inactive..."
+                                        value={dataDictionary}
+                                        onChange={(e) => setDataDictionary(e.target.value)}
+                                        spellCheck={false}
                                     />
                                 </div>
+                            </div>
+                        )}
 
-                                {showHistory && (
-                                    <div className="w-64 min-w-[250px] h-full">
-                                        <PromptHistory
-                                            history={history}
-                                            onSelect={(item) => {
-                                                const shouldLoad = !draftPrompt.trim() || window.confirm("Replace current content with this version?");
-                                                if (shouldLoad) {
-                                                    setDraftPrompt(item.prompt_text);
-                                                }
-                                            }}
+                        {currentStep === 4 && (
+                            <div className="h-full flex flex-col">
+                                <h2 className="text-xl font-semibold mb-4 flex justify-between items-center">
+                                    <span>Review & Configuration</span>
+                                    <button
+                                        onClick={() => setShowHistory(!showHistory)}
+                                        className={`text-sm px-3 py-1 rounded border ${showHistory ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+                                    >
+                                        {showHistory ? 'Hide History' : 'Show History'}
+                                    </button>
+                                </h2>
+                                <div className="flex-1 flex gap-4 min-h-0">
+                                    <div className="flex-1 min-h-0">
+                                        <PromptEditor
+                                            value={draftPrompt}
+                                            onChange={setDraftPrompt}
                                         />
                                     </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
 
-                    {currentStep === 5 && (
-                        <div className="h-full flex flex-col">
-                            <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
-                            <ConfigSummary
-                                connectionId={connectionId}
-                                schema={selectedSchema}
-                                dataDictionary={dataDictionary}
-                                activePromptVersion={history.find(p => p.is_active)?.version || null}
-                                totalPromptVersions={history.length}
-                            />
-                        </div>
+                                    {showHistory && (
+                                        <div className="w-64 min-w-[250px] h-full">
+                                            <PromptHistory
+                                                history={history}
+                                                onSelect={(item) => {
+                                                    const shouldLoad = !draftPrompt.trim() || window.confirm("Replace current content with this version?");
+                                                    if (shouldLoad) {
+                                                        setDraftPrompt(item.prompt_text);
+                                                    }
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {currentStep === 5 && (
+                            <div className="h-full flex flex-col">
+                                <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
+                                <div className="bg-blue-50 p-4 rounded-md mb-6 border border-blue-100 flex justify-between items-center">
+                                    <div>
+                                        <h3 className="font-bold text-blue-900">Setup Complete!</h3>
+                                        <p className="text-sm text-blue-700">Your agent is now configured with this prompt version.</p>
+                                    </div>
+                                    <button
+                                        onClick={() => setCurrentStep(0)}
+                                        className="px-4 py-2 bg-white text-blue-600 border border-blue-200 rounded font-medium shadow-sm hover:bg-gray-50"
+                                    >
+                                        Go to Dashboard
+                                    </button>
+                                </div>
+
+                                <ConfigSummary
+                                    connectionId={connectionId}
+                                    schema={selectedSchema}
+                                    dataDictionary={dataDictionary}
+                                    activePromptVersion={history.find(p => p.is_active)?.version || null}
+                                    totalPromptVersions={history.length}
+                                />
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* Footer Navigation */}
+            {currentStep > 0 && (
+                <div className="mt-8 flex justify-between">
+                    <button
+                        onClick={handleBack}
+                        className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                        disabled={currentStep === 1}
+                    >
+                        Back
+                    </button>
+
+                    {currentStep === 3 ? (
+                        <button
+                            onClick={handleGenerate}
+                            disabled={generating}
+                            className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+                                ${generating ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                        >
+                            {generating ? 'Generating...' : 'Generate Prompt'}
+                        </button>
+                    ) : currentStep === 4 ? (
+                        <button
+                            onClick={handlePublish}
+                            disabled={publishing}
+                            className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
+                        >
+                            {publishing ? 'Publishing...' : 'Publish to Production'}
+                        </button>
+                    ) : (
+                        <button
+                            onClick={handleNext}
+                            disabled={generating || publishing || (currentStep === 1 && !connectionId)}
+                            className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
+                                ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                        >
+                            {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
+                        </button>
                     )}
                 </div>
-            </div>
-
-            {/* Footer / Actions */}
-            <div className="flex justify-between items-center py-4 border-t border-gray-100">
-                <button
-                    onClick={handleBack}
-                    disabled={currentStep === 1}
-                    className="px-6 py-2 border border-gray-300 rounded-md text-gray-700 font-medium hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    Back
-                </button>
-
-                {currentStep < 3 && (
-                    <button
-                        onClick={handleNext}
-                        disabled={!connectionId}
-                        className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 disabled:opacity-50"
-                    >
-                        Next Step
-                    </button>
-                )}
-
-                {currentStep === 3 && (
-                    <button
-                        onClick={handleGenerate}
-                        disabled={generating}
-                        className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center"
-                    >
-                        {generating ? (
-                            <>Generating...</>
-                        ) : 'Generate Prompt'}
-                    </button>
-                )}
-
-                {currentStep === 4 && (
-                    <button
-                        onClick={handlePublish}
-                        disabled={publishing}
-                        className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
-                    >
-                        {publishing ? 'Publishing...' : 'Publish to Production'}
-                    </button>
-                )}
-            </div>
+            )}
         </div>
     );
 };

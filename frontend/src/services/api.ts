@@ -149,13 +149,21 @@ export const publishSystemPrompt = async (promptText: string): Promise<{ status:
 
   const response = await apiClient.post('/api/v1/config/publish', {
     prompt_text: promptText,
-    user_id: userId
+    user_id: userId,
+    connection_id: (window as any).__config_connectionId,
+    schema_selection: (window as any).__config_schema ? JSON.stringify((window as any).__config_schema) : null,
+    data_dictionary: (window as any).__config_dictionary
   });
   return response.data;
 };
 
-export const getPromptHistory = async (): Promise<any> => { // Assuming backend returns an array of prompt history items
+export const getPromptHistory = async (): Promise<any> => {
   const response = await apiClient.get('/api/v1/config/history');
+  return response.data;
+};
+
+export const getActiveConfigMetadata = async (): Promise<any> => {
+  const response = await apiClient.get('/api/v1/config/active-metadata');
   return response.data;
 };
 
