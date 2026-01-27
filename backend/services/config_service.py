@@ -46,13 +46,20 @@ class ConfigService:
         response = chain.invoke({})
         return response.content
 
-    def publish_system_prompt(self, prompt_text: str, user_id: str):
+    def publish_system_prompt(self, prompt_text: str, user_id: str, 
+                              connection_id: Optional[int] = None, 
+                              schema_selection: Optional[str] = None, 
+                              data_dictionary: Optional[str] = None):
         """Publish a new version of the system prompt."""
-        return self.db_service.publish_system_prompt(prompt_text, user_id)
+        return self.db_service.publish_system_prompt(prompt_text, user_id, connection_id, schema_selection, data_dictionary)
 
     def get_prompt_history(self):
         """Get history of all system prompts."""
         return self.db_service.get_all_prompts()
+
+    def get_active_config(self) -> Optional[dict]:
+        """Get the active prompt configuration."""
+        return self.db_service.get_active_config()
 
 # Singleton instance pattern not strictly requested but good practice if needed.
 # For now, just the class is requested, but usually services are singletons or instantiated per request.

@@ -20,6 +20,9 @@ class PromptGenerationRequest(BaseModel):
 class PromptPublishRequest(BaseModel):
     prompt_text: str
     user_id: str
+    connection_id: Optional[int] = None
+    schema_selection: Optional[str] = None # JSON string
+    data_dictionary: Optional[str] = None
 
 class PromptResponse(BaseModel):
     id: int

@@ -38,7 +38,13 @@ async def publish_prompt(
     Publish a new system prompt.
     """
     try:
-        result = service.publish_system_prompt(request.prompt_text, request.user_id)
+        result = service.publish_system_prompt(
+            request.prompt_text, 
+            request.user_id,
+            request.connection_id,
+            request.schema_selection,
+            request.data_dictionary
+        )
         return result
     except Exception as e:
         logger.error(f"Error publishing prompt: {e}")
@@ -54,6 +60,17 @@ async def get_prompt_history(
     except Exception as e:
         logger.error(f"Error fetching prompt history: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to fetch prompt history: {str(e)}")
+
+@router.get("/active-metadata", response_model=Optional[Dict[str, Any]])
+async def get_active_config(
+    service: ConfigService = Depends(get_config_service)
+):
+    """Get the configuration metadata for the active prompt."""
+    try:
+        return service.get_active_config()
+    except Exception as e:
+        logger.error(f"Error fetching active config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/active", response_model=Dict[str, Optional[str]])
 async def get_active_prompt(
