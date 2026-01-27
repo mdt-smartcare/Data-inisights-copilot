@@ -234,7 +234,8 @@ const ConfigPage: React.FC = () => {
                                         <PromptHistory
                                             history={history}
                                             onSelect={(item) => {
-                                                if (window.confirm("Replace current content with this version?")) {
+                                                const shouldLoad = !draftPrompt.trim() || window.confirm("Replace current content with this version?");
+                                                if (shouldLoad) {
                                                     setDraftPrompt(item.prompt_text);
                                                 }
                                             }}
