@@ -111,37 +111,55 @@ async def login(
     """
     logger.info(f"Login attempt for user: {request.username}")
     
-    # Authenticate user (checks username, password, and active status)
-    user = db.authenticate_user(request.username, request.password)
+    # 1. Get user by username
+    user = db.get_user_by_username(request.username)
     
+    # 2. Check if user exists
     if not user:
-        # Authentication failed - don't reveal why (security best practice)
-        logger.warning(f"Login failed for user: {request.username}")
+        logger.warning(f"Login failed: User not found - {request.username}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
-            headers={"WWW-Authenticate": "Bearer"},  # Required for 401 responses
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    # 3. Check if account is active
+    if not user.get('is_active'):
+        logger.warning(f"Login failed: User inactive - {request.username}")
+        # Specific error for inactive users (as requested)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is deactivated. Please contact administrator.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        
+    # 4. Verify password
+    if not db.verify_password(request.password, user['password_hash']):
+        logger.warning(f"Login failed: Invalid password - {request.username}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     
     # Create JWT access token
-    # Token contains username in 'sub' claim and expiration time
     access_token = create_access_token(
-        data={"sub": request.username},  # 'sub' (subject) is standard JWT claim for user identifier
-        expires_delta=timedelta(minutes=settings.access_token_expire_minutes)  # 720 minutes = 12 hours
+        data={"sub": request.username},
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
     )
     
     logger.info(f"Login successful for user: {request.username}")
     # Return token and user information
     return TokenResponse(
         access_token=access_token,
-        token_type="bearer",  # OAuth 2.0 standard token type
+        token_type="bearer",
         user=User(
             username=request.username,
             email=user.get('email'),
             full_name=user.get('full_name'),
-            role=user.get('role', 'user'),  # Default to 'user' if role not set
+            role=user.get('role', 'user'),
         ),
-        expires_in=settings.access_token_expire_minutes * 60  # Convert minutes to seconds for client
+        expires_in=settings.access_token_expire_minutes * 60
     )
 
 
