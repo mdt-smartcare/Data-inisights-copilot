@@ -134,7 +134,14 @@ const InsightsPage: React.FC = () => {
                                         <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
                                             <p className="text-sm text-orange-600 font-medium">Last Updated</p>
                                             <p className="text-lg font-semibold text-orange-700">
-                                                {new Date(activeConfig.created_at).toLocaleDateString()}
+                                                {(() => {
+                                                    try {
+                                                        const dateStr = activeConfig.created_at.replace(' ', 'T') + 'Z';
+                                                        return new Date(dateStr).toLocaleDateString();
+                                                    } catch (e) {
+                                                        return activeConfig.created_at;
+                                                    }
+                                                })()}
                                             </p>
                                             <p className="text-xs text-orange-500 mt-1">
                                                 {activeConfig.created_by_username && `by ${activeConfig.created_by_username}`}
