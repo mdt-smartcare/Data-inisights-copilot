@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     # API Configuration
     # ============================================
     api_v1_prefix: str = Field(default="/api/v1")
-    project_name: str = Field(default="FHIR RAG Chatbot API")
+    project_name: str = Field(default="Data Insights Copilot API")
     version: str = Field(default="1.0.0")
     debug: bool = Field(default=False)
     

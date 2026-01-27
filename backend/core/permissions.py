@@ -30,12 +30,12 @@ class UserRole(str, Enum):
 
 
 # Role hierarchy for permission checks (higher index = less privilege)
+# Role hierarchy for permission checks
 ROLE_HIERARCHY = [
     UserRole.SUPER_ADMIN.value,
     UserRole.ADMIN.value,
     UserRole.EDITOR.value,
     UserRole.USER.value,
-    UserRole.VIEWER.value,
 ]
 
 
@@ -74,8 +74,8 @@ def can_edit_config(role: str) -> bool:
 
 
 def can_publish_prompt(role: str) -> bool:
-    """Super Admin, Admin, and Editor can publish prompts."""
-    return role_at_least(role, UserRole.EDITOR.value)
+    """Only Super Admin (and Admin) can publish prompts."""
+    return role_at_least(role, UserRole.ADMIN.value)
 
 
 def can_execute_queries(role: str) -> bool:

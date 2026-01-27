@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { canEditPrompt } from '../utils/permissions';
+import { canEditPrompt, canRollback } from '../utils/permissions';
 import { ChatHeader } from '../components/chat';
 import { APP_CONFIG } from '../config';
 
@@ -33,6 +33,8 @@ const PromptHistoryPage: React.FC = () => {
     const [rollbackConfirm, setRollbackConfirm] = useState<{ show: boolean; version: PromptVersion | null }>({ show: false, version: null });
 
     const canEdit = canEditPrompt(user);
+    const hasRollbackPermission = canRollback(user);
+    const activeVersion = versions.find(v => v.is_active);
 
     useEffect(() => {
         loadVersions();
@@ -71,7 +73,7 @@ const PromptHistoryPage: React.FC = () => {
     };
 
     const handleRollback = async (version: PromptVersion) => {
-        if (!canEdit) {
+        if (!hasRollbackPermission) {
             setError('You do not have permission to rollback prompts');
             return;
         }
@@ -253,7 +255,7 @@ const PromptHistoryPage: React.FC = () => {
                                         {selectedVersion.created_by_username && ` by ${selectedVersion.created_by_username}`}
                                     </p>
                                 </div>
-                                {canEdit && !selectedVersion.is_active && (
+                                {hasRollbackPermission && activeVersion?.version !== selectedVersion.version && (
                                     <button
                                         onClick={() => handleRollback(selectedVersion)}
                                         disabled={rollbackLoading}

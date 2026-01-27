@@ -1,6 +1,6 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { canManageUsers, canViewAllAuditLogs, getRoleDisplayName } from '../../utils/permissions';
+import { canManageUsers, canViewAllAuditLogs, canViewConfig, canViewHistory, canViewInsights, getRoleDisplayName } from '../../utils/permissions';
 import logo from '../../assets/logo.svg';
 
 interface ChatHeaderProps {
@@ -25,9 +25,9 @@ export default function ChatHeader({
 
   const navLinks = [
     { path: '/chat', label: 'Chat', show: true },
-    { path: '/insights', label: 'Insights', show: true },
-    { path: '/config', label: 'Config', show: true },
-    { path: '/history', label: 'History', show: true },
+    { path: '/insights', label: 'Insights', show: canViewInsights(user) },
+    { path: '/config', label: 'Config', show: canViewConfig(user) },
+    { path: '/history', label: 'History', show: canViewHistory(user) },
     { path: '/users', label: 'Users', show: canManageUsers(user) },
     { path: '/audit', label: 'Audit', show: canViewAllAuditLogs(user) },
   ];

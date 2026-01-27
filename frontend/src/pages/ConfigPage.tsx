@@ -20,11 +20,12 @@ const steps = [
     { id: 5, name: 'Summary' }
 ];
 
-import { canEditPrompt, canManageConnections, getRoleDisplayName } from '../utils/permissions';
+import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
 
 const ConfigPage: React.FC = () => {
     const { user, isLoading } = useAuth();
     const canEdit = canEditPrompt(user);
+    const canPublish = canPublishPrompt(user);
     const isViewer = !canEdit;
 
     // MOVED HOOKS UP BEFORE CONDITIONAL RETURN
@@ -525,7 +526,7 @@ const ConfigPage: React.FC = () => {
                                         )}
                                     </button>
                                 ) : currentStep === 4 ? (
-                                    canEdit ? (
+                                    canPublish ? (
                                         <button
                                             onClick={handlePublish}
                                             disabled={publishing}
@@ -535,7 +536,7 @@ const ConfigPage: React.FC = () => {
                                         </button>
                                     ) : (
                                         <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
-                                            Read-only mode: Cannot publish changes
+                                            Publish restricted: Requires Super Admin
                                         </div>
                                     )
                                 ) : (

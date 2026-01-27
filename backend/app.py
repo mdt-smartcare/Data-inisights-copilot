@@ -68,7 +68,7 @@ app.include_router(users.router, prefix=settings.api_v1_prefix)
 async def root():
     """Root endpoint with API information."""
     return JSONResponse({
-        "message": "FHIR RAG Chatbot API",
+        "message": "Data Insights Copilot",
         "version": settings.version,
         "docs": f"{settings.api_v1_prefix}/docs",
         "health": f"{settings.api_v1_prefix}/health"

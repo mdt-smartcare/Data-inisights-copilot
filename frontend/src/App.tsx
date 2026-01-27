@@ -12,6 +12,7 @@ import AuditLogsPage from './pages/AuditLogsPage';
 import PromptHistoryPage from './pages/PromptHistoryPage';
 import InsightsPage from './pages/InsightsPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import type { UserRole } from './types';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -23,9 +24,14 @@ const queryClient = new QueryClient({
   },
 });
 
+interface ProtectedRouteProps {
+  children: React.ReactNode;
+  allowedRoles?: UserRole[];
+}
+
 // Protected route wrapper
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { logout } = useAuth();
+function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
+  const { user, logout, isLoading } = useAuth();
   const token = localStorage.getItem('auth_token');
   const expiresAt = localStorage.getItem('expiresAt');
 
@@ -44,6 +50,15 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       logout();
       return <Navigate to="/login" replace />;
     }
+  }
+
+  if (isLoading) {
+    return <div>Loading...</div>; // Or return null/spinner
+  }
+
+  if (allowedRoles && user?.role && !allowedRoles.includes(user.role)) {
+    // User is not authorized for this route
+    return <Navigate to="/chat" replace />;
   }
 
   return <>{children}</>;
@@ -87,7 +102,7 @@ function App() {
             <Route
               path="/config"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={['editor', 'admin', 'super_admin']}>
                   <ConfigPage />
                 </ProtectedRoute>
               }
@@ -96,7 +111,7 @@ function App() {
             <Route
               path="/users"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={['admin', 'super_admin']}>
                   <UsersPage />
                 </ProtectedRoute>
               }
@@ -104,7 +119,7 @@ function App() {
             <Route
               path="/audit"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={['super_admin']}>
                   <AuditLogsPage />
                 </ProtectedRoute>
               }
@@ -112,7 +127,7 @@ function App() {
             <Route
               path="/history"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={['editor', 'admin', 'super_admin']}>
                   <PromptHistoryPage />
                 </ProtectedRoute>
               }
@@ -120,7 +135,7 @@ function App() {
             <Route
               path="/insights"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute allowedRoles={['editor', 'admin', 'super_admin']}>
                   <InsightsPage />
                 </ProtectedRoute>
               }
