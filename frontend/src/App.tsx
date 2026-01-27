@@ -7,6 +7,7 @@ import AboutPage from './pages/AboutPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ConfigPage from './pages/ConfigPage';
+import UsersPage from './pages/UsersPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 
 // Create a client
@@ -89,6 +90,14 @@ function App() {
               }
             />
             <Route path="/about" element={<AboutPage />} />
+            <Route
+              path="/users"
+              element={
+                <ProtectedRoute>
+                  <UsersPage />
+                </ProtectedRoute>
+              }
+            />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
