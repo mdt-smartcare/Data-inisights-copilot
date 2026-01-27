@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/config", tags=["Configuration"])
 
-@router.post("/generate", response_model=Dict[str, Any], dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR, UserRole.USER, UserRole.VIEWER]))])
+@router.post("/generate", response_model=Dict[str, Any], dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR]))])
 async def generate_prompt(
     request: PromptGenerationRequest,
     config_service: ConfigService = Depends(get_config_service)
@@ -33,7 +33,7 @@ async def generate_prompt(
             detail=f"Failed to generate prompt: {str(e)}"
         )
 
-@router.post("/publish", response_model=PromptResponse, dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR, UserRole.USER, UserRole.VIEWER]))])
+@router.post("/publish", response_model=PromptResponse, dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR]))])
 async def publish_prompt(
     request: PromptPublishRequest,
     service: ConfigService = Depends(get_config_service)

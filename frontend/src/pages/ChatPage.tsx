@@ -8,9 +8,14 @@ import {
   MessageList,
   ChatInput
 } from '../components/chat';
+import { useAuth } from '../contexts/AuthContext';
+import { canExecuteQuery } from '../utils/permissions';
 import { APP_CONFIG } from '../config';
 
 export default function ChatPage() {
+  const { user } = useAuth();
+  const canChat = canExecuteQuery(user);
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string>();
   const [suggestions, setSuggestions] = useState<string[]>([
@@ -109,8 +114,8 @@ export default function ChatPage() {
 
       <ChatInput
         onSendMessage={handleSendMessage}
-        isDisabled={chatMutation.isPending}
-        placeholder="Type your message..."
+        isDisabled={!canChat || chatMutation.isPending}
+        placeholder={canChat ? "Type your message..." : "Read-only access"}
         maxLength={2000}
       />
     </div>

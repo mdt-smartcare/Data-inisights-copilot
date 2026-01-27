@@ -7,7 +7,7 @@ import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
 import { useAuth } from '../contexts/AuthContext';
-import type { UserRole } from '../types';
+
 
 const steps = [
     { id: 0, name: 'Dashboard' },
@@ -18,10 +18,21 @@ const steps = [
     { id: 5, name: 'Summary' }
 ];
 
+import { canEditPrompt, canManageConnections } from '../utils/permissions';
+
 const ConfigPage: React.FC = () => {
-    const { user } = useAuth();
-    const canEdit = true;
+    const { user, isLoading } = useAuth();
+    const canEdit = canEditPrompt(user);
     const isViewer = !canEdit;
+
+    if (isLoading) {
+        return (
+            <div className="h-full flex items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <span className="ml-3 text-gray-500">Loading user profile...</span>
+            </div>
+        );
+    }
 
     const [currentStep, setCurrentStep] = useState(1);
     const [connectionId, setConnectionId] = useState<number | null>(null);
@@ -189,7 +200,10 @@ const ConfigPage: React.FC = () => {
             {currentStep > 0 && (
                 <div className="mb-8">
                     <div className="flex justify-between items-center mb-6">
-                        <h1 className="text-2xl font-bold text-gray-900">Configure AI Agent</h1>
+                        <h1 className="text-2xl font-bold text-gray-900">
+                            Configure AI Agent
+                            <span className="ml-2 text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded">Role: {user?.role || 'None'}</span>
+                        </h1>
                         <span className="text-sm text-gray-500">Step {currentStep} of 5</span>
                     </div>
 
@@ -301,7 +315,7 @@ const ConfigPage: React.FC = () => {
                                 <ConnectionManager
                                     onSelect={setConnectionId}
                                     selectedId={connectionId}
-                                    readOnly={!canEdit}
+                                    readOnly={!canManageConnections(user)}
                                 />
                             </div>
                         )}

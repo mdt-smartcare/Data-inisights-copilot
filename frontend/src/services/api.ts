@@ -35,7 +35,7 @@ import type { User } from '../types';
 apiClient.interceptors.request.use(
   (config) => {
     // Skip authentication for public endpoints (login, register, health)
-    const publicEndpoints = ['/auth/login', '/auth/register', '/health'];
+    const publicEndpoints = ['/api/v1/auth/login', '/api/v1/auth/register', '/api/v1/health'];
     const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint));
 
     if (isPublicEndpoint) {
@@ -183,7 +183,7 @@ export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
 // ============================================================================
 
 export const getUserProfile = async (): Promise<User> => {
-  const response = await apiClient.get('/auth/me');
+  const response = await apiClient.get('/api/v1/auth/me');
   return response.data;
 };
 

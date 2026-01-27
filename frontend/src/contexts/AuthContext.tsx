@@ -12,6 +12,7 @@ interface AuthContextType {
   setUser: (user: User | null) => void;    // Update user state (used after login)
   isAuthenticated: boolean;                 // Quick check if user is logged in
   logout: () => void;                       // Logout function to clear auth state
+  isLoading: boolean;                       // Loading state during session restoration
 }
 
 // Create context with undefined as initial value
@@ -31,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // User state stored in memory (not persisted across page refreshes)
   // Actual authentication persistence is handled by localStorage tokens
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const restoreSession = async () => {
@@ -47,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           localStorage.removeItem('expiresAt');
         }
       }
+      setIsLoading(false);
     };
 
     restoreSession();
@@ -67,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = !!user && !!localStorage.getItem('auth_token');
 
   return (
-    <AuthContext.Provider value={{ user, setUser, isAuthenticated, logout }}>
+    <AuthContext.Provider value={{ user, setUser, isAuthenticated, logout, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

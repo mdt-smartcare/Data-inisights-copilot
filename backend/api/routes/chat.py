@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.models.schemas import ChatRequest, ChatResponse, User, ErrorResponse
 from backend.services.agent_service import get_agent_service
-from backend.api.deps import get_current_user
+from backend.api.deps import get_current_user, require_role, UserRole
 from backend.core.logging import get_logger
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 })
 async def chat(
     request: ChatRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(require_role([UserRole.ADMIN, UserRole.EDITOR, UserRole.USER]))
 ):
     """
     Process a chat query through the RAG pipeline.

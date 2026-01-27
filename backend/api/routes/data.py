@@ -23,7 +23,7 @@ async def list_connections(
         logger.error(f"Error listing connections: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/connections", response_model=Dict[str, Any], dependencies=[Depends(require_role([UserRole.ADMIN, UserRole.EDITOR]))])
+@router.post("/connections", response_model=Dict[str, Any], dependencies=[Depends(require_role([UserRole.ADMIN]))])
 async def create_connection(
     connection: DbConnectionCreate,
     db_service: DatabaseService = Depends(get_db_service)
