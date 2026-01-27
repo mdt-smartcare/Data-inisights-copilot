@@ -24,6 +24,15 @@ class UserUpdateRequest(BaseModel):
     is_active: Optional[bool] = None
 
 
+class UserCreateRequest(BaseModel):
+    """Request to create a new user."""
+    username: str
+    password: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: str = Field("user", description="Role: super_admin, admin, editor, user, viewer")
+
+
 class UserResponse(BaseModel):
     """User information response."""
     id: int
@@ -33,6 +42,53 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool = True
     created_at: Optional[str] = None
+
+
+
+@router.post("", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
+async def create_user(
+    request: UserCreateRequest,
+    current_user: User = Depends(require_super_admin),
+    db_service: DatabaseService = Depends(get_db_service)
+):
+    """
+    Create a new user.
+    
+    **Requires Super Admin role.**
+    """
+    try:
+        # Validate role
+        valid_roles = ['super_admin', 'admin', 'editor', 'user', 'viewer']
+        if request.role not in valid_roles:
+            raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+        
+        user = db_service.create_user(
+            username=request.username,
+            password=request.password,
+            email=request.email,
+            full_name=request.full_name,
+            role=request.role
+        )
+        
+        # Log audit event
+        audit = get_audit_service()
+        audit.log(
+            action=AuditAction.USER_CREATE,
+            actor_id=current_user.id,
+            actor_username=current_user.username,
+            actor_role=current_user.role,
+            resource_type="user",
+            resource_id=str(user['id']),
+            resource_name=user['username'],
+            details={"role": request.role}
+        )
+        
+        return user
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
 
 @router.get("", response_model=List[UserResponse], dependencies=[Depends(require_super_admin)])
