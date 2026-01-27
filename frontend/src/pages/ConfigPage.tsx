@@ -3,6 +3,7 @@ import { generateSystemPrompt, publishSystemPrompt, handleApiError } from '../se
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
+import PromptEditor from '../components/PromptEditor';
 
 const steps = [
     { id: 1, name: 'Connect Database' },
@@ -192,16 +193,10 @@ const ConfigPage: React.FC = () => {
                     {currentStep === 4 && (
                         <div className="h-full flex flex-col">
                             <h2 className="text-xl font-semibold mb-4">Review & Configuration</h2>
-                            <div className="flex-1 flex flex-col min-h-0">
-                                <div className="flex justify-between items-center mb-2">
-                                    <label className="text-sm font-medium text-gray-700">Generated System Prompt</label>
-                                    <span className="text-xs text-gray-500">Editable • Markdown Supported</span>
-                                </div>
-                                <textarea
-                                    className="flex-1 p-4 border border-gray-300 rounded-md font-mono text-sm bg-gray-50 text-gray-800 resize-none focus:ring-2 focus:ring-green-500 focus:border-transparent shadow-inner min-h-[600px]"
+                            <div className="flex-1 min-h-0">
+                                <PromptEditor
                                     value={draftPrompt}
-                                    onChange={(e) => setDraftPrompt(e.target.value)}
-                                    spellCheck={false}
+                                    onChange={setDraftPrompt}
                                 />
                             </div>
                         </div>
