@@ -18,6 +18,16 @@
 // Authentication types (User, LoginRequest, LoginResponse, etc.)
 export * from './auth';
 
+export type UserRole = 'admin' | 'editor' | 'viewer' | 'user';
+
+export interface User {
+    id?: number;
+    username: string;
+    email?: string;
+    full_name?: string;
+    role?: UserRole;
+}
+
 // Chat types (Message, ChatRequest, ChatResponse, ChartData, Source)
 export * from './chat';
 
