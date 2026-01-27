@@ -16,28 +16,29 @@ class ConfigService:
 
     def generate_draft_prompt(self, data_dictionary: str) -> str:
         """
-        Generates a draft system prompt based on the database schema and user-provided data dictionary.
+        Generates a draft system prompt based on the provided data dictionary / context.
+        
+        Args:
+            data_dictionary: A string containing schema info, selected tables, and user notes.
+                             (Constructed by the frontend wizard)
         """
-        # Fetch all table names using the SQL service's database connection
-        # Adapting from prompt "self.sql_service.db_connector.get_all_tables()" 
-        # to actual "self.sql_service.db.get_usable_table_names()"
-        try:
-            table_list = self.sql_service.db.get_usable_table_names()
-        except AttributeError:
-             # Fallback if db structure is different, but based on inspection it should be this
-             logger.warning("Could not fetch table names from sql_service.db, using empty list.")
-             table_list = []
-
-        system_role = "You are a Clinical Data Architect."
+        system_role = "You are a Clinical Data Architect and AI System Prompt Engineer."
         instruction = (
-            "Analyze the schema and dictionary. Write a strict System Instruction for an AI chatbot "
-            "to query this database. Define table relationships and unit conversions."
+            "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will query a medical database.\n\n"
+            "CONTEXT PROVIDED:\n"
+            f"{data_dictionary}\n\n"
+            "INSTRUCTIONS:\n"
+            "1. Define the persona (NCD Clinical Data Intelligence Agent).\n"
+            "2. List the KEY tables and columns available based on the context above.\n"
+            "3. Define strict rules for SQL generation (e.g., joins, filters).\n"
+            "4. Start with: 'You are an advanced NCD Clinical Data Intelligence Agent...'\n"
+            "5. return ONLY the prompt text, no markdown formatting."
         )
 
         # Construct the prompt template
         prompt_template = ChatPromptTemplate.from_messages([
             ("system", system_role),
-            ("user", f"Tables: {table_list}\n\nData Dictionary:\n{data_dictionary}\n\n{instruction}")
+            ("user", instruction)
         ])
 
         # Invoke the LLM
