@@ -227,7 +227,7 @@ const PromptHistoryPage: React.FC = () => {
                                 <div>
                                     <h3 className="text-xl font-semibold text-gray-900">
                                         Version {selectedVersion.version}
-                                        {selectedVersion.is_active && (
+                                        {Boolean(selectedVersion.is_active) && (
                                             <span className="ml-2 text-sm text-green-600">(Active)</span>
                                         )}
                                     </h3>
