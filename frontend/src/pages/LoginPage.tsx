@@ -60,8 +60,14 @@ export default function LoginPage() {
         role: response.data.user?.role
       });
 
-      // Redirect to chat page (protected route)
-      navigate('/chat');
+      // Redirect based on user role
+      // Super Admin goes to Config dashboard, others go to Chat
+      const userRole = response.data.user?.role;
+      if (userRole === 'super_admin') {
+        navigate('/insights');
+      } else {
+        navigate('/chat');
+      }
     } catch (err) {
       // Display error message to user
       setError(handleApiError(err));

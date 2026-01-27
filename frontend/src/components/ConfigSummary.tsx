@@ -118,9 +118,6 @@ const ConfigSummary: React.FC<ConfigSummaryProps> = ({
                         <span className="text-sm text-gray-600">Total Versions</span>
                         <span className="font-medium text-gray-900">{totalPromptVersions}</span>
                     </div>
-                    <p className="text-xs text-green-600 mt-4 text-center font-medium">
-                        ✓ AI Agent is configured and ready
-                    </p>
                 </div>
             </div>
         </div>

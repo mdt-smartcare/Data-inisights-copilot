@@ -29,6 +29,30 @@ interface ProtectedRouteProps {
   allowedRoles?: UserRole[];
 }
 
+// Default redirect component - routes users based on their role
+function DefaultRedirect() {
+  const { user, isLoading } = useAuth();
+  const token = localStorage.getItem('auth_token');
+
+  // If not authenticated, go to login
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+
+  // Wait for user to load
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
+  // Redirect based on role
+  if (user?.role === 'super_admin') {
+    return <Navigate to="/config" replace />;
+  }
+
+  // Default to chat for all other users
+  return <Navigate to="/chat" replace />;
+}
+
 // Protected route wrapper
 function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const { user, logout, isLoading } = useAuth();
@@ -90,7 +114,7 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
-            <Route path="/" element={<Navigate to="/chat" replace />} />
+            <Route path="/" element={<DefaultRedirect />} />
             <Route
               path="/chat"
               element={
