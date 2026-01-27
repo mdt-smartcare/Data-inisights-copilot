@@ -175,12 +175,14 @@ const PromptHistoryPage: React.FC = () => {
                                                 </div>
                                                 <span className="text-xs text-gray-400">
                                                     {(() => {
+                                                        if (!version.created_at) return '';
                                                         try {
-                                                            // Handle SQLite timestamp format "YYYY-MM-DD HH:MM:SS"
                                                             const dateStr = version.created_at.replace(' ', 'T') + 'Z';
-                                                            return new Date(dateStr).toLocaleDateString();
+                                                            const d = new Date(dateStr);
+                                                            if (isNaN(d.getTime())) return version.created_at;
+                                                            return d.toLocaleDateString();
                                                         } catch (e) {
-                                                            return version.created_at;
+                                                            return version.created_at || '';
                                                         }
                                                     })()}
                                                 </span>
@@ -252,7 +254,7 @@ const PromptHistoryPage: React.FC = () => {
                                         disabled={rollbackLoading}
                                         className="px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-md hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
                                     >
-                                        {rollbackLoading ? 'Rolling back...' : '↩ Rollback to this version'}
+                                        {rollbackLoading ? 'Rolling back...' : 'Rollback to this version'}
                                     </button>
                                 )}
                                 {showCompare && compareVersion && (
