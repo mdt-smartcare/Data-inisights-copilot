@@ -50,6 +50,7 @@ const ConfigPage: React.FC = () => {
     const [history, setHistory] = useState<any[]>([]);
     const [showHistory, setShowHistory] = useState(false);
     const [showClearConfirm, setShowClearConfirm] = useState(false);
+    const [replaceConfirm, setReplaceConfirm] = useState<{ show: boolean; version: any | null }>({ show: false, version: null });
 
     // Config Metadata for Dashboard
     const [activeConfig, setActiveConfig] = useState<any>(null);
@@ -418,9 +419,10 @@ const ConfigPage: React.FC = () => {
                                                     <PromptHistory
                                                         history={history}
                                                         onSelect={(item) => {
-                                                            const shouldLoad = !draftPrompt.trim() || window.confirm("Replace current content with this version?");
-                                                            if (shouldLoad) {
+                                                            if (!draftPrompt.trim()) {
                                                                 setDraftPrompt(item.prompt_text);
+                                                            } else {
+                                                                setReplaceConfirm({ show: true, version: item });
                                                             }
                                                         }}
                                                     />
@@ -579,6 +581,48 @@ const ConfigPage: React.FC = () => {
                                 className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium"
                             >
                                 Clear Content
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Replace Version Confirmation Modal */}
+            {replaceConfirm.show && replaceConfirm.version && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-semibold text-gray-900">Replace Current Draft</h3>
+                                <p className="text-sm text-gray-500">Load version {replaceConfirm.version.version}</p>
+                            </div>
+                        </div>
+                        <p className="text-gray-600 mb-6">
+                            This will replace your current draft with the content from <strong>v{replaceConfirm.version.version}</strong>.
+                            Any unsaved changes will be lost.
+                        </p>
+                        <div className="flex justify-end gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setReplaceConfirm({ show: false, version: null })}
+                                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 font-medium"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setDraftPrompt(replaceConfirm.version.prompt_text);
+                                    setReplaceConfirm({ show: false, version: null });
+                                }}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+                            >
+                                Replace Draft
                             </button>
                         </div>
                     </div>
