@@ -84,8 +84,8 @@ const ConfigPage: React.FC = () => {
                         <div key={step.id} className="flex flex-col items-center bg-white px-2">
                             <div
                                 className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm transition-colors ${currentStep >= step.id
-                                        ? 'bg-blue-600 text-white'
-                                        : 'bg-gray-200 text-gray-500'
+                                    ? 'bg-blue-600 text-white'
+                                    : 'bg-gray-200 text-gray-500'
                                     }`}
                             >
                                 {step.id}

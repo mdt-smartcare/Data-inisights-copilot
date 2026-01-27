@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { getConnections, saveConnection, deleteConnection, DbConnection, handleApiError } from '../services/api';
+import { getConnections, saveConnection, deleteConnection, handleApiError } from '../services/api';
+import type { DbConnection } from '../services/api';
 
 interface ConnectionManagerProps {
     onSelect: (connectionId: number) => void;
@@ -125,8 +126,8 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                         key={conn.id}
                         onClick={() => onSelect(conn.id)}
                         className={`p-3 rounded border cursor-pointer flex justify-between items-center transition-colors ${selectedId === conn.id
-                                ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
-                                : 'border-gray-200 hover:bg-gray-50'
+                            ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
+                            : 'border-gray-200 hover:bg-gray-50'
                             }`}
                     >
                         <div>
