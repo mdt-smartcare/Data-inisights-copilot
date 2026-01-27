@@ -245,7 +245,7 @@ async def delete_user(
     # Log audit event
     audit = get_audit_service()
     audit.log(
-        action=AuditAction.USER_DELETE,
+        action=AuditAction.USER_DEACTIVATE,
         actor_id=current_user.id,
         actor_username=current_user.username,
         actor_role=current_user.role,

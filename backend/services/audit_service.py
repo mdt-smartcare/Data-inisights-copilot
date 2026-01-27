@@ -18,7 +18,7 @@ class AuditAction(str, Enum):
     # User Management
     USER_CREATE = "user.create"
     USER_UPDATE = "user.update"
-    USER_DELETE = "user.delete"
+    USER_DEACTIVATE = "user.deactivate"
     USER_LOGIN = "user.login"
     USER_LOGOUT = "user.logout"
     

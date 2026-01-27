@@ -85,7 +85,12 @@ const AuditLogsPage: React.FC = () => {
     };
 
     const formatAction = (action: string) => {
-        return action.replace('.', ' → ').replace(/_/g, ' ');
+        if (!action) return '-';
+        return action
+            .split('.')
+            .map(part => part.replace(/_/g, ' '))
+            .join(' → ')
+            .replace(/\b\w/g, l => l.toUpperCase());
     };
 
     const getActionColor = (action: string) => {
@@ -94,6 +99,25 @@ const AuditLogsPage: React.FC = () => {
         if (action.includes('update') || action.includes('edit')) return 'text-blue-600 bg-blue-50';
         if (action.includes('publish')) return 'text-purple-600 bg-purple-50';
         return 'text-gray-600 bg-gray-50';
+    };
+
+    const renderDetails = (details: Record<string, any> | undefined) => {
+        if (!details || Object.keys(details).length === 0) return '-';
+
+        return (
+            <div className="flex flex-wrap gap-2 py-1">
+                {Object.entries(details).map(([key, value]) => (
+                    <div key={key} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-gray-50 border border-gray-200 rounded text-[10px] leading-none whitespace-nowrap">
+                        <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">{key.replace(/_/g, ' ')}:</span>
+                        <span className={`font-semibold ${typeof value === 'boolean' ? (value ? 'text-green-600' : 'text-red-600') : 'text-gray-700'}`}>
+                            {typeof value === 'boolean' ? (value ? 'Active' : 'Inactive') :
+                                key === 'role' ? getRoleDisplayName(value) :
+                                    String(value).length > 30 ? String(value).slice(0, 30) + '...' : String(value)}
+                        </span>
+                    </div>
+                ))}
+            </div>
+        );
     };
 
     // Access check AFTER all hooks
@@ -149,9 +173,11 @@ const AuditLogsPage: React.FC = () => {
                                     onChange={(e) => setFilters(f => ({ ...f, action: e.target.value }))}
                                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                                 >
-                                    <option value="">All Actions</option>
-                                    {actionTypes.map(a => (
-                                        <option key={a} value={a.split('.')[0]}>{a.split('.')[0]}</option>
+                                    <option value="">All Categories</option>
+                                    {Array.from(new Set(actionTypes.map(a => a.split('.')[0]))).map(cat => (
+                                        <option key={cat} value={cat}>
+                                            {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                                        </option>
                                     ))}
                                 </select>
                             </div>
@@ -166,8 +192,8 @@ const AuditLogsPage: React.FC = () => {
                                 />
                             </div>
                             <div className="flex items-end gap-2">
-                                <button 
-                                    type="submit" 
+                                <button
+                                    type="submit"
                                     className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                                 >
                                     Search
@@ -236,8 +262,8 @@ const AuditLogsPage: React.FC = () => {
                                                     <div className="text-sm text-gray-900">{log.resource_name || log.resource_id || '-'}</div>
                                                     <div className="text-xs text-gray-500">{log.resource_type}</div>
                                                 </td>
-                                                <td className="px-4 py-3 text-sm text-gray-500 max-w-xs truncate">
-                                                    {log.details ? JSON.stringify(log.details).slice(0, 100) : '-'}
+                                                <td className="px-4 py-3 max-w-sm">
+                                                    {renderDetails(log.details)}
                                                 </td>
                                             </tr>
                                         ))}
