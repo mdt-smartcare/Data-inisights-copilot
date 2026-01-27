@@ -326,7 +326,6 @@ class DatabaseService:
     def publish_system_prompt(self, prompt_text: str, user_id: str, 
                               connection_id: Optional[int] = None, 
                               schema_selection: Optional[str] = None, 
-                              schema_selection: Optional[str] = None, 
                               data_dictionary: Optional[str] = None,
                               reasoning: Optional[str] = None,
                               example_questions: Optional[str] = None) -> Dict[str, Any]:
@@ -336,8 +335,6 @@ class DatabaseService:
             prompt_text: Content of the prompt
             user_id: ID of the creating user
             connection_id: ID of the database connection used
-            connection_id: ID of the database connection used
-            schema_selection: JSON string of selected schema
             schema_selection: JSON string of selected schema
             data_dictionary: Content of data dictionary
             reasoning: JSON string of reasoning metadata
