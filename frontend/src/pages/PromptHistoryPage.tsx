@@ -233,11 +233,14 @@ const PromptHistoryPage: React.FC = () => {
                                     </h3>
                                     <p className="text-sm text-gray-500">
                                         Created {(() => {
+                                            if (!selectedVersion.created_at) return 'Unknown date';
                                             try {
                                                 const dateStr = selectedVersion.created_at.replace(' ', 'T') + 'Z';
-                                                return new Date(dateStr).toLocaleString();
+                                                const d = new Date(dateStr);
+                                                if (isNaN(d.getTime())) return selectedVersion.created_at;
+                                                return d.toLocaleString();
                                             } catch (e) {
-                                                return selectedVersion.created_at;
+                                                return selectedVersion.created_at || 'Unknown date';
                                             }
                                         })()}
                                         {selectedVersion.created_by_username && ` by ${selectedVersion.created_by_username}`}
