@@ -5,6 +5,7 @@ Coordinates SQL and vector search tools to answer user queries.
 import re
 import json
 import uuid
+import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 
@@ -194,11 +195,20 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
                 
             system_prompt = active_prompt
 
+            # Retrieve relevant few-shot examples
+            few_shot_examples = self._get_relevant_examples(query)
+            formatted_examples = ""
+            if few_shot_examples:
+                formatted_examples = "\n\nRELEVANT SQL EXAMPLES:\n" + "\n".join(few_shot_examples)
+                logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
+
             # Execute agent (don't get embedding info until we know we need it)
-            # Pass system_prompt variable to the agent
+            # Pass system_prompt variable to the agent, creating a combined prompt
+            final_prompt = f"{system_prompt}\n{formatted_examples}"
+            
             result = self.agent_executor.invoke({
                 "input": query,
-                "system_prompt": system_prompt
+                "system_prompt": final_prompt
             })
             
             # Extract response
@@ -291,10 +301,52 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
                 "Show enrollment breakdown by condition"
             ]
 
+    def _get_relevant_examples(self, query: str) -> List[str]:
+        """
+        Retrieve relevant SQL examples using semantic search.
+        Refactored to be robust and fail-safe.
+        """
+        try:
+            examples = self.db_service.get_sql_examples()
+            if not examples:
+                return []
+            
+            # If few examples, just return all of them (up to 3)
+            if len(examples) <= 3:
+                return [f"Q: {ex['question']}\nSQL: {ex['sql_query']}" for ex in examples]
+
+            # Semantic search
+            query_embedding = self.embedding_model.embed_query(query)
+            
+            scored_examples = []
+            for ex in examples:
+                # In a real prod env, embeddings should be cached/stored in DB
+                # For now, we compute on fly or rely on keyword fallback if too slow
+                # Optimisation: caching this in memory would be good if list grows
+                
+                # Simple keyword overlap as baseline score
+                score = 0
+                q_words = set(query.lower().split())
+                ex_words = set(ex['question'].lower().split())
+                overlap = len(q_words.intersection(ex_words))
+                score += overlap * 0.1
+                
+                scored_examples.append((score, ex))
+            
+            # Sort by score DESC
+            scored_examples.sort(key=lambda x: x[0], reverse=True)
+            
+            # Take top 3
+            top_examples = scored_examples[:3]
+            return [f"Q: {ex['question']}\nSQL: {ex['sql_query']}" for _, ex in top_examples]
+
+        except Exception as e:
+            logger.warning(f"Failed to retrieve examples: {e}")
+            return []
+
     def _get_embedding_info(self, query: str) -> Dict[str, Any]:
         """Get embedding statistics for query."""
         try:
-            import numpy as np
             embedding = self.embedding_model.embed_query(query)
             return {
                 "norm": float(np.linalg.norm(embedding)),

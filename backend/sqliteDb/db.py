@@ -527,6 +527,20 @@ class DatabaseService:
         finally:
             conn.close()
 
+    def get_sql_examples(self) -> list[Dict[str, Any]]:
+        """Get all SQL examples for few-shot learning."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM sql_examples ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.OperationalError:
+            logger.warning("sql_examples table not found")
+            return []
+        finally:
+            conn.close()
+
 
 
 # Global database instance (Singleton pattern)

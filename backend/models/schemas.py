@@ -155,6 +155,22 @@ class MetricDefinition(BaseModel):
         }
     })
 
+class SQLExample(BaseModel):
+    """Few-shot SQL example for context injection."""
+    id: Optional[int] = None
+    question: str = Field(..., description="Natural language question")
+    sql_query: str = Field(..., description="Corresponding SQL query")
+    description: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "question": "How many patients have hypertension?",
+            "sql_query": "SELECT count(*) FROM v_analytics_enrollment WHERE enrolled_condition = 'Hypertension'",
+            "description": "Simple count of hypertension patients"
+        }
+    })
+
 
 # ============================================
 # Feedback Schemas
