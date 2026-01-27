@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Dict
 
 class PromptGenerationRequest(BaseModel):
     data_dictionary: str
@@ -28,4 +28,7 @@ class PromptResponse(BaseModel):
     id: int
     prompt_text: str
     version: int
+    prompt_text: str
+    version: int
     is_active: int
+    reasoning: Optional[Dict[str, str]] = None  # New field for explainability
