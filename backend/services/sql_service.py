@@ -16,9 +16,7 @@ from langchain_core.outputs import LLMResult
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
-from backend.sqliteDb.db import get_db_service
-from backend.models.schemas import MetricDefinition
-from backend.services.reflection_service import get_critique_service
+
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -43,11 +41,6 @@ class SQLService:
         logger.info(f"Connecting to database at {settings.database_url}")
         
         try:
-            # Initialize metrics from DB
-            self.metrics: List[MetricDefinition] = []
-            self.db_service = get_db_service()
-            self._load_metrics()
-            
             # Initialize critique service
             self.critique_service = get_critique_service()
 
@@ -109,21 +102,7 @@ class SQLService:
             logger.error(f"Failed to initialize SQL service: {e}", exc_info=True)
             raise
     
-    def _load_metrics(self):
-        """Load active metrics from configuration database."""
-        try:
-            metric_dicts = self.db_service.get_active_metrics()
-            self.metrics = [MetricDefinition(**m) for m in metric_dicts]
-            logger.info(f"Loaded {len(self.metrics)} active metric definitions from DB")
-        except Exception as e:
-            logger.error(f"Failed to load metrics: {e}")
-            self.metrics = []
 
-    @staticmethod
-    @lru_cache(maxsize=100)
-    def _get_compiled_pattern(pattern: str):
-        """Cache compiled regex patterns."""
-        return re.compile(pattern)
 
     def _cache_schema(self):
         try:
@@ -222,25 +201,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
             logger.warning(f"Failed to get relevant schema: {e}. Falling back to full schema.")
             return self.cached_schema
 
-    def _check_dashboard_kpi(self, question: str) -> Optional[Tuple[str, str]]:
-        """
-        Check if question matches a known dashboard KPI template from the database.
-        Returns (sql_query, description) if matched, None otherwise.
-        """
-        question_lower = question.lower().strip()
-        
-        # Iterate through loaded metrics (already ordered by priority in DB query)
-        for metric in self.metrics:
-            try:
-                # Use cached regex compilation (static method)
-                if self._get_compiled_pattern(metric.regex_pattern).search(question_lower):
-                    logger.info(f"⚡ KPI Match: '{metric.name}' (Priority {metric.priority}) -> {metric.description}")
-                    return (metric.sql_template.strip(), metric.description)
-            except re.error as e:
-                logger.warning(f"Invalid regex pattern for metric '{metric.name}': {e}")
-                continue
-        
-        return None
+
 
     def _is_simple_query(self, question: str) -> bool:
         question_lower = question.lower().strip()
@@ -306,11 +267,12 @@ patient_tracker.id → patient_diagnosis.patient_track_id
     def query(self, question: str) -> str:
         logger.info(f"Executing SQL query for: '{question[:100]}...'")
         
-        kpi_match = self._check_dashboard_kpi(question)
-        if kpi_match:
-            sql_query, description = kpi_match
-            logger.info(f"⚡ Using pre-defined KPI template for: {description}")
-            return self._execute_kpi_template(sql_query, description, question)
+        # KPI template matching disabled by domain-agnostic refactor
+        # kpi_match = self._check_dashboard_kpi(question)
+        # if kpi_match:
+        #     sql_query, description = kpi_match
+        #     logger.info(f"⚡ Using pre-defined KPI template for: {description}")
+        #     return self._execute_kpi_template(sql_query, description, question)
         
         if self._is_simple_query(question):
             logger.info(" Detected simple query - using optimized execution path")
@@ -319,40 +281,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
             logger.info(" Complex query detected - using full agent")
             return self._execute_with_agent(question)
     
-    def _execute_kpi_template(self, sql_query: str, description: str, original_question: str) -> str:
-        logger.info("=" * 80)
-        logger.info("⚡ KPI TEMPLATE EXECUTION (1 API call):")
-        logger.info("=" * 80)
-        logger.info(f" Template: {description}")
-        logger.info(f" SQL: {sql_query[:200]}...")
-        
-        try:
-            result = self.db.run(sql_query)
-            logger.info(f" Query result: {result}")
-            
-            format_prompt = f"""Convert this database result into a clear, natural language answer.
 
-Dashboard KPI: {description}
-SQL Query: {sql_query}
-Result: {result}
-
-Original question: {original_question}
-
-Provide a concise, professional answer. Include the exact number(s) and briefly explain what they mean in the NCD program context."""
-
-            formatted_response = self.llm.invoke(format_prompt)
-            output = formatted_response.content.strip()
-            
-            logger.info("=" * 80)
-            logger.info("✅ KPI template execution completed with 1 API call")
-            logger.info(f" Final Answer: {output[:300]}...")
-            logger.info("=" * 80)
-            
-            return output
-            
-        except Exception as e:
-            logger.warning(f"⚠️ KPI template execution failed: {e}. Falling back to agent.")
-            return self._execute_with_agent(original_question)
     
     def _execute_optimized(self, question: str) -> str:
         logger.info("=" * 80)
