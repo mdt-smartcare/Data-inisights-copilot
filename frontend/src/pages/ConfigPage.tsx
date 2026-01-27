@@ -364,8 +364,12 @@ const ConfigPage: React.FC = () => {
                                                     {dataDictionary && canEdit && (
                                                         <button
                                                             type="button"
-                                                            onClick={() => {
-                                                                if (window.confirm('Clear dictionary content?')) setDataDictionary('');
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                if (window.confirm('Clear dictionary content?')) {
+                                                                    setDataDictionary('');
+                                                                }
                                                             }}
                                                             className="text-xs text-red-600 hover:text-red-800 font-medium px-2 py-1 rounded hover:bg-red-50"
                                                         >
