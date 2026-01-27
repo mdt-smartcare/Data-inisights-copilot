@@ -28,6 +28,8 @@ const PromptHistoryPage: React.FC = () => {
     const [selectedVersion, setSelectedVersion] = useState<PromptVersion | null>(null);
     const [compareVersion, setCompareVersion] = useState<PromptVersion | null>(null);
     const [showCompare, setShowCompare] = useState(false);
+    const [rollbackLoading, setRollbackLoading] = useState(false);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     const canEdit = canEditPrompt(user);
 
@@ -64,6 +66,37 @@ const PromptHistoryPage: React.FC = () => {
         } else {
             setCompareVersion(version);
             setShowCompare(true);
+        }
+    };
+
+    const handleRollback = async (version: PromptVersion) => {
+        if (!canEdit) {
+            setError('You do not have permission to rollback prompts');
+            return;
+        }
+        if (!window.confirm(`Rollback to version ${version.version}? This will make it the active prompt.`)) {
+            return;
+        }
+        setRollbackLoading(true);
+        setError(null);
+        try {
+            const token = getAuthToken();
+            const res = await fetch(`/api/v1/config/rollback/${version.id}`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.ok) {
+                const data = await res.json();
+                throw new Error(data.detail || 'Failed to rollback');
+            }
+            const data = await res.json();
+            setSuccessMessage(`Rolled back to version ${data.version}`);
+            loadVersions();
+            setTimeout(() => setSuccessMessage(null), 3000);
+        } catch (err: any) {
+            setError(err.message || 'Failed to rollback');
+        } finally {
+            setRollbackLoading(false);
         }
     };
 
@@ -174,6 +207,12 @@ const PromptHistoryPage: React.FC = () => {
                         </div>
                     )}
 
+                    {successMessage && (
+                        <div className="m-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md text-sm">
+                            ✓ {successMessage}
+                        </div>
+                    )}
+
                     {selectedVersion && (
                         <div className="flex-1 overflow-auto p-6">
                             <div className="flex justify-between items-start mb-4">
@@ -189,6 +228,15 @@ const PromptHistoryPage: React.FC = () => {
                                         {selectedVersion.created_by_username && ` by ${selectedVersion.created_by_username}`}
                                     </p>
                                 </div>
+                                {canEdit && !selectedVersion.is_active && (
+                                    <button
+                                        onClick={() => handleRollback(selectedVersion)}
+                                        disabled={rollbackLoading}
+                                        className="px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-md hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                        {rollbackLoading ? 'Rolling back...' : '↩ Rollback to this version'}
+                                    </button>
+                                )}
                                 {showCompare && compareVersion && (
                                     <div className="text-right">
                                         <p className="text-sm font-medium text-purple-600">

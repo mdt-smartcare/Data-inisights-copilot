@@ -93,3 +93,66 @@ async def get_active_prompt(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch active prompt: {str(e)}"
         )
+
+
+@router.post("/rollback/{version_id}", response_model=Dict[str, Any], dependencies=[Depends(require_editor)])
+async def rollback_to_version(
+    version_id: int,
+    current_user: User = Depends(get_current_user),
+    db_service: DatabaseService = Depends(get_db_service)
+):
+    """
+    Rollback to a previous prompt version by making it the active version.
+    Requires Editor role or above.
+    """
+    from backend.services.audit_service import get_audit_service, AuditAction
+    
+    try:
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        
+        # Get the version to rollback to
+        cursor.execute("SELECT id, version, prompt_text FROM system_prompts WHERE id = ?", (version_id,))
+        row = cursor.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Version not found")
+        
+        prompt_id, version_num, prompt_text = row
+        
+        # Deactivate all existing prompts
+        cursor.execute("UPDATE system_prompts SET is_active = 0")
+        
+        # Activate the selected version
+        cursor.execute("UPDATE system_prompts SET is_active = 1 WHERE id = ?", (version_id,))
+        conn.commit()
+        
+        # Log audit event
+        audit = get_audit_service()
+        audit.log(
+            action=AuditAction.PROMPT_ROLLBACK,
+            actor_id=current_user.id,
+            actor_username=current_user.username,
+            actor_role=current_user.role,
+            resource_type="prompt",
+            resource_id=str(version_id),
+            resource_name=f"v{version_num}",
+            details={"rolled_back_to_version": version_num}
+        )
+        
+        logger.info(f"User {current_user.username} rolled back to prompt version {version_num}")
+        
+        return {
+            "status": "success",
+            "message": f"Rolled back to version {version_num}",
+            "version_id": version_id,
+            "version": version_num
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rolling back to version {version_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to rollback: {str(e)}"
+        )
+
