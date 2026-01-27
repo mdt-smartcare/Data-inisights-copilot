@@ -103,8 +103,6 @@ export default function ChatPage() {
         emptyStateProps={{
           title: 'Ask me anything about FHIR healthcare data!',
           subtitle: 'Start a conversation by typing a message below',
-          title: 'Ask me anything about FHIR healthcare data!',
-          subtitle: 'Start a conversation by typing a message below',
           suggestions: suggestions
         }}
       />
