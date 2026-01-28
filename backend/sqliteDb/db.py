@@ -7,6 +7,8 @@ from pathlib import Path
 import bcrypt
 from typing import Optional, Dict, Any
 import logging
+import json
+import hashlib
 
 logger = logging.getLogger(__name__)
 
