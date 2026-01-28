@@ -52,7 +52,7 @@ export interface Source {
  */
 export interface ChatRequest {
   query: string;              // User's question or prompt
-  conversation_id?: string;   // Optional conversation thread ID
+  session_id?: string;        // Optional session ID for conversation tracking
 }
 
 /**
@@ -66,6 +66,7 @@ export interface ChatResponse {
   suggested_questions?: string[];      // Optional follow-up questions
   chart_data?: ChartData;              // Optional chart visualization
   conversation_id: string;             // Conversation thread ID
+  session_id?: string;                 // Session ID for conversation tracking
   timestamp: string;                   // Response generation timestamp
   trace_id?: string;                   // Optional trace ID for debugging
   processing_time?: number;            // Optional processing time in ms

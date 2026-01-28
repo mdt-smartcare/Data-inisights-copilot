@@ -23,17 +23,16 @@ class ConfigService:
             data_dictionary: A string containing schema info, selected tables, and user notes.
                              (Constructed by the frontend wizard)
         """
-        system_role = "You are a Clinical Data Architect and AI System Prompt Engineer."
+        system_role = "You are a Data Architect and AI System Prompt Engineer."
         instruction = (
-            "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will query a medical database.\n\n"
+            "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will query a structured database.\n\n"
             "CONTEXT PROVIDED:\n"
             f"{data_dictionary}\n\n"
             "INSTRUCTIONS:\n"
-            "1. Define the persona (NCD Clinical Data Intelligence Agent).\n"
+            "1. Define a suitable persona based strictly on the table names and column definitions provided in the context.\n"
             "2. List the KEY tables and columns available based on the context above.\n"
             "3. Define strict rules for SQL generation (e.g., joins, filters).\n"
-            "4. Start with: 'You are an advanced NCD Clinical Data Intelligence Agent...'\n"
-            "5. return ONLY the prompt text, no markdown formatting."
+            "4. return ONLY the prompt text, no markdown formatting."
         )
 
         # Construct the prompt template

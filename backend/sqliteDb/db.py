@@ -502,6 +502,45 @@ class DatabaseService:
         conn.close()
         return dict(row) if row else None
 
+    def get_active_metrics(self) -> list[Dict[str, Any]]:
+        """Get all active metric definitions ordered by priority.
+        
+        Returns:
+            List of metric dictionary objects
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor() # Use dictionary cursor via row_factory in get_connection
+        
+        try:
+            cursor.execute("""
+                SELECT id, name, description, regex_pattern, sql_template, priority 
+                FROM metric_definitions 
+                WHERE is_active = 1 
+                ORDER BY priority ASC
+            """)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.OperationalError:
+            # Table might not exist yet if migration hasn't run or in tests
+            logger.warning("metric_definitions table not found")
+            return []
+        finally:
+            conn.close()
+
+    def get_sql_examples(self) -> list[Dict[str, Any]]:
+        """Get all SQL examples for few-shot learning."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM sql_examples ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except sqlite3.OperationalError:
+            logger.warning("sql_examples table not found")
+            return []
+        finally:
+            conn.close()
+
 
 
 # Global database instance (Singleton pattern)

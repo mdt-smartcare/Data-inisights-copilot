@@ -20,33 +20,33 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
   };
 
   return (
-    <div className="flex justify-start w-full">
+    <div className="flex justify-start w-full animate-fadeSlideUp">
       <div className="w-full">
         <div className="flex items-start gap-2 mb-1">
           <div className="flex-shrink-0 w-5 h-5 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white text-[10px] font-bold">
             AI
           </div>
           <div className="text-[10px] text-gray-400">
-            {message.timestamp.toLocaleTimeString([], { 
-              hour: '2-digit', 
-              minute: '2-digit' 
+            {message.timestamp.toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit'
             })}
           </div>
         </div>
-        
+
         <div className="pl-7">
           <div className="prose prose-sm max-w-none text-gray-900">
-            <ReactMarkdown 
+            <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
-                h1: ({node, ...props}) => <h1 className="text-base font-bold mt-2 mb-1" {...props} />,
-                h2: ({node, ...props}) => <h2 className="text-sm font-bold mt-2 mb-1" {...props} />,
-                h3: ({node, ...props}) => <h3 className="text-sm font-semibold mt-1.5 mb-0.5" {...props} />,
-                p: ({node, ...props}) => <p className="my-1 leading-relaxed" {...props} />,
-                ul: ({node, ...props}) => <ul className="list-disc list-inside my-1 space-y-0.5" {...props} />,
-                ol: ({node, ...props}) => <ol className="list-decimal list-inside my-1 space-y-0.5" {...props} />,
-                li: ({node, ...props}) => <li className="my-0.5" {...props} />,
-                code: ({node, className, children, ...props}) => {
+                h1: ({ node, ...props }) => <h1 className="text-base font-bold mt-2 mb-1" {...props} />,
+                h2: ({ node, ...props }) => <h2 className="text-sm font-bold mt-2 mb-1" {...props} />,
+                h3: ({ node, ...props }) => <h3 className="text-sm font-semibold mt-1.5 mb-0.5" {...props} />,
+                p: ({ node, ...props }) => <p className="my-1 leading-relaxed" {...props} />,
+                ul: ({ node, ...props }) => <ul className="list-disc list-inside my-1 space-y-0.5" {...props} />,
+                ol: ({ node, ...props }) => <ol className="list-decimal list-inside my-1 space-y-0.5" {...props} />,
+                li: ({ node, ...props }) => <li className="my-0.5" {...props} />,
+                code: ({ node, className, children, ...props }) => {
                   const match = /language-(\w+)/.exec(className || '');
                   const isInline = !match;
                   return isInline ? (
@@ -59,22 +59,22 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
                     </code>
                   );
                 },
-                pre: ({node, ...props}) => <pre className="my-1" {...props} />,
-                blockquote: ({node, ...props}) => (
+                pre: ({ node, ...props }) => <pre className="my-1" {...props} />,
+                blockquote: ({ node, ...props }) => (
                   <blockquote className="border-l-2 border-gray-300 pl-2 my-1 italic" {...props} />
                 ),
-                a: ({node, ...props}) => (
+                a: ({ node, ...props }) => (
                   <a className="text-blue-600 hover:text-blue-700 underline" target="_blank" rel="noopener noreferrer" {...props} />
                 ),
-                table: ({node, ...props}) => (
+                table: ({ node, ...props }) => (
                   <div className="overflow-x-auto my-1">
                     <table className="min-w-full divide-y divide-gray-200 text-xs" {...props} />
                   </div>
                 ),
-                th: ({node, ...props}) => (
+                th: ({ node, ...props }) => (
                   <th className="px-2 py-1 bg-gray-100 font-semibold text-left" {...props} />
                 ),
-                td: ({node, ...props}) => (
+                td: ({ node, ...props }) => (
                   <td className="px-2 py-1 border-t border-gray-200" {...props} />
                 ),
               }}
@@ -82,10 +82,10 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               {message.content}
             </ReactMarkdown>
           </div>
-          
+
           {/* Render chart if present */}
           {message.chartData && <ChartRenderer chartData={message.chartData} />}
-          
+
           {/* Render SQL query if present */}
           {message.sqlQuery && (
             <div className="my-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
@@ -100,14 +100,14 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               </pre>
             </div>
           )}
-          
+
           {/* Render sources */}
           {message.sources && <SourceList sources={message.sources} />}
-          
+
           {/* Render suggested questions */}
           {message.suggestedQuestions && message.suggestedQuestions.length > 0 && (
             <div className="my-3">
-              <p className="text-xs font-semibold text-gray-700 mb-2">💡 Follow-up questions:</p>
+              <p className="text-xs font-semibold text-gray-700 mb-2">Follow-up questions:</p>
               <div className="space-y-1.5">
                 {message.suggestedQuestions.map((question, idx) => (
                   <button
@@ -121,7 +121,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               </div>
             </div>
           )}
-          
+
           {/* Debug info (trace_id and processing_time) */}
           {(message.traceId || message.processingTime) && (
             <div className="mt-2 text-[10px] text-gray-400 flex items-center gap-3">
@@ -129,11 +129,11 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
                 <span>⏱️ {message.processingTime.toFixed(2)}s</span>
               )}
               {message.traceId && (
-                <span title="Trace ID">🔍 {message.traceId.substring(0, 8)}</span>
+                <span title="Trace ID">{message.traceId.substring(0, 8)}</span>
               )}
             </div>
           )}
-          
+
           {/* Feedback buttons */}
           <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-3">
             <span className="text-[10px] text-gray-500">Was this helpful?</span>
@@ -141,11 +141,10 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               <button
                 onClick={() => handleFeedback('positive')}
                 disabled={feedback !== null}
-                className={`p-1.5 rounded transition-all ${
-                  feedback === 'positive'
-                    ? 'bg-green-100 text-green-600'
-                    : 'hover:bg-gray-100 text-gray-400 hover:text-green-600'
-                } disabled:cursor-not-allowed`}
+                className={`p-1.5 rounded transition-all ${feedback === 'positive'
+                  ? 'bg-green-100 text-green-600'
+                  : 'hover:bg-gray-100 text-gray-400 hover:text-green-600'
+                  } disabled:cursor-not-allowed`}
                 title="Good response"
               >
                 <svg className="w-4 h-4" fill={feedback === 'positive' ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
@@ -155,11 +154,10 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               <button
                 onClick={() => handleFeedback('negative')}
                 disabled={feedback !== null}
-                className={`p-1.5 rounded transition-all ${
-                  feedback === 'negative'
-                    ? 'bg-red-100 text-red-600'
-                    : 'hover:bg-gray-100 text-gray-400 hover:text-red-600'
-                } disabled:cursor-not-allowed`}
+                className={`p-1.5 rounded transition-all ${feedback === 'negative'
+                  ? 'bg-red-100 text-red-600'
+                  : 'hover:bg-gray-100 text-gray-400 hover:text-red-600'
+                  } disabled:cursor-not-allowed`}
                 title="Bad response"
               >
                 <svg className="w-4 h-4" fill={feedback === 'negative' ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">

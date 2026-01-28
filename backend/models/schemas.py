@@ -52,11 +52,16 @@ class ChatRequest(BaseModel):
     """Chat request payload."""
     query: str = Field(..., min_length=1, max_length=2000, description="User question")
     user_id: Optional[str] = Field(default=None, description="User identifier (from JWT)")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Session ID for conversation tracking. Auto-generated if not provided."
+    )
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "query": "How many patients have hypertension?",
-            "user_id": "admin"
+            "query": "How many active users are there?",
+            "user_id": "admin",
+            "session_id": "abc123-session-id"
         }
     })
 
@@ -69,10 +74,10 @@ class ChartData(BaseModel):
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "title": "Hypertension Distribution",
+            "title": "User Distribution",
             "type": "pie",
             "data": {
-                "labels": ["Stage 1", "Stage 2"],
+                "labels": ["Active", "Inactive"],
                 "values": [120, 125]
             }
         }
@@ -103,22 +108,23 @@ class ChatResponse(BaseModel):
     reasoning_steps: List[ReasoningStep] = Field(default_factory=list, description="Agent reasoning process")
     embedding_info: Optional[EmbeddingInfo] = Field(default=None, description="Embedding analysis")
     trace_id: str = Field(..., description="Langfuse trace ID for debugging")
+    session_id: Optional[str] = Field(default=None, description="Session ID for conversation tracking")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
-            "answer": "There are 245 patients with diagnosed hypertension in the database.",
+            "answer": "There are 245 active users in the database.",
             "chart_data": {
-                "title": "HTN Distribution",
+                "title": "User Status",
                 "type": "pie",
-                "data": {"labels": ["Stage 1", "Stage 2"], "values": [120, 125]}
+                "data": {"labels": ["Active", "Inactive"], "values": [120, 125]}
             },
             "suggested_questions": [
-                "What is the average age of hypertensive patients?",
-                "Show glucose levels for diabetic patients"
+                "What is the average age of users?",
+                "Show active users by region"
             ],
             "reasoning_steps": [
-                {"tool": "sql_query_tool", "input": "SELECT COUNT(*) FROM patients WHERE diagnosis='HTN'", "output": "245"}
+                {"tool": "sql_query_tool", "input": "SELECT COUNT(*) FROM users WHERE status='active'", "output": "245"}
             ],
             "embedding_info": {
                 "model": "bge-m3",
@@ -126,7 +132,65 @@ class ChatResponse(BaseModel):
                 "search_method": "hybrid"
             },
             "trace_id": "550e8400-e29b-41d4-a716-446655440000",
+            "session_id": "abc123-session-id",
             "timestamp": "2025-12-30T10:30:00Z"
+        }
+    })
+
+
+# ============================================
+# Metric & Configuration Schemas
+# ============================================
+
+class MetricDefinition(BaseModel):
+    """Configuration for dynamic SQL metrics."""
+    id: Optional[int] = None
+    name: str = Field(..., description="Unique metric name")
+    description: Optional[str] = None
+    regex_pattern: str = Field(..., description="Regex pattern to match user questions")
+    sql_template: str = Field(..., description="SQL query template")
+    priority: int = Field(default=0, description="Match priority (lower is checked first)")
+    is_active: bool = Field(default=True)
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "name": "metric_name",
+            "regex_pattern": ".*metric.*",
+            "sql_template": "SELECT count(*) FROM ...",
+            "priority": 1
+        }
+    })
+
+class SQLExample(BaseModel):
+    """Few-shot SQL example for context injection."""
+    id: Optional[int] = None
+    question: str = Field(..., description="Natural language question")
+    sql_query: str = Field(..., description="Corresponding SQL query")
+    description: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "question": "How many users are active?",
+            "sql_query": "SELECT count(*) FROM users WHERE status = 'active'",
+            "description": "Simple count of users"
+        }
+    })
+
+class CritiqueResponse(BaseModel):
+    """Output from the SQL critique agent."""
+    is_valid: bool = Field(..., description="Whether the SQL is valid and safe")
+    issues: List[str] = Field(default_factory=list, description="List of identified issues")
+    corrected_sql: Optional[str] = Field(default=None, description="Suggested fix if applicable")
+    reasoning: str = Field(..., description="Explanation of the critique")
+
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "is_valid": False,
+            "issues": ["Column 'p_id' does not exist in table 'patients'"],
+            "corrected_sql": "SELECT count(*) FROM patient_tracker",
+            "reasoning": "Schema mismatch identified."
         }
     })
 
@@ -146,8 +210,8 @@ class FeedbackRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "trace_id": "550e8400-e29b-41d4-a716-446655440000",
-            "query": "How many patients have hypertension?",
-            "selected_suggestion": "What is the average age of hypertensive patients?",
+            "query": "How many users are active?",
+            "selected_suggestion": "What is the average age of users?",
             "rating": 1,
             "comment": "Very helpful suggestion"
         }

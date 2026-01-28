@@ -16,6 +16,8 @@ from langchain_core.outputs import LLMResult
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
+from backend.services.reflection_service import get_critique_service
+
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -25,361 +27,12 @@ logger = get_logger(__name__)
 # FIX 2: DASHBOARD KPI TEMPLATES - Exact SQL for dashboard alignment
 # ORDERED BY PRIORITY - More specific patterns first!
 # =============================================================================
-DASHBOARD_KPI_TEMPLATES: List[Tuple[str, str, str]] = [
-    # Format: (pattern, SQL query, description)
-    # ORDER MATTERS - More specific patterns MUST come first!
-    
-    # ==========================================================================
-    # PRIORITY 0: COMBINED/COMPOUND QUERIES (most specific - check FIRST!)
-    # ==========================================================================
-    (
-        r"(critical|high).?risk.*smok|smok.*(critical|high).?risk",
-        """SELECT 
-            risk_category,
-            COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END) as smokers,
-            COUNT(DISTINCT CASE WHEN is_smoker = FALSE OR is_smoker IS NULL THEN patient_track_id END) as non_smokers,
-            COUNT(DISTINCT patient_track_id) as total
-        FROM v_high_risk_patients 
-        WHERE workflow_status = 'NCD'
-        GROUP BY risk_category
-        ORDER BY CASE risk_category 
-            WHEN 'Critical' THEN 1 
-            WHEN 'High' THEN 2 
-            WHEN 'Moderate' THEN 3 
-            ELSE 4 END""",
-        "high-risk patients by smoking status"
-    ),
-    (
-        r"smok.*(critical|high).?risk|(critical|high).?risk.*who.*smok",
-        """SELECT 
-            COUNT(DISTINCT patient_track_id) as critical_smokers
-        FROM v_high_risk_patients 
-        WHERE workflow_status = 'NCD' 
-        AND risk_category = 'Critical'
-        AND is_smoker = TRUE""",
-        "critical risk patients who are smokers"
-    ),
-    (
-        r"risk.*categor.*smok|smok.*risk.*categor",
-        """SELECT 
-            risk_category,
-            COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END) as smokers,
-            COUNT(DISTINCT patient_track_id) as total,
-            ROUND(COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END)::numeric / 
-                  NULLIF(COUNT(DISTINCT patient_track_id), 0) * 100, 2) as smoking_rate_pct
-        FROM v_high_risk_patients 
-        WHERE workflow_status = 'NCD'
-        GROUP BY risk_category
-        ORDER BY CASE risk_category 
-            WHEN 'Critical' THEN 1 
-            WHEN 'High' THEN 2 
-            WHEN 'Moderate' THEN 3 
-            ELSE 4 END""",
-        "smoking rate by risk category"
-    ),
-    
-    # ==========================================================================
-    # PRIORITY 1: High-Risk & Lifestyle Queries (specific but single-dimension)
-    # ==========================================================================
-    (
-        r"high.?risk.*patient|critical.*patient|risk.*(category|stratification)",
-        """SELECT risk_category, COUNT(DISTINCT patient_track_id) as count
-        FROM v_high_risk_patients 
-        WHERE workflow_status = 'NCD'
-        GROUP BY risk_category
-        ORDER BY CASE risk_category 
-            WHEN 'Critical' THEN 1 
-            WHEN 'High' THEN 2 
-            WHEN 'Moderate' THEN 3 
-            ELSE 4 END""",
-        "high-risk patient distribution by category"
-    ),
-    (
-        r"smoker|smoking.*patient",
-        """SELECT 
-            COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END) as smokers,
-            COUNT(DISTINCT CASE WHEN is_smoker = FALSE OR is_smoker IS NULL THEN patient_track_id END) as non_smokers,
-            ROUND(COUNT(DISTINCT CASE WHEN is_smoker = TRUE THEN patient_track_id END)::numeric / 
-                  NULLIF(COUNT(DISTINCT patient_track_id), 0) * 100, 2) as smoking_rate_pct
-        FROM v_analytics_screening_enhanced 
-        WHERE workflow_status = 'NCD'""",
-        "smoking status among NCD patients"
-    ),
-    (
-        r"lifestyle.*risk|poor.*lifestyle",
-        """SELECT 
-            lifestyle_risk_score,
-            COUNT(DISTINCT patient_track_id) as patient_count
-        FROM v_analytics_screening_enhanced 
-        WHERE workflow_status = 'NCD' AND lifestyle_risk_score IS NOT NULL
-        GROUP BY lifestyle_risk_score
-        ORDER BY lifestyle_risk_score DESC""",
-        "lifestyle risk score distribution"
-    ),
-    (
-        r"glycemic.*control|hba1c.*control",
-        """SELECT 
-            glycemic_control_status,
-            COUNT(DISTINCT patient_track_id) as patient_count
-        FROM v_analytics_enrollment_enhanced 
-        WHERE patient_status = 'ENROLLED' AND workflow_status = 'NCD'
-        GROUP BY glycemic_control_status
-        ORDER BY CASE glycemic_control_status
-            WHEN 'Very Poorly Controlled' THEN 1
-            WHEN 'Poorly Controlled' THEN 2
-            WHEN 'Controlled Diabetic' THEN 3
-            WHEN 'Pre-Diabetic' THEN 4
-            WHEN 'Normal' THEN 5
-            ELSE 6 END""",
-        "glycemic control status distribution"
-    ),
-    (
-        r"abnormal.*lab|lab.*abnormal",
-        """SELECT 
-            CASE 
-                WHEN abnormal_result_count >= 3 THEN '3+ abnormal'
-                WHEN abnormal_result_count = 2 THEN '2 abnormal'
-                WHEN abnormal_result_count = 1 THEN '1 abnormal'
-                ELSE 'No abnormal'
-            END as abnormal_category,
-            COUNT(DISTINCT patient_track_id) as patient_count
-        FROM v_analytics_enrollment_enhanced 
-        WHERE patient_status = 'ENROLLED' AND workflow_status = 'NCD'
-        GROUP BY abnormal_category
-        ORDER BY abnormal_result_count DESC""",
-        "patients by abnormal lab result count"
-    ),
-    (
-        r"screener.*role|role.*screener|who.*screen",
-        """SELECT 
-            screener_role_name,
-            COUNT(DISTINCT patient_track_id) as patients_screened
-        FROM v_analytics_screening_enhanced 
-        WHERE workflow_status = 'NCD' AND screener_role_name IS NOT NULL
-        GROUP BY screener_role_name
-        ORDER BY patients_screened DESC""",
-        "screening counts by screener role"
-    ),
-    (
-        r"shasthya kormi|chcp|medical officer",
-        """SELECT 
-            screener_role_name,
-            COUNT(DISTINCT patient_track_id) as patients_screened,
-            COUNT(DISTINCT CASE WHEN is_referred = TRUE THEN patient_track_id END) as patients_referred
-        FROM v_analytics_screening_enhanced 
-        WHERE workflow_status = 'NCD' AND screener_role_name IS NOT NULL
-        GROUP BY screener_role_name
-        ORDER BY patients_screened DESC""",
-        "screening and referral by health worker role"
-    ),
-    (
-        r"symptom|headache|dizziness|fatigue",
-        """SELECT 
-            COUNT(DISTINCT CASE WHEN has_headache = TRUE THEN patient_track_id END) as with_headache,
-            COUNT(DISTINCT CASE WHEN has_dizziness = TRUE THEN patient_track_id END) as with_dizziness,
-            COUNT(DISTINCT CASE WHEN has_fatigue = TRUE THEN patient_track_id END) as with_fatigue,
-            COUNT(DISTINCT CASE WHEN has_vision_issues = TRUE THEN patient_track_id END) as with_vision_issues,
-            COUNT(DISTINCT CASE WHEN has_chest_pain = TRUE THEN patient_track_id END) as with_chest_pain
-        FROM v_analytics_screening_enhanced 
-        WHERE workflow_status = 'NCD'""",
-        "symptom prevalence among NCD patients"
-    ),
-    
-    # ==========================================================================
-    # PRIORITY 1: Prevalence & Yield KPIs (most specific - check these first!)
-    # ==========================================================================
-    (
-        r"htn.*(prevalence|rate)|prevalence.*(htn|hypertension|bp)",
-        """SELECT 
-            ROUND(
-                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
-                    AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BP & BG') 
-                    THEN patient_track_id END)::numeric / 
-                 NULLIF(COUNT(DISTINCT CASE WHEN has_bp_reading = TRUE 
-                    THEN patient_track_id END), 0)) * 100, 
-                2
-            ) as htn_prevalence_pct
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD'""",
-        "HTN prevalence rate"
-    ),
-    (
-        r"hypertension.*(prevalence|rate)",
-        """SELECT 
-            ROUND(
-                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
-                    AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BP & BG') 
-                    THEN patient_track_id END)::numeric / 
-                 NULLIF(COUNT(DISTINCT CASE WHEN has_bp_reading = TRUE 
-                    THEN patient_track_id END), 0)) * 100, 
-                2
-            ) as htn_prevalence_pct
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD'""",
-        "HTN prevalence rate"
-    ),
-    (
-        r"dbm.*(prevalence|rate)|prevalence.*(dbm|diabetes|glucose|bg)",
-        """SELECT 
-            ROUND(
-                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
-                    AND referred_reason IN ('Due to Elevated BG', 'Due to Elevated BP & BG') 
-                    THEN patient_track_id END)::numeric / 
-                 NULLIF(COUNT(DISTINCT CASE WHEN has_bg_reading = TRUE 
-                    THEN patient_track_id END), 0)) * 100, 
-                2
-            ) as dbm_prevalence_pct
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD'""",
-        "DBM prevalence rate"
-    ),
-    (
-        r"diabetes.*(prevalence|rate)",
-        """SELECT 
-            ROUND(
-                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
-                    AND referred_reason IN ('Due to Elevated BG', 'Due to Elevated BP & BG') 
-                    THEN patient_track_id END)::numeric / 
-                 NULLIF(COUNT(DISTINCT CASE WHEN has_bg_reading = TRUE 
-                    THEN patient_track_id END), 0)) * 100, 
-                2
-            ) as dbm_prevalence_pct
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD'""",
-        "DBM prevalence rate"
-    ),
-    (
-        r"screening.*(yield|rate)",
-        """SELECT 
-            ROUND(
-                (COUNT(DISTINCT CASE WHEN is_referred = TRUE 
-                    AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BG', 'Due to Elevated BP & BG') 
-                    THEN patient_track_id END)::numeric / 
-                 NULLIF(COUNT(DISTINCT CASE WHEN has_bp_reading = TRUE 
-                    THEN patient_track_id END), 0)) * 100, 
-                2
-            ) as screening_yield_pct
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD'""",
-        "screening yield percentage"
-    ),
-    
-    # ==========================================================================
-    # PRIORITY 2: Referral KPIs (check before general screening)
-    # ==========================================================================
-    (
-        r"crisis.*(referral|refer)",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_screening 
-        WHERE crisis_referral_status = 'Crisis Referral'""",
-        "crisis referrals"
-    ),
-    (
-        r"referred.*(elevated|high).*(bp|blood pressure)",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD' 
-        AND is_referred = TRUE 
-        AND referred_reason IN ('Due to Elevated BP', 'Due to Elevated BP & BG')""",
-        "patients referred due to elevated blood pressure"
-    ),
-    (
-        r"referred.*(elevated|high).*(bg|glucose|sugar)",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD' 
-        AND is_referred = TRUE 
-        AND referred_reason IN ('Due to Elevated BG', 'Due to Elevated BP & BG')""",
-        "patients referred due to elevated blood glucose"
-    ),
-    (
-        r"(total|how many|count).*referred|people referred",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD' 
-        AND is_referred = TRUE""",
-        "total patients referred"
-    ),
-    
-    # ==========================================================================
-    # PRIORITY 3: Enrollment KPIs
-    # ==========================================================================
-    (
-        r"enrolled.*by.*condition|breakdown.*enrolled",
-        """SELECT enrolled_condition, COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_enrollment 
-        WHERE patient_status = 'ENROLLED' 
-        AND workflow_status = 'NCD'
-        AND enrolled_condition IS NOT NULL
-        GROUP BY enrolled_condition
-        ORDER BY count DESC""",
-        "enrollment breakdown by condition"
-    ),
-    (
-        r"enrolled.*(hypertension|htn)",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_enrollment 
-        WHERE patient_status = 'ENROLLED' 
-        AND workflow_status = 'NCD'
-        AND enrolled_condition = 'Hypertension'""",
-        "patients enrolled with Hypertension"
-    ),
-    (
-        r"enrolled.*(diabetes|dbm)",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_enrollment 
-        WHERE patient_status = 'ENROLLED' 
-        AND workflow_status = 'NCD'
-        AND enrolled_condition = 'Diabetes'""",
-        "patients enrolled with Diabetes"
-    ),
-    (
-        r"enrolled.*co-?morbid",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_enrollment 
-        WHERE patient_status = 'ENROLLED' 
-        AND workflow_status = 'NCD'
-        AND enrolled_condition = 'Co-morbid (DBM + HTN)'""",
-        "patients enrolled with co-morbid conditions"
-    ),
-    (
-        r"community.*(enrolled|enrollment)",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_enrollment 
-        WHERE patient_status = 'ENROLLED' 
-        AND is_screening = TRUE 
-        AND workflow_status = 'NCD'""",
-        "community enrolled patients"
-    ),
-    (
-        r"(total|how many|count).*enrolled|enrolled.*ncd",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_enrollment 
-        WHERE patient_status = 'ENROLLED' 
-        AND workflow_status = 'NCD'""",
-        "total enrolled NCD patients"
-    ),
-    
-    # ==========================================================================
-    # PRIORITY 4: Screening KPIs (most general - check last)
-    # ==========================================================================
-    (
-        r"screened.*(bp|blood pressure)|(bp|blood pressure).*screened",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD' 
-        AND has_bp_reading = TRUE""",
-        "patients screened for blood pressure"
-    ),
-    (
-        r"screened.*(bg|glucose|blood glucose)|(bg|glucose).*screened",
-        """SELECT COUNT(DISTINCT patient_track_id) as count
-        FROM v_analytics_screening 
-        WHERE workflow_status = 'NCD' 
-        AND has_bg_reading = TRUE""",
-        "patients screened for blood glucose"
-    ),
-]
+
+# =============================================================================
+# METRICS LOADED DYNAMICALLY FROM DATABASE
+# See: metric_definitions table
+# =============================================================================
+
 
 
 class SQLService:
@@ -389,6 +42,9 @@ class SQLService:
         logger.info(f"Connecting to database at {settings.database_url}")
         
         try:
+            # Initialize critique service
+            self.critique_service = get_critique_service()
+
             # Initialize database connection with views included
             temp_db = SQLDatabase.from_uri(settings.database_url)
             all_tables = list(temp_db.get_usable_table_names())
@@ -447,6 +103,8 @@ class SQLService:
             logger.error(f"Failed to initialize SQL service: {e}", exc_info=True)
             raise
     
+
+
     def _cache_schema(self):
         try:
             all_tables = self.db.get_usable_table_names()
@@ -521,7 +179,7 @@ CRITICAL: USE ANALYTICS VIEWS FOR DASHBOARD KPIs (MANDATORY)
                 return self.cached_schema
             
             relevant_tables = list(dict.fromkeys(relevant_tables))
-            logger.info(f"📋 Selected relevant tables for query: {', '.join(relevant_tables)}")
+            logger.info(f"Selected relevant tables for query: {', '.join(relevant_tables)}")
             
             base_schema = self.db.get_table_info(table_names=relevant_tables)
             
@@ -544,22 +202,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
             logger.warning(f"Failed to get relevant schema: {e}. Falling back to full schema.")
             return self.cached_schema
 
-    def _check_dashboard_kpi(self, question: str) -> Optional[Tuple[str, str]]:
-        """
-        Check if question matches a known dashboard KPI template.
-        Returns (sql_query, description) if matched, None otherwise.
-        
-        IMPORTANT: Templates are checked in priority order - more specific first!
-        """
-        question_lower = question.lower().strip()
-        
-        # Check templates in priority order (list maintains order)
-        for pattern, sql, description in DASHBOARD_KPI_TEMPLATES:
-            if re.search(pattern, question_lower):
-                logger.info(f"⚡ KPI Template Match: '{pattern}' -> {description}")
-                return (sql.strip(), description)
-        
-        return None
+
 
     def _is_simple_query(self, question: str) -> bool:
         question_lower = question.lower().strip()
@@ -573,19 +216,17 @@ patient_tracker.id → patient_diagnosis.patient_track_id
             except Exception:
                 return False
         
-        logger.info("🔍 Analyzing natural language query")
+        logger.info("Analyzing natural language query")
         
         simple_patterns = [
-            r'\bcount\b.*\bpatients?\b',
-            r'\bhow many\b.*\bpatients?\b',
+            r'\bcount\b',
+            r'\bhow many\b',
             r'\btotal\b.*\bnumber\b',
-            r'\baverage\b.*\b(bmi|age|glucose|systolic|diastolic|bp|blood pressure)\b',
-            r'\bmean\b.*\b(bmi|age|glucose)\b',
-            r'\bsum\b.*\b(patients?|visits?)\b',
-            r'number of (patients?|visits?)',
-            r'(male|female|gender).*patients?.*with.*(hypertension|diabetes|htn|dm)',
-            r'(gender|age|bmi).*(distribution|breakdown)',
-            r'distribution of (gender|age|patients?)',
+            r'\baverage\b',
+            r'\bmean\b',
+            r'\bsum\b',
+            r'number of',
+            r'distribution of',
         ]
         
         has_simple_pattern = any(re.search(pattern, question_lower) for pattern in simple_patterns)
@@ -608,7 +249,7 @@ patient_tracker.id → patient_diagnosis.patient_track_id
         
         targets_analytics_view = 'v_analytics' in question_lower
         if targets_analytics_view:
-            logger.info("📊 Query targets analytics view - treating as single source")
+            logger.info("Query targets analytics view - treating as single source")
             references_multiple_tables = False
         else:
             references_multiple_tables = table_references > 1
@@ -625,11 +266,12 @@ patient_tracker.id → patient_diagnosis.patient_track_id
     def query(self, question: str) -> str:
         logger.info(f"Executing SQL query for: '{question[:100]}...'")
         
-        kpi_match = self._check_dashboard_kpi(question)
-        if kpi_match:
-            sql_query, description = kpi_match
-            logger.info(f"⚡ Using pre-defined KPI template for: {description}")
-            return self._execute_kpi_template(sql_query, description, question)
+        # KPI template matching disabled by domain-agnostic refactor
+        # kpi_match = self._check_dashboard_kpi(question)
+        # if kpi_match:
+        #     sql_query, description = kpi_match
+        #     logger.info(f"Using pre-defined KPI template for: {description}")
+        #     return self._execute_kpi_template(sql_query, description, question)
         
         if self._is_simple_query(question):
             logger.info(" Detected simple query - using optimized execution path")
@@ -638,44 +280,11 @@ patient_tracker.id → patient_diagnosis.patient_track_id
             logger.info(" Complex query detected - using full agent")
             return self._execute_with_agent(question)
     
-    def _execute_kpi_template(self, sql_query: str, description: str, original_question: str) -> str:
-        logger.info("=" * 80)
-        logger.info("⚡ KPI TEMPLATE EXECUTION (1 API call):")
-        logger.info("=" * 80)
-        logger.info(f" Template: {description}")
-        logger.info(f" SQL: {sql_query[:200]}...")
-        
-        try:
-            result = self.db.run(sql_query)
-            logger.info(f" Query result: {result}")
-            
-            format_prompt = f"""Convert this database result into a clear, natural language answer.
 
-Dashboard KPI: {description}
-SQL Query: {sql_query}
-Result: {result}
-
-Original question: {original_question}
-
-Provide a concise, professional answer. Include the exact number(s) and briefly explain what they mean in the NCD program context."""
-
-            formatted_response = self.llm.invoke(format_prompt)
-            output = formatted_response.content.strip()
-            
-            logger.info("=" * 80)
-            logger.info("✅ KPI template execution completed with 1 API call")
-            logger.info(f" Final Answer: {output[:300]}...")
-            logger.info("=" * 80)
-            
-            return output
-            
-        except Exception as e:
-            logger.warning(f"⚠️ KPI template execution failed: {e}. Falling back to agent.")
-            return self._execute_with_agent(original_question)
     
     def _execute_optimized(self, question: str) -> str:
         logger.info("=" * 80)
-        logger.info("⚡ OPTIMIZED SQL EXECUTION:")
+        logger.info("OPTIMIZED SQL EXECUTION:")
         logger.info("=" * 80)
         
         try:
@@ -716,14 +325,69 @@ SQL Query:"""
                 response = self.llm_fast.invoke(prompt)
                 sql_query = response.content.strip()
                 
-                sql_query = re.sub(r'```sql\n?', '', sql_query)
                 sql_query = re.sub(r'```\n?', '', sql_query)
                 sql_query = sql_query.strip()
             
+            # =================================================================
+            # REFLECTION LOOP: Validate and Fix SQL Algorithm
+            # =================================================================
+            logger.info(f"Initial SQL generated: {sql_query[:100]}...")
+            
+            max_retries = 2
+            current_try = 0
+            is_valid = False
+            critique_feedback = ""
+            
+            while current_try <= max_retries:
+                if current_try > 0:
+                    logger.warning(f"Retry attempt {current_try}/{max_retries} due to critique: {critique_feedback}")
+                    
+                    # Fix SQL based on critique
+                    fix_prompt = f"""The previous SQL query was invalid. Fix it based on the critique.
+                    
+DATABASE SCHEMA:
+{relevant_schema}
+
+CRITIQUE:
+{critique_feedback}
+
+ORIGINAL QUESTION: {question}
+
+PREVIOUS SQL: {sql_query}
+
+Return ONLY the corrected SQL query."""
+                    
+                    response = self.llm_fast.invoke(fix_prompt)
+                    sql_query = response.content.strip()
+                    sql_query = re.sub(r'```sql\n?', '', sql_query)
+                    sql_query = re.sub(r'```\n?', '', sql_query)
+                    sql_query = sql_query.strip()
+                    logger.info(f"Fixed SQL: {sql_query[:100]}...")
+
+                # Validate with Critique Service
+                # We need the full schema context for critique, or at least the relevant part
+                critique = self.critique_service.critique_sql(
+                    question=question,
+                    sql_query=sql_query,
+                    schema_context=relevant_schema
+                )
+                
+                if critique.is_valid:
+                    logger.info("SQL validated successfully via reflection")
+                    is_valid = True
+                    break
+                else:
+                    critique_feedback = "; ".join(critique.issues)
+                    current_try += 1
+            
+            if not is_valid:
+                logger.warning("SQL failed validation after retries. Executing strict safety check fallback.")
+            
             logger.info(f" SQL to execute: {sql_query[:200]}...")
             
+            # Still run the regex safety check as a final fail-safe
             if not self._validate_sql_query(sql_query):
-                logger.warning("  SQL validation failed, falling back to agent")
+                logger.warning("  Final SQL validation failed, falling back to agent")
                 return self._execute_with_agent(question)
             
             logger.info(" Executing query against database (no API call)")

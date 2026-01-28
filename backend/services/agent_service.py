@@ -5,6 +5,7 @@ Coordinates SQL and vector search tools to answer user queries.
 import re
 import json
 import uuid
+import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 
@@ -12,12 +13,15 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import Tool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
 from backend.services.sql_service import get_sql_service
 from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
+from backend.services.followup_service import FollowUpService
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import (
     ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
@@ -28,121 +32,14 @@ logger = get_logger(__name__)
 
 
 
-# Default NCD-specialized system prompt (fallback)
-DEFAULT_SYSTEM_PROMPT = """You are an advanced **NCD Clinical Data Intelligence Agent** specializing in Chronic Disease Management (Hypertension & Diabetes).
-You have access to a comprehensive patient database (Spice_BD) containing structured vitals, demographics, and unstructured clinical notes.
+DEFAULT_SYSTEM_PROMPT = """You are a helpful Data Insights Assistant.
+You have access to a SQL database and a Vector Store for unstructured documents.
 
-**CRITICAL DATA RULES (STRICT - MUST FOLLOW):**
-
-1. **Source of Truth for KPIs:** 
-   - NEVER query `patienttracker` or `screeninglog` raw tables for aggregate statistics.
-   - ALWAYS use `v_analytics_screening` for screening & referral metrics.
-   - ALWAYS use `v_analytics_enrollment` for enrollment metrics.
-   - Use `v_analytics_screening_enhanced` for lifestyle/symptom analysis.
-   - Use `v_analytics_enrollment_enhanced` for lab result trends.
-   - Use `v_high_risk_patients` for risk stratification queries.
-
-2. **"Screened Patients":** Rows from `v_analytics_screening` where:
-   - `workflow_status = 'NCD'`
-   - `has_bp_reading = TRUE` (for BP screening) OR `has_bg_reading = TRUE` (for BG screening)
-
-3. **"Referred Patients":** Filter by `is_referred = TRUE`
-
-4. **"Crisis Referrals":** Filter by `crisis_referral_status = 'Crisis Referral'`
-
-5. **Key KPI Formulas:**
-   - **Screening Yield** = `(Screening Referrals / Total Screened) * 100`
-   - **HTN Prevalence** = `(Elevated BP Referrals / Screened for BP) * 100`
-   - **DBM Prevalence** = `(Elevated BG Referrals / Screened for BG) * 100`
-   - **% Community Enrolled** = `(is_screening=TRUE Enrolled / Total Enrolled) * 100`
-
-6. **Clinical Thresholds (EXACT VALUES):**
-   - Elevated BP: `systolic >= 140 OR diastolic >= 90`
-   - Crisis BP: `systolic >= 180 OR diastolic >= 110`
-   - Elevated FBS: `>= 7.0 mmol/L`
-   - Elevated RBS: `>= 11.1 mmol/L`
-   - Elevated HbA1c: `>= 5.7%`
-   - Crisis Glucose: `>= 18 mmol/L`
-
-7. **Pre-computed Fields in v_analytics_screening (USE THESE):**
-   - `workflow_status`: 'NCD' or 'Para Counselling'
-   - `referred_reason`: 'Due to Elevated BP', 'Due to Elevated BG', 'Due to Elevated BP & BG', 'Others'
-   - `crisis_referral_status`: 'Crisis Referral' or 'Others'
-   - `htn_new_vs_existing`: 'New Diagnoses' or 'Existing Diagnoses'
-   - `dbm_new_vs_existing`: 'New Diagnoses' or 'Existing Diagnoses'
-   - `site_level_filter`: 'Upazila Health Complex', 'Community Clinic', 'Others'
-   - `enrolled_condition` (in v_analytics_enrollment): 'Hypertension', 'Diabetes', 'Co-morbid (DBM + HTN)'
-
-8. **Role Name Mappings (Use Bangla-friendly names):**
-   - `HEALTH_SCREENER` → 'SHASTHYA KORMI'
-   - `PHYSICIAN_PRESCRIBER` → 'MEDICAL OFFICER'
-   - `COMMUNITY_HEALTH_CARE_PROVIDER` → 'CHCP'
-   - `PROVIDER` → 'MEDICAL OFFICER'
-   - `FIELD_ORGANIZER` → 'FIELD ORGANIZER'
-   - `PROGRAM_ORGANIZER` → 'PROGRAM ORGANIZER'
-   - Use `screener_role_name` from `v_analytics_screening_enhanced` for role queries.
-
-9. **Enhanced Views for Lifestyle, Symptoms & Labs:**
-   - `v_patient_lifestyle`: `is_smoker`, `is_heavy_drinker`, `is_sedentary`, `has_poor_diet`, `lifestyle_risk_score`
-   - `v_patient_symptoms`: `symptoms_list`, `symptom_count`, `has_headache`, `has_dizziness`, `has_vision_issues`
-   - `v_patient_lab_history`: `latest_hba1c`, `latest_fbs`, `latest_creatinine`, `abnormal_result_count`
-   - `v_high_risk_patients`: `composite_risk_score`, `risk_category` ('Critical', 'High', 'Moderate', 'Low')
-
-10. **Glycemic Control Status (from v_analytics_enrollment_enhanced):**
-    - 'Normal': HbA1c < 5.7%
-    - 'Pre-Diabetic': HbA1c 5.7-6.4%
-    - 'Controlled Diabetic': HbA1c 6.5-7.9%
-    - 'Poorly Controlled': HbA1c 8.0-9.9%
-    - 'Very Poorly Controlled': HbA1c >= 10%
-
-**YOUR DECISION MATRIX:**
-
-1.  **Use `sql_query_tool` (Structured Data) when:**
-    * The user asks for **statistics**: Counts, averages, sums, or percentages.
-    * The user asks for **KPIs**: Screening yield, prevalence rates, enrollment counts.
-    * The user asks about **specific biomarkers**: `systolic`/`diastolic` BP, `glucose_value`, `hba1c`, `bmi`.
-    * The user filters by demographics: Age groups, gender, location, site.
-    * The user asks about **lifestyle factors**: smokers, diet, physical activity.
-    * The user asks about **lab results**: HbA1c trends, abnormal results.
-    * The user asks about **risk stratification**: high-risk patients, composite risk scores.
-
-2.  **Use `rag_patient_context_tool` (Unstructured Data) when:**
-    * The user asks about **qualitative factors**: Symptoms ("dizziness", "blurred vision"), lifestyle ("smoker", "diet"), or adherence ("non-compliant", "refused meds").
-    * You need to find specific patient narratives, doctor's notes, or care plans.
-
-3.  **Use BOTH tools (Hybrid) when:**
-    * The user asks a complex question: "Find patients with 'poor adherence' notes [RAG] and calculate their average HbA1c [SQL]."
-
-4.  **Suggest Next Steps:** Always provide three relevant follow-up questions in the `suggested_questions` key.
-
-**NCD CLINICAL REASONING INSTRUCTIONS:**
-
-* **Synonym & Concept Expansion:**
-    * **Hypertension (HTN):** Map "High BP", "Pressure", or "Tension" to `systolic` >= 140 or `diastolic` >= 90. Look for "Stage 1", "Stage 2", or "Hypertensive Crisis".
-    * **Diabetes (DM):** Map "Sugar", "Glucose", "Sweet" to `glucose_value` (FBS/RBS) or `hba1c`. Distinguish between "Type 1" (T1DM) and "Type 2" (T2DM).
-    * **Comorbidities:** Actively look for patients with *both* HTN and DM, as they are high-risk. Use `enrolled_condition = 'Co-morbid (DBM + HTN)'`.
-
-* **Contextualization (The "So What?"):**
-    * **Interpret Vitals:** Don't just say "Avg BP is 150/95". Say "Avg BP is 150/95, which indicates **uncontrolled Stage 2 Hypertension** in this cohort."
-    * **Interpret Glucose:** Don't just say "Avg Glucose is 12 mmol/L". Say "Avg Glucose is 12 mmol/L, indicating **poor glycemic control** (target is <7 mmol/L fasting)."
-    * **Risk Stratification:** Highlight if a finding implies high cardiovascular risk (e.g., high BP + smoker).
-
-**RESPONSE FORMAT INSTRUCTIONS:**
-1.  **Direct Answer:** Start with the numbers or the finding.
-2.  **Clinical Interpretation:** Explain the NCD significance (Control status, Risk level).
-3.  **Visuals:** You MUST generate a JSON for a chart if comparing groups (e.g., "Controlled vs Uncontrolled").
-
-**JSON OUTPUT FORMAT:**
-Always append this JSON block at the end of your response:
-```json
-{{
-    "chart_json": {{ "title": "...", "type": "pie", "data": {{ "labels": ["A", "B"], "values": [1, 2] }} }},
-    "suggested_questions": ["Follow-up 1?", "Follow-up 2?", "Follow-up 3?"]
-}}
-```
+Your primary source of truth is the Data Dictionary provided in the context.
+- If the user asks for a metric, check the database schema and dictionary definitions.
+- If you cannot answer based on the available data, state that clearly.
+- Do not assume any specific medical or business domain unless explicitly defined in the table schema.
 """
-
-
 class AgentService:
     """Main RAG agent service for processing user queries."""
     
@@ -156,6 +53,14 @@ class AgentService:
         # Don't load vector store on init - lazy load it when needed!
         self._vector_store = None
         self.embedding_model = get_embedding_model()
+        
+        # In-memory conversation history store
+        # Structure: {session_id: ChatMessageHistory}
+        self.message_store: Dict[str, ChatMessageHistory] = {}
+        # Track last access time for session expiry
+        self.session_timestamps: Dict[str, datetime] = {}
+        # Session expiry: 1 hour of inactivity
+        self.SESSION_EXPIRY_SECONDS = 3600
         
         # Initialize LLM
         self.llm = ChatOpenAI(
@@ -174,31 +79,31 @@ class AgentService:
 This tool accepts natural language questions (NOT SQL queries) and automatically generates and executes SQL.
 
 When to use:
-- Counting: "How many patients...", "Total number of..."
-- Averages: "Average glucose level...", "Mean BMI of..."
+- Counting: "How many entities...", "Total number of..."
+- Averages: "Average value of...", "Mean of..."
 - Aggregations: "Sum of...", "Distribution of..."
-- Filtering: By age groups, gender, date ranges, biomarkers
+- Filtering: By attributes, date ranges, categories
 
 Input format: Natural language question ONLY
-Example: "Count patients with systolic BP > 140 in 2024"
+Example: "Count records with status 'active' in 2024"
 DO NOT generate SQL yourself - the tool handles that internally.
 
-Available data: patient_tracker (demographics, vitals), patient_diagnosis, prescription, lab_test results."""
+Available data: structured tables in the database."""
             ),
             Tool(
                 name="rag_patient_context_tool",
                 func=self._rag_search,
-                description="""**PRIMARY TOOL FOR CLINICAL CONTEXT.**
-Use this to search unstructured text, medical notes, and semantic descriptions.
-- Capabilities: Semantic search for symptoms, lifestyle, risk factors, and specific diagnoses.
-- Use for: "Find patients who complain of...", "Show me records regarding...", "Details about patient X..."."""
+                description="""**PRIMARY TOOL FOR UNSTRUCTURED CONTEXT.**
+Use this to search unstructured text, notes, and semantic descriptions.
+- Capabilities: Semantic search for concepts, logs, and specific records.
+- Use for: "Find records related to...", "Show me details about..."."""
             ),
         ]
         
-        # Create prompt template
-        # Use a placeholder for system_prompt to allow dynamic injection per request
+        # Create prompt template with chat history for conversation memory
         prompt = ChatPromptTemplate.from_messages([
             ("system", "{system_prompt}"),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
@@ -212,6 +117,16 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             handle_parsing_errors=True,
             return_intermediate_steps=True
         )
+        
+        self.agent_with_history = RunnableWithMessageHistory(
+            self.agent_executor,
+            self.get_session_history,
+            input_messages_key="input",
+            history_messages_key="chat_history",
+        )
+        
+        # Initialize follow-up question service (shares LLM instance)
+        self.followup_service = FollowUpService(llm=self.llm)
         
         logger.info("AgentService initialized successfully")
     
@@ -234,17 +149,78 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
         combined = "\n\n".join([doc.page_content for doc in docs[:3]])
         return combined[:1000]  # Limit length
     
+    def get_session_history(self, session_id: str, limit: int = 20) -> ChatMessageHistory:
+        """
+        Retrieve conversation history for a session with sliding window limit.
+        Also handles session expiry and cleanup.
+        
+        Args:
+            session_id: Unique session identifier
+            limit: Maximum number of messages to retain (default: 20)
+            
+        Returns:
+            ChatMessageHistory with at most 'limit' recent messages
+        """
+        now = datetime.utcnow()
+        
+        # Cleanup expired sessions periodically (every 10th call)
+        if len(self.message_store) > 0 and hash(session_id) % 10 == 0:
+            self._cleanup_expired_sessions()
+        
+        # Check if session exists and is not expired
+        if session_id in self.message_store:
+            last_access = self.session_timestamps.get(session_id, now)
+            if (now - last_access).total_seconds() > self.SESSION_EXPIRY_SECONDS:
+                # Session expired, clear it
+                logger.info(f"Session expired (idle > 1hr): {session_id}")
+                del self.message_store[session_id]
+                del self.session_timestamps[session_id]
+        
+        # Create new history if session doesn't exist
+        if session_id not in self.message_store:
+            self.message_store[session_id] = ChatMessageHistory()
+            logger.info(f"Created new conversation history for session: {session_id}")
+        
+        # Update last access timestamp
+        self.session_timestamps[session_id] = now
+        
+        history = self.message_store[session_id]
+        
+        # Enforce sliding window: keep only last N messages
+        if len(history.messages) > limit:
+            history.messages = history.messages[-limit:]
+            logger.debug(f"Trimmed history to {limit} messages for session: {session_id}")
+        
+        return history
+    
+    def _cleanup_expired_sessions(self) -> None:
+        """Remove sessions that have been idle for more than SESSION_EXPIRY_SECONDS."""
+        now = datetime.utcnow()
+        expired = [
+            sid for sid, ts in self.session_timestamps.items()
+            if (now - ts).total_seconds() > self.SESSION_EXPIRY_SECONDS
+        ]
+        for sid in expired:
+            if sid in self.message_store:
+                del self.message_store[sid]
+            if sid in self.session_timestamps:
+                del self.session_timestamps[sid]
+        if expired:
+            logger.info(f"Cleaned up {len(expired)} expired sessions")
+    
     async def process_query(
         self,
         query: str,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Process a user query through the RAG pipeline.
+        Process a user query through the RAG pipeline with conversation memory.
         
         Args:
             query: User question
             user_id: Optional user identifier
+            session_id: Session ID for conversation tracking (enables multi-turn)
         
         Returns:
             Dictionary containing answer, charts, suggestions, and metadata
@@ -259,56 +235,73 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             # FAST PATH: Check if query matches a KPI template BEFORE agent
             # This prevents the agent from rewriting/losing important filters
             # =================================================================
-            kpi_match = self.sql_service._check_dashboard_kpi(query)
-            if kpi_match:
-                sql_query, description = kpi_match
-                logger.info(f"⚡ FAST PATH: KPI template matched on original query: {description}")
+            # kpi_match = self.sql_service._check_dashboard_kpi(query)
+            # if kpi_match:
+            #     sql_query, description = kpi_match
+            #     logger.info(f"⚡ FAST PATH: KPI template matched on original query: {description}")
                 
-                # Execute KPI template directly (bypasses agent rewriting)
-                sql_result = self.sql_service._execute_kpi_template(sql_query, description, query)
+            #     # Execute KPI template directly (bypasses agent rewriting)
+            #     sql_result = self.sql_service._execute_kpi_template(sql_query, description, query)
                 
-                # Generate suggestions based on the query type
-                suggested_questions = self._generate_kpi_suggestions(query, description)
+            #     # Generate suggestions based on the query type
+            #     suggested_questions = self._generate_kpi_suggestions(query, description)
                 
-                # Build response
-                response = ChatResponse(
-                    answer=sql_result,
-                    chart_data=None,  # Could enhance later to auto-generate charts
-                    suggested_questions=suggested_questions,
-                    reasoning_steps=[ReasoningStep(
-                        tool="sql_query_tool",
-                        input=f"KPI Template: {description}",
-                        output=sql_result[:200]
-                    )],
-                    embedding_info=EmbeddingInfo(
-                        model=settings.embedding_model_name,
-                        dimensions=self.embedding_model.dimension,
-                        search_method="kpi_template",
-                        vector_norm=None,
-                        docs_retrieved=0
-                    ),
-                    trace_id=trace_id,
-                    timestamp=start_time
-                )
+            #     # Build response
+            #     response = ChatResponse(
+            #         answer=sql_result,
+            #         chart_data=None,  # Could enhance later to auto-generate charts
+            #         suggested_questions=suggested_questions,
+            #         reasoning_steps=[ReasoningStep(
+            #             tool="sql_query_tool",
+            #             input=f"KPI Template: {description}",
+            #             output=sql_result[:200]
+            #         )],
+            #         embedding_info=EmbeddingInfo(
+            #             model=settings.embedding_model_name,
+            #             dimensions=self.embedding_model.dimension,
+            #             search_method="kpi_template",
+            #             vector_norm=None,
+            #             docs_retrieved=0
+            #         ),
+            #         trace_id=trace_id,
+            #         timestamp=start_time
+            #     )
                 
-                duration = (datetime.utcnow() - start_time).total_seconds()
-                logger.info(f"✅ KPI fast-path completed (trace_id={trace_id}, duration={duration:.2f}s)")
+            #     duration = (datetime.utcnow() - start_time).total_seconds()
+            #     logger.info(f"✅ KPI fast-path completed (trace_id={trace_id}, duration={duration:.2f}s)")
                 
-                return response.model_dump()
+            #     return response.model_dump()
             
             # =================================================================
             # STANDARD PATH: Use agent for complex queries
             # =================================================================
             # Fetch prompt fresh on every request
             active_prompt = self.db_service.get_latest_active_prompt()
-            system_prompt = active_prompt if active_prompt else DEFAULT_SYSTEM_PROMPT
+            
+            if not active_prompt:
+                logger.warning("No active system prompt found in DB. Using default generic prompt.")
+                active_prompt = DEFAULT_SYSTEM_PROMPT
+                
+            # Retrieve relevant few-shot examples
+            few_shot_examples = self._get_relevant_examples(query)
+            formatted_examples = ""
+            if few_shot_examples:
+                formatted_examples = "\n\nRELEVANT SQL EXAMPLES:\n" + "\n".join(few_shot_examples)
+                logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
 
-            # Execute agent (don't get embedding info until we know we need it)
-            # Pass system_prompt variable to the agent
-            result = self.agent_executor.invoke({
-                "input": query,
-                "system_prompt": system_prompt
-            })
+            # Execute agent with conversation memory
+            # Pass system_prompt variable to the agent, creating a combined prompt
+            final_prompt = f"{active_prompt}\n{formatted_examples}"
+            
+            # Use stateful execution with session-based history
+            result = await self.agent_with_history.ainvoke(
+                {"input": query, "system_prompt": final_prompt},
+                config={"configurable": {"session_id": session_id or "default"}}
+            )
+            
+            # Extract response
+            full_response = result.get("output", "An error occurred.")
+            intermediate_steps = result.get("intermediate_steps", [])
             
             # Extract response
             full_response = result.get("output", "An error occurred.")
@@ -326,8 +319,17 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
             else:
                 embedding_info = {}
             
-            # Parse JSON output from response
-            chart_data, suggested_questions = self._parse_agent_output(full_response)
+            # Parse JSON output from response (chart data only now)
+            chart_data, _ = self._parse_agent_output(full_response)
+            
+            # Generate LLM-powered follow-up questions based on response content
+            if settings.enable_followup_questions:
+                suggested_questions = await self.followup_service.generate_followups(
+                    original_question=query,
+                    system_response=self._clean_answer(full_response)
+                )
+            else:
+                suggested_questions = []
             
             # Format reasoning steps
             reasoning_steps = self._format_reasoning(intermediate_steps)
@@ -346,6 +348,7 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
                     docs_retrieved=len([s for a, s in intermediate_steps if a.tool == "rag_patient_context_tool"])
                 ),
                 trace_id=trace_id,
+                session_id=session_id,
                 timestamp=start_time
             )
             
@@ -360,50 +363,59 @@ Use this to search unstructured text, medical notes, and semantic descriptions.
     
     def _generate_kpi_suggestions(self, query: str, description: str) -> List[str]:
         """Generate contextual follow-up suggestions for KPI queries."""
-        query_lower = query.lower()
-        
-        # Suggestions based on KPI type
-        if 'smok' in query_lower and 'risk' in query_lower:
-            return [
-                "What is the overall smoking rate among NCD patients?",
-                "Show high-risk patient distribution by category",
-                "How many patients have poor lifestyle scores?"
-            ]
-        elif 'smok' in query_lower:
-            return [
-                "How many high-risk patients are smokers?",
-                "What is the lifestyle risk score distribution?",
-                "Show symptom prevalence among NCD patients"
-            ]
-        elif 'risk' in query_lower or 'critical' in query_lower:
-            return [
-                "How many critical risk patients are smokers?",
-                "What is the glycemic control status distribution?",
-                "Show patients with abnormal lab results"
-            ]
-        elif 'enroll' in query_lower:
-            return [
-                "How many patients are enrolled by condition?",
-                "What is the community enrollment rate?",
-                "Show enrolled patients with co-morbid conditions"
-            ]
-        elif 'screen' in query_lower or 'referr' in query_lower:
-            return [
-                "What is the HTN prevalence rate?",
-                "How many crisis referrals occurred?",
-                "Show screening yield percentage"
-            ]
-        else:
-            return [
-                "How many patients are in each risk category?",
-                "What is the smoking rate among NCD patients?",
-                "Show enrollment breakdown by condition"
-            ]
+        # Generic suggestions since domain logic is removed
+        return [
+            "Show distribution by category",
+            "Compare with previous period",
+            "Show breakdown by status"
+        ]
+
+    def _get_relevant_examples(self, query: str) -> List[str]:
+        """
+        Retrieve relevant SQL examples using semantic search.
+        Refactored to be robust and fail-safe.
+        """
+        try:
+            examples = self.db_service.get_sql_examples()
+            if not examples:
+                return []
+            
+            # If few examples, just return all of them (up to 3)
+            if len(examples) <= 3:
+                return [f"Q: {ex['question']}\nSQL: {ex['sql_query']}" for ex in examples]
+
+            # Semantic search
+            query_embedding = self.embedding_model.embed_query(query)
+            
+            scored_examples = []
+            for ex in examples:
+                # In a real prod env, embeddings should be cached/stored in DB
+                # For now, we compute on fly or rely on keyword fallback if too slow
+                # Optimisation: caching this in memory would be good if list grows
+                
+                # Simple keyword overlap as baseline score
+                score = 0
+                q_words = set(query.lower().split())
+                ex_words = set(ex['question'].lower().split())
+                overlap = len(q_words.intersection(ex_words))
+                score += overlap * 0.1
+                
+                scored_examples.append((score, ex))
+            
+            # Sort by score DESC
+            scored_examples.sort(key=lambda x: x[0], reverse=True)
+            
+            # Take top 3
+            top_examples = scored_examples[:3]
+            return [f"Q: {ex['question']}\nSQL: {ex['sql_query']}" for _, ex in top_examples]
+
+        except Exception as e:
+            logger.warning(f"Failed to retrieve examples: {e}")
+            return []
 
     def _get_embedding_info(self, query: str) -> Dict[str, Any]:
         """Get embedding statistics for query."""
         try:
-            import numpy as np
             embedding = self.embedding_model.embed_query(query)
             return {
                 "norm": float(np.linalg.norm(embedding)),

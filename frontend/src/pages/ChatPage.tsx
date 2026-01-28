@@ -17,7 +17,8 @@ export default function ChatPage() {
   const canChat = canExecuteQuery(user);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [conversationId, setConversationId] = useState<string>();
+  // Session ID for conversation continuity - can be reset via Clear Chat
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
   const [suggestions, setSuggestions] = useState<string[]>([
     "How many male patients are over the age of 50?",
     "Which patients have a family history of heart disease mentioned in their records?",
@@ -61,7 +62,6 @@ export default function ChatPage() {
         processingTime: data.processing_time,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      setConversationId(data.conversation_id);
     },
     onError: (error) => {
       console.error('Chat error:', error);
@@ -86,8 +86,13 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, userMessage]);
     chatMutation.mutate({
       query: content,
-      conversation_id: conversationId,
+      session_id: sessionId,
     });
+  };
+
+  const handleClearChat = () => {
+    setMessages([]);
+    setSessionId(crypto.randomUUID()); // Generate new session for fresh start
   };
 
   const handleFeedback = (messageId: string, rating: 'positive' | 'negative') => {
@@ -100,9 +105,26 @@ export default function ChatPage() {
     <div className="flex flex-col h-screen bg-gray-50">
       <ChatHeader title={APP_CONFIG.APP_NAME} />
 
+      {/* Clear Chat Button - shown when messages exist */}
+      {messages.length > 0 && (
+        <div className="flex justify-end px-4 py-2 bg-gray-50 border-b border-gray-200">
+          <button
+            onClick={handleClearChat}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+            title="Start a new conversation"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+            </svg>
+            Clear Chat
+          </button>
+        </div>
+      )}
+
       <MessageList
         messages={messages}
         isLoading={chatMutation.isPending}
+        username={user?.username}
         onSuggestedQuestionClick={handleSendMessage}
         onFeedback={handleFeedback}
         emptyStateProps={{

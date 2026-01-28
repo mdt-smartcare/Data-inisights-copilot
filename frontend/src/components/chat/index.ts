@@ -6,5 +6,6 @@ export { default as ChatInput } from './ChatInput';
 export { default as MessageList } from './MessageList';
 export { default as EmptyState } from './EmptyState';
 export { default as LoadingIndicator } from './LoadingIndicator';
+export { default as ThinkingIndicator } from './ThinkingIndicator';
 export { default as SourceList } from './SourceList';
 export { default as ChartRenderer } from './ChartRenderer';
