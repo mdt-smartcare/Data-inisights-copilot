@@ -17,7 +17,8 @@ export default function ChatPage() {
   const canChat = canExecuteQuery(user);
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [conversationId, setConversationId] = useState<string>();
+  // Generate session ID once on mount for conversation continuity
+  const [sessionId] = useState<string>(() => crypto.randomUUID());
   const [suggestions, setSuggestions] = useState<string[]>([
     "How many male patients are over the age of 50?",
     "Which patients have a family history of heart disease mentioned in their records?",
@@ -61,7 +62,6 @@ export default function ChatPage() {
         processingTime: data.processing_time,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      setConversationId(data.conversation_id);
     },
     onError: (error) => {
       console.error('Chat error:', error);
@@ -86,7 +86,7 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, userMessage]);
     chatMutation.mutate({
       query: content,
-      conversation_id: conversationId,
+      session_id: sessionId,
     });
   };
 

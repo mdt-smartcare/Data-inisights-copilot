@@ -52,7 +52,7 @@ export interface Source {
  */
 export interface ChatRequest {
   query: string;              // User's question or prompt
-  conversation_id?: string;   // Optional conversation thread ID
+  session_id?: string;        // Optional session ID for conversation tracking
 }
 
 /**
