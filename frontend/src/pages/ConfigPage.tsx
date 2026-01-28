@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError } from '../services/api';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
@@ -7,9 +7,11 @@ import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
 import Alert from '../components/Alert';
+import EmbeddingProgress from '../components/EmbeddingProgress';
 import { ChatHeader } from '../components/chat';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../components/Toast';
 
 
 const steps = [
@@ -25,12 +27,14 @@ import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayNa
 
 const ConfigPage: React.FC = () => {
     const { user, isLoading } = useAuth();
+    const { success: showSuccess, error: showError } = useToast();
     const canEdit = canEditPrompt(user);
     const canPublish = canPublishPrompt(user);
     const isViewer = !canEdit;
 
     // MOVED HOOKS UP BEFORE CONDITIONAL RETURN
     const [currentStep, setCurrentStep] = useState(1);
+    const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [connectionId, setConnectionId] = useState<number | null>(null);
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
@@ -211,6 +215,22 @@ const ConfigPage: React.FC = () => {
         }
     };
 
+    const handleStartEmbedding = async () => {
+        if (!activeConfig?.id) return;
+
+        try {
+            const result = await startEmbeddingJob({
+                config_id: activeConfig.id,
+                batch_size: 50,
+                max_concurrent: 5
+            });
+            setEmbeddingJobId(result.job_id);
+            showSuccess('Embedding Job Started', result.message);
+        } catch (err) {
+            showError('Failed to start embedding job', handleApiError(err));
+        }
+    };
+
 
 
     return (
@@ -296,9 +316,43 @@ const ConfigPage: React.FC = () => {
                                             schema={activeConfig.schema_selection ? JSON.parse(activeConfig.schema_selection) : {}}
                                             dataDictionary={activeConfig.data_dictionary || ''}
                                             activePromptVersion={activeConfig.version}
-                                            totalPromptVersions={history.length} // This might need separate fetch if history not loaded
+                                            totalPromptVersions={history.length}
                                             lastUpdatedBy={activeConfig.created_by_username}
                                         />
+
+                                        {/* Embedding Section */}
+                                        <div className="mt-8">
+                                            <h2 className="text-xl font-semibold mb-4 text-gray-900">Embedding Status</h2>
+                                            {embeddingJobId ? (
+                                                <EmbeddingProgress
+                                                    jobId={embeddingJobId}
+                                                    onComplete={() => {
+                                                        showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
+                                                        // Optional: clear job ID after delay or kept for display
+                                                    }}
+                                                    onError={(err) => showError('Embedding Failed', err)}
+                                                    onCancel={() => {
+                                                        showError('Job Cancelled', 'Embedding generation cancelled');
+                                                        setEmbeddingJobId(null);
+                                                    }}
+                                                />
+                                            ) : (
+                                                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex items-center justify-between">
+                                                    <div>
+                                                        <h3 className="font-medium text-gray-900">Generate Embeddings</h3>
+                                                        <p className="text-sm text-gray-500 mt-1">
+                                                            Update the vector knowledge base with the current schema and dictionary.
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        onClick={handleStartEmbedding}
+                                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
+                                                    >
+                                                        Start Generation
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 rounded-xl">
@@ -485,6 +539,39 @@ const ConfigPage: React.FC = () => {
                                             totalPromptVersions={history.length}
                                             lastUpdatedBy={history.find(p => p.is_active)?.created_by_username}
                                         />
+
+                                        {/* Embedding Section */}
+                                        <div className="mt-8">
+                                            <h2 className="text-xl font-semibold mb-4 text-gray-900">Embedding Status</h2>
+                                            {embeddingJobId ? (
+                                                <EmbeddingProgress
+                                                    jobId={embeddingJobId}
+                                                    onComplete={() => {
+                                                        showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
+                                                    }}
+                                                    onError={(err) => showError('Embedding Failed', err)}
+                                                    onCancel={() => {
+                                                        showError('Job Cancelled', 'Embedding generation cancelled');
+                                                        setEmbeddingJobId(null);
+                                                    }}
+                                                />
+                                            ) : (
+                                                <div className="bg-white p-6 rounded-lg border border-blue-100 shadow-sm flex items-center justify-between">
+                                                    <div>
+                                                        <h3 className="font-medium text-gray-900">Generate Embeddings</h3>
+                                                        <p className="text-sm text-gray-500 mt-1">
+                                                            Required to make your new configuration searchable.
+                                                        </p>
+                                                    </div>
+                                                    <button
+                                                        onClick={handleStartEmbedding}
+                                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
+                                                    >
+                                                        Start Generation
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </div>

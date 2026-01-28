@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { canManageUsers, canViewAllAuditLogs, canViewConfig, canViewHistory, canViewInsights, getRoleDisplayName } from '../../utils/permissions';
 import logo from '../../assets/logo.svg';
+import NotificationCenter from '../NotificationCenter';
 
 interface ChatHeaderProps {
   title?: string;
@@ -111,6 +112,7 @@ export default function ChatHeader({
         </div>
 
         <div className="flex items-center gap-4">
+          <NotificationCenter />
           {user && (
             <div className="relative" ref={menuRef}>
               {/* User Menu Button */}
@@ -124,7 +126,7 @@ export default function ChatHeader({
                 <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-semibold text-sm shadow-sm">
                   {user.username.charAt(0).toUpperCase()}
                 </div>
-                
+
                 {/* User Info */}
                 <div className="text-left hidden sm:block">
                   <div className="text-sm font-medium text-gray-900">{user.username}</div>
