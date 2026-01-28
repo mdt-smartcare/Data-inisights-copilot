@@ -1,19 +1,30 @@
-"""
-Pytest configuration and shared fixtures.
-"""
 import pytest
 import os
-from fastapi.testclient import TestClient
-from typing import Generator
+from unittest.mock import MagicMock, patch
+
+# Mock SQLService to avoid real database connections during tests
+# MUST HAPPEN BEFORE ANY BACKEND IMPORTS
+mock_sql_service = MagicMock()
+mock_sql_service.get_schema_info_for_connection.return_value = {"tables": [], "details": {}}
+
+# Use patch to globally replace get_sql_service wherever it is imported
+# This handles calls inside constructors like AgentService and ConfigService
+patcher = patch("backend.services.sql_service.get_sql_service", return_value=mock_sql_service)
+patcher.start()
 
 # Set test environment variables before importing app
 os.environ["OPENAI_API_KEY"] = "test-key-123"
 os.environ["SECRET_KEY"] = "test-secret-key-minimum-32-chars-long-for-jwt-signing"
 os.environ["DEBUG"] = "true"
 
+from fastapi.testclient import TestClient
+from typing import Generator
 from backend.app import app
 from backend.config import get_settings
+from backend.services.sql_service import get_sql_service
 
+# Also use dependency_overrides for extra safety in FastAPI routes
+app.dependency_overrides[get_sql_service] = lambda: mock_sql_service
 
 @pytest.fixture(scope="session")
 def test_settings():
@@ -39,7 +50,7 @@ def auth_token(client: TestClient) -> str:
     """
     response = client.post(
         "/api/v1/auth/login",
-        json={"username": "admin", "password": "admin"}
+        json={"username": "admin", "password": "admin123"}
     )
     assert response.status_code == 200
     return response.json()["access_token"]

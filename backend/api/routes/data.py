@@ -98,6 +98,7 @@ async def delete_connection(
 @router.get("/connections/{connection_id}/schema")
 async def get_connection_schema(
     connection_id: int,
+    current_user: User = Depends(get_current_user),
     db_service: DatabaseService = Depends(get_db_service),
     sql_service: SQLService = Depends(get_sql_service)
 ):
