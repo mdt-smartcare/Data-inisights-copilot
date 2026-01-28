@@ -13,6 +13,8 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import Tool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_openai import ChatOpenAI
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -50,6 +52,10 @@ class AgentService:
         # Don't load vector store on init - lazy load it when needed!
         self._vector_store = None
         self.embedding_model = get_embedding_model()
+        
+        # In-memory conversation history store
+        # Structure: {session_id: ChatMessageHistory}
+        self.message_store: Dict[str, ChatMessageHistory] = {}
         
         # Initialize LLM
         self.llm = ChatOpenAI(
@@ -89,10 +95,10 @@ Use this to search unstructured text, notes, and semantic descriptions.
             ),
         ]
         
-        # Create prompt template
-        # Use a placeholder for system_prompt to allow dynamic injection per request
+        # Create prompt template with chat history for conversation memory
         prompt = ChatPromptTemplate.from_messages([
             ("system", "{system_prompt}"),
+            MessagesPlaceholder(variable_name="chat_history"),
             ("user", "{input}"),
             MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
@@ -105,6 +111,14 @@ Use this to search unstructured text, notes, and semantic descriptions.
             verbose=settings.debug,
             handle_parsing_errors=True,
             return_intermediate_steps=True
+        )
+        
+        # Wrap executor with conversation memory
+        self.agent_with_history = RunnableWithMessageHistory(
+            self.agent_executor,
+            self.get_session_history,
+            input_messages_key="input",
+            history_messages_key="chat_history",
         )
         
         logger.info("AgentService initialized successfully")
@@ -128,17 +142,44 @@ Use this to search unstructured text, notes, and semantic descriptions.
         combined = "\n\n".join([doc.page_content for doc in docs[:3]])
         return combined[:1000]  # Limit length
     
+    def get_session_history(self, session_id: str, limit: int = 10) -> ChatMessageHistory:
+        """
+        Retrieve conversation history for a session with sliding window limit.
+        
+        Args:
+            session_id: Unique session identifier
+            limit: Maximum number of messages to retain (default: 10)
+            
+        Returns:
+            ChatMessageHistory with at most 'limit' recent messages
+        """
+        # Create new history if session doesn't exist
+        if session_id not in self.message_store:
+            self.message_store[session_id] = ChatMessageHistory()
+            logger.info(f"Created new conversation history for session: {session_id}")
+        
+        history = self.message_store[session_id]
+        
+        # Enforce sliding window: keep only last N messages
+        if len(history.messages) > limit:
+            history.messages = history.messages[-limit:]
+            logger.debug(f"Trimmed history to {limit} messages for session: {session_id}")
+        
+        return history
+    
     async def process_query(
         self,
         query: str,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Process a user query through the RAG pipeline.
+        Process a user query through the RAG pipeline with conversation memory.
         
         Args:
             query: User question
             user_id: Optional user identifier
+            session_id: Session ID for conversation tracking (enables multi-turn)
         
         Returns:
             Dictionary containing answer, charts, suggestions, and metadata
@@ -207,14 +248,15 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 formatted_examples = "\n\nRELEVANT SQL EXAMPLES:\n" + "\n".join(few_shot_examples)
                 logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
 
-            # Execute agent (don't get embedding info until we know we need it)
+            # Execute agent with conversation memory
             # Pass system_prompt variable to the agent, creating a combined prompt
             final_prompt = f"{active_prompt}\n{formatted_examples}"
             
-            result = self.agent_executor.invoke({
-                "input": query,
-                "system_prompt": final_prompt
-            })
+            # Use stateful execution with session-based history
+            result = await self.agent_with_history.ainvoke(
+                {"input": query, "system_prompt": final_prompt},
+                config={"configurable": {"session_id": session_id or "default"}}
+            )
             
             # Extract response
             full_response = result.get("output", "An error occurred.")
