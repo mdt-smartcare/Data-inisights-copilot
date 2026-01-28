@@ -196,7 +196,6 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                             <div className="notification-center__loading">Loading...</div>
                         ) : notifications.length === 0 ? (
                             <div className="notification-center__empty">
-                                <div className="notification-center__empty-icon">🔔</div>
                                 <div className="notification-center__empty-text">No notifications</div>
                             </div>
                         ) : (
