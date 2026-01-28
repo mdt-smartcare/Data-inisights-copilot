@@ -90,6 +90,14 @@ class Settings(BaseSettings):
     enable_langfuse: bool = Field(default=False)
     
     # ============================================
+    # Feature Flags
+    # ============================================
+    enable_followup_questions: bool = Field(
+        default=True,
+        description="Generate LLM-powered follow-up question suggestions"
+    )
+    
+    # ============================================
     # Logging Configuration
     # ============================================
     log_level: str = Field(default="INFO")
