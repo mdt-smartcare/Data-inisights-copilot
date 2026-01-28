@@ -3,7 +3,7 @@ import type { Message } from '../../types';
 import UserMessage from './UserMessage';
 import AssistantMessage from './AssistantMessage';
 import EmptyState from './EmptyState';
-import LoadingIndicator from './LoadingIndicator';
+import ThinkingIndicator from './ThinkingIndicator';
 
 interface MessageListProps {
   messages: Message[];
@@ -17,12 +17,12 @@ interface MessageListProps {
   };
 }
 
-export default function MessageList({ 
-  messages, 
+export default function MessageList({
+  messages,
   isLoading = false,
   onSuggestedQuestionClick,
   onFeedback,
-  emptyStateProps 
+  emptyStateProps
 }: MessageListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastAssistantMessageRef = useRef<HTMLDivElement>(null);
@@ -46,17 +46,17 @@ export default function MessageList({
         ) : (
           <>
             {messages.map((message, index) => {
-              const isLastAssistantMessage = 
+              const isLastAssistantMessage =
                 index === messages.length - 1 && message.role === 'assistant';
-              
+
               return message.role === 'user' ? (
                 <UserMessage key={message.id} message={message} />
               ) : (
-                <div 
+                <div
                   key={message.id}
                   ref={isLastAssistantMessage ? lastAssistantMessageRef : null}
                 >
-                  <AssistantMessage 
+                  <AssistantMessage
                     message={message}
                     onSuggestedQuestionClick={onSuggestedQuestionClick}
                     onFeedback={onFeedback}
@@ -64,7 +64,7 @@ export default function MessageList({
                 </div>
               );
             })}
-            {isLoading && <LoadingIndicator />}
+            {isLoading && <ThinkingIndicator />}
           </>
         )}
         <div ref={messagesEndRef} />
