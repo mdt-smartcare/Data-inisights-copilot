@@ -21,6 +21,7 @@ from backend.core.logging import get_logger
 from backend.services.sql_service import get_sql_service
 from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
+from backend.services.followup_service import FollowUpService
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import (
     ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
@@ -117,13 +118,15 @@ Use this to search unstructured text, notes, and semantic descriptions.
             return_intermediate_steps=True
         )
         
-        # Wrap executor with conversation memory
         self.agent_with_history = RunnableWithMessageHistory(
             self.agent_executor,
             self.get_session_history,
             input_messages_key="input",
             history_messages_key="chat_history",
         )
+        
+        # Initialize follow-up question service (shares LLM instance)
+        self.followup_service = FollowUpService(llm=self.llm)
         
         logger.info("AgentService initialized successfully")
     
@@ -316,8 +319,17 @@ Use this to search unstructured text, notes, and semantic descriptions.
             else:
                 embedding_info = {}
             
-            # Parse JSON output from response
-            chart_data, suggested_questions = self._parse_agent_output(full_response)
+            # Parse JSON output from response (chart data only now)
+            chart_data, _ = self._parse_agent_output(full_response)
+            
+            # Generate LLM-powered follow-up questions based on response content
+            if settings.enable_followup_questions:
+                suggested_questions = await self.followup_service.generate_followups(
+                    original_question=query,
+                    system_response=self._clean_answer(full_response)
+                )
+            else:
+                suggested_questions = []
             
             # Format reasoning steps
             reasoning_steps = self._format_reasoning(intermediate_steps)
