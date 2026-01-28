@@ -124,6 +124,7 @@ export default function ChatPage() {
       <MessageList
         messages={messages}
         isLoading={chatMutation.isPending}
+        username={user?.username}
         onSuggestedQuestionClick={handleSendMessage}
         onFeedback={handleFeedback}
         emptyStateProps={{

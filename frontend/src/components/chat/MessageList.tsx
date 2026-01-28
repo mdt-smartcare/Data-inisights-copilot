@@ -8,6 +8,7 @@ import ThinkingIndicator from './ThinkingIndicator';
 interface MessageListProps {
   messages: Message[];
   isLoading?: boolean;
+  username?: string;
   onSuggestedQuestionClick?: (question: string) => void;
   onFeedback?: (messageId: string, rating: 'positive' | 'negative') => void;
   emptyStateProps?: {
@@ -20,6 +21,7 @@ interface MessageListProps {
 export default function MessageList({
   messages,
   isLoading = false,
+  username,
   onSuggestedQuestionClick,
   onFeedback,
   emptyStateProps
@@ -50,7 +52,7 @@ export default function MessageList({
                 index === messages.length - 1 && message.role === 'assistant';
 
               return message.role === 'user' ? (
-                <UserMessage key={message.id} message={message} />
+                <UserMessage key={message.id} message={message} username={username} />
               ) : (
                 <div
                   key={message.id}
