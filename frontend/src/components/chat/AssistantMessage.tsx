@@ -107,7 +107,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
           {/* Render suggested questions */}
           {message.suggestedQuestions && message.suggestedQuestions.length > 0 && (
             <div className="my-3">
-              <p className="text-xs font-semibold text-gray-700 mb-2">💡 Follow-up questions:</p>
+              <p className="text-xs font-semibold text-gray-700 mb-2">Follow-up questions:</p>
               <div className="space-y-1.5">
                 {message.suggestedQuestions.map((question, idx) => (
                   <button
@@ -129,7 +129,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
                 <span>⏱️ {message.processingTime.toFixed(2)}s</span>
               )}
               {message.traceId && (
-                <span title="Trace ID">🔍 {message.traceId.substring(0, 8)}</span>
+                <span title="Trace ID">{message.traceId.substring(0, 8)}</span>
               )}
             </div>
           )}
@@ -142,8 +142,8 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
                 onClick={() => handleFeedback('positive')}
                 disabled={feedback !== null}
                 className={`p-1.5 rounded transition-all ${feedback === 'positive'
-                    ? 'bg-green-100 text-green-600'
-                    : 'hover:bg-gray-100 text-gray-400 hover:text-green-600'
+                  ? 'bg-green-100 text-green-600'
+                  : 'hover:bg-gray-100 text-gray-400 hover:text-green-600'
                   } disabled:cursor-not-allowed`}
                 title="Good response"
               >
@@ -155,8 +155,8 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
                 onClick={() => handleFeedback('negative')}
                 disabled={feedback !== null}
                 className={`p-1.5 rounded transition-all ${feedback === 'negative'
-                    ? 'bg-red-100 text-red-600'
-                    : 'hover:bg-gray-100 text-gray-400 hover:text-red-600'
+                  ? 'bg-red-100 text-red-600'
+                  : 'hover:bg-gray-100 text-gray-400 hover:text-red-600'
                   } disabled:cursor-not-allowed`}
                 title="Bad response"
               >
