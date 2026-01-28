@@ -275,6 +275,33 @@ class DatabaseService:
         if row:
             return dict(row)
         return None
+
+    def get_config_by_id(self, config_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific configuration by ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        query = """
+            SELECT 
+                rc.id,
+                rc.version,
+                rc.prompt_template,
+                rc.connection_id,
+                rc.schema_snapshot,
+                rc.data_dictionary
+            FROM rag_configurations rc
+            WHERE rc.id = ?
+        """
+        cursor.execute(query, (config_id,))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            data = dict(row)
+            # Rehydrate schema snapshot if it's stored as JSON string
+            # (It is stored as TEXT in migration)
+            return data
+        return None
     
     def authenticate_user(self, username: str, password: str) -> Optional[Dict[str, Any]]:
         """Authenticate a user with username and password.
@@ -319,20 +346,20 @@ class DatabaseService:
         """Get the latest active system prompt.
         
         Returns:
-            The prompt text of the row where is_active=1 (ordered by version desc),
+            The prompt text of the row where is_active=1 (ordered by version_number desc),
             or None if no active prompt exists.
         """
         conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute(
-            "SELECT prompt_text FROM system_prompts WHERE is_active = 1 ORDER BY version DESC LIMIT 1"
+            "SELECT prompt_template FROM rag_configurations WHERE is_active = 1 ORDER BY version_number DESC LIMIT 1"
         )
         row = cursor.fetchone()
         conn.close()
         
         if row:
-            return row['prompt_text']
+            return row['prompt_template']
         return None
 
     def publish_system_prompt(self, prompt_text: str, user_id: str, 
@@ -359,44 +386,62 @@ class DatabaseService:
         cursor = conn.cursor()
         
         try:
-            # 1. Get the current max version
-            cursor.execute("SELECT MAX(version) FROM system_prompts")
+            # 1. Get the current max version number
+            cursor.execute("SELECT MAX(version_number) FROM rag_configurations")
             result = cursor.fetchone()
-            current_max_version = result[0] if result and result[0] is not None else 0
-            new_version = current_max_version + 1
+            current_max = result[0] if result and result[0] is not None else 0
+            new_version_num = current_max + 1
+            new_version_str = f"1.{new_version_num}.0" # Simple semantic versioning
 
-            # 2. Deactivate all existing prompts
-            cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE is_active = 1")
+            # 2. Deactivate all existing configs
+            cursor.execute("UPDATE rag_configurations SET is_active = 0 WHERE is_active = 1")
 
-            # 3. Insert the new prompt
+            # 3. Insert the new config
+            # Combining schema_selection, reasoning, example_questions into snapshot logic if needed
+            # But the table expects schema_snapshot (snapshot of DB schema) separate from selection
+            # For now, we will store the selection as the snapshot since we re-fetch details on demand
+            schema_snapshot = schema_selection if schema_selection else "{}"
+            
+            # Additional metadata bag
+            metadata = {
+                "reasoning": json.loads(reasoning) if reasoning else None,
+                "example_questions": json.loads(example_questions) if example_questions else None
+            }
+            
+            # Generate config hash (simplified)
+            import hashlib
+            config_hash = hashlib.sha256(
+                f"{prompt_text}{schema_snapshot}{data_dictionary}".encode()
+            ).hexdigest()
+
             cursor.execute("""
-                INSERT INTO system_prompts (prompt_text, version, is_active, created_by)
-                VALUES (?, ?, 1, ?)
-            """, (prompt_text, new_version, user_id))
+                INSERT INTO rag_configurations (
+                    version, version_number, schema_snapshot, data_dictionary, 
+                    prompt_template, status, created_by, connection_id, is_active, 
+                    config_hash, change_summary
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                new_version_str, new_version_num, schema_snapshot, data_dictionary,
+                prompt_text, 'published', user_id, connection_id, 1,
+                config_hash, json.dumps(metadata)
+            ))
             
-            prompt_id = cursor.lastrowid
-            
-            # 4. Insert config metadata if available
-            # 4. Insert config metadata if available
-            if connection_id is not None:
-                cursor.execute("""
-                    INSERT INTO prompt_configs (prompt_id, connection_id, schema_selection, data_dictionary, reasoning, example_questions)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (prompt_id, connection_id, schema_selection, data_dictionary, reasoning, example_questions))
-            
+            config_id = cursor.lastrowid
             conn.commit()
             
-            # Return full object
+            # Return full object matched to UI expectations
             return {
-                "id": prompt_id,
+                "id": config_id,
                 "prompt_text": prompt_text,
-                "version": new_version,
+                "version": new_version_str,
+                "version_number": new_version_num,
                 "is_active": 1
             }
             
         except Exception as e:
             conn.rollback()
-            logger.error(f"Failed to publish prompt: {e}")
+            logger.error(f"Failed to publish config: {e}")
             raise
         finally:
             conn.close()
@@ -408,21 +453,19 @@ class DatabaseService:
         
         query = """
             SELECT 
-                sp.id as prompt_id,
-                sp.version,
-                sp.prompt_text,
-                sp.created_at,
-                sp.created_by,
+                rc.id as prompt_id,
+                rc.version,
+                rc.prompt_template as prompt_text,
+                rc.created_at,
+                rc.created_by,
                 u.username as created_by_username,
-                pc.connection_id,
-                pc.schema_selection,
-                pc.data_dictionary,
-                pc.reasoning,
-                pc.example_questions
-            FROM system_prompts sp
-            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
-            LEFT JOIN users u ON sp.created_by = CAST(u.id AS TEXT)
-            WHERE sp.is_active = 1
+                rc.connection_id,
+                rc.schema_snapshot as schema_selection,
+                rc.data_dictionary,
+                rc.change_summary
+            FROM rag_configurations rc
+            LEFT JOIN users u ON rc.created_by = CAST(u.id AS TEXT)
+            WHERE rc.is_active = 1
             LIMIT 1
         """
         cursor.execute(query)
@@ -430,30 +473,36 @@ class DatabaseService:
         conn.close()
         
         if row:
-            return dict(row)
+            data = dict(row)
+            # Rehydrate change_summary into reasoning/questions if present
+            try:
+                if data['change_summary']:
+                    meta = json.loads(data['change_summary'])
+                    if isinstance(meta, dict):
+                        data['reasoning'] = json.dumps(meta.get('reasoning'))
+                        data['example_questions'] = json.dumps(meta.get('example_questions'))
+            except:
+                pass
+            return data
         return None
 
     def get_all_prompts(self) -> list[Dict[str, Any]]:
-        """Get all system prompt versions history.
-        
-        Returns:
-            List of prompt dictionaries ordered by version desc
-        """
+        """Get all system prompt versions history."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute("""
             SELECT 
-                sp.id, 
-                sp.prompt_text, 
-                sp.version, 
-                sp.is_active, 
-                sp.created_at, 
-                sp.created_by,
+                rc.id, 
+                rc.prompt_template as prompt_text, 
+                rc.version, 
+                rc.is_active, 
+                rc.created_at, 
+                rc.created_by,
                 u.username as created_by_username
-            FROM system_prompts sp
-            LEFT JOIN users u ON sp.created_by = CAST(u.id AS TEXT)
-            ORDER BY sp.version DESC
+            FROM rag_configurations rc
+            LEFT JOIN users u ON rc.created_by = CAST(u.id AS TEXT)
+            ORDER BY rc.version_number DESC
         """)
         rows = cursor.fetchall()
         conn.close()

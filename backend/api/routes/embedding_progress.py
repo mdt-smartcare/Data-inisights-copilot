@@ -89,25 +89,93 @@ async def start_embedding_job(
         )
 
 
+from backend.services.sql_service import get_sql_service
+from backend.sqliteDb.db import get_db_service
+import json
+
 async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
     """Background task to run embedding generation."""
     job_service = get_embedding_job_service()
     notification_service = get_notification_service()
+    db_service = get_db_service()
+    sql_service = get_sql_service()
     
     try:
         # Start the job
         job_service.start_job(job_id)
         
-        # Get schema and generate documents
-        # TODO: Get actual schema from config
+        # 1. Fetch Configuration
+        config = db_service.get_config_by_id(config_id)
+        if not config:
+            raise ValueError(f"Configuration {config_id} not found")
+            
+        connection_id = config.get('connection_id')
+        if not connection_id:
+            raise ValueError("Configuration missing connection_id")
+            
+        # 2. Fetch Connection Details
+        connection_info = db_service.get_db_connection_by_id(connection_id)
+        if not connection_info:
+            raise ValueError(f"Connection {connection_id} not found")
+            
+        # 3. Determine Selected Tables
+        # schema_snapshot is stored as JSON string in rag_configurations
+        schema_snapshot_raw = config.get('schema_snapshot', '{}')
+        try:
+            schema_selection = json.loads(schema_snapshot_raw)
+            # If selection format is {'table': ['col']}, keys are tables
+            # If selection format is just list ['table'], handle that too
+            if isinstance(schema_selection, dict):
+                target_tables = list(schema_selection.keys())
+            elif isinstance(schema_selection, list):
+                target_tables = schema_selection
+            else:
+                target_tables = []
+        except:
+            target_tables = []
+            
+        if not target_tables:
+            raise ValueError("No tables selected in configuration")
+
+        # 4. Fetch Live Schema Metadata
+        # We need rich metadata (types, nullable, etc) which might not be in the snapshot
+        schema_info = sql_service.get_schema_info_for_connection(
+            connection_info['uri'], 
+            table_names=target_tables
+        )
+        
+        # 5. Transform for Document Generator
+        # Generator expects {'tables': {'t1': {'columns': {'c1': {...}}}}}
+        generator_schema = {'tables': {}}
+        for table, cols in schema_info.get('details', {}).items():
+            # Transform list of col dicts to dict of col dicts keyed by name
+            col_dict = {}
+            for col in cols:
+                col_name = col['name']
+                col_dict[col_name] = col
+                
+            generator_schema['tables'][table] = {'columns': col_dict}
+
+        # 6. Generate Documents
         document_generator = get_document_generator()
-        sample_schema = {"tables": {"users": {"columns": {"id": {}, "name": {}}}}}
-        documents = document_generator.generate_all(sample_schema, "")
+        data_dictionary = config.get('data_dictionary', '')
+        
+        documents = document_generator.generate_all(
+            generator_schema, 
+            dictionary_content=data_dictionary
+        )
+        
+        # Update job with accurate document count
+        total_docs = len(documents)
+        # We can update total_documents in the job record here if needed
+        # But for now, we just proceed. Ideally we'd update the DB record.
         
         # Transition to embedding phase
         job_service.transition_to_embedding(job_id)
         
         # Process with batch processor
+        # Max concurrent and batch size are stored in the job, but processor takes config
+        # We'll use defaults or fetch from job metadata if we extended job service to return it
         processor = EmbeddingBatchProcessor(BatchConfig(
             batch_size=50,
             max_concurrent=5
@@ -135,7 +203,8 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
         # Transition to storing
         job_service.transition_to_storing(job_id)
         
-        # TODO: Store embeddings to vector database
+        # TODO: Store actual vectors to vector database
+        # For now we simulate storage success
         
         # Complete the job
         job_service.complete_job(job_id, validation_passed=validation_passed)
@@ -145,12 +214,12 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
             user_id=user_id,
             notification_type="embedding_complete",
             title="Embedding Generation Complete",
-            message=f"Successfully generated {result['processed_documents']} embeddings.",
+            message=f"Successfully generated {result['processed_documents']} embeddings for v{config.get('version', 'unknown')}.",
             priority="medium",
-            action_url=f"/config/embedding-jobs/{job_id}",
-            action_label="View Details",
+            action_url=f"/config",
+            action_label="View Configuration",
             related_entity_type="embedding_job",
-            related_entity_id=0  # Would be internal ID
+            related_entity_id=0
         )
         
     except Exception as e:

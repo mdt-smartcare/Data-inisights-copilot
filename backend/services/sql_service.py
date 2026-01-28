@@ -429,24 +429,32 @@ Provide a concise, natural language answer."""
             logger.error(f"Failed to get table info: {e}")
             return "Error retrieving table information"
 
-    def get_schema_info_for_connection(self, uri: str) -> Dict[str, Any]:
+    def get_schema_info_for_connection(self, uri: str, table_names: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Connect to a database URI and retrieve its schema (tables and columns).
-        Used for the frontend Schema Explorer.
+        Used for the frontend Schema Explorer and Embedding Generator.
+        
+        Args:
+            uri: Database connection URI
+            table_names: Optional list of tables to inspect. If None, fetches all.
         """
         try:
             # Create a temporary connection
             temp_db = SQLDatabase.from_uri(uri)
-            table_names = temp_db.get_usable_table_names()
+            
+            # If explicit tables requested, use those. Otherwise discover all.
+            if table_names:
+                all_tables = temp_db.get_usable_table_names()
+                # Filter to only those that actually exist
+                target_tables = [t for t in table_names if t in all_tables]
+            else:
+                target_tables = temp_db.get_usable_table_names()
             
             schema_info = {}
-            for table in table_names:
+            inspector = inspect(temp_db._engine)
+            
+            for table in target_tables:
                 # Get column info
-                # LangChain's SQLDatabase doesn't expose raw columns easily, 
-                # but we can use the underlying engine inspector if needed.
-                # Or parsing get_table_info([table]). 
-                # For a cleaner approach, let's use the sqlalchemy inspector directly via the engine.
-                inspector = inspect(temp_db._engine)
                 columns = inspector.get_columns(table)
                 
                 column_details = []
@@ -457,9 +465,17 @@ Provide a concise, natural language answer."""
                         "nullable": col.get("nullable", True)
                     })
                 
+                # Get FK info if possible (useful for graph relationships)
+                try:
+                    fks = inspector.get_foreign_keys(table)
+                    # Enrich column details with FK info? 
+                    # For now just store columns as generator expects
+                except:
+                    pass
+                
                 schema_info[table] = column_details
                 
-            return {"tables": table_names, "details": schema_info}
+            return {"tables": target_tables, "details": schema_info}
             
         except Exception as e:
             logger.error(f"Failed to inspect schema for URI {uri}: {e}")
