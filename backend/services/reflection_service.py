@@ -29,8 +29,8 @@ CRITIQUE RULES:
 1. Schema Validation: Check if table and column names exist in the schema.
 2. Logic Check: Does the SQL answer the user's question?
 3. Security: Check for proper date handling and injection risks (though we use read-only).
-4. Hallucination Check: Ensure no made-up columns (e.g., 'bmi' might be calculated, not stored).
-5. Join Logic: Are joins correct based on patient_id/patient_track_id?
+4. Hallucination Check: Ensure no made-up columns that don't exist in the schema.
+5. Join Logic: Are joins correct based on primary/foreign key relationships in the schema?
 
 Output valid JSON matching the CritiqueResponse schema.
 If the SQL is 100% correct and optimal, set is_valid=True.

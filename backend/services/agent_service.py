@@ -91,7 +91,7 @@ DO NOT generate SQL yourself - the tool handles that internally.
 Available data: structured tables in the database."""
             ),
             Tool(
-                name="rag_patient_context_tool",
+                name="rag_document_search_tool",
                 func=self._rag_search,
                 description="""**PRIMARY TOOL FOR UNSTRUCTURED CONTEXT.**
 Use this to search unstructured text, notes, and semantic descriptions.
@@ -232,48 +232,8 @@ Use this to search unstructured text, notes, and semantic descriptions.
         
         try:
             # =================================================================
-            # FAST PATH: Check if query matches a KPI template BEFORE agent
-            # This prevents the agent from rewriting/losing important filters
-            # =================================================================
-            # kpi_match = self.sql_service._check_dashboard_kpi(query)
-            # if kpi_match:
-            #     sql_query, description = kpi_match
-            #     logger.info(f"⚡ FAST PATH: KPI template matched on original query: {description}")
-                
-            #     # Execute KPI template directly (bypasses agent rewriting)
-            #     sql_result = self.sql_service._execute_kpi_template(sql_query, description, query)
-                
-            #     # Generate suggestions based on the query type
-            #     suggested_questions = self._generate_kpi_suggestions(query, description)
-                
-            #     # Build response
-            #     response = ChatResponse(
-            #         answer=sql_result,
-            #         chart_data=None,  # Could enhance later to auto-generate charts
-            #         suggested_questions=suggested_questions,
-            #         reasoning_steps=[ReasoningStep(
-            #             tool="sql_query_tool",
-            #             input=f"KPI Template: {description}",
-            #             output=sql_result[:200]
-            #         )],
-            #         embedding_info=EmbeddingInfo(
-            #             model=settings.embedding_model_name,
-            #             dimensions=self.embedding_model.dimension,
-            #             search_method="kpi_template",
-            #             vector_norm=None,
-            #             docs_retrieved=0
-            #         ),
-            #         trace_id=trace_id,
-            #         timestamp=start_time
-            #     )
-                
-            #     duration = (datetime.utcnow() - start_time).total_seconds()
-            #     logger.info(f"✅ KPI fast-path completed (trace_id={trace_id}, duration={duration:.2f}s)")
-                
-            #     return response.model_dump()
-            
-            # =================================================================
-            # STANDARD PATH: Use agent for complex queries
+            # STANDARD PATH: Use agent for all queries
+            # Domain-specific logic removed in favor of dynamic prompt configuration
             # =================================================================
             # Fetch prompt fresh on every request
             active_prompt = self.db_service.get_latest_active_prompt()
@@ -309,7 +269,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
             
             # Check if RAG was used
             rag_used = any(
-                action.tool == "rag_patient_context_tool"
+                action.tool == "rag_document_search_tool"
                 for action, _ in intermediate_steps
             )
             
@@ -345,7 +305,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
                     dimensions=self.embedding_model.dimension,
                     search_method="hybrid" if rag_used else "structured",
                     vector_norm=embedding_info.get("norm"),
-                    docs_retrieved=len([s for a, s in intermediate_steps if a.tool == "rag_patient_context_tool"])
+                    docs_retrieved=len([s for a, s in intermediate_steps if a.tool == "rag_document_search_tool"])
                 ),
                 trace_id=trace_id,
                 session_id=session_id,
@@ -361,14 +321,6 @@ Use this to search unstructured text, notes, and semantic descriptions.
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
             raise
     
-    def _generate_kpi_suggestions(self, query: str, description: str) -> List[str]:
-        """Generate contextual follow-up suggestions for KPI queries."""
-        # Generic suggestions since domain logic is removed
-        return [
-            "Show distribution by category",
-            "Compare with previous period",
-            "Show breakdown by status"
-        ]
 
     def _get_relevant_examples(self, query: str) -> List[str]:
         """

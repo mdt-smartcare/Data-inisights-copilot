@@ -23,17 +23,6 @@ settings = get_settings()
 logger = get_logger(__name__)
 
 
-# =============================================================================
-# FIX 2: DASHBOARD KPI TEMPLATES - Exact SQL for dashboard alignment
-# ORDERED BY PRIORITY - More specific patterns first!
-# =============================================================================
-
-# =============================================================================
-# METRICS LOADED DYNAMICALLY FROM DATABASE
-# See: metric_definitions table
-# =============================================================================
-
-
 
 class SQLService:
     """Service for SQL database operations."""
@@ -45,29 +34,10 @@ class SQLService:
             # Initialize critique service
             self.critique_service = get_critique_service()
 
-            # Initialize database connection with views included
-            temp_db = SQLDatabase.from_uri(settings.database_url)
-            all_tables = list(temp_db.get_usable_table_names())
-            
-            # Include all analytics views (base + enhanced)
-            analytics_views = [
-                'v_analytics_screening', 
-                'v_analytics_enrollment',
-                'v_analytics_screening_enhanced',
-                'v_analytics_enrollment_enhanced',
-                'v_high_risk_patients',
-                'v_user_roles',
-                'v_patient_lifestyle',
-                'v_patient_symptoms',
-                'v_patient_lab_history'
-            ]
-            for view in analytics_views:
-                if view not in all_tables:
-                    all_tables.append(view)
-            
+            # Initialize database connection with dynamic table discovery
+            # No hardcoded view names - uses whatever tables/views exist in the database
             self.db = SQLDatabase.from_uri(
                 settings.database_url,
-                include_tables=all_tables,
                 view_support=True
             )
             logger.info("Database connection established with view support")
@@ -109,31 +79,15 @@ class SQLService:
         try:
             all_tables = self.db.get_usable_table_names()
             
-            self.relevant_tables = [
-                table for table in all_tables 
-                if any(keyword in table.lower() for keyword in [
-                    'patient', 'visit', 'tracker', 'diagnosis', 'medication',
-                    'lab_test', 'assessment', 'vital', 'bp_log', 'glucose',
-                    'screening', 'enrollment', 'medical', 'notes',
-                    'v_analytics'
-                ])
-            ]
+            # Use all discovered tables without domain-specific filtering
+            # Schema relevance is now determined dynamically by the LLM
+            self.relevant_tables = list(all_tables)
             
             base_schema = self.db.get_table_info(table_names=self.relevant_tables)
             
-            schema_enhancements = """
-==============================================================================
-CRITICAL: USE ANALYTICS VIEWS FOR DASHBOARD KPIs (MANDATORY)
-==============================================================================
-
-**RULE: For ANY statistics about screening, referrals, or enrollment, you MUST use:**
-- `v_analytics_screening` - For screening & referral KPIs
-- `v_analytics_enrollment` - For enrollment KPIs
-
-**NEVER query raw `patienttracker` or `screeninglog` tables for aggregate statistics.**
-
-==============================================================================
-"""
+            # Schema context is provided dynamically via system prompt configuration
+            # Domain-specific rules should be defined in the data dictionary
+            schema_enhancements = ""
             
             self.cached_schema = base_schema + schema_enhancements
             
@@ -154,25 +108,14 @@ CRITICAL: USE ANALYTICS VIEWS FOR DASHBOARD KPIs (MANDATORY)
                 if table.lower() in question_lower
             ]
             
-            keyword_to_tables = {
-                'glucose': ['glucose_log', 'patient_tracker', 'patient'],
-                'bp': ['bp_log', 'patient_tracker', 'patient'],
-                'blood pressure': ['bp_log', 'patient_tracker', 'patient'],
-                'hypertension': ['patient_diagnosis', 'bp_log', 'patient_tracker', 'patient'],
-                'diabetes': ['patient_diagnosis', 'glucose_log', 'patient_tracker', 'patient'],
-                'smoker': ['patient', 'patient_tracker'],
-                'smoking': ['patient', 'patient_tracker'],
-                'visit': ['patient_visit', 'patient_tracker', 'patient'],
-                'diagnosis': ['patient_diagnosis', 'patient_tracker', 'patient'],
-                'medication': ['current_medication', 'patient_tracker', 'patient'],
-                'lab': ['lab_test', 'lab_test_result', 'patient_tracker', 'patient'],
-            }
-            
-            for keyword, tables in keyword_to_tables.items():
-                if keyword in question_lower:
-                    for table in tables:
-                        if table in self.relevant_tables and table not in relevant_tables:
-                            relevant_tables.append(table)
+            # Dynamic table matching: look for tables whose names appear in the question
+            # No hardcoded keyword mappings - schema understanding comes from data dictionary
+            for table in (self.relevant_tables or []):
+                # Match if table name (or parts of it) appear in the question
+                table_words = table.lower().replace('_', ' ').split()
+                if any(word in question_lower for word in table_words if len(word) > 2):
+                    if table not in relevant_tables:
+                        relevant_tables.append(table)
             
             if not relevant_tables:
                 logger.info("No specific tables matched in question. Using full cached schema.")
@@ -183,18 +126,8 @@ CRITICAL: USE ANALYTICS VIEWS FOR DASHBOARD KPIs (MANDATORY)
             
             base_schema = self.db.get_table_info(table_names=relevant_tables)
             
-            schema_enhancements = """
-==============================================================================
-CRITICAL: CORRECT JOIN PATTERNS
-==============================================================================
-
-patient.id → patient_tracker.patient_id → other tables
-patient_tracker.id → glucose_log.patient_track_id
-patient_tracker.id → bp_log.patient_track_id
-patient_tracker.id → patient_diagnosis.patient_track_id
-
-==============================================================================
-"""
+            # Join patterns are discovered from schema foreign keys or data dictionary
+            schema_enhancements = ""
             
             return base_schema + schema_enhancements
             
@@ -311,10 +244,8 @@ IMPORTANT RULES:
 1. Use ONLY the exact column names shown in the schema above
 2. Use ONLY the exact table names shown in the schema above
 3. Study the sample rows to understand the data
-4. For patient demographics (gender, age), use the 'patient' table
-5. For patient vitals (BP, glucose), use 'bp_log' or 'glucose_log'
-6. The patient_visit table links to patient_tracker via 'patient_track_id'
-7. Use proper date filtering: WHERE date_column >= 'YYYY-MM-DD' AND date_column <= 'YYYY-MM-DD'
+4. Identify primary and foreign key relationships from column names
+5. Use proper date filtering: WHERE date_column >= 'YYYY-MM-DD' AND date_column <= 'YYYY-MM-DD'
 
 QUESTION: {question}
 

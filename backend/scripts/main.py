@@ -98,9 +98,9 @@ with open("config/embedding_config.yaml", 'r') as f:
 # Initialize the advanced retriever for semantic search on unstructured notes
 rag_retriever = AdvancedRAGRetriever(config=rag_config)
 
-# --- Main Agent Prompt Template (NCD SPECIALIZED) ---
+# --- Main Agent Prompt Template ---
 system_prompt = """You are an advanced **Data Intelligence Agent**.
-You have access to a patient database containing structured data and unstructured notes.
+You have access to a database containing structured data and unstructured documents.
 
 **YOUR DECISION MATRIX:**
 
@@ -108,7 +108,7 @@ You have access to a patient database containing structured data and unstructure
     * The user asks for **statistics**: Counts, averages, sums, or percentages.
     * The user filters by demographics: Age groups, gender, location.
 
-2.  **Use `rag_patient_context_tool` (Unstructured Data) when:**
+2.  **Use `rag_document_search_tool` (Unstructured Data) when:**
     * The user asks about **qualitative factors**: Symptoms, lifestyle, or free-text descriptions.
     * You need to find specific narratives or notes.
 
@@ -144,17 +144,16 @@ tools: List[Tool] = [
         name="sql_query_tool", 
         func=sql_agent.invoke, 
         description="""**PRIMARY TOOL FOR STATISTICS.** Use this to access the structured SQL database.
-- Tables: patient_tracker (demographics, bp, glucose), patient_diagnosis (conditions), prescription.
-- Capabilities: COUNT, AVG, GROUP BY, filtering by age/gender/date.
-- Use for: "How many patients...", "Average glucose...", "Distribution of..."."""
+- Capabilities: COUNT, AVG, GROUP BY, and filtering by various attributes.
+- Use for: "How many records...", "Average value...", "Distribution of..."."""
     ),
     Tool(
-        name="rag_patient_context_tool", 
+        name="rag_document_search_tool", 
         func=rag_retriever.invoke, 
-        description="""**PRIMARY TOOL FOR CLINICAL CONTEXT.**
-Use this to search unstructured text, medical notes, and semantic descriptions.
-- Capabilities: Semantic search for symptoms, lifestyle, risk factors, and specific diagnoses.
-- Use for: "Find patients who complain of...", "Show me records regarding...", "Details about patient X..."."""
+        description="""**PRIMARY TOOL FOR DOCUMENT CONTEXT.**
+Use this to search unstructured text and semantic descriptions.
+- Capabilities: Semantic search for concepts, details, and specific records.
+- Use for: "Find records related to...", "Show me details about..."."""
     ),
 ]
 
@@ -194,7 +193,7 @@ def create_plotly_chart(chart_json: Dict[str, Any]) -> Optional[go.Figure]:
 
 def format_thinking_process(intermediate_steps: List[Tuple[Any, Any]]) -> str:
     """Formats the agent's intermediate steps into a readable markdown string."""
-    log = "###  Clinical Reasoning Process\n\n"
+    log = "### Reasoning Process\n\n"
     if not intermediate_steps: 
         return log + "Direct response generated."
     
@@ -459,7 +458,7 @@ def get_agent_response(message: str) -> Dict[str, Any]:
     # Check tool usage in intermediate steps
     if result.get("intermediate_steps"):
         for action, observation in result.get("intermediate_steps"):
-            if action.tool == "rag_patient_context_tool":
+            if action.tool == "rag_document_search_tool":
                 rag_search_used = True
                 try:
                     # Re-fetch docs for visualization (agent observation is just text)
@@ -525,7 +524,7 @@ def chat_ui_updater(message: str, history: List[List[str]]) -> Generator[Tuple, 
         yield (
             history, 
             gr.update(visible=False),  # plot
-            gr.update(value="*Analyzing Clinical Data...*"),  # thinking_box
+            gr.update(value="*Analyzing Data...*"),  # thinking_box
             gr.Dataframe(value=[]),  # suggestions_df
             gr.update(visible=False),  # suggestions_box
             "",  # textbox
@@ -664,7 +663,7 @@ with gr.Blocks(theme=theme, title="Data Insights AI-Copilot") as demo:
 
     # --- Login Interface ---
     with gr.Group(visible=True) as login_form:
-        gr.Markdown("#  Clinical Login")
+        gr.Markdown("# Login")
         with gr.Row():
             with gr.Column(scale=2):
                 user_input = gr.Textbox(label="Username")
@@ -680,13 +679,13 @@ with gr.Blocks(theme=theme, title="Data Insights AI-Copilot") as demo:
         with gr.Row():
             with gr.Column(scale=1):
                 chatbot = gr.Chatbot(height=500, label="Analyst Chat", avatar_images=(None, "https://cdn-icons-png.flaticon.com/512/387/387569.png"))
-                msg_box = gr.Textbox(placeholder="Ask a clinical question (e.g., 'Patients with hypertension over 50?')...", container=False)
+                msg_box = gr.Textbox(placeholder="Ask a question about your data...", container=False)
                 with gr.Row():
                     submit = gr.Button("Analyze", variant="primary")
                     clear = gr.Button("Clear")
             
             with gr.Column(scale=1):
-                plot = gr.Plot(label="Population Health Insights", visible=False)
+                plot = gr.Plot(label="Data Insights", visible=False)
                 with gr.Accordion(" Agent Reasoning", open=False):
                     reasoning = gr.Markdown("*Waiting for query...*")
                 with gr.Accordion(" Embedding Analysis", open=False):
