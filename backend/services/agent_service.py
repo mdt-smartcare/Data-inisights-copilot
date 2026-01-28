@@ -142,7 +142,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
         combined = "\n\n".join([doc.page_content for doc in docs[:3]])
         return combined[:1000]  # Limit length
     
-    def get_session_history(self, session_id: str, limit: int = 10) -> ChatMessageHistory:
+    def get_session_history(self, session_id: str, limit: int = 20) -> ChatMessageHistory:
         """
         Retrieve conversation history for a session with sliding window limit.
         
