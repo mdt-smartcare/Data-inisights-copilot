@@ -108,6 +108,7 @@ class ChatResponse(BaseModel):
     reasoning_steps: List[ReasoningStep] = Field(default_factory=list, description="Agent reasoning process")
     embedding_info: Optional[EmbeddingInfo] = Field(default=None, description="Embedding analysis")
     trace_id: str = Field(..., description="Langfuse trace ID for debugging")
+    session_id: Optional[str] = Field(default=None, description="Session ID for conversation tracking")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
     
     model_config = ConfigDict(json_schema_extra={
@@ -131,6 +132,7 @@ class ChatResponse(BaseModel):
                 "search_method": "hybrid"
             },
             "trace_id": "550e8400-e29b-41d4-a716-446655440000",
+            "session_id": "abc123-session-id",
             "timestamp": "2025-12-30T10:30:00Z"
         }
     })

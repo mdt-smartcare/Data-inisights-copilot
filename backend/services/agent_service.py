@@ -56,6 +56,10 @@ class AgentService:
         # In-memory conversation history store
         # Structure: {session_id: ChatMessageHistory}
         self.message_store: Dict[str, ChatMessageHistory] = {}
+        # Track last access time for session expiry
+        self.session_timestamps: Dict[str, datetime] = {}
+        # Session expiry: 1 hour of inactivity
+        self.SESSION_EXPIRY_SECONDS = 3600
         
         # Initialize LLM
         self.llm = ChatOpenAI(
@@ -145,18 +149,37 @@ Use this to search unstructured text, notes, and semantic descriptions.
     def get_session_history(self, session_id: str, limit: int = 20) -> ChatMessageHistory:
         """
         Retrieve conversation history for a session with sliding window limit.
+        Also handles session expiry and cleanup.
         
         Args:
             session_id: Unique session identifier
-            limit: Maximum number of messages to retain (default: 10)
+            limit: Maximum number of messages to retain (default: 20)
             
         Returns:
             ChatMessageHistory with at most 'limit' recent messages
         """
+        now = datetime.utcnow()
+        
+        # Cleanup expired sessions periodically (every 10th call)
+        if len(self.message_store) > 0 and hash(session_id) % 10 == 0:
+            self._cleanup_expired_sessions()
+        
+        # Check if session exists and is not expired
+        if session_id in self.message_store:
+            last_access = self.session_timestamps.get(session_id, now)
+            if (now - last_access).total_seconds() > self.SESSION_EXPIRY_SECONDS:
+                # Session expired, clear it
+                logger.info(f"Session expired (idle > 1hr): {session_id}")
+                del self.message_store[session_id]
+                del self.session_timestamps[session_id]
+        
         # Create new history if session doesn't exist
         if session_id not in self.message_store:
             self.message_store[session_id] = ChatMessageHistory()
             logger.info(f"Created new conversation history for session: {session_id}")
+        
+        # Update last access timestamp
+        self.session_timestamps[session_id] = now
         
         history = self.message_store[session_id]
         
@@ -166,6 +189,21 @@ Use this to search unstructured text, notes, and semantic descriptions.
             logger.debug(f"Trimmed history to {limit} messages for session: {session_id}")
         
         return history
+    
+    def _cleanup_expired_sessions(self) -> None:
+        """Remove sessions that have been idle for more than SESSION_EXPIRY_SECONDS."""
+        now = datetime.utcnow()
+        expired = [
+            sid for sid, ts in self.session_timestamps.items()
+            if (now - ts).total_seconds() > self.SESSION_EXPIRY_SECONDS
+        ]
+        for sid in expired:
+            if sid in self.message_store:
+                del self.message_store[sid]
+            if sid in self.session_timestamps:
+                del self.session_timestamps[sid]
+        if expired:
+            logger.info(f"Cleaned up {len(expired)} expired sessions")
     
     async def process_query(
         self,
@@ -298,6 +336,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
                     docs_retrieved=len([s for a, s in intermediate_steps if a.tool == "rag_patient_context_tool"])
                 ),
                 trace_id=trace_id,
+                session_id=session_id,
                 timestamp=start_time
             )
             
