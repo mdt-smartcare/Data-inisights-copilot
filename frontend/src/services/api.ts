@@ -231,3 +231,133 @@ export const getConnectionSchema = async (id: number): Promise<{ status: string;
   const response = await apiClient.get(`/api/v1/data/connections/${id}/schema`);
   return response.data;
 };
+
+// ============================================================================
+// EMBEDDING JOBS API
+// ============================================================================
+
+import type {
+  EmbeddingJobProgress,
+  EmbeddingJobSummary,
+  EmbeddingJobCreate,
+  Notification,
+  NotificationPreferences,
+  NotificationPreferencesUpdate
+} from '../types/rag';
+
+/**
+ * Start a new embedding generation job.
+ * Requires SuperAdmin role.
+ */
+export const startEmbeddingJob = async (params: EmbeddingJobCreate): Promise<{ status: string; job_id: string; message: string }> => {
+  const response = await apiClient.post('/api/v1/embedding-jobs', params);
+  return response.data;
+};
+
+/**
+ * Get progress of an embedding job.
+ */
+export const getEmbeddingProgress = async (jobId: string): Promise<EmbeddingJobProgress> => {
+  const response = await apiClient.get(`/api/v1/embedding-jobs/${jobId}/progress`);
+  return response.data;
+};
+
+/**
+ * Get summary of a completed embedding job.
+ */
+export const getEmbeddingSummary = async (jobId: string): Promise<EmbeddingJobSummary> => {
+  const response = await apiClient.get(`/api/v1/embedding-jobs/${jobId}/summary`);
+  return response.data;
+};
+
+/**
+ * Cancel a running embedding job.
+ */
+export const cancelEmbeddingJob = async (jobId: string): Promise<{ status: string; job_id: string; message: string }> => {
+  const response = await apiClient.post(`/api/v1/embedding-jobs/${jobId}/cancel`);
+  return response.data;
+};
+
+/**
+ * List embedding jobs with optional filtering.
+ */
+export const listEmbeddingJobs = async (params?: {
+  status_filter?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<EmbeddingJobProgress[]> => {
+  const response = await apiClient.get('/api/v1/embedding-jobs', { params });
+  return response.data;
+};
+
+// ============================================================================
+// NOTIFICATIONS API
+// ============================================================================
+
+/**
+ * Get notifications for the current user.
+ */
+export const getNotifications = async (params?: {
+  status_filter?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<Notification[]> => {
+  const response = await apiClient.get('/api/v1/notifications', { params });
+  return response.data;
+};
+
+/**
+ * Get count of unread notifications.
+ */
+export const getUnreadNotificationCount = async (): Promise<{ count: number }> => {
+  const response = await apiClient.get('/api/v1/notifications/unread-count');
+  return response.data;
+};
+
+/**
+ * Get a specific notification.
+ */
+export const getNotification = async (notificationId: number): Promise<Notification> => {
+  const response = await apiClient.get(`/api/v1/notifications/${notificationId}`);
+  return response.data;
+};
+
+/**
+ * Mark a notification as read.
+ */
+export const markNotificationAsRead = async (notificationId: number): Promise<{ success: boolean }> => {
+  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/read`);
+  return response.data;
+};
+
+/**
+ * Mark all notifications as read.
+ */
+export const markAllNotificationsAsRead = async (): Promise<{ success: boolean; marked_count: number }> => {
+  const response = await apiClient.post('/api/v1/notifications/read-all');
+  return response.data;
+};
+
+/**
+ * Dismiss a notification.
+ */
+export const dismissNotification = async (notificationId: number): Promise<{ success: boolean }> => {
+  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/dismiss`);
+  return response.data;
+};
+
+/**
+ * Get notification preferences for the current user.
+ */
+export const getNotificationPreferences = async (): Promise<NotificationPreferences> => {
+  const response = await apiClient.get('/api/v1/notifications/preferences');
+  return response.data;
+};
+
+/**
+ * Update notification preferences.
+ */
+export const updateNotificationPreferences = async (preferences: NotificationPreferencesUpdate): Promise<{ success: boolean }> => {
+  const response = await apiClient.put('/api/v1/notifications/preferences', preferences);
+  return response.data;
+};
