@@ -52,11 +52,16 @@ class ChatRequest(BaseModel):
     """Chat request payload."""
     query: str = Field(..., min_length=1, max_length=2000, description="User question")
     user_id: Optional[str] = Field(default=None, description="User identifier (from JWT)")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Session ID for conversation tracking. Auto-generated if not provided."
+    )
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
             "query": "How many active users are there?",
-            "user_id": "admin"
+            "user_id": "admin",
+            "session_id": "abc123-session-id"
         }
     })
 
