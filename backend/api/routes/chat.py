@@ -1,6 +1,7 @@
 """
 Chat endpoint for RAG chatbot queries.
 """
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from backend.models.schemas import ChatRequest, ChatResponse, User, ErrorResponse
@@ -33,9 +34,15 @@ async def chat(
     """
     user_id = request.user_id or current_user.username
     
+    # Extract or generate session ID for conversation tracking
+    session_id = request.session_id
+    if session_id is None:
+        session_id = str(uuid.uuid4())
+        logger.info(f"New session created: {session_id}")
+    
     logger.info(
-        f"Chat request from user={user_id}, query_length={len(request.query)}",
-        extra={"user_id": user_id}
+        f"Chat request from user={user_id}, session={session_id}, query_length={len(request.query)}",
+        extra={"user_id": user_id, "session_id": session_id}
     )
     
     try:
@@ -43,7 +50,8 @@ async def chat(
         agent_service = get_agent_service()
         result = await agent_service.process_query(
             query=request.query,
-            user_id=user_id
+            user_id=user_id,
+            session_id=session_id
         )
         
         return result
