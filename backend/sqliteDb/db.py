@@ -290,7 +290,9 @@ class DatabaseService:
                 rc.prompt_template,
                 rc.connection_id,
                 rc.schema_snapshot,
-                rc.data_dictionary
+                rc.data_dictionary,
+                rc.embedding_config,
+                rc.retriever_config
             FROM rag_configurations rc
             WHERE rc.id = ?
         """
@@ -369,7 +371,9 @@ class DatabaseService:
                               schema_selection: Optional[str] = None, 
                               data_dictionary: Optional[str] = None,
                               reasoning: Optional[str] = None,
-                              example_questions: Optional[str] = None) -> Dict[str, Any]:
+                              example_questions: Optional[str] = None,
+                              embedding_config: Optional[str] = None,
+                              retriever_config: Optional[str] = None) -> Dict[str, Any]:
         """Publish a new version of the system prompt with optional config metadata.
         
         Args:
@@ -380,6 +384,8 @@ class DatabaseService:
             data_dictionary: Content of data dictionary
             reasoning: JSON string of reasoning metadata
             example_questions: JSON string list of questions
+            embedding_config: JSON string of embedding parameters
+            retriever_config: JSON string of retrieval parameters
             
         Returns:
             Dictionary with the new prompt details
@@ -420,13 +426,13 @@ class DatabaseService:
                 INSERT INTO rag_configurations (
                     version, version_number, schema_snapshot, data_dictionary, 
                     prompt_template, status, created_by, connection_id, is_active, 
-                    config_hash, change_summary
+                    config_hash, change_summary, embedding_config, retriever_config
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 new_version_str, new_version_num, schema_snapshot, data_dictionary,
                 prompt_text, 'published', user_id, connection_id, 1,
-                config_hash, json.dumps(metadata)
+                config_hash, json.dumps(metadata), embedding_config, retriever_config
             ))
             
             config_id = cursor.lastrowid
@@ -464,7 +470,9 @@ class DatabaseService:
                 rc.connection_id,
                 rc.schema_snapshot as schema_selection,
                 rc.data_dictionary,
-                rc.change_summary
+                rc.change_summary,
+                rc.embedding_config,
+                rc.retriever_config
             FROM rag_configurations rc
             LEFT JOIN users u ON rc.created_by = CAST(u.id AS TEXT)
             WHERE rc.is_active = 1
@@ -511,7 +519,7 @@ class DatabaseService:
         
         return [dict(row) for row in rows]
 
-    def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None) -> int:
+    def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None, pool_config: Optional[str] = None) -> int:
         """Add a new database connection.
         
         Args:
@@ -519,6 +527,7 @@ class DatabaseService:
             uri: Connection string (e.g., postgresql://user:pass@host/db)
             engine_type: Database type (postgresql, mysql, sqlite)
             created_by: User ID creating the connection
+            pool_config: JSON string of pool configuration
             
         Returns:
             The ID of the newly created connection
@@ -527,8 +536,8 @@ class DatabaseService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO db_connections (name, uri, engine_type, created_by) VALUES (?, ?, ?, ?)",
-                (name, uri, engine_type, created_by)
+                "INSERT INTO db_connections (name, uri, engine_type, created_by, pool_config) VALUES (?, ?, ?, ?, ?)",
+                (name, uri, engine_type, created_by, pool_config)
             )
             conn.commit()
             return cursor.lastrowid
@@ -541,7 +550,7 @@ class DatabaseService:
         """Get all saved database connections."""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, uri, engine_type, created_at FROM db_connections ORDER BY created_at DESC")
+        cursor.execute("SELECT id, name, uri, engine_type, created_at, pool_config FROM db_connections ORDER BY created_at DESC")
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -560,7 +569,7 @@ class DatabaseService:
         """Get a specific database connection by ID."""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, uri, engine_type FROM db_connections WHERE id = ?", (connection_id,))
+        cursor.execute("SELECT id, name, uri, engine_type, pool_config FROM db_connections WHERE id = ?", (connection_id,))
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None

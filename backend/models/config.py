@@ -25,6 +25,8 @@ class PromptPublishRequest(BaseModel):
     data_dictionary: Optional[str] = None
     reasoning: Optional[str] = None # JSON string
     example_questions: Optional[str] = None  # JSON string list
+    embedding_config: Optional[str] = None # JSON string
+    retriever_config: Optional[str] = None # JSON string
 
 class PromptResponse(BaseModel):
     id: int
@@ -35,3 +37,5 @@ class PromptResponse(BaseModel):
     reasoning: Optional[Dict[str, str]] = None  # New field for explainability
     created_at: Optional[str] = None
     created_by_username: Optional[str] = None
+    embedding_config: Optional[str] = None
+    retriever_config: Optional[str] = None

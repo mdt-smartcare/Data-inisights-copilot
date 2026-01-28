@@ -22,6 +22,9 @@ settings = get_settings()
 logger = get_logger(__name__)
 
 
+from backend.sqliteDb.db import get_db_service
+import json
+
 class VectorStoreService:
     """Service for managing vector store operations."""
     
@@ -47,8 +50,71 @@ class VectorStoreService:
         
         with open(config_path, 'r') as f:
             self.rag_config = yaml.safe_load(f)
+            
+        # ------------------------------------------------------------------
+        # OVERRIDE WITH DB CONFIG
+        # ------------------------------------------------------------------
+        try:
+            db_service = get_db_service()
+            active_config = db_service.get_active_config()
+            
+            if active_config:
+                logger.info("Found active RAG config in database. Applying overrides...")
+                
+                # Override Embedding Config
+                if active_config.get('embedding_config'):
+                    try:
+                        emb_conf = json.loads(active_config['embedding_config'])
+                        # Map frontend keys to backend config structure if needed
+                        # Frontend sends: { model, chunkSize, chunkOverlap }
+                        # Backend expects: 
+                        # embedding: { model_name }
+                        # chunking: { parent_splitter: { chunk_size, chunk_overlap }, ... }
+                        
+                        if 'model' in emb_conf and emb_conf['model']:
+                            self.rag_config['embedding']['model_name'] = emb_conf['model']
+                            
+                        # Update chunking config if provided (assuming it applies to parent/child broadly or specific)
+                        # For simplicity, we apply size/overlap to parent splitter as it's the main driver
+                        if 'chunkSize' in emb_conf:
+                            if 'chunking' not in self.rag_config: self.rag_config['chunking'] = {}
+                            if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
+                            self.rag_config['chunking']['parent_splitter']['chunk_size'] = int(emb_conf['chunkSize'])
+                            
+                        if 'chunkOverlap' in emb_conf:
+                             if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
+                             self.rag_config['chunking']['parent_splitter']['chunk_overlap'] = int(emb_conf['chunkOverlap'])
+                             
+                        logger.info(f"Applied embedding config overrides from DB: {emb_conf}")
+                    except Exception as e:
+                        logger.error(f"Failed to parse embedding_config from DB: {e}")
+
+                # Override Retriever Config
+                if active_config.get('retriever_config'):
+                    try:
+                        ret_conf = json.loads(active_config['retriever_config'])
+                        # Frontend sends: { topKInitial, topKFinal, hybridWeights }
+                        # Backend expects: retriever: { top_k_initial, top_k_final, hybrid_search_weights }
+                        
+                        if 'retriever' not in self.rag_config: self.rag_config['retriever'] = {}
+                        
+                        if 'topKInitial' in ret_conf:
+                            self.rag_config['retriever']['top_k_initial'] = int(ret_conf['topKInitial'])
+                        
+                        if 'topKFinal' in ret_conf:
+                            self.rag_config['retriever']['top_k_final'] = int(ret_conf['topKFinal'])
+                            
+                        if 'hybridWeights' in ret_conf:
+                            self.rag_config['retriever']['hybrid_search_weights'] = ret_conf['hybridWeights']
+                            
+                        logger.info(f"Applied retriever config overrides from DB: {ret_conf}")
+                    except Exception as e:
+                        logger.error(f"Failed to parse retriever_config from DB: {e}")
+                        
+        except Exception as e:
+            logger.warning(f"Failed to load config overrides from DB: {e}. Using YAML defaults.")
         
-        logger.info("Loaded RAG config successfully")
+        logger.info("Final RAG Config loaded successfully")
         
         # Initialize advanced retriever
         self.retriever = AdvancedRAGRetriever(config=self.rag_config)
