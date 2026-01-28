@@ -34,6 +34,18 @@ class DatabaseService:
         """
         self.db_path = db_path or str(DB_PATH)
         self._init_database()
+        self._run_migrations()
+    
+    def _run_migrations(self):
+        """Run any pending SQL migrations from the migrations directory."""
+        try:
+            from backend.sqliteDb.migrations import MigrationRunner
+            runner = MigrationRunner(self.db_path)
+            applied = runner.run_pending_migrations()
+            if applied:
+                logger.info(f"Applied {len(applied)} database migrations: {applied}")
+        except Exception as e:
+            logger.warning(f"Migration runner failed (non-fatal): {e}")
     
     def _init_database(self):
         """Initialize database schema and create default admin user.
