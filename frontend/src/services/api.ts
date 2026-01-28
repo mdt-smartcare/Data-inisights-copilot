@@ -133,7 +133,13 @@ export const generateSystemPrompt = async (dataDictionary: string): Promise<{ dr
   return response.data;
 };
 
-export const publishSystemPrompt = async (promptText: string, reasoning?: Record<string, string>, exampleQuestions?: string[]): Promise<{ status: string; version: number }> => {
+export const publishSystemPrompt = async (
+  promptText: string,
+  reasoning?: Record<string, string>,
+  exampleQuestions?: string[],
+  embeddingConfig?: any,
+  retrieverConfig?: any
+): Promise<{ status: string; version: number }> => {
   // We need to fetch the user_id from the token or some auth context.
   // For now, let's decode the token or just send a dummy ID if the backend parses the token.
   // Looking at backend/api/routes/config.py, it expects `user_id` in the body.
@@ -157,7 +163,9 @@ export const publishSystemPrompt = async (promptText: string, reasoning?: Record
     schema_selection: (window as any).__config_schema ? JSON.stringify((window as any).__config_schema) : null,
     data_dictionary: (window as any).__config_dictionary,
     reasoning: reasoning ? JSON.stringify(reasoning) : null,
-    example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null
+    example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
+    embedding_config: embeddingConfig ? JSON.stringify(embeddingConfig) : null,
+    retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null
   });
   return response.data;
 };
@@ -200,7 +208,7 @@ export const getConnections = async (): Promise<DbConnection[]> => {
   return response.data;
 };
 
-export const saveConnection = async (name: string, uri: string, engine_type: string = 'postgresql'): Promise<{ status: string; id: number }> => {
+export const saveConnection = async (name: string, uri: string, engine_type: string = 'postgresql', pool_config?: any): Promise<{ status: string; id: number }> => {
   // Get user ID similar to publishSystemPrompt
   const user = localStorage.getItem('user');
   let userId = 'admin';
@@ -217,7 +225,8 @@ export const saveConnection = async (name: string, uri: string, engine_type: str
     name,
     uri,
     engine_type,
-    created_by: userId
+    created_by: userId,
+    pool_config: pool_config ? JSON.stringify(pool_config) : null
   });
   return response.data;
 };

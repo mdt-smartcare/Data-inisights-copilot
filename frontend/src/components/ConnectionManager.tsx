@@ -24,6 +24,15 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
     // Deletion Modal
     const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
 
+    // Pool Config State
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [poolConfig, setPoolConfig] = useState({
+        pool_size: 10,
+        max_overflow: 20,
+        pool_timeout: 30,
+        pool_recycle: 3600
+    });
+
     const fetchConnections = async () => {
         setLoading(true);
         try {
@@ -48,11 +57,19 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
         setLoading(true);
         setError(null);
         try {
-            const result = await saveConnection(newName, newUri);
+            const result = await saveConnection(newName, newUri, 'postgresql', poolConfig);
             await fetchConnections();
             setIsAdding(false);
             setNewName('');
             setNewUri('');
+            // Reset pool defaults
+            setPoolConfig({
+                pool_size: 10,
+                max_overflow: 20,
+                pool_timeout: 30,
+                pool_recycle: 3600
+            });
+            setShowAdvanced(false);
             onSelect(result.id); // Auto-select new connection
         } catch (err) {
             setError(handleApiError(err));
@@ -60,6 +77,27 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
             setLoading(false);
         }
     };
+
+    const handlePoolChange = (field: string, value: string) => {
+        setPoolConfig(prev => ({
+            ...prev,
+            [field]: parseInt(value) || 0
+        }));
+    };
+
+    // ... (rest of imports/props)
+
+    // Inside render, after URI input:
+    /* 
+       I will use replace_file_content to insert the UI.
+       This replacement block covers handleSave and state init.
+    */
+
+    // Wait, I cannot use comments to guide replacement inside the Content block if I'm replacing the whole function body or parts of it.
+    // I will try to target specific blocks. 
+
+    /* Returning effectively the inputs section update */
+
 
     const handleDeleteClick = (id: number, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -127,6 +165,60 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                             value={newUri}
                             onChange={(e) => setNewUri(e.target.value)}
                         />
+                    </div>
+
+                    <div>
+                        <button
+                            type="button"
+                            onClick={() => setShowAdvanced(!showAdvanced)}
+                            className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
+                        >
+                            {showAdvanced ? 'Hide Advanced Settings' : 'Show Advanced Settings'}
+                            <svg className={`w-3 h-3 transform transition-transform ${showAdvanced ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+
+                        {showAdvanced && (
+                            <div className="mt-3 grid grid-cols-2 gap-3 bg-white p-3 rounded border border-gray-200">
+                                <div>
+                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Pool Size</label>
+                                    <input
+                                        type="number"
+                                        className="w-full mt-1 p-1.5 border rounded text-xs"
+                                        value={poolConfig.pool_size}
+                                        onChange={(e) => handlePoolChange('pool_size', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Max Overflow</label>
+                                    <input
+                                        type="number"
+                                        className="w-full mt-1 p-1.5 border rounded text-xs"
+                                        value={poolConfig.max_overflow}
+                                        onChange={(e) => handlePoolChange('max_overflow', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Timeout (s)</label>
+                                    <input
+                                        type="number"
+                                        className="w-full mt-1 p-1.5 border rounded text-xs"
+                                        value={poolConfig.pool_timeout}
+                                        onChange={(e) => handlePoolChange('pool_timeout', e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Recycle (s)</label>
+                                    <input
+                                        type="number"
+                                        className="w-full mt-1 p-1.5 border rounded text-xs"
+                                        value={poolConfig.pool_recycle}
+                                        onChange={(e) => handlePoolChange('pool_recycle', e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
                     <button
                         onClick={handleSave}

@@ -6,6 +6,7 @@ import DictionaryUploader from '../components/DictionaryUploader';
 import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
+import AdvancedSettings from '../components/AdvancedSettings';
 import Alert from '../components/Alert';
 import EmbeddingProgress from '../components/EmbeddingProgress';
 import { ChatHeader } from '../components/chat';
@@ -19,8 +20,9 @@ const steps = [
     { id: 1, name: 'Connect Database' },
     { id: 2, name: 'Select Schema' },
     { id: 3, name: 'Data Dictionary' },
-    { id: 4, name: 'Review & Publish' },
-    { id: 5, name: 'Summary' }
+    { id: 4, name: 'Advanced Settings' },
+    { id: 5, name: 'Review & Publish' },
+    { id: 6, name: 'Summary' }
 ];
 
 import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
@@ -45,6 +47,20 @@ const ConfigPage: React.FC = () => {
     const [showHistory, setShowHistory] = useState(false);
     const [showClearConfirm, setShowClearConfirm] = useState(false);
     const [replaceConfirm, setReplaceConfirm] = useState<{ show: boolean; version: any | null }>({ show: false, version: null });
+
+    // Advanced Settings State
+    const [advancedSettings, setAdvancedSettings] = useState({
+        embedding: {
+            model: 'BAAI/bge-m3',
+            chunkSize: 800,
+            chunkOverlap: 150
+        },
+        retriever: {
+            topKInitial: 50,
+            topKFinal: 10,
+            hybridWeights: [0.75, 0.25] as [number, number]
+        }
+    });
 
     // Config Metadata for Dashboard
     const [activeConfig, setActiveConfig] = useState<any>(null);
@@ -142,7 +158,7 @@ const ConfigPage: React.FC = () => {
             return;
         }
         setError(null);
-        if (currentStep < 5) setCurrentStep(currentStep + 1);
+        if (currentStep < 6) setCurrentStep(currentStep + 1);
     };
 
     const handleBack = () => {
@@ -181,7 +197,7 @@ const ConfigPage: React.FC = () => {
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
             if (result.example_questions) setExampleQuestions(result.example_questions);
-            setCurrentStep(4); // Move to final step
+            setCurrentStep(4); // Move to Advanced Settings
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -194,11 +210,17 @@ const ConfigPage: React.FC = () => {
         setPublishing(true);
         setError(null);
         try {
-            const result = await publishSystemPrompt(draftPrompt, reasoning, exampleQuestions);
+            const result = await publishSystemPrompt(
+                draftPrompt,
+                reasoning,
+                exampleQuestions,
+                advancedSettings.embedding,
+                advancedSettings.retriever
+            );
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
             loadHistory(); // Refresh history
             loadDashboard(); // Refresh config metadata
-            setCurrentStep(5); // Move to Summary (which is visually same as Dashboard but in flow context)
+            setCurrentStep(6); // Move to Summary
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -280,7 +302,7 @@ const ConfigPage: React.FC = () => {
                     <div className={`flex-1 min-h-0 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden ${currentStep === 0 ? 'bg-gray-50 border-none shadow-none' : ''}`}>
                         {currentStep === 0 ? (
                             // DASHBOARD VIEW
-                            <div className="h-full flex flex-col">
+                            <div className="h-full flex flex-col overflow-y-auto p-6">
                                 <header className="flex justify-between items-center mb-8 px-1">
                                     <div>
                                         <h1 className="text-3xl font-bold text-gray-900">AI Agent Dashboard</h1>
@@ -460,7 +482,19 @@ const ConfigPage: React.FC = () => {
                                     </div>
                                 )}
 
+
+
                                 {currentStep === 4 && (
+                                    <div className="h-full flex flex-col">
+                                        <AdvancedSettings
+                                            settings={advancedSettings}
+                                            onChange={setAdvancedSettings}
+                                            readOnly={!canEdit}
+                                        />
+                                    </div>
+                                )}
+
+                                {currentStep === 5 && (
                                     <div className="h-full flex flex-col">
                                         <h2 className="text-xl font-semibold mb-4 flex justify-between items-center">
                                             <span>Review & Configuration</span>
@@ -515,8 +549,8 @@ const ConfigPage: React.FC = () => {
                                     </div>
                                 )}
 
-                                {currentStep === 5 && (
-                                    <div className="h-full flex flex-col">
+                                {currentStep === 6 && (
+                                    <div className="h-full flex flex-col overflow-y-auto p-6">
                                         <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
                                         <div className="bg-blue-50 p-4 rounded-md mb-6 border border-blue-100 flex justify-between items-center">
                                             <div>
@@ -615,7 +649,7 @@ const ConfigPage: React.FC = () => {
                                             </>
                                         )}
                                     </button>
-                                ) : currentStep === 4 ? (
+                                ) : currentStep === 5 ? (
                                     canPublish ? (
                                         <button
                                             onClick={handlePublish}
@@ -636,7 +670,7 @@ const ConfigPage: React.FC = () => {
                                         className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
                                 ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                     >
-                                        {publishing ? 'Publishing...' : currentStep === 5 ? 'Done' : 'Next'}
+                                        {publishing ? 'Publishing...' : currentStep === 6 ? 'Done' : 'Next'}
                                     </button>
                                 )}
                             </div>
@@ -646,88 +680,92 @@ const ConfigPage: React.FC = () => {
             </div>
 
             {/* Clear Confirmation Modal */}
-            {showClearConfirm && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
-                                <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
+            {
+                showClearConfirm && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                                    <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-semibold text-gray-900">Clear Data Dictionary</h3>
+                                    <p className="text-sm text-gray-500">This action cannot be undone</p>
+                                </div>
                             </div>
-                            <div>
-                                <h3 className="text-lg font-semibold text-gray-900">Clear Data Dictionary</h3>
-                                <p className="text-sm text-gray-500">This action cannot be undone</p>
+                            <p className="text-gray-600 mb-6">
+                                Are you sure you want to clear all the data dictionary content? You'll need to re-enter or upload it again.
+                            </p>
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowClearConfirm(false)}
+                                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 font-medium"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setDataDictionary('');
+                                        setShowClearConfirm(false);
+                                    }}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium"
+                                >
+                                    Clear Content
+                                </button>
                             </div>
-                        </div>
-                        <p className="text-gray-600 mb-6">
-                            Are you sure you want to clear all the data dictionary content? You'll need to re-enter or upload it again.
-                        </p>
-                        <div className="flex justify-end gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setShowClearConfirm(false)}
-                                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 font-medium"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setDataDictionary('');
-                                    setShowClearConfirm(false);
-                                }}
-                                className="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 font-medium"
-                            >
-                                Clear Content
-                            </button>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Replace Version Confirmation Modal */}
-            {replaceConfirm.show && replaceConfirm.version && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
-                        <div className="flex items-center gap-3 mb-4">
-                            <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                                </svg>
+            {
+                replaceConfirm.show && replaceConfirm.version && (
+                    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6 mx-4">
+                            <div className="flex items-center gap-3 mb-4">
+                                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-semibold text-gray-900">Replace Current Draft</h3>
+                                    <p className="text-sm text-gray-500">Load version {replaceConfirm.version.version}</p>
+                                </div>
                             </div>
-                            <div>
-                                <h3 className="text-lg font-semibold text-gray-900">Replace Current Draft</h3>
-                                <p className="text-sm text-gray-500">Load version {replaceConfirm.version.version}</p>
+                            <p className="text-gray-600 mb-6">
+                                This will replace your current draft with the content from <strong>v{replaceConfirm.version.version}</strong>.
+                                Any unsaved changes will be lost.
+                            </p>
+                            <div className="flex justify-end gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setReplaceConfirm({ show: false, version: null })}
+                                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 font-medium"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setDraftPrompt(replaceConfirm.version.prompt_text);
+                                        setReplaceConfirm({ show: false, version: null });
+                                    }}
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
+                                >
+                                    Replace Draft
+                                </button>
                             </div>
-                        </div>
-                        <p className="text-gray-600 mb-6">
-                            This will replace your current draft with the content from <strong>v{replaceConfirm.version.version}</strong>.
-                            Any unsaved changes will be lost.
-                        </p>
-                        <div className="flex justify-end gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setReplaceConfirm({ show: false, version: null })}
-                                className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 font-medium"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setDraftPrompt(replaceConfirm.version.prompt_text);
-                                    setReplaceConfirm({ show: false, version: null });
-                                }}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
-                            >
-                                Replace Draft
-                            </button>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 

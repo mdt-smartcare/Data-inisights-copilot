@@ -22,7 +22,7 @@ const ConfigSummary: React.FC<ConfigSummaryProps> = ({
     const dictionarySize = dataDictionary.length;
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-full overflow-y-auto p-1">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-1">
             {/* Connection Status */}
             <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex flex-col">
                 <div className="flex items-center gap-3 mb-4">
