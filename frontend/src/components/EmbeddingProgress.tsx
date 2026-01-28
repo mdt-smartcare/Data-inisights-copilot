@@ -55,7 +55,21 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     const [error, setError] = useState<string | null>(null);
     const [isCancelling, setIsCancelling] = useState(false);
     const wsRef = useRef<WebSocket | null>(null);
-    const pollingRef = useRef<NodeJS.Timeout | null>(null);
+    const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Memoize the handlers to prevent dependency churn
+    const onCompleteRef = useRef(onComplete);
+    const onErrorRef = useRef(onError);
+    const onCancelRef = useRef(onCancel);
+
+    useEffect(() => {
+        onCompleteRef.current = onComplete;
+        onErrorRef.current = onError;
+        onCancelRef.current = onCancel;
+    }, [onComplete, onError, onCancel]);
+
+    const isFinalState = (status: EmbeddingJobStatus) =>
+        ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status);
 
     // Format time remaining
     const formatTimeRemaining = (seconds: number | null): string => {
@@ -73,8 +87,18 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
+    const stopPolling = useCallback(() => {
+        if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+        }
+    }, []);
+
     // Connect to WebSocket
     const connectWebSocket = useCallback(() => {
+        // If we already have a final state, don't connect
+        if (progress && isFinalState(progress.status)) return false;
+
         const token = localStorage.getItem('auth_token');
         if (!token) {
             console.warn('No auth token for WebSocket, falling back to polling');
@@ -89,11 +113,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
             ws.onopen = () => {
                 console.log('WebSocket connected for job:', jobId);
-                // Stop polling if we have WebSocket
-                if (pollingRef.current) {
-                    clearInterval(pollingRef.current);
-                    pollingRef.current = null;
-                }
+                stopPolling();
             };
 
             ws.onmessage = (event) => {
@@ -122,9 +142,11 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                     } else if (data.event === 'job_finished') {
                         const finished = data as any;
                         if (finished.status === 'COMPLETED') {
-                            onComplete?.(true);
+                            onCompleteRef.current?.(true);
+                            ws.close();
                         } else if (finished.status === 'FAILED') {
-                            onError?.('Job failed');
+                            onErrorRef.current?.('Job failed');
+                            ws.close();
                         }
                     }
                 } catch (e) {
@@ -134,7 +156,6 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
             ws.onerror = (error) => {
                 console.error('WebSocket error:', error);
-                // Fall back to polling
                 startPolling();
             };
 
@@ -148,11 +169,14 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             console.error('WebSocket connection failed:', e);
             return false;
         }
-    }, [jobId, onComplete, onError]);
+    }, [jobId, progress?.status, stopPolling]); // Depend on status to prevent reconnecting if done
 
     // Polling fallback
     const startPolling = useCallback(() => {
-        if (pollingRef.current) return;
+        stopPolling(); // Ensure clean slate
+
+        // If we already have a final state, don't poll
+        if (progress && isFinalState(progress.status)) return;
 
         const poll = async () => {
             try {
@@ -160,33 +184,29 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                 setProgress(data);
 
                 if (data.status === 'COMPLETED') {
-                    onComplete?.(true);
-                    if (pollingRef.current) {
-                        clearInterval(pollingRef.current);
-                        pollingRef.current = null;
-                    }
+                    stopPolling();
+                    onCompleteRef.current?.(true);
                 } else if (data.status === 'FAILED') {
-                    onError?.(data.recent_errors?.[0] || 'Job failed');
-                    if (pollingRef.current) {
-                        clearInterval(pollingRef.current);
-                        pollingRef.current = null;
-                    }
+                    stopPolling();
+                    onErrorRef.current?.(data.recent_errors?.[0] || 'Job failed');
                 } else if (data.status === 'CANCELLED') {
-                    onCancel?.();
-                    if (pollingRef.current) {
-                        clearInterval(pollingRef.current);
-                        pollingRef.current = null;
-                    }
+                    stopPolling();
+                    onCancelRef.current?.();
                 }
             } catch (e) {
                 console.error('Polling error:', e);
-                setError('Failed to fetch progress');
+                // If 404, might be done or bad ID, stop polling to prevent spam
+                stopPolling();
+                // Don't error immediately, maybe just one fail? 
+                // But for this spam issue, better to back off.
+                // We will setError to visually indicate issue.
+                setError('Connection lost');
             }
         };
 
         poll(); // Initial fetch
         pollingRef.current = setInterval(poll, 2000);
-    }, [jobId, onComplete, onError, onCancel]);
+    }, [jobId, progress?.status, stopPolling]);
 
     // Handle cancel
     const handleCancel = async () => {
@@ -195,7 +215,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
         setIsCancelling(true);
         try {
             await cancelEmbeddingJob(jobId);
-            onCancel?.();
+            onCancelRef.current?.();
         } catch (e: any) {
             setError(e.message || 'Failed to cancel job');
         } finally {
@@ -205,6 +225,15 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
     // Initialize connection
     useEffect(() => {
+        // If we have a final state, stop everything
+        if (progress && isFinalState(progress.status)) {
+            stopPolling();
+            if (wsRef.current) {
+                wsRef.current.close();
+            }
+            return;
+        }
+
         const wsConnected = connectWebSocket();
         if (!wsConnected) {
             startPolling();
@@ -214,11 +243,9 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             if (wsRef.current) {
                 wsRef.current.close();
             }
-            if (pollingRef.current) {
-                clearInterval(pollingRef.current);
-            }
+            stopPolling();
         };
-    }, [connectWebSocket, startPolling]);
+    }, [connectWebSocket, startPolling, stopPolling, progress?.status]);
 
     // Get current phase index for phase indicators
     const getCurrentPhaseIndex = (status: EmbeddingJobStatus): number => {
@@ -247,6 +274,11 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     const isComplete = progress.status === 'COMPLETED';
     const isFailed = progress.status === 'FAILED';
     const currentPhaseIndex = getCurrentPhaseIndex(progress.status);
+
+    // Fix display for completed state
+    const displayPercentage = isComplete ? 100 : progress.progress_percentage;
+    const displayProcessed = isComplete ? progress.total_documents : progress.processed_documents;
+    const displayBatch = isComplete ? progress.total_batches : progress.current_batch;
 
     return (
         <div className={`embedding-progress embedding-progress--${progress.status.toLowerCase()}`}>
@@ -277,12 +309,12 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                 <div
                     className="embedding-progress__bar"
                     style={{
-                        width: `${progress.progress_percentage}%`,
+                        width: `${displayPercentage}%`,
                         backgroundColor: STATUS_COLORS[progress.status]
                     }}
                 ></div>
                 <div className="embedding-progress__percentage">
-                    {progress.progress_percentage.toFixed(1)}%
+                    {displayPercentage.toFixed(1)}%
                 </div>
             </div>
 
@@ -291,13 +323,13 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                 <div className="embedding-progress__stat">
                     <div className="embedding-progress__stat-label">Documents</div>
                     <div className="embedding-progress__stat-value">
-                        {progress.processed_documents.toLocaleString()} / {progress.total_documents.toLocaleString()}
+                        {displayProcessed.toLocaleString()} / {progress.total_documents.toLocaleString()}
                     </div>
                 </div>
                 <div className="embedding-progress__stat">
                     <div className="embedding-progress__stat-label">Batch</div>
                     <div className="embedding-progress__stat-value">
-                        {progress.current_batch} / {progress.total_batches}
+                        {displayBatch} / {progress.total_batches}
                     </div>
                 </div>
                 <div className="embedding-progress__stat">
@@ -334,8 +366,8 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                     <div
                         key={phase}
                         className={`embedding-progress__phase-step ${index < currentPhaseIndex ? 'embedding-progress__phase-step--completed' :
-                                index === currentPhaseIndex ? 'embedding-progress__phase-step--active' :
-                                    'embedding-progress__phase-step--pending'
+                            index === currentPhaseIndex ? 'embedding-progress__phase-step--active' :
+                                'embedding-progress__phase-step--pending'
                             }`}
                     >
                         <div className="embedding-progress__phase-icon">
@@ -363,13 +395,13 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             {/* Completion message */}
             {isComplete && (
                 <div className="embedding-progress__complete">
-                    ✅ Embedding generation completed successfully!
+                    Embedding generation completed successfully!
                 </div>
             )}
 
             {isFailed && (
                 <div className="embedding-progress__failed">
-                    ❌ Embedding generation failed. Check the errors above.
+                    Embedding generation failed. Check the errors above.
                 </div>
             )}
         </div>

@@ -167,8 +167,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
         
         # Update job with accurate document count
         total_docs = len(documents)
-        # We can update total_documents in the job record here if needed
-        # But for now, we just proceed. Ideally we'd update the DB record.
+        job_service._update_job(job_id, total_documents=total_docs)
         
         # Transition to embedding phase
         job_service.transition_to_embedding(job_id)

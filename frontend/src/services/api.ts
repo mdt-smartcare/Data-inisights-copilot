@@ -201,6 +201,7 @@ export interface DbConnection {
   uri: string;
   engine_type: string;
   created_at: string;
+  pool_config?: string;
 }
 
 export const getConnections = async (): Promise<DbConnection[]> => {

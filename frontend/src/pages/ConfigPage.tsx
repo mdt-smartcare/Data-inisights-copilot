@@ -238,11 +238,12 @@ const ConfigPage: React.FC = () => {
     };
 
     const handleStartEmbedding = async () => {
-        if (!activeConfig?.id) return;
+        const configId = activeConfig?.id || activeConfig?.prompt_id;
+        if (!configId) return;
 
         try {
             const result = await startEmbeddingJob({
-                config_id: activeConfig.id,
+                config_id: configId,
                 batch_size: 50,
                 max_concurrent: 5
             });
@@ -580,14 +581,14 @@ const ConfigPage: React.FC = () => {
                                             {embeddingJobId ? (
                                                 <EmbeddingProgress
                                                     jobId={embeddingJobId}
-                                                    onComplete={() => {
+                                                    onComplete={React.useCallback(() => {
                                                         showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
-                                                    }}
-                                                    onError={(err) => showError('Embedding Failed', err)}
-                                                    onCancel={() => {
+                                                    }, [showSuccess])}
+                                                    onError={React.useCallback((err: string) => showError('Embedding Failed', err), [showError])}
+                                                    onCancel={React.useCallback(() => {
                                                         showError('Job Cancelled', 'Embedding generation cancelled');
                                                         setEmbeddingJobId(null);
-                                                    }}
+                                                    }, [showError])}
                                                 />
                                             ) : (
                                                 <div className="bg-white p-6 rounded-lg border border-blue-100 shadow-sm flex items-center justify-between">
