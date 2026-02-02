@@ -1,34 +1,37 @@
 import pytest
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-# Mock SQLService to avoid real database connections during tests
-# MUST HAPPEN BEFORE ANY BACKEND IMPORTS
-mock_sql_service = MagicMock()
-mock_sql_service.get_schema_info_for_connection.return_value = {"tables": [], "details": {}}
-
-# Use patch to globally replace get_sql_service wherever it is imported
-# This handles calls inside constructors like AgentService and ConfigService
-patcher = patch("backend.services.sql_service.get_sql_service", return_value=mock_sql_service)
-patcher.start()
-
-# Set test environment variables before importing app
+# Set test environment variables FIRST before any imports
 os.environ["OPENAI_API_KEY"] = "test-key-123"
 os.environ["SECRET_KEY"] = "test-secret-key-minimum-32-chars-long-for-jwt-signing"
 os.environ["DEBUG"] = "true"
 
-from fastapi.testclient import TestClient
-from typing import Generator
-from backend.app import app
-from backend.config import get_settings
-from backend.services.sql_service import get_sql_service
+# Mock SQL service for tests that need it
+mock_sql_service = MagicMock()
+mock_sql_service.get_schema_info_for_connection.return_value = {"tables": [], "details": {}}
 
-# Also use dependency_overrides for extra safety in FastAPI routes
-app.dependency_overrides[get_sql_service] = lambda: mock_sql_service
+# Import after env vars are set
+from typing import Generator
+
+# Lazy imports to avoid circular import issues
+_app = None
+_test_client = None
+
+def get_test_app():
+    """Lazy load the FastAPI app."""
+    global _app
+    if _app is None:
+        from backend.app import app
+        from backend.services.sql_service import get_sql_service
+        app.dependency_overrides[get_sql_service] = lambda: mock_sql_service
+        _app = app
+    return _app
 
 @pytest.fixture(scope="session")
 def test_settings():
     """Fixture to provide test settings."""
+    from backend.config import get_settings
     return get_settings()
 
 
@@ -38,12 +41,14 @@ def client() -> Generator:
     Fixture to provide FastAPI test client.
     Uses module scope to reuse client across tests in same module.
     """
+    from fastapi.testclient import TestClient
+    app = get_test_app()
     with TestClient(app) as test_client:
         yield test_client
 
 
 @pytest.fixture(scope="module")
-def auth_token(client: TestClient) -> str:
+def auth_token(client) -> str:
     """
     Fixture to provide valid JWT token for authenticated requests.
     Logs in with default admin credentials.
