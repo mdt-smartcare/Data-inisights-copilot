@@ -2,6 +2,7 @@
 Follow-Up Question Generation Service.
 Generates context-aware follow-up questions based on response content.
 """
+import asyncio
 from typing import List
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,6 +12,10 @@ from pydantic import BaseModel, Field
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Timeout for follow-up generation (seconds)
+# Allow enough time for context-aware generation, but prevent blocking
+FOLLOWUP_TIMEOUT_SECONDS = 10
 
 
 class FollowUpQuestions(BaseModel):
@@ -73,7 +78,7 @@ System Response: {system_response}
         system_response: str
     ) -> List[str]:
         """
-        Generate 3 context-aware follow-up questions.
+        Generate 3 context-aware follow-up questions with timeout protection.
         
         Args:
             original_question: The user's original query
@@ -83,29 +88,45 @@ System Response: {system_response}
             List of 3 follow-up question strings
         """
         try:
-            # Build and execute the chain
-            chain = self.prompt | self.llm | self.parser
-            
-            result = await chain.ainvoke({
-                "original_question": original_question,
-                "system_response": system_response,
-                "format_instructions": self.parser.get_format_instructions()
-            })
-            
-            questions = result.get("questions", [])
-            
-            # Validate we got exactly 3 questions
-            if len(questions) != 3:
-                logger.warning(
-                    f"Expected 3 questions, got {len(questions)}. Using fallback."
-                )
-                return self.FALLBACK_QUESTIONS
-            
-            logger.debug(f"Generated follow-up questions: {questions}")
-            return questions
-            
+            # Use asyncio.wait_for to enforce timeout
+            return await asyncio.wait_for(
+                self._generate_followups_internal(original_question, system_response),
+                timeout=FOLLOWUP_TIMEOUT_SECONDS
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Follow-up generation timed out after {FOLLOWUP_TIMEOUT_SECONDS}s. Using fallback."
+            )
+            return self.FALLBACK_QUESTIONS
         except Exception as e:
             logger.warning(
                 f"Failed to generate follow-up questions: {e}. Using fallback."
             )
             return self.FALLBACK_QUESTIONS
+    
+    async def _generate_followups_internal(
+        self, 
+        original_question: str, 
+        system_response: str
+    ) -> List[str]:
+        """Internal method that performs the actual LLM call."""
+        # Build and execute the chain
+        chain = self.prompt | self.llm | self.parser
+        
+        result = await chain.ainvoke({
+            "original_question": original_question,
+            "system_response": system_response,
+            "format_instructions": self.parser.get_format_instructions()
+        })
+        
+        questions = result.get("questions", [])
+        
+        # Validate we got exactly 3 questions
+        if len(questions) != 3:
+            logger.warning(
+                f"Expected 3 questions, got {len(questions)}. Using fallback."
+            )
+            return self.FALLBACK_QUESTIONS
+        
+        logger.debug(f"Generated follow-up questions: {questions}")
+        return questions
