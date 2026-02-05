@@ -173,8 +173,8 @@ Use this to search unstructured text, notes, and semantic descriptions.
             verbose=settings.debug,
             handle_parsing_errors=True,
             return_intermediate_steps=True,
-            max_iterations=3,  # Limit to 3 iterations to prevent long-running loops
-            max_execution_time=30,  # Maximum 30 seconds for agent execution
+            max_iterations=5,  # Allow enough iterations for multi-tool queries (age + gender breakdown)
+            max_execution_time=60,  # Maximum 60 seconds for agent execution
         )
         
         self.agent_with_history = RunnableWithMessageHistory(
