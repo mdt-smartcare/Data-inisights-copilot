@@ -29,7 +29,7 @@ export interface Message {
 export interface ChartData {
   type: 'line' | 'bar' | 'pie' | 'area';  // Chart type
   title?: string;                          // Optional chart title
-  data: any[];                             // Chart data points
+  data: any[] | { labels?: string[]; values?: number[] };  // Chart data points (array or labels/values format)
   xKey?: string;                           // Key for x-axis data
   yKey?: string;                           // Key for y-axis data
   colors?: string[];                       // Optional custom color scheme

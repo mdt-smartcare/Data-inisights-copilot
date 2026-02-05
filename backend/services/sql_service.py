@@ -23,22 +23,65 @@ settings = get_settings()
 logger = get_logger(__name__)
 
 
+def _get_active_database_url() -> str:
+    """
+    Get the database URL from the active published config.
+    Falls back to settings.database_url if no active config or connection.
+    """
+    try:
+        from backend.sqliteDb.db import get_db_service
+        db_service = get_db_service()
+        
+        # Get active config
+        active_config = db_service.get_active_config()
+        if active_config and active_config.get('connection_id'):
+            connection_id = active_config['connection_id']
+            connection = db_service.get_db_connection_by_id(connection_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection from active config: {connection.get('name')} (ID: {connection_id})")
+                return connection['uri']
+        
+        logger.info("No active config connection found, using default database URL")
+        return settings.database_url
+        
+    except Exception as e:
+        logger.warning(f"Failed to get active database URL: {e}. Using default.")
+        return settings.database_url
+
 
 class SQLService:
     """Service for SQL database operations."""
     
-    def __init__(self):
-        logger.info(f"Connecting to database at {settings.database_url}")
+    def __init__(self, database_url: Optional[str] = None):
+        # Use provided URL, or get from active config, or fall back to settings
+        if database_url:
+            self._database_url = database_url
+        else:
+            self._database_url = _get_active_database_url()
+            
+        logger.info(f"Connecting to database at {self._database_url}")
         
         try:
             # Initialize critique service
             self.critique_service = get_critique_service()
 
+            # Check if patient_tracker exists to determine if we should ignore demo 'patient' table
+            # First, create a temporary connection to check tables
+            temp_db = SQLDatabase.from_uri(self._database_url, view_support=True)
+            all_tables = temp_db.get_usable_table_names()
+            
+            # Determine tables to ignore (demo tables that shouldn't be used)
+            ignore_tables = []
+            if 'patient_tracker' in all_tables and 'patient' in all_tables:
+                ignore_tables.append('patient')
+                logger.info("Will ignore demo 'patient' table - using 'patient_tracker' for patient data")
+
             # Initialize database connection with dynamic table discovery
             # No hardcoded view names - uses whatever tables/views exist in the database
             self.db = SQLDatabase.from_uri(
-                settings.database_url,
-                view_support=True
+                self._database_url,
+                view_support=True,
+                ignore_tables=ignore_tables if ignore_tables else None
             )
             logger.info("Database connection established with view support")
             
@@ -73,7 +116,12 @@ class SQLService:
             logger.error(f"Failed to initialize SQL service: {e}", exc_info=True)
             raise
     
-
+    def reinitialize(self, database_url: Optional[str] = None):
+        """
+        Reinitialize the SQLService with a new database connection.
+        """
+        logger.info("Reinitializing SQLService with new database connection")
+        self.__init__(database_url=database_url)
 
     def _cache_schema(self):
         try:
@@ -82,6 +130,13 @@ class SQLService:
             # Use all discovered tables without domain-specific filtering
             # Schema relevance is now determined dynamically by the LLM
             self.relevant_tables = list(all_tables)
+            
+            # IMPORTANT: Exclude the demo 'patient' table if patient_tracker exists
+            # The 'patient' table is a simple demo table with only 3 rows
+            # patient_tracker is the real patient data table with actual data
+            if 'patient_tracker' in self.relevant_tables and 'patient' in self.relevant_tables:
+                self.relevant_tables.remove('patient')
+                logger.info("Excluded demo 'patient' table from schema - using 'patient_tracker' for patient data")
             
             base_schema = self.db.get_table_info(table_names=self.relevant_tables)
             
@@ -121,6 +176,12 @@ class SQLService:
                 logger.info("No specific tables matched in question. Using full cached schema.")
                 return self.cached_schema
             
+            # IMPORTANT: Exclude the demo 'patient' table if patient_tracker exists
+            # patient_tracker is the real patient data table
+            if 'patient_tracker' in relevant_tables and 'patient' in relevant_tables:
+                relevant_tables.remove('patient')
+                logger.info("Removed demo 'patient' table - using 'patient_tracker' instead")
+            
             relevant_tables = list(dict.fromkeys(relevant_tables))
             logger.info(f"Selected relevant tables for query: {', '.join(relevant_tables)}")
             
@@ -135,7 +196,58 @@ class SQLService:
             logger.warning(f"Failed to get relevant schema: {e}. Falling back to full schema.")
             return self.cached_schema
 
-
+    def _get_active_system_prompt_rules(self) -> str:
+        """
+        Fetch active system prompt rules for domain-specific SQL generation.
+        Extracts key rules from the published system prompt.
+        """
+        try:
+            from backend.sqliteDb.db import get_db_service
+            db_service = get_db_service()
+            
+            # Get the active system prompt
+            prompt_text = db_service.get_latest_active_prompt()
+            
+            if not prompt_text:
+                logger.warning("No active system prompt found")
+                return ""
+            
+            # Extract important rules section from the prompt
+            # Look for TABLE CLARIFICATIONS or RULES sections
+            rules_section = ""
+            
+            # Extract IMPORTANT TABLE CLARIFICATIONS if present
+            if "IMPORTANT TABLE CLARIFICATIONS:" in prompt_text:
+                start = prompt_text.find("IMPORTANT TABLE CLARIFICATIONS:")
+                end = prompt_text.find("RULES FOR SQL GENERATION:", start)
+                if end == -1:
+                    end = len(prompt_text)
+                rules_section += prompt_text[start:end].strip() + "\n\n"
+            
+            # Extract RULES FOR SQL GENERATION if present
+            if "RULES FOR SQL GENERATION:" in prompt_text:
+                start = prompt_text.find("RULES FOR SQL GENERATION:")
+                # Find next major section or end of prompt
+                end = len(prompt_text)
+                rules_section += prompt_text[start:end].strip()
+            
+            # If no specific sections found, look for KEY TABLES section
+            if not rules_section and "KEY TABLES AND COLUMNS:" in prompt_text:
+                start = prompt_text.find("KEY TABLES AND COLUMNS:")
+                end = prompt_text.find("RULES FOR SQL", start)
+                if end == -1:
+                    end = min(start + 2000, len(prompt_text))  # Limit to 2000 chars
+                rules_section = prompt_text[start:end].strip()
+            
+            if rules_section:
+                logger.info(f"Loaded {len(rules_section)} chars of system prompt rules for SQL generation")
+                return f"DOMAIN-SPECIFIC RULES FROM SYSTEM PROMPT:\n{rules_section}"
+            
+            return ""
+            
+        except Exception as e:
+            logger.warning(f"Failed to fetch system prompt rules: {e}")
+            return ""
 
     def _is_simple_query(self, question: str) -> bool:
         question_lower = question.lower().strip()
@@ -235,7 +347,12 @@ class SQLService:
                 
                 relevant_schema = self._get_relevant_schema(question)
                 
+                # Fetch active system prompt for domain-specific rules
+                system_prompt_rules = self._get_active_system_prompt_rules()
+                
                 prompt = f"""You are a PostgreSQL expert. Generate ONLY a SQL query to answer the question.
+
+{system_prompt_rules}
 
 DATABASE SCHEMA:
 {relevant_schema}
@@ -246,6 +363,7 @@ IMPORTANT RULES:
 3. Study the sample rows to understand the data
 4. Identify primary and foreign key relationships from column names
 5. Use proper date filtering: WHERE date_column >= 'YYYY-MM-DD' AND date_column <= 'YYYY-MM-DD'
+6. ALWAYS filter by is_active = true AND is_deleted = false unless explicitly asked otherwise
 
 QUESTION: {question}
 
@@ -329,13 +447,39 @@ Return ONLY the corrected SQL query."""
             api_call_count += 1
             
             format_prompt = f"""Convert this database result into a clear, natural language answer.
+Also, generate a JSON chart specification if the data is suitable for visualization.
 
 SQL Query: {sql_query}
 Result: {result}
 
 Original question: {question}
 
-Provide a concise, natural language answer."""
+RESPONSE FORMAT:
+1. First, provide a concise natural language answer explaining the data.
+2. Then, if the data has categories/labels and numeric values (counts, percentages, etc.), 
+   append a JSON code block with chart data in this exact format:
+
+```json
+{{
+    "chart_json": {{
+        "title": "Descriptive Chart Title",
+        "type": "pie|bar|line",
+        "data": {{
+            "labels": ["Label1", "Label2"],
+            "values": [100, 200]
+        }}
+    }}
+}}
+```
+
+Chart type guidelines:
+- Use "pie" for: distributions, proportions, percentages (2-6 categories)
+- Use "bar" for: comparisons, counts by category, rankings
+- Use "line" for: trends over time
+
+If the data is not suitable for a chart (e.g., single value, text response), skip the JSON block.
+
+Response:"""
 
             formatted_response = self.llm.invoke(format_prompt)
             output = formatted_response.content.strip()
@@ -359,10 +503,17 @@ Provide a concise, natural language answer."""
             logger.warning("Query doesn't start with SELECT")
             return False
         
+        # Check for dangerous keywords as WHOLE WORDS only (not substrings)
+        # This prevents false positives like 'is_deleted' triggering on 'delete'
         dangerous_keywords = ['drop', 'delete', 'truncate', 'alter', 'create', 'insert', 'update', 'exec']
-        if any(keyword in sql_lower for keyword in dangerous_keywords):
-            logger.warning("Query contains dangerous keyword")
-            return False
+        for keyword in dangerous_keywords:
+            # Match keyword as a whole word using word boundaries
+            if re.search(rf'\b{keyword}\b', sql_lower):
+                # Exception: 'is_deleted' column is safe
+                if keyword == 'delete' and 'is_deleted' in sql_lower:
+                    continue
+                logger.warning(f"Query contains dangerous keyword: {keyword}")
+                return False
         
         if self.relevant_tables:
             has_known_table = any(table.lower() in sql_lower for table in self.relevant_tables)

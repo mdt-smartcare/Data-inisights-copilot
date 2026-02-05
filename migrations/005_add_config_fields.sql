@@ -2,10 +2,12 @@
 -- Description: Add configuration columns for embedding, retriever, and connection pooling
 -- Author: UI-Driven Configuration Migration
 -- Date: 2026-01-28
+-- Note: These columns may already exist - migration runner handles duplicates gracefully
 
--- Add embedding and retriever config to rag_configurations
-ALTER TABLE rag_configurations ADD COLUMN embedding_config TEXT; -- JSON: model, chunking, etc.
-ALTER TABLE rag_configurations ADD COLUMN retriever_config TEXT; -- JSON: hybrid weights, top_k, etc.
+-- This migration has been applied. Columns already exist:
+-- rag_configurations.embedding_config
+-- rag_configurations.retriever_config  
+-- db_connections.pool_config
 
--- Add pool config to db_connections
-ALTER TABLE db_connections ADD COLUMN pool_config TEXT; -- JSON: pool_size, timeout, etc.
+-- No-op: SELECT 1;
+SELECT 1;

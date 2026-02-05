@@ -7,6 +7,7 @@ from backend.models.config import PromptGenerationRequest, PromptPublishRequest,
 from backend.sqliteDb.db import get_db_service, DatabaseService
 from backend.core.logging import get_logger
 from backend.core.permissions import require_editor, require_super_admin, get_current_user, User
+from backend.services.sql_service import get_sql_service
 
 logger = get_logger(__name__)
 
@@ -50,6 +51,17 @@ async def publish_prompt(
             reasoning=request.reasoning,
             example_questions=request.example_questions
         )
+        
+        # Reinitialize SQL service to use the new connection if changed
+        if request.connection_id:
+            logger.info(f"Config published with connection_id={request.connection_id}, reinitializing SQL service")
+            try:
+                sql_service = get_sql_service()
+                sql_service.reinitialize()
+                logger.info("SQL service reinitialized with new database connection")
+            except Exception as e:
+                logger.warning(f"Failed to reinitialize SQL service: {e}. Will use new connection on next restart.")
+        
         return result
     except Exception as e:
         logger.error(f"Error publishing prompt: {e}")

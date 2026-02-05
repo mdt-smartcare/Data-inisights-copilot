@@ -32,13 +32,70 @@ logger = get_logger(__name__)
 
 
 
-DEFAULT_SYSTEM_PROMPT = """You are a helpful Data Insights Assistant.
+DEFAULT_SYSTEM_PROMPT = """You are an advanced Data Intelligence Agent with visualization capabilities.
 You have access to a SQL database and a Vector Store for unstructured documents.
 
-Your primary source of truth is the Data Dictionary provided in the context.
-- If the user asks for a metric, check the database schema and dictionary definitions.
-- If you cannot answer based on the available data, state that clearly.
-- Do not assume any specific medical or business domain unless explicitly defined in the table schema.
+**YOUR DECISION MATRIX:**
+
+1. **Use `sql_query_tool` (Structured Data) when:**
+   - The user asks for statistics: Counts, averages, sums, or percentages
+   - The user filters by demographics: Age groups, gender, location
+   - Questions about "how many", "total", "distribution", "breakdown"
+
+2. **Use `rag_document_search_tool` (Unstructured Data) when:**
+   - The user asks about qualitative factors or descriptions
+   - You need to find specific narratives or documentation
+
+**RESPONSE FORMAT INSTRUCTIONS:**
+
+1. **Direct Answer:** Start with the key numbers or findings clearly stated.
+
+2. **Interpretation:** Briefly explain what the data means.
+
+3. **IMPORTANT - Chart Generation:** For ANY query that returns categorical or numerical data suitable for visualization (counts, distributions, comparisons, breakdowns), you MUST include a JSON block at the end of your response with chart data.
+
+**REQUIRED JSON OUTPUT FORMAT:**
+When data can be visualized, ALWAYS append this JSON block at the end:
+
+```json
+{
+    "chart_json": {
+        "title": "Descriptive Chart Title",
+        "type": "bar|pie|line",
+        "data": {
+            "labels": ["Category1", "Category2", "Category3"],
+            "values": [100, 200, 150]
+        }
+    }
+}
+```
+
+**Chart Type Guidelines:**
+- Use "pie" for: gender distribution, percentage breakdowns, proportions (2-6 categories)
+- Use "bar" for: counts by category, comparisons, rankings, age groups (any number of categories)
+- Use "line" for: trends over time, monthly/yearly data
+
+**Example Response Format:**
+Here are the results:
+- Male: 5,000 patients (60%)
+- Female: 3,322 patients (40%)
+
+The data shows a higher proportion of male patients in the system.
+
+```json
+{
+    "chart_json": {
+        "title": "Patient Gender Distribution",
+        "type": "pie",
+        "data": {
+            "labels": ["Male", "Female"],
+            "values": [5000, 3322]
+        }
+    }
+}
+```
+
+REMEMBER: Always include the chart_json block when presenting numerical/categorical data!
 """
 class AgentService:
     """Main RAG agent service for processing user queries."""
@@ -382,29 +439,35 @@ Use this to search unstructured text, notes, and semantic descriptions.
         chart_data = None
         suggestions = []
         
-        # Try to extract JSON block
-        json_match = re.search(r'```json\s*({.*?})\s*```', response, re.DOTALL)
+        # Try to extract JSON block - handle nested braces properly
+        # Look for ```json ... ``` block
+        json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
         if json_match:
+            json_str = json_match.group(1).strip()
             try:
-                data = json.loads(json_match.group(1))
+                data = json.loads(json_str)
                 
                 # Extract chart data
                 if chart_json := data.get("chart_json"):
                     chart_data = ChartData(**chart_json)
+                    logger.info(f"Successfully parsed chart data: {chart_json.get('title', 'Untitled')}")
                 
                 # Extract suggestions
                 if questions := data.get("suggested_questions"):
                     suggestions = questions[:3]  # Limit to 3
                     
-            except (json.JSONDecodeError, ValueError) as e:
+            except json.JSONDecodeError as e:
                 logger.warning(f"Failed to parse agent JSON output: {e}")
+                logger.debug(f"JSON string was: {json_str[:200]}...")
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Failed to create ChartData from JSON: {e}")
         
         return chart_data, suggestions
     
     def _clean_answer(self, response: str) -> str:
         """Remove JSON block from answer text."""
-        # Remove JSON code block
-        cleaned = re.sub(r'```json\s*{.*?}\s*```', '', response, flags=re.DOTALL)
+        # Remove JSON code block - use [\s\S]*? to match across newlines including nested braces
+        cleaned = re.sub(r'```json\s*[\s\S]*?\s*```', '', response)
         return cleaned.strip()
     
     def _format_reasoning(self, intermediate_steps: List[Tuple]) -> List[ReasoningStep]:

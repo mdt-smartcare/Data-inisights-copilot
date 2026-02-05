@@ -128,7 +128,7 @@ export default function ChatPage() {
         onSuggestedQuestionClick={handleSendMessage}
         onFeedback={handleFeedback}
         emptyStateProps={{
-          title: 'Ask me anything about FHIR healthcare data!',
+          title: 'Ask me anything about healthcare data!',
           subtitle: 'Start a conversation by typing a message below',
           suggestions: suggestions
         }}

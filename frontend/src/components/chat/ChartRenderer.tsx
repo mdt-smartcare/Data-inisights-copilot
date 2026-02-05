@@ -18,7 +18,11 @@ const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'
 export default function ChartRenderer({ chartData }: ChartRendererProps) {
   const { type, data: rawData, xKey, yKey, title, colors = COLORS } = chartData;
 
+  // Debug logging
+  console.log('ChartRenderer received:', { type, title, rawData });
+
   if (!rawData) {
+    console.warn('ChartRenderer: No rawData provided');
     return <div className="text-sm text-gray-500 italic">No data available for chart</div>;
   }
 
@@ -28,23 +32,27 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
   if (Array.isArray(rawData)) {
     // Already in array format
     data = rawData;
+    console.log('ChartRenderer: Using array format data', data);
   } else if (rawData.labels && rawData.values) {
     // Transform from backend format: {labels: [...], values: [...]}
     // to Recharts format: [{name: ..., value: ...}, ...]
     data = rawData.labels.map((label: string, index: number) => {
       const value = rawData.values![index];
-      // Convert string values to 0 (e.g., "Other" -> 0)
-      const numericValue = typeof value === 'number' ? value : 0;
+      // Keep numeric values, convert non-numeric to 0
+      const numericValue = typeof value === 'number' ? value : (parseFloat(value) || 0);
       return {
         name: label,
         value: numericValue
       };
-    }).filter(item => item.value > 0); // Filter out zero/invalid values
+    });
+    console.log('ChartRenderer: Transformed labels/values to array format', data);
   } else {
+    console.warn('ChartRenderer: Invalid data format', rawData);
     return <div className="text-sm text-gray-500 italic">Invalid chart data format</div>;
   }
 
   if (data.length === 0) {
+    console.warn('ChartRenderer: No valid data after transformation');
     return <div className="text-sm text-gray-500 italic">No valid data available for chart</div>;
   }
 
