@@ -28,5 +28,8 @@ dist-ssr
 *.sln
 *.sw?
 
+# Test coverage
+coverage/
+
 # Vite cache
 .vite/
