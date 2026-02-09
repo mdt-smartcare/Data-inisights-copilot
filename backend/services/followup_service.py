@@ -60,22 +60,12 @@ Generate exactly 3 follow-up questions based on the system's response content th
 2. Use simple, natural language for non-technical users
 3. Cover different analytical angles: comparison, drill-down, causation, trends, or actions
 4. Help users discover related insights or explore deeper
-5. **IMPORTANT - Chart/Visualization Focus:** When the response contains numerical or categorical data 
-   (counts, distributions, breakdowns, percentages), at least ONE question should suggest exploring 
-   the data through visualization or alternative chart types. Examples:
-   - "Can you show this as a [bar/pie/line] chart?"
-   - "How would this look broken down by [another dimension]?"
-   - "Can you visualize the trend over time?"
-   - "What does the distribution look like across [categories]?"
 
 Focus on the RESPONSE content, not just the original question. Extract specific data points, 
 metrics, or findings mentioned in the response and build questions around them.
 
-**Chart-Related Question Guidelines:**
-- If response shows counts/distributions → suggest visualization by category
-- If response shows percentages/proportions → suggest pie chart or comparison
-- If response mentions time periods → suggest trend visualization
-- If response compares groups → suggest side-by-side chart comparison
+NOTE: Do NOT suggest creating charts or visualizations, as these are automatically generated 
+when appropriate. Focus on exploring the data from different analytical perspectives.
 
 Original Question: {original_question}
 System Response: {system_response}
