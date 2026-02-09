@@ -121,7 +121,8 @@ class BGEProvider(EmbeddingProvider):
         model_path: str = "./models/bge-m3",
         model_name: str = "BAAI/bge-m3",
         batch_size: int = 128,
-        normalize: bool = True
+        normalize: bool = True,
+        **kwargs: Any
     ):
         """
         Initialize BGE provider.
@@ -131,6 +132,7 @@ class BGEProvider(EmbeddingProvider):
             model_name: HuggingFace model name for download fallback
             batch_size: Batch size for document embedding
             normalize: Whether to L2-normalize embeddings
+            **kwargs: Additional configuration (ignored)
         """
         self._model_path = model_path
         self._model_name = model_name
@@ -236,7 +238,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         self,
         model_name: str = "text-embedding-3-small",
         api_key: Optional[str] = None,
-        batch_size: int = 100
+        batch_size: int = 100,
+        **kwargs: Any
     ):
         """
         Initialize OpenAI provider.
@@ -245,6 +248,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             model_name: OpenAI embedding model name
             api_key: Optional API key (falls back to env var)
             batch_size: Batch size for document embedding
+            **kwargs: Additional configuration (ignored)
         """
         self._model_name = model_name
         self._api_key = api_key
@@ -338,7 +342,8 @@ class SentenceTransformerProvider(EmbeddingProvider):
         model_name: str = "all-MiniLM-L6-v2",
         batch_size: int = 128,
         normalize: bool = True,
-        models_dir: Optional[str] = None
+        models_dir: Optional[str] = None,
+        **kwargs: Any
     ):
         """
         Initialize SentenceTransformer provider.
@@ -348,6 +353,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
             batch_size: Batch size for document embedding
             normalize: Whether to L2-normalize embeddings
             models_dir: Directory to store models (default: ./models)
+            **kwargs: Additional configuration (ignored)
         """
         self._model_name = model_name
         self._batch_size = batch_size

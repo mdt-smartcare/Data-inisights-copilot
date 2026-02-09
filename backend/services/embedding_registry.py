@@ -151,7 +151,8 @@ class EmbeddingRegistry:
         self,
         provider_type: str,
         config: Optional[Dict[str, Any]] = None,
-        persist: bool = True
+        persist: bool = True,
+        updated_by: str = "system"
     ) -> Dict[str, Any]:
         """
         Switch to a different embedding provider (hot-swap).
@@ -160,6 +161,7 @@ class EmbeddingRegistry:
             provider_type: One of the registered provider types
             config: Optional provider-specific configuration
             persist: Whether to persist the change to settings DB
+            updated_by: Username making the change
             
         Returns:
             Dict with success status and provider info
@@ -187,12 +189,12 @@ class EmbeddingRegistry:
                 settings_svc = get_settings_service()
                 
                 # Map to settings format
-                settings_svc.update_setting("embedding", "provider", provider_type)
-                settings_svc.update_setting("embedding", "model_name", default_cfg.get("model_name", ""))
+                settings_svc.update_setting("embedding", "provider", provider_type, updated_by)
+                settings_svc.update_setting("embedding", "model_name", default_cfg.get("model_name", ""), updated_by)
                 if "model_path" in default_cfg:
-                    settings_svc.update_setting("embedding", "model_path", default_cfg.get("model_path", ""))
+                    settings_svc.update_setting("embedding", "model_path", default_cfg.get("model_path", ""), updated_by)
                 if "batch_size" in default_cfg:
-                    settings_svc.update_setting("embedding", "batch_size", default_cfg.get("batch_size", 128))
+                    settings_svc.update_setting("embedding", "batch_size", default_cfg.get("batch_size", 128), updated_by)
                     
                 logger.info("Provider settings persisted to database")
             except Exception as e:
@@ -215,6 +217,29 @@ class EmbeddingRegistry:
             return self._active_provider.get_config()
         return {}
     
+    def _list_local_models(self) -> List[str]:
+        """List models available in the localized models directory."""
+        try:
+            from pathlib import Path
+            backend_root = Path(__file__).parent.parent
+            models_dir = backend_root / "models"
+            
+            if not models_dir.exists():
+                return []
+                
+            # List all subdirectories that look like models
+            # Only include directories that have a config.json (indicates a model)
+            models = []
+            for item in models_dir.iterdir():
+                if item.is_dir() and not item.name.startswith("__"):
+                    if (item / "config.json").exists():
+                        models.append(item.name)
+            
+            return sorted(models)
+        except Exception as e:
+            logger.warning(f"Failed to list local models: {e}")
+            return []
+
     def list_providers(self) -> List[Dict[str, Any]]:
         """
         List all available provider types with their metadata.
@@ -223,15 +248,33 @@ class EmbeddingRegistry:
             List of provider info dicts
         """
         result = []
+        local_models = self._list_local_models()
+        
         for name, info in self.PROVIDER_CATALOG.items():
-            result.append({
+            provider_info = {
                 "name": name,
                 "display_name": info["display_name"],
                 "description": info["description"],
                 "requires_api_key": info["requires_api_key"],
                 "is_active": name == self._active_provider_type,
                 "default_config": info["default_config"]
-            })
+            }
+            
+            # Attach available models
+            if name == "sentence-transformers":
+                provider_info["models"] = local_models
+            elif name == "openai":
+                provider_info["models"] = [
+                    "text-embedding-3-small", 
+                    "text-embedding-3-large", 
+                    "text-embedding-ada-002"
+                ]
+            elif name == "bge-m3":
+                provider_info["models"] = ["BAAI/bge-m3"]
+            else:
+                provider_info["models"] = []
+                
+            result.append(provider_info)
         return result
     
     def health_check(self) -> Dict[str, Any]:

@@ -2,9 +2,14 @@
 FastAPI application entrypoint for the RAG Chatbot Backend.
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+# Load environment variables manually for libraries that rely on os.environ (like OpenAI)
+load_dotenv(Path(__file__).parent / ".env")
 
 from backend.config import get_settings
 from backend.core.logging import setup_logging, get_logger

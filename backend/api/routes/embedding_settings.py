@@ -42,6 +42,7 @@ class ProviderInfo(BaseModel):
     requires_api_key: bool
     is_active: bool
     default_config: Dict[str, Any]
+    models: List[str] = []
 
 
 class HealthResponse(BaseModel):
@@ -139,7 +140,8 @@ async def update_embedding_config(
         result = registry.set_active_provider(
             config.provider,
             provider_config,
-            persist=True
+            persist=True,
+            updated_by=current_user.username
         )
         
         logger.info(f"Embedding provider switched to {config.provider} by {current_user.username}")
