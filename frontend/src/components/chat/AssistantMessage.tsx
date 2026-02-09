@@ -39,24 +39,30 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
-                h1: ({ node, ...props }) => <h1 className="text-base font-bold mt-2 mb-1" {...props} />,
-                h2: ({ node, ...props }) => <h2 className="text-sm font-bold mt-2 mb-1" {...props} />,
-                h3: ({ node, ...props }) => <h3 className="text-sm font-semibold mt-1.5 mb-0.5" {...props} />,
-                p: ({ node, ...props }) => <p className="my-1 leading-relaxed" {...props} />,
-                ul: ({ node, ...props }) => <ul className="list-disc list-inside my-1 space-y-0.5" {...props} />,
-                ol: ({ node, ...props }) => <ol className="list-decimal list-inside my-1 space-y-0.5" {...props} />,
-                li: ({ node, ...props }) => <li className="my-0.5" {...props} />,
+                h1: ({ node, ...props }) => <h1 className="text-base font-bold mt-4 mb-2 first:mt-0" {...props} />,
+                h2: ({ node, ...props }) => <h2 className="text-sm font-bold mt-3 mb-2" {...props} />,
+                h3: ({ node, ...props }) => <h3 className="text-sm font-semibold mt-2 mb-1" {...props} />,
+                p: ({ node, ...props }) => <p className="my-2 leading-relaxed text-gray-800" {...props} />,
+                ul: ({ node, ...props }) => <ul className="list-disc pl-5 my-2 space-y-1" {...props} />,
+                ol: ({ node, ...props }) => <ol className="list-decimal pl-5 my-2 space-y-1" {...props} />,
+                li: ({ node, ...props }) => <li className="pl-1 leading-relaxed" {...props} />,
+                strong: ({ node, ...props }) => <strong className="font-bold text-gray-900" {...props} />,
                 code: ({ node, className, children, ...props }) => {
                   const match = /language-(\w+)/.exec(className || '');
                   const isInline = !match;
                   return isInline ? (
-                    <code className="bg-gray-200 px-1 py-0.5 rounded text-xs font-mono" {...props}>
+                    <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono text-pink-600 border border-gray-200" {...props}>
                       {children}
                     </code>
                   ) : (
-                    <code className="block bg-gray-100 p-2 rounded my-1 text-xs font-mono overflow-x-auto" {...props}>
-                      {children}
-                    </code>
+                    <div className="relative group my-3">
+                      <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <span className="text-[10px] text-gray-400 font-mono">{match?.[1]}</span>
+                      </div>
+                      <code className="block bg-gray-900 text-gray-100 p-3 rounded-lg text-xs font-mono overflow-x-auto shadow-sm border border-gray-800" {...props}>
+                        {children}
+                      </code>
+                    </div>
                   );
                 },
                 pre: ({ node, ...props }) => <pre className="my-1" {...props} />,
