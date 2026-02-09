@@ -2,6 +2,7 @@
 Authentication routes for login, registration, and token management.
 """
 from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi.security import OAuth2PasswordRequestForm
 from datetime import timedelta
 
 from backend.config import get_settings
@@ -14,6 +15,62 @@ from backend.core.permissions import get_current_user
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 settings = get_settings()
 logger = get_logger(__name__)
+
+
+@router.post("/token", include_in_schema=True)
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: DatabaseService = Depends(get_db_service)
+):
+    """
+    OAuth2 compatible token login for Swagger UI.
+    
+    This endpoint follows the OAuth2 password flow spec:
+    - Accepts form data with username and password
+    - Returns access_token and token_type
+    
+    Use this endpoint in Swagger UI's Authorize dialog.
+    """
+    logger.info(f"OAuth2 token request for user: {form_data.username}")
+    
+    # Get user by username
+    user = db.get_user_by_username(form_data.username)
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Check if account is active
+    if not user.get('is_active'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is deactivated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Verify password
+    if not db.verify_password(form_data.password, user['password_hash']):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # Create access token
+    access_token = create_access_token(
+        data={"sub": form_data.username},
+        expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
+    )
+    
+    logger.info(f"OAuth2 token issued for user: {form_data.username}")
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
 
 
 @router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
