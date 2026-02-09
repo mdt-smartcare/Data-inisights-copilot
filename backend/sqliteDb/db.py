@@ -519,7 +519,7 @@ class DatabaseService:
         
         return [dict(row) for row in rows]
 
-    def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None, pool_config: Optional[str] = None) -> int:
+    def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None) -> int:
         """Add a new database connection.
         
         Args:
@@ -527,7 +527,6 @@ class DatabaseService:
             uri: Connection string (e.g., postgresql://user:pass@host/db)
             engine_type: Database type (postgresql, mysql, sqlite)
             created_by: User ID creating the connection
-            pool_config: JSON string of pool configuration
             
         Returns:
             The ID of the newly created connection
@@ -536,8 +535,8 @@ class DatabaseService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO db_connections (name, uri, engine_type, created_by, pool_config) VALUES (?, ?, ?, ?, ?)",
-                (name, uri, engine_type, created_by, pool_config)
+                "INSERT INTO db_connections (name, uri, engine_type, created_by) VALUES (?, ?, ?, ?)",
+                (name, uri, engine_type, created_by)
             )
             conn.commit()
             return cursor.lastrowid
@@ -550,7 +549,7 @@ class DatabaseService:
         """Get all saved database connections."""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, uri, engine_type, created_at, pool_config FROM db_connections ORDER BY created_at DESC")
+        cursor.execute("SELECT id, name, uri, engine_type, created_at FROM db_connections ORDER BY created_at DESC")
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -569,7 +568,7 @@ class DatabaseService:
         """Get a specific database connection by ID."""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, uri, engine_type, pool_config FROM db_connections WHERE id = ?", (connection_id,))
+        cursor.execute("SELECT id, name, uri, engine_type FROM db_connections WHERE id = ?", (connection_id,))
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
