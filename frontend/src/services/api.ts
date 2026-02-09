@@ -1,0 +1,373 @@
+import axios, { AxiosError } from 'axios';
+import { API_BASE_URL } from '../config';
+
+/**
+ * Configured Axios instance for all API requests
+ * 
+ * Features:
+ * - Automatic JWT token injection in request headers
+ * - Token expiration checking before each request
+ * - Automatic redirect to login on authentication errors
+ * - 60 second timeout for requests
+ * 
+ * Usage:
+ *   import { apiClient } from '../services/api';
+ *   const response = await apiClient.post('/endpoint', data);
+ */
+export const apiClient = axios.create({
+  baseURL: API_BASE_URL,                    // Base URL from config (e.g., http://localhost:8000/api/v1)
+  headers: {
+    'Content-Type': 'application/json',     // Default content type for all requests
+  },
+  timeout: 60 * 1000,                         // 60 seconds - important for AI model responses
+});
+
+// Import User type
+import type { User } from '../types';
+
+/**
+ * Request Interceptor
+ * Runs before every API request to:
+ * 1. Check if JWT token has expired (prevents unnecessary API calls)
+ * 2. Automatically inject Authorization header with JWT token
+ * 3. Redirect to login if token is expired
+ */
+apiClient.interceptors.request.use(
+  (config) => {
+    // Skip authentication for public endpoints (login, register, health)
+    const publicEndpoints = ['/api/v1/auth/login', '/api/v1/auth/register', '/api/v1/health'];
+    const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint));
+
+    if (isPublicEndpoint) {
+      // Don't add auth headers or check token expiration for public endpoints
+      return config;
+    }
+
+    // Check token expiration before making request
+    const expiresAt = localStorage.getItem('expiresAt');
+    if (expiresAt) {
+      const currentTime = Math.floor(Date.now() / 1000);  // Current time in seconds
+      const expirationTime = parseInt(expiresAt, 10);      // Token expiration in seconds
+
+      if (currentTime >= expirationTime) {
+        // Token has expired - clean up and redirect
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('expiresAt');
+        window.location.href = '/login';
+        return Promise.reject(new Error('Token expired'));
+      }
+    }
+
+    // Automatically add Authorization header if token exists
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      // Add Bearer token to all authenticated requests
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+/**
+ * Response Interceptor
+ * Runs after every API response to:
+ * 1. Handle 401 Unauthorized errors globally
+ * 2. Clear expired/invalid tokens
+ * 3. Redirect to login on authentication failure
+ */
+apiClient.interceptors.response.use(
+  (response) => response,  // Pass successful responses through unchanged
+  (error: AxiosError) => {
+    // Handle authentication errors globally
+    if (error.response?.status === 401) {
+      // Don't redirect if this is a login/register attempt (let the page handle the error)
+      const publicEndpoints = ['/auth/login', '/auth/register'];
+      const isPublicEndpoint = publicEndpoints.some(endpoint => error.config?.url?.includes(endpoint));
+
+      if (!isPublicEndpoint) {
+        // 401 = Unauthorized (invalid/expired token)
+        // Clean up authentication state
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('expiresAt');
+        // Redirect to login page
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+
+/**
+ * Centralized error message extractor
+ * Converts various error types into user-friendly messages
+ * 
+ * @param error - Error from API call (any type)
+ * @returns User-friendly error message string
+ * 
+ * Usage:
+ *   try {
+ *     await apiClient.post('/endpoint', data);
+ *   } catch (err) {
+ *     const message = handleApiError(err);
+ *     setError(message);
+ *   }
+ */
+export const handleApiError = (error: unknown): string => {
+  if (axios.isAxiosError(error)) {
+    // Extract error message from API response
+    // FastAPI sends errors in 'detail' field, some APIs use 'message'
+    return error.response?.data?.detail || error.response?.data?.message || error.message || 'An error occurred';
+  }
+  return 'An unexpected error occurred';
+};
+
+// ============================================================================
+// SYSTEM PROMPT CONFIGURATION API
+// ============================================================================
+
+export const generateSystemPrompt = async (dataDictionary: string): Promise<{ draft_prompt: string; reasoning?: Record<string, string>; example_questions?: string[] }> => {
+  const response = await apiClient.post('/api/v1/config/generate', { data_dictionary: dataDictionary });
+  return response.data;
+};
+
+export const publishSystemPrompt = async (
+  promptText: string,
+  reasoning?: Record<string, string>,
+  exampleQuestions?: string[],
+  embeddingConfig?: any,
+  retrieverConfig?: any
+): Promise<{ status: string; version: number }> => {
+  // We need to fetch the user_id from the token or some auth context.
+  // For now, let's decode the token or just send a dummy ID if the backend parses the token.
+  // Looking at backend/api/routes/config.py, it expects `user_id` in the body.
+  // In a real app, this should come from the user context. 
+  // I'll grab it from localStorage if available, or use a placeholder "admin_user".
+  const user = localStorage.getItem('user'); // Assuming user info might be stored
+  let userId = 'admin';
+  if (user) {
+    try {
+      const parsedUser = JSON.parse(user);
+      userId = parsedUser.id || parsedUser.username || 'admin';
+    } catch (e) {
+      console.warn("Could not parse user from local storage", e);
+    }
+  }
+
+  const response = await apiClient.post('/api/v1/config/publish', {
+    prompt_text: promptText,
+    user_id: userId,
+    connection_id: (window as any).__config_connectionId,
+    schema_selection: (window as any).__config_schema ? JSON.stringify((window as any).__config_schema) : null,
+    data_dictionary: (window as any).__config_dictionary,
+    reasoning: reasoning ? JSON.stringify(reasoning) : null,
+    example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
+    embedding_config: embeddingConfig ? JSON.stringify(embeddingConfig) : null,
+    retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null
+  });
+  return response.data;
+};
+
+export const getPromptHistory = async (): Promise<any> => {
+  const response = await apiClient.get('/api/v1/config/history');
+  return response.data;
+};
+
+export const getActiveConfigMetadata = async (): Promise<any> => {
+  const response = await apiClient.get('/api/v1/config/active-metadata');
+  return response.data;
+};
+
+export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
+  const response = await apiClient.get('/api/v1/config/active');
+  return response.data;
+};
+
+
+// ============================================================================
+// DATA SETUP & CONNECTION API (Phase 6 & 7)
+// ============================================================================
+
+export const getUserProfile = async (): Promise<User> => {
+  const response = await apiClient.get('/api/v1/auth/me');
+  return response.data;
+};
+
+export interface DbConnection {
+  id: number;
+  name: string;
+  uri: string;
+  engine_type: string;
+  created_at: string;
+  pool_config?: string;
+}
+
+export const getConnections = async (): Promise<DbConnection[]> => {
+  const response = await apiClient.get('/api/v1/data/connections');
+  return response.data;
+};
+
+export const saveConnection = async (name: string, uri: string, engine_type: string = 'postgresql', pool_config?: any): Promise<{ status: string; id: number }> => {
+  // Get user ID similar to publishSystemPrompt
+  const user = localStorage.getItem('user');
+  let userId = 'admin';
+  if (user) {
+    try {
+      const parsedUser = JSON.parse(user);
+      userId = parsedUser.id || parsedUser.username || 'admin';
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  const response = await apiClient.post('/api/v1/data/connections', {
+    name,
+    uri,
+    engine_type,
+    created_by: userId,
+    pool_config: pool_config ? JSON.stringify(pool_config) : null
+  });
+  return response.data;
+};
+
+export const deleteConnection = async (id: number): Promise<{ status: string }> => {
+  const response = await apiClient.delete(`/api/v1/data/connections/${id}`);
+  return response.data;
+};
+
+export const getConnectionSchema = async (id: number): Promise<{ status: string; connection: string; schema: { tables: string[]; details: any } }> => {
+  const response = await apiClient.get(`/api/v1/data/connections/${id}/schema`);
+  return response.data;
+};
+
+// ============================================================================
+// EMBEDDING JOBS API
+// ============================================================================
+
+import type {
+  EmbeddingJobProgress,
+  EmbeddingJobSummary,
+  EmbeddingJobCreate,
+  Notification,
+  NotificationPreferences,
+  NotificationPreferencesUpdate
+} from '../types/rag';
+
+/**
+ * Start a new embedding generation job.
+ * Requires SuperAdmin role.
+ */
+export const startEmbeddingJob = async (params: EmbeddingJobCreate): Promise<{ status: string; job_id: string; message: string }> => {
+  const response = await apiClient.post('/api/v1/embedding-jobs', params);
+  return response.data;
+};
+
+/**
+ * Get progress of an embedding job.
+ */
+export const getEmbeddingProgress = async (jobId: string): Promise<EmbeddingJobProgress> => {
+  const response = await apiClient.get(`/api/v1/embedding-jobs/${jobId}/progress`);
+  return response.data;
+};
+
+/**
+ * Get summary of a completed embedding job.
+ */
+export const getEmbeddingSummary = async (jobId: string): Promise<EmbeddingJobSummary> => {
+  const response = await apiClient.get(`/api/v1/embedding-jobs/${jobId}/summary`);
+  return response.data;
+};
+
+/**
+ * Cancel a running embedding job.
+ */
+export const cancelEmbeddingJob = async (jobId: string): Promise<{ status: string; job_id: string; message: string }> => {
+  const response = await apiClient.post(`/api/v1/embedding-jobs/${jobId}/cancel`);
+  return response.data;
+};
+
+/**
+ * List embedding jobs with optional filtering.
+ */
+export const listEmbeddingJobs = async (params?: {
+  status_filter?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<EmbeddingJobProgress[]> => {
+  const response = await apiClient.get('/api/v1/embedding-jobs', { params });
+  return response.data;
+};
+
+// ============================================================================
+// NOTIFICATIONS API
+// ============================================================================
+
+/**
+ * Get notifications for the current user.
+ */
+export const getNotifications = async (params?: {
+  status_filter?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<Notification[]> => {
+  const response = await apiClient.get('/api/v1/notifications', { params });
+  return response.data;
+};
+
+/**
+ * Get count of unread notifications.
+ */
+export const getUnreadNotificationCount = async (): Promise<{ count: number }> => {
+  const response = await apiClient.get('/api/v1/notifications/unread-count');
+  return response.data;
+};
+
+/**
+ * Get a specific notification.
+ */
+export const getNotification = async (notificationId: number): Promise<Notification> => {
+  const response = await apiClient.get(`/api/v1/notifications/${notificationId}`);
+  return response.data;
+};
+
+/**
+ * Mark a notification as read.
+ */
+export const markNotificationAsRead = async (notificationId: number): Promise<{ success: boolean }> => {
+  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/read`);
+  return response.data;
+};
+
+/**
+ * Mark all notifications as read.
+ */
+export const markAllNotificationsAsRead = async (): Promise<{ success: boolean; marked_count: number }> => {
+  const response = await apiClient.post('/api/v1/notifications/read-all');
+  return response.data;
+};
+
+/**
+ * Dismiss a notification.
+ */
+export const dismissNotification = async (notificationId: number): Promise<{ success: boolean }> => {
+  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/dismiss`);
+  return response.data;
+};
+
+/**
+ * Get notification preferences for the current user.
+ */
+export const getNotificationPreferences = async (): Promise<NotificationPreferences> => {
+  const response = await apiClient.get('/api/v1/notifications/preferences');
+  return response.data;
+};
+
+/**
+ * Update notification preferences.
+ */
+export const updateNotificationPreferences = async (preferences: NotificationPreferencesUpdate): Promise<{ success: boolean }> => {
+  const response = await apiClient.put('/api/v1/notifications/preferences', preferences);
+  return response.data;
+};

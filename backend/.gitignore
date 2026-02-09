@@ -1,0 +1,25 @@
+.env
+__pycache__/
+*.pyc
+*.log
+
+# Models (large files)
+models/bge-m3/
+
+# Vector stores - keep directory structure but ignore contents
+vector_stores/*
+!vector_stores/.gitkeep
+
+# Data indexes - keep directory structure but ignore contents
+data/indexes/*
+!data/indexes/.gitkeep
+
+# Logs
+logs/
+
+#Sqlite DB
+sqliteDb/app.db
+
+# Legacy paths (can be removed if no longer needed)
+/chroma_db_index
+/chroma_db_index_bge_m3_full
