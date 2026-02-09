@@ -196,22 +196,21 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
         );
 
       case 'pie':
-        // Pie charts generally don't support stacked data well in this simple renderer
-        // We'll just take the first series or default behavior
+        // Pie charts use the transformed data format: [{name: "Label", value: Number}, ...]
         return (
           <ResponsiveContainer width="100%" height={300}>
             <PieChart>
               <Pie
                 data={data}
-                dataKey={isMultiSeries ? dataKeys[0] : "value"} // Fallback to first key if multi
+                dataKey="value" // Always use 'value' for single-series pie charts
                 nameKey={xKey || 'name'}
                 cx="50%"
                 cy="50%"
                 outerRadius={80}
-                label={({ name, value }) => `${name}: ${value} `}
+                label={({ name, value }) => `${name}: ${value}`}
               >
                 {data.map((_, index) => (
-                  <Cell key={`cell - ${index} `} fill={colors[index % colors.length]} />
+                  <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />
                 ))}
               </Pie>
               <Tooltip />
