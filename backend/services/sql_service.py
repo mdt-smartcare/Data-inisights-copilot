@@ -479,8 +479,11 @@ Chart type guidelines:
 - Use "pie" for: distributions, proportions, percentages (2-6 categories)
 - Use "bar" for: comparisons, counts by category, rankings
 - Use "line" for: trends over time
-- Use "scorecard" for: single numeric values (counts, averages, sums) or highly aggregated KPIs. 
-  For example, if the result is just [(8322,)], make a scorecard with label="Total Patients" and value=8322.
+- Use "scorecard" for: single numeric values (counts, averages, sums) or highly aggregated KPIs.
+- Use "treemap" for: hierarchical data or visualizing proportions (e.g., Disease by Region).
+- Use "radar" for: multi-variable comparisons.
+
+IMPORTANT: ALWAYS generate a chart_json if the data contains ANY numbers or categories, even if there is only 1 row (e.g., a single bar or a single scorecard). Do NOT skip the chart just because the data is "limited".
 
 Response:"""
 
