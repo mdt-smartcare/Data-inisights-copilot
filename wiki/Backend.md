@@ -203,9 +203,50 @@ The backend features a pluggable embedding architecture (`embedding_providers.py
 - **OpenAI**: Uses `text-embedding-3-small` or `large`. Requires API key.
 - **Generic HuggingFace**: Load any compatible model (e.g., `all-MiniLM-L6-v2`).
 
+## 5. LLM System
+
+The backend features a pluggable LLM architecture (`llm_providers.py` & `llm_registry.py`) enabling runtime switching between providers.
+
+### Supported Providers
+
+| Provider | Description | Requires API Key |
+|----------|-------------|------------------|
+| **OpenAI** | GPT-4o, GPT-4, GPT-3.5-turbo | Yes |
+| **Azure OpenAI** | Azure-hosted OpenAI deployments | Yes + Endpoint |
+| **Anthropic** | Claude 3.5, Claude 3 models | Yes |
+| **Ollama** | Local models (Llama, Mistral, etc.) | No |
+| **HuggingFace** | API or local inference | Yes (API mode) |
+| **Local LLM** | GGUF models via LlamaCpp | No |
+
+### Configuration via API
+
+```bash
+# List available providers
+GET /api/v1/settings/llm/providers
+
+# Get current configuration
+GET /api/v1/settings/llm
+
+# Switch provider (hot-swap)
+PUT /api/v1/settings/llm
+{
+  "provider": "anthropic",
+  "config": {
+    "model_name": "claude-3-5-sonnet-20241022",
+    "api_key": "your-api-key"
+  }
+}
+
+# Validate credentials without saving
+POST /api/v1/settings/llm/validate
+```
+
+### Hot-Swapping
+
+The `LLMRegistry` allows changing LLM providers at runtime without restart. Changes are persisted to the database and take effect immediately for all new requests.
 
 
-## 5. Development Tools
+## 6. Development Tools
 
 ### Gradio Prototype (`backend/scripts/main.py`)
 A standalone, interactive UI for testing the RAG pipeline without the full frontend.
@@ -213,7 +254,7 @@ A standalone, interactive UI for testing the RAG pipeline without the full front
 - **Features**: Chat interface, plot generation, and raw retrieval inspection.
 - **Note**: This is a development tool and uses its own agent logic separate from the main FastAPI app.
 
-## 6. Database Schema
+## 7. Database Schema
 
 The backend uses a local SQLite database (`app.db`).
 
@@ -224,7 +265,7 @@ Key tables include:
 - `system_prompts`: Versioned system prompts.
 - `rag_configurations`: RAG pipeline settings.
 
-## 7. API Reference
+## 8. API Reference
 
 The API is versioned (currently `v1`).
 
@@ -269,7 +310,7 @@ Interactive API documentation is available at `/docs` (Swagger UI) and `/redoc`.
 
 ![Settings API](images/api_settings.png)
 
-## 8. Development & Testing
+## 9. Development & Testing
 
 ### Running Tests
 The project uses `pytest` for testing.
@@ -286,7 +327,7 @@ pytest tests/test_sql_service.py
 Logs are written to `logs/backend.log` (if configured) and standard output.
 Log level can be controlled via `LOG_LEVEL` in `.env`.
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 ### Common Issues
 

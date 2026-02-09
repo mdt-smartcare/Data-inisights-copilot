@@ -157,6 +157,59 @@ View audit log of setting changes.
 
 ---
 
+## LLM Settings (`/settings/llm`)
+Configure and manage the LLM (Language Model) provider.
+
+### `GET /settings/llm`
+Get current LLM provider configuration.
+- **Response**:
+    ```json
+    {
+      "provider": "openai",
+      "config": {
+        "model": "gpt-4o",
+        "temperature": 0.0,
+        "max_tokens": 4096,
+        "api_key_configured": true
+      },
+      "is_healthy": true
+    }
+    ```
+
+### `PUT /settings/llm`
+Switch LLM provider (hot-swap). Requires Super Admin role.
+- **Request Body**:
+    ```json
+    {
+      "provider": "anthropic",
+      "config": {
+        "model_name": "claude-3-5-sonnet-20241022",
+        "api_key": "sk-ant-...",
+        "temperature": 0.0
+      }
+    }
+    ```
+
+### `GET /settings/llm/providers`
+List all available LLM providers with metadata.
+- **Response**: Array of provider objects with display name, description, supported models, and configuration requirements.
+
+### `POST /settings/llm/validate`
+Test provider configuration without saving.
+- **Request Body**:
+    ```json
+    {
+      "provider": "openai",
+      "config": { "api_key": "your-key-to-test" }
+    }
+    ```
+- **Response**: `{ "success": true/false, "health": {...} }`
+
+### `GET /settings/llm/health`
+Perform health check on active LLM provider.
+
+---
+
 ## Notifications (`/notifications`)
 
 ### `GET /notifications`
