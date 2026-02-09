@@ -293,6 +293,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
             # =================================================================
             # Fetch prompt fresh on every request
             active_prompt = self.db_service.get_latest_active_prompt()
+            logger.info(f"Active prompt fetched for trace_id={trace_id}")
             
             if not active_prompt:
                 logger.warning("No active system prompt found in DB. Using default generic prompt.")
@@ -309,16 +310,15 @@ Use this to search unstructured text, notes, and semantic descriptions.
             # Pass system_prompt variable to the agent, creating a combined prompt
             final_prompt = f"{active_prompt}\n{formatted_examples}"
             
+            logger.info(f"Invoking agent for trace_id={trace_id}")
             # Use stateful execution with session-based history
             result = await self.agent_with_history.ainvoke(
                 {"input": query, "system_prompt": final_prompt},
                 config={"configurable": {"session_id": session_id or "default"}}
             )
             
-            # Extract response
-            full_response = result.get("output", "An error occurred.")
-            intermediate_steps = result.get("intermediate_steps", [])
-            
+            logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
+
             # Extract response
             full_response = result.get("output", "An error occurred.")
             intermediate_steps = result.get("intermediate_steps", [])
@@ -337,6 +337,8 @@ Use this to search unstructured text, notes, and semantic descriptions.
             
             # Parse JSON output from response (chart data only now)
             chart_data, _ = self._parse_agent_output(full_response)
+            if chart_data:
+                logger.info(f"Chart data parsed: {chart_data.title}")
             
             # Generate LLM-powered follow-up questions based on response content
             if settings.enable_followup_questions:
@@ -446,10 +448,20 @@ Use this to search unstructured text, notes, and semantic descriptions.
             try:
                 data = json.loads(json_str)
                 
-                # Extract chart data
-                if chart_json := data.get("chart_json"):
-                    chart_data = ChartData(**chart_json)
-                    logger.info(f"Successfully parsed chart data: {chart_json.get('title', 'Untitled')}")
+                # Extract chart data - handle both wrapped and direct formats
+                chart_json = None
+                if "chart_json" in data:
+                    chart_json = data["chart_json"]
+                elif "type" in data and "data" in data:
+                    # LLM returned the chart object directly
+                    chart_json = data
+                
+                if chart_json:
+                    try:
+                        chart_data = ChartData(**chart_json)
+                        logger.info(f"Successfully parsed chart data: {chart_json.get('title', 'Untitled')}")
+                    except Exception as ve:
+                        logger.warning(f"Validation failed for chart data: {ve}")
                 
                 # Extract suggestions
                 if questions := data.get("suggested_questions"):

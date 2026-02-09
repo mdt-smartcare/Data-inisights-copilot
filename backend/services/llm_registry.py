@@ -153,6 +153,7 @@ class LLMRegistry:
     
     def _load_initial_provider(self):
         """Load the initial provider based on settings."""
+        import os
         try:
             # Try to load from settings service
             from backend.services.settings_service import get_settings_service
@@ -173,6 +174,17 @@ class LLMRegistry:
             api_key = llm_settings.get("api_key", "")
             if api_key and api_key != "***MASKED***":
                 config["api_key"] = api_key
+            else:
+                # Fallback to environment variables based on provider type
+                if provider_type == "openai":
+                    config["api_key"] = os.getenv("OPENAI_API_KEY", "")
+                elif provider_type == "anthropic":
+                    config["api_key"] = os.getenv("ANTHROPIC_API_KEY", "")
+                elif provider_type == "huggingface":
+                    config["api_key"] = os.getenv("HUGGINGFACE_API_KEY", "")
+                elif provider_type == "azure":
+                    config["api_key"] = os.getenv("AZURE_OPENAI_API_KEY", "")
+                    config["endpoint"] = os.getenv("AZURE_OPENAI_ENDPOINT", "")
             
             logger.info(f"Loading initial LLM provider from settings: {provider_type}")
             self._set_provider(provider_type, config)
@@ -181,7 +193,9 @@ class LLMRegistry:
             logger.warning(f"Could not load from settings, using default OpenAI: {e}")
             # Fall back to environment-based OpenAI
             try:
-                self._set_provider("openai", self.PROVIDER_CATALOG["openai"]["default_config"])
+                default_config = self.PROVIDER_CATALOG["openai"]["default_config"].copy()
+                default_config["api_key"] = os.getenv("OPENAI_API_KEY", "")
+                self._set_provider("openai", default_config)
             except Exception as e2:
                 logger.error(f"Failed to initialize default OpenAI provider: {e2}")
                 self._active_provider = None
