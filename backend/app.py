@@ -69,12 +69,12 @@ app.include_router(users.router, prefix=settings.api_v1_prefix)
 app.include_router(embedding_progress.router, prefix=settings.api_v1_prefix)
 app.include_router(notifications.router, prefix=settings.api_v1_prefix)
 
-# Settings management routes
-app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
-
-# Embedding settings routes
+# Embedding settings routes (MUST be before general settings to prevent route shadowing)
 from backend.api.routes import embedding_settings
 app.include_router(embedding_settings.router, prefix=settings.api_v1_prefix)
+
+# Settings management routes (has /{category} catch-all, must come after specific routes)
+app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
 
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)

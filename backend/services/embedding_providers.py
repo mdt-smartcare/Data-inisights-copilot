@@ -337,7 +337,8 @@ class SentenceTransformerProvider(EmbeddingProvider):
         self,
         model_name: str = "all-MiniLM-L6-v2",
         batch_size: int = 128,
-        normalize: bool = True
+        normalize: bool = True,
+        models_dir: Optional[str] = None
     ):
         """
         Initialize SentenceTransformer provider.
@@ -346,17 +347,20 @@ class SentenceTransformerProvider(EmbeddingProvider):
             model_name: HuggingFace model name
             batch_size: Batch size for document embedding
             normalize: Whether to L2-normalize embeddings
+            models_dir: Directory to store models (default: ./models)
         """
         self._model_name = model_name
         self._batch_size = batch_size
         self._normalize = normalize
+        self._models_dir = models_dir
         self._model = None
         self._dimension = None
+        self._local_path = None
         
         self._load_model()
     
     def _load_model(self):
-        """Load the SentenceTransformer model."""
+        """Load the SentenceTransformer model from local path or download and save."""
         if self._model is not None:
             return
             
@@ -364,8 +368,39 @@ class SentenceTransformerProvider(EmbeddingProvider):
         
         logger.info(f"Loading SentenceTransformer model: {self._model_name}")
         
+        # Determine models directory
+        models_dir = self._models_dir
+        if models_dir is None:
+            # Default to backend/models/
+            backend_root = Path(__file__).parent.parent
+            models_dir = str(backend_root / "models")
+        elif models_dir.startswith('./'):
+            # Resolve relative path
+            backend_root = Path(__file__).parent.parent
+            models_dir = str((backend_root / models_dir.lstrip('./')).resolve())
+        
+        # Create a clean folder name from the model name
+        # "sentence-transformers/all-MiniLM-L6-v2" -> "all-MiniLM-L6-v2"
+        # "intfloat/e5-large-v2" -> "e5-large-v2"
+        model_folder_name = self._model_name.split('/')[-1]
+        local_model_path = Path(models_dir) / model_folder_name
+        self._local_path = str(local_model_path)
+        
         try:
-            self._model = SentenceTransformer(self._model_name)
+            # Check if model already exists locally
+            if local_model_path.exists() and (local_model_path / "config.json").exists():
+                logger.info(f"Loading model from local path: {local_model_path}")
+                self._model = SentenceTransformer(str(local_model_path))
+            else:
+                # Download from HuggingFace and save locally
+                logger.info(f"Downloading model {self._model_name} to {local_model_path}")
+                self._model = SentenceTransformer(self._model_name)
+                
+                # Save to local path in flat structure
+                local_model_path.mkdir(parents=True, exist_ok=True)
+                self._model.save(str(local_model_path))
+                logger.info(f"Model saved to: {local_model_path}")
+            
             self._dimension = self._model.get_sentence_embedding_dimension()
             logger.info(f"Model loaded. Dimension: {self._dimension}")
         except Exception as e:
@@ -409,7 +444,8 @@ class SentenceTransformerProvider(EmbeddingProvider):
             "model_name": self._model_name,
             "batch_size": self._batch_size,
             "dimension": self.dimension,
-            "normalize": self._normalize
+            "normalize": self._normalize,
+            "local_path": self._local_path
         }
 
 

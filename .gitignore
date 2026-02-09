@@ -7,3 +7,6 @@ logs/backend.log
 *.log
 .coverage
 __pycache__/
+/backend/models/sentence-transformers
+/models/bge-m3
+/backend/models
