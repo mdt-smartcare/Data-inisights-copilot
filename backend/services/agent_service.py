@@ -457,6 +457,19 @@ Use this to search unstructured text, notes, and semantic descriptions.
                     chart_json = data
                 
                 if chart_json:
+                    # Compatibility fix for Chart.js style output (datasets) -> Frontend style (values)
+                    if "data" in chart_json and isinstance(chart_json["data"], dict):
+                        cdata = chart_json["data"]
+                        if "datasets" in cdata and "values" not in cdata:
+                            # Extract data from first dataset
+                            try:
+                                datasets = cdata["datasets"]
+                                if datasets and isinstance(datasets, list):
+                                    cdata["values"] = datasets[0].get("data", [])
+                                    logger.info("Transformed Chart.js style 'datasets' to 'values'")
+                            except Exception as e:
+                                logger.warning(f"Failed to transform chart datasets: {e}")
+
                     try:
                         chart_data = ChartData(**chart_json)
                         logger.info(f"Successfully parsed chart data: {chart_json.get('title', 'Untitled')}")
