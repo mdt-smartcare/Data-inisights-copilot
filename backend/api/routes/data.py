@@ -36,8 +36,7 @@ async def create_connection(
             name=connection.name,
             uri=connection.uri,
             engine_type=connection.engine_type,
-            created_by=connection.created_by,
-            pool_config=connection.pool_config
+            created_by=connection.created_by
         )
         
         # Log audit event

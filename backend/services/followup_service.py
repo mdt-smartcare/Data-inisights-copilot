@@ -64,6 +64,9 @@ Generate exactly 3 follow-up questions based on the system's response content th
 Focus on the RESPONSE content, not just the original question. Extract specific data points, 
 metrics, or findings mentioned in the response and build questions around them.
 
+NOTE: Do NOT suggest creating charts or visualizations, as these are automatically generated 
+when appropriate. Focus on exploring the data from different analytical perspectives.
+
 Original Question: {original_question}
 System Response: {system_response}
 

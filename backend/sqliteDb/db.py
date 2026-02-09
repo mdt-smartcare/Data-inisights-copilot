@@ -384,8 +384,8 @@ class DatabaseService:
             data_dictionary: Content of data dictionary
             reasoning: JSON string of reasoning metadata
             example_questions: JSON string list of questions
-            embedding_config: JSON string of embedding parameters
-            retriever_config: JSON string of retrieval parameters
+            embedding_config: JSON string of embedding parameters (ignored - for compatibility)
+            retriever_config: JSON string of retrieval parameters (ignored - for compatibility)
             
         Returns:
             Dictionary with the new prompt details
@@ -395,61 +395,52 @@ class DatabaseService:
         
         try:
             # 1. Get the current max version number
-            cursor.execute("SELECT MAX(version_number) FROM rag_configurations")
+            cursor.execute("SELECT MAX(version) FROM system_prompts")
             result = cursor.fetchone()
             current_max = result[0] if result and result[0] is not None else 0
-            new_version_num = current_max + 1
-            new_version_str = f"1.{new_version_num}.0" # Simple semantic versioning
+            new_version = current_max + 1
 
-            # 2. Deactivate all existing configs
-            cursor.execute("UPDATE rag_configurations SET is_active = 0 WHERE is_active = 1")
+            # 2. Deactivate all existing prompts
+            cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE is_active = 1")
 
-            # 3. Insert the new config
-            # Combining schema_selection, reasoning, example_questions into snapshot logic if needed
-            # But the table expects schema_snapshot (snapshot of DB schema) separate from selection
-            # For now, we will store the selection as the snapshot since we re-fetch details on demand
-            schema_snapshot = schema_selection if schema_selection else "{}"
-            
-            # Additional metadata bag
-            metadata = {
-                "reasoning": json.loads(reasoning) if reasoning else None,
-                "example_questions": json.loads(example_questions) if example_questions else None
-            }
-            
-            # Generate config hash (simplified)
-            import hashlib
-            config_hash = hashlib.sha256(
-                f"{prompt_text}{schema_snapshot}{data_dictionary}".encode()
-            ).hexdigest()
-
+            # 3. Insert the new prompt into system_prompts
             cursor.execute("""
-                INSERT INTO rag_configurations (
-                    version, version_number, schema_snapshot, data_dictionary, 
-                    prompt_template, status, created_by, connection_id, is_active, 
-                    config_hash, change_summary, embedding_config, retriever_config
+                INSERT INTO system_prompts (
+                    prompt_text, version, is_active, created_by
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?)
             """, (
-                new_version_str, new_version_num, schema_snapshot, data_dictionary,
-                prompt_text, 'published', user_id, connection_id, 1,
-                config_hash, json.dumps(metadata), embedding_config, retriever_config
+                prompt_text, new_version, 1, user_id
             ))
             
-            config_id = cursor.lastrowid
+            prompt_id = cursor.lastrowid
+
+            # 4. Insert configuration metadata into prompt_configs
+            cursor.execute("""
+                INSERT INTO prompt_configs (
+                    prompt_id, connection_id, schema_selection, 
+                    data_dictionary, reasoning, example_questions
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                prompt_id, connection_id, schema_selection,
+                data_dictionary, reasoning, example_questions
+            ))
+            
             conn.commit()
             
             # Return full object matched to UI expectations
             return {
-                "id": config_id,
+                "id": prompt_id,
                 "prompt_text": prompt_text,
-                "version": new_version_str,
-                "version_number": new_version_num,
-                "is_active": 1
+                "version": str(new_version),
+                "is_active": 1,
+                "created_by": user_id
             }
             
         except Exception as e:
             conn.rollback()
-            logger.error(f"Failed to publish config: {e}")
+            logger.error(f"Failed to publish prompt: {e}")
             raise
         finally:
             conn.close()
@@ -461,21 +452,21 @@ class DatabaseService:
         
         query = """
             SELECT 
-                rc.id as prompt_id,
-                rc.version,
-                rc.prompt_template as prompt_text,
-                rc.created_at,
-                rc.created_by,
+                sp.id as prompt_id,
+                sp.version,
+                sp.prompt_text,
+                sp.created_at,
+                sp.created_by,
                 u.username as created_by_username,
-                rc.connection_id,
-                rc.schema_snapshot as schema_selection,
-                rc.data_dictionary,
-                rc.change_summary,
-                rc.embedding_config,
-                rc.retriever_config
-            FROM rag_configurations rc
-            LEFT JOIN users u ON rc.created_by = CAST(u.id AS TEXT)
-            WHERE rc.is_active = 1
+                pc.connection_id,
+                pc.schema_selection,
+                pc.data_dictionary,
+                pc.reasoning,
+                pc.example_questions
+            FROM system_prompts sp
+            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            LEFT JOIN users u ON sp.created_by = u.username
+            WHERE sp.is_active = 1
             LIMIT 1
         """
         cursor.execute(query)
@@ -484,15 +475,6 @@ class DatabaseService:
         
         if row:
             data = dict(row)
-            # Rehydrate change_summary into reasoning/questions if present
-            try:
-                if data['change_summary']:
-                    meta = json.loads(data['change_summary'])
-                    if isinstance(meta, dict):
-                        data['reasoning'] = json.dumps(meta.get('reasoning'))
-                        data['example_questions'] = json.dumps(meta.get('example_questions'))
-            except:
-                pass
             return data
         return None
 
@@ -503,23 +485,30 @@ class DatabaseService:
         
         cursor.execute("""
             SELECT 
-                rc.id, 
-                rc.prompt_template as prompt_text, 
-                rc.version, 
-                rc.is_active, 
-                rc.created_at, 
-                rc.created_by,
+                sp.id, 
+                sp.prompt_text, 
+                sp.version, 
+                sp.is_active, 
+                sp.created_at, 
+                sp.created_by,
                 u.username as created_by_username
-            FROM rag_configurations rc
-            LEFT JOIN users u ON rc.created_by = CAST(u.id AS TEXT)
-            ORDER BY rc.version_number DESC
+            FROM system_prompts sp
+            LEFT JOIN users u ON sp.created_by = u.username
+            ORDER BY sp.version DESC
         """)
         rows = cursor.fetchall()
         conn.close()
         
-        return [dict(row) for row in rows]
+        # Convert version to string for API validation
+        result = []
+        for row in rows:
+            data = dict(row)
+            data['version'] = str(data['version'])
+            result.append(data)
+        
+        return result
 
-    def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None, pool_config: Optional[str] = None) -> int:
+    def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None) -> int:
         """Add a new database connection.
         
         Args:
@@ -527,7 +516,6 @@ class DatabaseService:
             uri: Connection string (e.g., postgresql://user:pass@host/db)
             engine_type: Database type (postgresql, mysql, sqlite)
             created_by: User ID creating the connection
-            pool_config: JSON string of pool configuration
             
         Returns:
             The ID of the newly created connection
@@ -536,8 +524,8 @@ class DatabaseService:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "INSERT INTO db_connections (name, uri, engine_type, created_by, pool_config) VALUES (?, ?, ?, ?, ?)",
-                (name, uri, engine_type, created_by, pool_config)
+                "INSERT INTO db_connections (name, uri, engine_type, created_by) VALUES (?, ?, ?, ?)",
+                (name, uri, engine_type, created_by)
             )
             conn.commit()
             return cursor.lastrowid
@@ -550,7 +538,7 @@ class DatabaseService:
         """Get all saved database connections."""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, uri, engine_type, created_at, pool_config FROM db_connections ORDER BY created_at DESC")
+        cursor.execute("SELECT id, name, uri, engine_type, created_at FROM db_connections ORDER BY created_at DESC")
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
@@ -569,7 +557,7 @@ class DatabaseService:
         """Get a specific database connection by ID."""
         conn = self.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name, uri, engine_type, pool_config FROM db_connections WHERE id = ?", (connection_id,))
+        cursor.execute("SELECT id, name, uri, engine_type FROM db_connections WHERE id = ?", (connection_id,))
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
