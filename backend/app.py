@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from backend.config import get_settings
 from backend.core.logging import setup_logging, get_logger
 from backend.api.routes import auth, chat, feedback, health, config, data, audit, users
-from backend.api.routes import embedding_progress, notifications
+from backend.api.routes import embedding_progress, notifications, settings as settings_routes
 from backend.api.websocket import embedding_progress as embedding_ws
 from backend.services.embeddings import preload_embedding_model
 
@@ -68,6 +68,9 @@ app.include_router(users.router, prefix=settings.api_v1_prefix)
 # New embedding and notification routes
 app.include_router(embedding_progress.router, prefix=settings.api_v1_prefix)
 app.include_router(notifications.router, prefix=settings.api_v1_prefix)
+
+# Settings management routes
+app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
 
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)
