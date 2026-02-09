@@ -456,18 +456,21 @@ Original question: {question}
 
 RESPONSE FORMAT:
 1. First, provide a concise natural language answer explaining the data.
-2. Then, if the data has categories/labels and numeric values (counts, percentages, etc.), 
-   append a JSON code block with chart data in this exact format:
+2. Then, you MUST append a JSON code block with chart data if the result is a number, a count, an average, or a list of values.
 
+Format:
 ```json
 {{
     "chart_json": {{
         "title": "Descriptive Chart Title",
-        "type": "pie|bar|line",
+        "type": "pie|bar|line|scorecard",
         "data": {{
             "labels": ["Label1", "Label2"],
             "values": [100, 200]
-        }}
+        }},
+        "metrics": [   // REQUIRED for 'scorecard' type, optional otherwise
+            {{ "label": "Metric Name", "value": 123, "change": "+5% vs last month", "status": "up" }}
+        ]
     }}
 }}
 ```
@@ -476,8 +479,8 @@ Chart type guidelines:
 - Use "pie" for: distributions, proportions, percentages (2-6 categories)
 - Use "bar" for: comparisons, counts by category, rankings
 - Use "line" for: trends over time
-
-If the data is not suitable for a chart (e.g., single value, text response), skip the JSON block.
+- Use "scorecard" for: single numeric values (counts, averages, sums) or highly aggregated KPIs. 
+  For example, if the result is just [(8322,)], make a scorecard with label="Total Patients" and value=8322.
 
 Response:"""
 
