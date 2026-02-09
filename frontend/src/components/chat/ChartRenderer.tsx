@@ -1,4 +1,3 @@
-```typescript
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Treemap, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell, LabelList } from 'recharts';
 
 interface ChartData {
@@ -36,10 +35,9 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
                 <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">{metric.label}</span>
                 <span className="text-xl font-bold text-gray-900 my-1">{metric.value}</span>
                 {metric.change && (
-                  <span className={`text - xs font - medium px - 2 py - 0.5 rounded - full ${
-  metric.status === 'up' ? 'bg-green-100 text-green-700' :
-    metric.status === 'down' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
-} `}>
+                  <span className={`text - xs font - medium px - 2 py - 0.5 rounded - full ${metric.status === 'up' ? 'bg-green-100 text-green-700' :
+                    metric.status === 'down' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
+                    } `}>
                     {metric.change}
                   </span>
                 )}
@@ -70,7 +68,7 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
   let data: any[] = [];
   let dataKeys: string[] = [];
   let isMultiSeries = false;
-  
+
   if (Array.isArray(rawData)) {
     // Already in array format
     data = rawData;
@@ -198,10 +196,10 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
                 cx="50%"
                 cy="50%"
                 outerRadius={80}
-                label={({ name, value }) => `${ name }: ${ value } `}
+                label={({ name, value }) => `${name}: ${value} `}
               >
                 {data.map((_, index) => (
-                  <Cell key={`cell - ${ index } `} fill={colors[index % colors.length]} />
+                  <Cell key={`cell - ${index} `} fill={colors[index % colors.length]} />
                 ))}
               </Pie>
               <Tooltip />
@@ -245,14 +243,14 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
       case 'radar':
         // Requires data in specific format, usually provided correctly by agent
         return (
-           <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={300}>
             <RadarChart cx="50%" cy="50%" outerRadius="80%" data={data}>
               <PolarGrid />
               <PolarAngleAxis dataKey={xKey || 'name'} tick={{ fontSize: 11 }} />
               <PolarRadiusAxis />
               <Tooltip />
               <Legend wrapperStyle={{ fontSize: '12px' }} />
-               {isMultiSeries ? (
+              {isMultiSeries ? (
                 dataKeys.map((key, index) => (
                   <Radar
                     key={key}
@@ -273,7 +271,7 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
       case 'treemap':
         // Treemap needs nested data structure or flat list with weights
         return (
-           <ResponsiveContainer width="100%" height={300}>
+          <ResponsiveContainer width="100%" height={300}>
             <Treemap
               data={data}
               dataKey={yKey || 'value'}
@@ -319,16 +317,15 @@ const CustomTreemapContent = (props: any) => {
         }}
       />
       {width > 50 && height > 30 && (
-         <text x={x + width / 2} y={y + height / 2 + 7} textAnchor="middle" fill="#fff" fontSize={12}>
-           {value}
-         </text>
+        <text x={x + width / 2} y={y + height / 2 + 7} textAnchor="middle" fill="#fff" fontSize={12}>
+          {value}
+        </text>
       )}
       {width > 50 && height > 50 && (
-          <text x={x + width / 2} y={y + height / 2 - 7} textAnchor="middle" fill="#fff" fontSize={10} fontWeight="bold">
-            {name}
-          </text>
+        <text x={x + width / 2} y={y + height / 2 - 7} textAnchor="middle" fill="#fff" fontSize={10} fontWeight="bold">
+          {name}
+        </text>
       )}
     </g>
   );
 };
-```
