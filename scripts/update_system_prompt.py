@@ -21,9 +21,16 @@ def update_system_prompt():
         config_service = get_config_service()
         db_service = get_db_service()
         
+        from backend.services.sql_service import get_sql_service
+        sql_service = get_sql_service()
+        
+        logger.info("Fetching database schema info...")
+        # Get table info (schema) from the SQL service
+        schema_context = sql_service.db.get_table_info()
+        
         logger.info("Generating draft prompt from ConfigService...")
-        # passing empty context as we just want the base template with instructions
-        draft = config_service.generate_draft_prompt("Global Schema Context")
+        # Pass REAL schema context
+        draft = config_service.generate_draft_prompt(schema_context)
         prompt_text = draft['draft_prompt']
         
         logger.info("Draft prompt generated. Length: %d chars", len(prompt_text))

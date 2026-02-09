@@ -454,36 +454,28 @@ Result: {result}
 
 Original question: {question}
 
-RESPONSE FORMAT:
+RESPOND WITH A CHART JSON:
 1. First, provide a concise natural language answer explaining the data.
-2. Then, you MUST append a JSON code block with chart data if the result is a number, a count, an average, or a list of values.
+2. Then, you MUST append a JSON code block with chart data.
+   - NEVER skip this step if you have data.
+   - If data is sparse (e.g., 1 row), still plot it.
 
 Format:
 ```json
 {{
     "chart_json": {{
         "title": "Descriptive Chart Title",
-        "type": "pie|bar|line|scorecard",
-        "data": {{
-            "labels": ["Label1", "Label2"],
-            "values": [100, 200]
-        }},
-        "metrics": [   // REQUIRED for 'scorecard' type, optional otherwise
-            {{ "label": "Metric Name", "value": 123, "change": "+5% vs last month", "status": "up" }}
-        ]
+        "type": "pie|bar|line|scorecard|treemap",
+        "data": {{ ... }}
     }}
 }}
 ```
 
 Chart type guidelines:
-- Use "pie" for: distributions, proportions, percentages (2-6 categories)
-- Use "bar" for: comparisons, counts by category, rankings
-- Use "line" for: trends over time
-- Use "scorecard" for: single numeric values (counts, averages, sums) or highly aggregated KPIs.
-- Use "treemap" for: hierarchical data or visualizing proportions (e.g., Disease by Region).
-- Use "radar" for: multi-variable comparisons.
-
-IMPORTANT: ALWAYS generate a chart_json if the data contains ANY numbers or categories, even if there is only 1 row (e.g., a single bar or a single scorecard). Do NOT skip the chart just because the data is "limited".
+- Use "treemap" for: ANY distribution by Region, District, or Location.
+- Use "scorecard" for: single numeric values or totals.
+- Use "bar" for: comparisons.
+- Use "pie" for: percentages.
 
 Response:"""
 

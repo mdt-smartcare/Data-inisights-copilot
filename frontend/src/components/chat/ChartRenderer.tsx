@@ -27,11 +27,20 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
   if (type === 'scorecard') {
     // Transform standard data format (labels/values) to metrics if needed
     let displayMetrics = metrics;
-    if (!displayMetrics && rawData && !Array.isArray(rawData) && rawData.labels && rawData.values) {
-      displayMetrics = rawData.labels.map((label: string, index: number) => ({
-        label,
-        value: rawData.values?.[index]
-      }));
+    if (!displayMetrics && rawData && !Array.isArray(rawData)) {
+      const typedRawData = rawData as any;
+      if (typedRawData.value !== undefined || typedRawData.count !== undefined) {
+        // Handle singular value (e.g. { value: 10 } or { count: 10 })
+        displayMetrics = [{
+          label: title || 'Total',
+          value: typedRawData.value ?? typedRawData.count
+        }];
+      } else if (rawData.labels && rawData.values) {
+        displayMetrics = rawData.labels.map((label: string, index: number) => ({
+          label,
+          value: rawData.values?.[index]
+        }));
+      }
     } else if (!displayMetrics && Array.isArray(rawData)) {
       displayMetrics = rawData;
     }
