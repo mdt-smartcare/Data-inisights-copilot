@@ -499,7 +499,14 @@ class DatabaseService:
         rows = cursor.fetchall()
         conn.close()
         
-        return [dict(row) for row in rows]
+        # Convert version to string for API validation
+        result = []
+        for row in rows:
+            data = dict(row)
+            data['version'] = str(data['version'])
+            result.append(data)
+        
+        return result
 
     def add_db_connection(self, name: str, uri: str, engine_type: str = 'postgresql', created_by: Optional[str] = None) -> int:
         """Add a new database connection.
