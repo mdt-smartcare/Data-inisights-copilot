@@ -485,16 +485,16 @@ class DatabaseService:
         
         cursor.execute("""
             SELECT 
-                rc.id, 
-                rc.prompt_template as prompt_text, 
-                rc.version, 
-                rc.is_active, 
-                rc.created_at, 
-                rc.created_by,
+                sp.id, 
+                sp.prompt_text, 
+                sp.version, 
+                sp.is_active, 
+                sp.created_at, 
+                sp.created_by,
                 u.username as created_by_username
-            FROM rag_configurations rc
-            LEFT JOIN users u ON rc.created_by = CAST(u.id AS TEXT)
-            ORDER BY rc.version_number DESC
+            FROM system_prompts sp
+            LEFT JOIN users u ON sp.created_by = u.username
+            ORDER BY sp.version DESC
         """)
         rows = cursor.fetchall()
         conn.close()
