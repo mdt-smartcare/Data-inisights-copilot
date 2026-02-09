@@ -454,30 +454,28 @@ Result: {result}
 
 Original question: {question}
 
-RESPONSE FORMAT:
+RESPOND WITH A CHART JSON:
 1. First, provide a concise natural language answer explaining the data.
-2. Then, if the data has categories/labels and numeric values (counts, percentages, etc.), 
-   append a JSON code block with chart data in this exact format:
+2. Then, you MUST append a JSON code block with chart data.
+   - NEVER skip this step if you have data.
+   - If data is sparse (e.g., 1 row), still plot it.
 
+Format:
 ```json
 {{
     "chart_json": {{
         "title": "Descriptive Chart Title",
-        "type": "pie|bar|line",
-        "data": {{
-            "labels": ["Label1", "Label2"],
-            "values": [100, 200]
-        }}
+        "type": "pie|bar|line|scorecard|treemap",
+        "data": {{ ... }}
     }}
 }}
 ```
 
 Chart type guidelines:
-- Use "pie" for: distributions, proportions, percentages (2-6 categories)
-- Use "bar" for: comparisons, counts by category, rankings
-- Use "line" for: trends over time
-
-If the data is not suitable for a chart (e.g., single value, text response), skip the JSON block.
+- Use "treemap" for: ANY distribution by Region, District, or Location.
+- Use "scorecard" for: single numeric values or totals.
+- Use "bar" for: comparisons.
+- Use "pie" for: percentages.
 
 Response:"""
 

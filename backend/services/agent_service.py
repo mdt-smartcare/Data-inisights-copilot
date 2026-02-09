@@ -123,7 +123,8 @@ class AgentService:
         self.llm = ChatOpenAI(
             temperature=settings.openai_temperature,
             model_name=settings.openai_model,
-            api_key=settings.openai_api_key
+            api_key=settings.openai_api_key,
+            max_tokens=2000  # Prevent JSON truncation
         )
         
         # Create tools
