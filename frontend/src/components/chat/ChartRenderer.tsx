@@ -25,30 +25,33 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
 
   // Handle Scorecard type specifically (doesn't use standard data transformation)
   if (type === 'scorecard') {
+    // Transform standard data format (labels/values) to metrics if needed
+    let displayMetrics = metrics;
+    if (!displayMetrics && rawData && !Array.isArray(rawData) && rawData.labels && rawData.values) {
+      displayMetrics = rawData.labels.map((label: string, index: number) => ({
+        label,
+        value: rawData.values?.[index]
+      }));
+    } else if (!displayMetrics && Array.isArray(rawData)) {
+      displayMetrics = rawData;
+    }
+
     return (
       <div className="my-3 p-4 bg-white rounded-lg border border-gray-200 shadow-sm">
         {title && <h4 className="text-sm font-bold mb-4 text-gray-800 border-b pb-2">{title}</h4>}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-          {metrics ? (
-            metrics.map((metric, idx) => (
+          {displayMetrics && displayMetrics.length > 0 ? (
+            displayMetrics.map((metric: any, idx: number) => (
               <div key={idx} className="p-3 bg-gray-50 rounded-md border border-gray-100 flex flex-col items-center text-center">
-                <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">{metric.label}</span>
+                <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">{metric.label || metric.name || 'Metric'}</span>
                 <span className="text-xl font-bold text-gray-900 my-1">{metric.value}</span>
                 {metric.change && (
-                  <span className={`text - xs font - medium px - 2 py - 0.5 rounded - full ${metric.status === 'up' ? 'bg-green-100 text-green-700' :
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${metric.status === 'up' ? 'bg-green-100 text-green-700' :
                     metric.status === 'down' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
                     } `}>
                     {metric.change}
                   </span>
                 )}
-              </div>
-            ))
-          ) : rawData && Array.isArray(rawData) ? (
-            // Fallback: try to interpret rawData as metrics if provided
-            rawData.map((item, idx) => (
-              <div key={idx} className="p-3 bg-gray-50 rounded-md border border-gray-100 flex flex-col items-center text-center">
-                <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">{item.name || item.label || 'Metric'}</span>
-                <span className="text-xl font-bold text-gray-900 my-1">{item.value}</span>
               </div>
             ))
           ) : (
