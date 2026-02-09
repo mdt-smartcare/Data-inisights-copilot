@@ -26,29 +26,29 @@ class ConfigService:
         system_role = "You are a Data Architect and AI System Prompt Engineer."
         # Standard Chart Rules to append (Single Source of Truth)
         standard_chart_rules = """
-CHART GENERATION RULES:
-1. Generate a chart_json for every query that returns data.
-2. Use 'treemap' for distributions by location (e.g., country, site).
-3. Use 'radar' for comparing entities across multiple metrics.
-4. Use 'scorecard' for single statistics or summary data.
-5. Avoid using 'bar' or 'pie' for location distributions; use 'treemap' instead.
-6. For "Scorecard" charts, provide clear labels and values for each metric.
-7. For "Radar" charts, compare entities across variables.
-8. For "Treemap" charts, visualize hierarchical or categorical distributions.
+        CHART GENERATION RULES:
+        1. Generate a chart_json for every query that returns data.
+        2. Use 'treemap' for distributions by location (e.g., country, site).
+        3. Use 'radar' for comparing entities across multiple metrics.
+        4. Use 'scorecard' for single statistics or summary data.
+        5. Avoid using 'bar' or 'pie' for location distributions; use 'treemap' instead.
+        6. For "Scorecard" charts, provide clear labels and values for each metric.
+        7. For "Radar" charts, compare entities across variables.
+        8. For "Treemap" charts, visualize hierarchical or categorical distributions.
 
-JSON FORMAT:
-You MUST append a single JSON block at the end of your response:
-```json
-{
-    "chart_json": {
-        "title": "...",
-        "type": "radar|scorecard|treemap|bar|line|pie",
-        "data": { "labels": ["..."], "values": [10, 20] }
-    }
-}
-```
-IMPORTANT: DO NOT use Chart.js structure (datasets). Use simple "values" array matching the "labels" array.
-"""
+        JSON FORMAT:ß
+        You MUST append a single JSON block at the end of your response:
+        ```json
+        {
+            "chart_json": {
+                "title": "...",
+                "type": "radar|scorecard|treemap|bar|line|pie",
+                "data": { "labels": ["..."], "values": [10, 20] }
+            }
+        }
+        ```
+        IMPORTANT: DO NOT use Chart.js structure (datasets). Use simple "values" array matching the "labels" array.
+        """
 
         instruction = (
             "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will query a structured database.\\n\\n"

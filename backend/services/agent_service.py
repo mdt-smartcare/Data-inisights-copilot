@@ -273,10 +273,21 @@ Use this to search unstructured text, notes, and semantic descriptions.
             else:
                 embedding_info = {}
             
+            # DEBUG: Write full response to file for diagnosis
+            try:
+                with open("/tmp/llm_response_debug.txt", "w") as f:
+                    f.write(f"=== LLM RESPONSE (trace_id={trace_id}) ===\n")
+                    f.write(full_response)
+                    f.write("\n=== END RESPONSE ===\n")
+            except Exception as debug_err:
+                logger.warning(f"Failed to write debug file: {debug_err}")
+            
             # Parse JSON output from response (chart data only now)
             chart_data, _ = self._parse_agent_output(full_response)
             if chart_data:
                 logger.info(f"Chart data parsed: {chart_data.title}")
+            else:
+                logger.warning(f"NO CHART DATA PARSED from response (trace_id={trace_id})")
             
             # Generate LLM-powered follow-up questions based on response content
             if settings.enable_followup_questions:
@@ -407,6 +418,12 @@ Use this to search unstructured text, notes, and semantic descriptions.
                                     logger.info("Transformed Chart.js style 'datasets' to 'values'")
                             except Exception as e:
                                 logger.warning(f"Failed to transform chart datasets: {e}")
+                    
+                    # Fallback: Auto-generate title if missing (LLM sometimes omits it)
+                    if "title" not in chart_json or not chart_json["title"]:
+                        chart_type = chart_json.get("type", "Chart")
+                        chart_json["title"] = f"{chart_type.capitalize()} Visualization"
+                        logger.info(f"Auto-generated missing chart title: {chart_json['title']}")
 
                     try:
                         chart_data = ChartData(**chart_json)
