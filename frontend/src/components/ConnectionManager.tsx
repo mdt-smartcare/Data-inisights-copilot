@@ -24,14 +24,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
     // Deletion Modal
     const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
 
-    // Pool Config State
-    const [showAdvanced, setShowAdvanced] = useState(false);
-    const [poolConfig, setPoolConfig] = useState({
-        pool_size: 10,
-        max_overflow: 20,
-        pool_timeout: 30,
-        pool_recycle: 3600
-    });
+
 
     const fetchConnections = async () => {
         setLoading(true);
@@ -49,27 +42,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
         fetchConnections();
     }, []);
 
-    // Sync pool config with selected connection
-    useEffect(() => {
-        if (selectedId) {
-            const selected = connections.find(c => c.id === selectedId);
-            if (selected && selected.pool_config) {
-                try {
-                    setPoolConfig(JSON.parse(selected.pool_config));
-                } catch (e) {
-                    console.error("Failed to parse pool config", e);
-                }
-            } else {
-                // Reset to defaults if no config
-                setPoolConfig({
-                    pool_size: 10,
-                    max_overflow: 20,
-                    pool_timeout: 30,
-                    pool_recycle: 3600
-                });
-            }
-        }
-    }, [selectedId, connections]);
+
 
     const handleSave = async () => {
         if (!newName || !newUri) {
@@ -79,19 +52,12 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
         setLoading(true);
         setError(null);
         try {
-            const result = await saveConnection(newName, newUri, 'postgresql', poolConfig);
+            const result = await saveConnection(newName, newUri, 'postgresql', {});
             await fetchConnections();
             setIsAdding(false);
             setNewName('');
             setNewUri('');
-            // Reset pool defaults
-            setPoolConfig({
-                pool_size: 10,
-                max_overflow: 20,
-                pool_timeout: 30,
-                pool_recycle: 3600
-            });
-            setShowAdvanced(false);
+
             onSelect(result.id); // Auto-select new connection
         } catch (err) {
             setError(handleApiError(err));
@@ -100,12 +66,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
         }
     };
 
-    const handlePoolChange = (field: string, value: string) => {
-        setPoolConfig(prev => ({
-            ...prev,
-            [field]: parseInt(value) || 0
-        }));
-    };
+
 
     // ... (rest of imports/props)
 
@@ -189,59 +150,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                         />
                     </div>
 
-                    <div>
-                        <button
-                            type="button"
-                            onClick={() => setShowAdvanced(!showAdvanced)}
-                            className="text-xs text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"
-                        >
-                            {showAdvanced ? 'Hide Advanced Pool Settings' : 'Show Advanced Pool Settings'}
-                            <svg className={`w-3 h-3 transform transition-transform ${showAdvanced ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                        </button>
 
-                        {showAdvanced && (
-                            <div className="mt-3 grid grid-cols-2 gap-3 bg-white p-3 rounded border border-gray-200">
-                                <div>
-                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Pool Size</label>
-                                    <input
-                                        type="number"
-                                        className="w-full mt-1 p-1.5 border rounded text-xs"
-                                        value={poolConfig.pool_size}
-                                        onChange={(e) => handlePoolChange('pool_size', e.target.value)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Max Overflow</label>
-                                    <input
-                                        type="number"
-                                        className="w-full mt-1 p-1.5 border rounded text-xs"
-                                        value={poolConfig.max_overflow}
-                                        onChange={(e) => handlePoolChange('max_overflow', e.target.value)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Timeout (s)</label>
-                                    <input
-                                        type="number"
-                                        className="w-full mt-1 p-1.5 border rounded text-xs"
-                                        value={poolConfig.pool_timeout}
-                                        onChange={(e) => handlePoolChange('pool_timeout', e.target.value)}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] font-medium text-gray-500 uppercase">Recycle (s)</label>
-                                    <input
-                                        type="number"
-                                        className="w-full mt-1 p-1.5 border rounded text-xs"
-                                        value={poolConfig.pool_recycle}
-                                        onChange={(e) => handlePoolChange('pool_recycle', e.target.value)}
-                                    />
-                                </div>
-                            </div>
-                        )}
-                    </div>
                     <button
                         onClick={handleSave}
                         disabled={loading}
@@ -298,45 +207,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                 ))}
             </div>
 
-            {/* View Advanced Settings for Selected Connection */}
-            {selectedId && !isAdding && (
-                <div className="mt-4 p-4 border rounded-lg bg-blue-50 border-blue-200">
-                    <button
-                        type="button"
-                        onClick={() => setShowAdvanced(!showAdvanced)}
-                        className="text-xs text-blue-700 hover:text-blue-900 font-bold flex items-center gap-1 uppercase tracking-wider"
-                    >
-                        {showAdvanced ? 'Hide Advanced Pool Settings' : 'Show Advanced Pool Settings'}
-                        <svg className={`w-3 h-3 transform transition-transform ${showAdvanced ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                    </button>
 
-                    {showAdvanced && (
-                        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 bg-white p-3 rounded border border-blue-100">
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase">Pool Size</label>
-                                <p className="text-sm font-semibold text-gray-900">{poolConfig.pool_size}</p>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase">Max Overflow</label>
-                                <p className="text-sm font-semibold text-gray-900">{poolConfig.max_overflow}</p>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase">Timeout</label>
-                                <p className="text-sm font-semibold text-gray-900">{poolConfig.pool_timeout}s</p>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold text-gray-500 uppercase">Recycle</label>
-                                <p className="text-sm font-semibold text-gray-900">{poolConfig.pool_recycle}s</p>
-                            </div>
-                            <p className="col-span-full text-[10px] text-gray-400 italic">
-                                * To change these settings, recreate the connection with new values.
-                            </p>
-                        </div>
-                    )}
-                </div>
-            )}
 
             {/* Confirmation Modal */}
             <ConfirmationModal
