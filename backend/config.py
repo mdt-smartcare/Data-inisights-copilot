@@ -134,11 +134,12 @@ class Settings(BaseSettings):
     pytest_timeout: int = Field(default=30)
 
 
-@lru_cache()
 def get_settings() -> Settings:
     """
-    Get cached settings instance.
+    Get settings instance.
     Use this function throughout the application to access settings.
+    
+    Note: Cache removed to allow .env changes to take effect on server reload.
     """
     return Settings()
 
