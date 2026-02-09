@@ -12,7 +12,6 @@ from datetime import datetime
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import Tool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_openai import ChatOpenAI
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 
@@ -22,6 +21,7 @@ from backend.services.sql_service import get_sql_service
 from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
 from backend.services.followup_service import FollowUpService
+from backend.services.llm_registry import get_llm_registry
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import (
     ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
@@ -119,13 +119,9 @@ class AgentService:
         # Session expiry: 1 hour of inactivity
         self.SESSION_EXPIRY_SECONDS = 3600
         
-        # Initialize LLM
-        self.llm = ChatOpenAI(
-            temperature=settings.openai_temperature,
-            model_name=settings.openai_model,
-            api_key=settings.openai_api_key,
-            max_tokens=2000  # Prevent JSON truncation
-        )
+        # Initialize LLM via registry (enables hot-swapping)
+        self._llm_registry = get_llm_registry()
+        self.llm = self._llm_registry.get_langchain_llm()
         
         # Create tools
         self.tools = [
