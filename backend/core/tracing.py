@@ -12,10 +12,16 @@ import logging
 from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
 
-# Langfuse Imports
-from langfuse import Langfuse
-from langfuse.decorators import observe, langfuse_context
-from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
+# Langfuse Imports - v3.x uses direct imports from langfuse
+from langfuse import Langfuse, observe
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
+
+# Try to import langfuse_context (may vary by version)
+try:
+    from langfuse import langfuse_context
+except ImportError:
+    # Fallback for compatibility
+    langfuse_context = None
 
 # OpenTelemetry Imports
 from opentelemetry import trace
