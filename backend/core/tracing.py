@@ -94,11 +94,14 @@ class TracingManager:
     def get_langchain_callback(self) -> Optional[LangfuseCallbackHandler]:
         """Get LangChain callback handler if enabled."""
         if self.langfuse_enabled:
-            return LangfuseCallbackHandler(
-                public_key=settings.langfuse_public_key,
-                secret_key=settings.langfuse_secret_key,
-                host=settings.langfuse_host
-            )
+            # In langfuse v3.x, CallbackHandler reads credentials from environment
+            # variables (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST)
+            # or uses the default Langfuse client if already initialized
+            try:
+                return LangfuseCallbackHandler()
+            except Exception as e:
+                logger.warning(f"Failed to create Langfuse callback: {e}")
+                return None
         return None
 
     @contextmanager
