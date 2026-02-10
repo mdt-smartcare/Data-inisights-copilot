@@ -350,20 +350,20 @@ class DatabaseService:
         """Get the latest active system prompt.
         
         Returns:
-            The prompt text of the row where is_active=1 (ordered by version_number desc),
+            The prompt text of the row where is_active=1 (ordered by version desc),
             or None if no active prompt exists.
         """
         conn = self.get_connection()
         cursor = conn.cursor()
         
         cursor.execute(
-            "SELECT prompt_template FROM rag_configurations WHERE is_active = 1 ORDER BY version_number DESC LIMIT 1"
+            "SELECT prompt_text FROM system_prompts WHERE is_active = 1 ORDER BY version DESC LIMIT 1"
         )
         row = cursor.fetchone()
         conn.close()
         
         if row:
-            return row['prompt_template']
+            return row['prompt_text']
         return None
 
     def publish_system_prompt(self, prompt_text: str, user_id: str, 

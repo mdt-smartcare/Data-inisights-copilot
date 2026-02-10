@@ -4,6 +4,7 @@ Provides retrieval capabilities for the RAG pipeline.
 """
 import sys
 import os
+import time
 from pathlib import Path
 from functools import lru_cache
 from typing import List, Optional
@@ -14,6 +15,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.rag.retrieve import AdvancedRAGRetriever
 from langchain_core.documents import Document
+
+# Langfuse imports - v3.x uses direct imports from langfuse
+from langfuse import observe
+try:
+    from langfuse import langfuse_context
+except ImportError:
+    langfuse_context = None
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -120,6 +128,7 @@ class VectorStoreService:
         self.retriever = AdvancedRAGRetriever(config=self.rag_config)
         logger.info("Vector store initialized successfully")
     
+    @observe(as_type="span")
     def search(self, query: str, top_k: Optional[int] = None) -> List[Document]:
         """
         Perform semantic search on the vector store.
@@ -135,6 +144,18 @@ class VectorStoreService:
         logger.info(f"Searching vector store for query: '{query[:100]}...' (top_k={k})")
         
         try:
+            start_time = time.time()
+            
+            # Add metadata to trace
+            try:
+                if langfuse_context:
+                    langfuse_context.update_current_observation(
+                        input=query,
+                        metadata={"top_k": k, "method": "search"}
+                    )
+            except:
+                pass
+
             # Use the advanced retriever's invoke method
             result = self.retriever.invoke(query)
             
@@ -147,13 +168,26 @@ class VectorStoreService:
             else:
                 docs = [Document(page_content=str(result), metadata={"source": "rag"})]
             
-            logger.info(f"Retrieved {len(docs)} documents from vector store")
+            duration = time.time() - start_time
+            logger.info(f"Retrieved {len(docs)} documents from vector store in {duration:.2f} seconds")
+            
+            # Log result count and sources
+            try:
+                if langfuse_context:
+                    sources = [doc.metadata.get("source", "unknown") for doc in docs]
+                    langfuse_context.update_current_observation(
+                        metadata={"results_count": len(docs), "duration": duration, "sources": sources}
+                    )
+            except:
+                pass
+                
             return docs
             
         except Exception as e:
             logger.error(f"Vector store search failed: {e}", exc_info=True)
             raise
     
+    @observe(as_type="span")
     def search_with_scores(self, query: str, top_k: Optional[int] = None) -> List[tuple]:
         """
         Perform semantic search with relevance scores.
@@ -169,16 +203,41 @@ class VectorStoreService:
         logger.info(f"Searching with scores for: '{query[:100]}...'")
         
         try:
+            start_time = time.time()
+            
+            # Add metadata to trace
+            try:
+                if langfuse_context:
+                    langfuse_context.update_current_observation(
+                        input=query,
+                        metadata={"top_k": k, "method": "search_with_scores"}
+                    )
+            except:
+                pass
+
             # Check if retriever has reranking with scores method
             if hasattr(self.retriever, 'retrieve_and_rerank_with_scores'):
                 results = self.retriever.retrieve_and_rerank_with_scores(query)
-                logger.info(f"Retrieved {len(results)} documents with reranking scores")
+                duration = time.time() - start_time
+                logger.info(f"Retrieved {len(results)} documents with reranking scores in {duration:.2f} seconds")
+                
+                # Log result count and sources
+                try:
+                    if langfuse_context:
+                        sources = [doc.metadata.get("source", "unknown") for doc, _ in results]
+                        langfuse_context.update_current_observation(
+                            metadata={"results_count": len(results), "duration": duration, "sources": sources}
+                        )
+                except:
+                    pass
+                    
                 return results
             else:
                 # Fallback to regular search
                 docs = self.search(query, top_k=k)
                 # Return with dummy scores
-                return [(doc, 1.0) for doc in docs]
+                results = [(doc, 1.0) for doc in docs]
+                return results
                 
         except Exception as e:
             logger.error(f"Vector store search with scores failed: {e}", exc_info=True)

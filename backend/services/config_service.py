@@ -24,6 +24,32 @@ class ConfigService:
                              (Constructed by the frontend wizard)
         """
         system_role = "You are a Data Architect and AI System Prompt Engineer."
+        # Standard Chart Rules to append (Single Source of Truth)
+        standard_chart_rules = """
+        CHART GENERATION RULES:
+        1. Generate a chart_json for every query that returns data.
+        2. Use 'treemap' for distributions by location (e.g., country, site).
+        3. Use 'radar' for comparing entities across multiple metrics.
+        4. Use 'scorecard' for single statistics or summary data.
+        5. Avoid using 'bar' or 'pie' for location distributions; use 'treemap' instead.
+        6. For "Scorecard" charts, provide clear labels and values for each metric.
+        7. For "Radar" charts, compare entities across variables.
+        8. For "Treemap" charts, visualize hierarchical or categorical distributions.
+
+        JSON FORMAT:ß
+        You MUST append a single JSON block at the end of your response:
+        ```json
+        {
+            "chart_json": {
+                "title": "...",
+                "type": "radar|scorecard|treemap|bar|line|pie",
+                "data": { "labels": ["..."], "values": [10, 20] }
+            }
+        }
+        ```
+        IMPORTANT: DO NOT use Chart.js structure (datasets). Use simple "values" array matching the "labels" array.
+        """
+
         instruction = (
             "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will query a structured database.\\n\\n"
             "CONTEXT PROVIDED:\\n"
@@ -33,51 +59,10 @@ class ConfigService:
             "2. List the KEY tables and columns available based on the context above.\\n"
             "3. Define strict rules for SQL generation (e.g., joins, filters).\\n"
             "   - When multiple specific entities are mentioned (e.g., 'at Site A and Site B'), Use 'GROUP BY' to provide a breakdown/comparison, NOT a single total sum.\\n"
-            "4. **CHART GENERATION RULES (STRICT):\\n"
-            "1. **MANDATORY**: You MUST generate a chart_json for EVERY query that returns data. NEVER skip it.\\n"
-            "2. **CHART PREFERENCES** (Override default choices):\\n"
-            "   - IF data shows a distribution by LOCATION (Region, District, Site), USE 'treemap' INSTEAD of 'bar' or 'pie'.\\n"
-            "   - IF data compares entities across multiple metrics, USE 'radar'.\\n"
-            "   - IF data is a single number or summary, USE 'scorecard'.\\n"
-            "3. **DATA QUALITY**: Plot whatever data you have, even if sparse. Do not apologize for missing data in the chart.\\n"
-            "4. **NEGATIVE CONSTRAINTS (STRICT):**\\n"
-            "   - DO NOT use 'bar' or 'pie' for Location/District/Region distributions. YOU MUST USE 'treemap'.\\n"
-            "   - DO NOT Use 'bar' for single statistics. Use 'scorecard'.\\n"
-            "5. For \"Scorecard\" (KPIs):\\n"
-            "   - Use for single values: \"Total patients is 50\" -> Label: \"Total Patients\", Value: 50.\\n"
-            "   - Use for summaries: \"Avg wait time 30m, Total 10\" -> 2 metrics.\\n"
-            "   - Schema: {{ \"chart_json\": {{ \"type\": \"scorecard\", \"metrics\": [ {{ \"label\": \"...\", \"value\": \"...\" }} ] }} }}\\n"
-            "3. For \"Radar\":\\n"
-            "   - Use for comparing entities (A vs B) across variables.\\n"
-            "4. For \"Treemap\":\\n"
-            "   - Use for hierarchical or categorical distributions.\\n\\n"
-            "JSON FORMAT:\\n"
-            "You MUST append a single JSON block at the end of your response:\\n"
-            "```json\\n"
-            "{{\\n"
-            "    \\\"chart_json\\\": {{\\n"
-            "        \\\"title\\\": \\\"...\\\",\\n"
-            "        \\\"type\\\": \\\"radar|scorecard|treemap|bar|line|pie\\\",\\n"
-            "        \\\"data\\\": {{ ... }}\\n"
-            "    }}\\n"
-            "}}\\n"
-            "```\\n"
-            "If no chart is requested, omit the JSON.\\n"
-            "Chart type guidelines:\\n"
-            "- Use \\\"pie\\\" for: distributions, proportions (2-6 categories)\\n"
-            "- Use \\\"bar\\\" for: comparisons, counts by category, rankings\\n"
-            "- Use \\\"line\\\" for: trends over time\\n"
-            "- Use \\\"scorecard\\\" for: high-level KPIs, summary stats, headline numbers (e.g., Total Patients, Average Wait Time)\\n"
-            "- Use \\\"radar\\\" for: multi-variable comparison of entities (e.g., Hospital A vs B across 5 metrics)\\n"
-            "- Use \\\"treemap\\\" for: hierarchical data or visualizing proportions of a whole with many categories\\n\\n"
-            "FEW-SHOT EXAMPLES:\\n"
-            "user: \"Show distribution of patients by District\"\\n"
-            "assistant: ... \\\"chart_json\\\": {{ \\\"type\\\": \\\"treemap\\\", ... }}\\n\\n"
-            "user: \"Total active patients\"\\n"
-            "assistant: ... \\\"chart_json\\\": {{ \\\"type\\\": \\\"scorecard\\\", ... }}\\n\\n"
-            "user: \"Compare Clinic A and Clinic B\"\\n"
-            "assistant: ... \\\"chart_json\\\": {{ \\\"type\\\": \\\"bar\\\", ... }}\\n\\n"
-            "5. Return ONLY the prompt text, no markdown formatting."
+            "4. **OUTPUT FORMAT:**\\n"
+            "   - Do NOT include generic chart generation rules or JSON formats in your output (these will be appended automatically).\\n"
+            "   - Focus on domain-specific examples and logic.\\n"
+            "5. Return ONLY the prompt text (Persona + SQL Rules), no markdown formatting."
         )
 
         # Construct the prompt template
@@ -87,17 +72,12 @@ class ConfigService:
         ])
 
         # Invoke the LLM
-        # Invoke the LLM
         # We want the LLM to explain WHY it prioritized certain tables
         instruction += (
             "\n\nAlso, at the end of your response, strictly separated by '---REASONING---', "
             "provide a JSON object with two keys: \n"
             "1. 'selection_reasoning': mapping key schema elements (table names or table.column) to the reason they were selected.\n"
             "2. 'example_questions': a list of 3-5 representative questions this agent could answer.\n"
-            "Example:\n"
-            "Prompt Text...\n"
-            "---REASONING---\n"
-            "{\"selection_reasoning\": {\"patients\": \"Contains core demographics needed for most queries\", \"visits.admission_date\": \"Required for timeline analysis\"}, \"example_questions\": [\"Count patients by gender\", \"What is the average length of stay?\"]}"
         )
 
         chain = prompt_template | self.llm
@@ -134,6 +114,10 @@ class ConfigService:
             prompt_content = full_text
             reasoning = {}
             questions = []
+
+        # Append standard chart rules
+        if "CHART GENERATION RULES" not in prompt_content:
+            prompt_content += "\n\n" + standard_chart_rules
 
         return {
             "draft_prompt": prompt_content, 

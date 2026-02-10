@@ -371,3 +371,27 @@ export const updateNotificationPreferences = async (preferences: NotificationPre
   const response = await apiClient.put('/api/v1/notifications/preferences', preferences);
   return response.data;
 };
+
+// ============================================================================
+// OBSERVABILITY API
+// ============================================================================
+
+export const getObservabilityConfig = async () => {
+  const response = await apiClient.get('/api/v1/observability/config');
+  return response.data;
+};
+
+export const updateObservabilityConfig = async (config: any) => {
+  const response = await apiClient.put('/api/v1/observability/config', config);
+  return response.data;
+};
+
+export const getUsageStats = async (period: string = '24h') => {
+  const response = await apiClient.get(`/api/v1/observability/usage?period=${period}`);
+  return response.data;
+};
+
+export const testLogEmission = async (level: string, message: string) => {
+  const response = await apiClient.post(`/api/v1/observability/test-log?level=${level}&message=${encodeURIComponent(message)}`);
+  return response.data;
+};

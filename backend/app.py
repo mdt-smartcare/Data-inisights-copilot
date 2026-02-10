@@ -2,14 +2,19 @@
 FastAPI application entrypoint for the RAG Chatbot Backend.
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+# Load environment variables manually for libraries that rely on os.environ (like OpenAI)
+load_dotenv(Path(__file__).parent / ".env")
+
 from backend.config import get_settings
 from backend.core.logging import setup_logging, get_logger
 from backend.api.routes import auth, chat, feedback, health, config, data, audit, users
-from backend.api.routes import embedding_progress, notifications, settings as settings_routes
+from backend.api.routes import embedding_progress, notifications, settings as settings_routes, observability
 from backend.api.websocket import embedding_progress as embedding_ws
 from backend.services.embeddings import preload_embedding_model
 
@@ -69,8 +74,19 @@ app.include_router(users.router, prefix=settings.api_v1_prefix)
 app.include_router(embedding_progress.router, prefix=settings.api_v1_prefix)
 app.include_router(notifications.router, prefix=settings.api_v1_prefix)
 
-# Settings management routes
+# Embedding settings routes (MUST be before general settings to prevent route shadowing)
+from backend.api.routes import embedding_settings
+app.include_router(embedding_settings.router, prefix=settings.api_v1_prefix)
+
+# LLM settings routes (MUST be before general settings to prevent route shadowing)
+from backend.api.routes import llm_settings
+app.include_router(llm_settings.router, prefix=settings.api_v1_prefix)
+
+# Settings management routes (has /{category} catch-all, must come after specific routes)
 app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
+
+# Observability routes
+app.include_router(observability.router, prefix=settings.api_v1_prefix)
 
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)

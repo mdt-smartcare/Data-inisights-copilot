@@ -109,6 +109,15 @@ class ObservabilitySettings(BaseModel):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     enable_tracing: bool = False
     trace_sample_rate: float = Field(default=0.1, ge=0.0, le=1.0)
+    log_destinations: List[str] = ["console", "file"]
+    log_file_path: str = "./logs/backend.log"
+    log_max_size_mb: int = 100
+    log_backup_count: int = 5
+    langfuse_enabled: bool = False
+    opentelemetry_enabled: bool = False
+    otlp_endpoint: str = "http://localhost:4317"
+    tracing_provider: Literal["none", "langfuse", "opentelemetry", "both"] = "none"
+    observability_enabled: bool = False
 
 
 # Mapping of category to validation model

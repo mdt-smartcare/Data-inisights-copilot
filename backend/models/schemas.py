@@ -67,10 +67,15 @@ class ChatRequest(BaseModel):
 
 
 class ChartData(BaseModel):
-    """Chart visualization data."""
+    """Chart visualization data.
+    
+    Supports multiple chart types:
+    - List-based: pie, bar, line (data contains lists of labels/values)
+    - Single-value: scorecard, metric (data contains single value/label)
+    """
     title: str = Field(..., description="Chart title")
-    type: str = Field(..., description="Chart type (pie, bar, line)")
-    data: Dict[str, List[Any]] = Field(..., description="Chart data with labels and values")
+    type: str = Field(..., description="Chart type (pie, bar, line, scorecard, metric)")
+    data: Dict[str, Any] = Field(..., description="Chart data - format depends on chart type")
     
     model_config = ConfigDict(json_schema_extra={
         "example": {

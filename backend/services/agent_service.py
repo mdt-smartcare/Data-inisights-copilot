@@ -12,7 +12,6 @@ from datetime import datetime
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import Tool
 from langchain.agents import create_tool_calling_agent, AgentExecutor
-from langchain_openai import ChatOpenAI
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 
@@ -22,6 +21,7 @@ from backend.services.sql_service import get_sql_service
 from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
 from backend.services.followup_service import FollowUpService
+from backend.services.llm_registry import get_llm_registry
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import (
     ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
@@ -32,70 +32,8 @@ logger = get_logger(__name__)
 
 
 
-DEFAULT_SYSTEM_PROMPT = """You are an advanced Data Intelligence Agent with visualization capabilities.
-You have access to a SQL database and a Vector Store for unstructured documents.
-
-**YOUR DECISION MATRIX:**
-
-1. **Use `sql_query_tool` (Structured Data) when:**
-   - The user asks for statistics: Counts, averages, sums, or percentages
-   - The user filters by demographics: Age groups, gender, location
-   - Questions about "how many", "total", "distribution", "breakdown"
-
-2. **Use `rag_document_search_tool` (Unstructured Data) when:**
-   - The user asks about qualitative factors or descriptions
-   - You need to find specific narratives or documentation
-
-**RESPONSE FORMAT INSTRUCTIONS:**
-
-1. **Direct Answer:** Start with the key numbers or findings clearly stated.
-
-2. **Interpretation:** Briefly explain what the data means.
-
-3. **IMPORTANT - Chart Generation:** For ANY query that returns categorical or numerical data suitable for visualization (counts, distributions, comparisons, breakdowns), you MUST include a JSON block at the end of your response with chart data.
-
-**REQUIRED JSON OUTPUT FORMAT:**
-When data can be visualized, ALWAYS append this JSON block at the end:
-
-```json
-{
-    "chart_json": {
-        "title": "Descriptive Chart Title",
-        "type": "bar|pie|line",
-        "data": {
-            "labels": ["Category1", "Category2", "Category3"],
-            "values": [100, 200, 150]
-        }
-    }
-}
-```
-
-**Chart Type Guidelines:**
-- Use "pie" for: gender distribution, percentage breakdowns, proportions (2-6 categories)
-- Use "bar" for: counts by category, comparisons, rankings, age groups (any number of categories)
-- Use "line" for: trends over time, monthly/yearly data
-
-**Example Response Format:**
-Here are the results:
-- Male: 5,000 patients (60%)
-- Female: 3,322 patients (40%)
-
-The data shows a higher proportion of male patients in the system.
-
-```json
-{
-    "chart_json": {
-        "title": "Patient Gender Distribution",
-        "type": "pie",
-        "data": {
-            "labels": ["Male", "Female"],
-            "values": [5000, 3322]
-        }
-    }
-}
-```
-
-REMEMBER: Always include the chart_json block when presenting numerical/categorical data!
+DEFAULT_SYSTEM_PROMPT = """You are a helpful Data Intelligence Agent.
+Please contact the administrator to configure the active system prompt in the database.
 """
 class AgentService:
     """Main RAG agent service for processing user queries."""
@@ -119,13 +57,9 @@ class AgentService:
         # Session expiry: 1 hour of inactivity
         self.SESSION_EXPIRY_SECONDS = 3600
         
-        # Initialize LLM
-        self.llm = ChatOpenAI(
-            temperature=settings.openai_temperature,
-            model_name=settings.openai_model,
-            api_key=settings.openai_api_key,
-            max_tokens=2000  # Prevent JSON truncation
-        )
+        # Initialize LLM via registry (enables hot-swapping)
+        self._llm_registry = get_llm_registry()
+        self.llm = self._llm_registry.get_langchain_llm()
         
         # Create tools
         self.tools = [
@@ -288,6 +222,23 @@ Use this to search unstructured text, notes, and semantic descriptions.
         trace_id = str(uuid.uuid4())
         start_time = datetime.utcnow()
         
+        # Get Langfuse callback handler for tracing
+        # This groups ALL LLM calls for this query under ONE trace
+        from backend.core.tracing import get_tracing_manager
+        tracer = get_tracing_manager()
+        
+        # Create callback handler with trace context - this is the KEY fix
+        # All LangChain operations will be grouped under this single trace
+        langfuse_handler = tracer.get_langchain_callback(
+            trace_id=trace_id,
+            session_id=session_id,
+            user_id=user_id,
+            trace_name="rag_query"
+        )
+        
+        # Build callbacks list for LangChain
+        callbacks = [langfuse_handler] if langfuse_handler else []
+        
         logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
         
         try:
@@ -297,6 +248,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
             # =================================================================
             # Fetch prompt fresh on every request
             active_prompt = self.db_service.get_latest_active_prompt()
+            logger.info(f"Active prompt fetched for trace_id={trace_id}")
             
             if not active_prompt:
                 logger.warning("No active system prompt found in DB. Using default generic prompt.")
@@ -313,16 +265,35 @@ Use this to search unstructured text, notes, and semantic descriptions.
             # Pass system_prompt variable to the agent, creating a combined prompt
             final_prompt = f"{active_prompt}\n{formatted_examples}"
             
+            logger.info(f"Invoking agent for trace_id={trace_id}")
             # Use stateful execution with session-based history
+            # Pass callbacks to group all LLM calls under one trace
+            # Include langfuse metadata in config for proper trace-level user/session mapping
             result = await self.agent_with_history.ainvoke(
                 {"input": query, "system_prompt": final_prompt},
-                config={"configurable": {"session_id": session_id or "default"}}
+                config={
+                    "configurable": {"session_id": session_id or "default"},
+                    "callbacks": callbacks,  # This links all LLM calls to our trace
+                    "metadata": {
+                        "langfuse_user_id": user_id,
+                        "langfuse_session_id": session_id,
+                        "langfuse_tags": ["rag_query"],
+                        "trace_id": trace_id,
+                    }
+                }
             )
             
-            # Extract response
-            full_response = result.get("output", "An error occurred.")
-            intermediate_steps = result.get("intermediate_steps", [])
+            # Update trace with session_id, user_id, and name for proper filtering in Langfuse UI
+            # This must be called AFTER the LangChain operation creates the trace
+            tracer.update_current_trace_metadata(
+                name="rag_query",
+                session_id=session_id,
+                user_id=user_id,
+                metadata={"query_length": len(query), "trace_id": trace_id}
+            )
             
+            logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
+
             # Extract response
             full_response = result.get("output", "An error occurred.")
             intermediate_steps = result.get("intermediate_steps", [])
@@ -339,14 +310,29 @@ Use this to search unstructured text, notes, and semantic descriptions.
             else:
                 embedding_info = {}
             
+            # DEBUG: Write full response to file for diagnosis
+            try:
+                with open("/tmp/llm_response_debug.txt", "w") as f:
+                    f.write(f"=== LLM RESPONSE (trace_id={trace_id}) ===\n")
+                    f.write(full_response)
+                    f.write("\n=== END RESPONSE ===\n")
+            except Exception as debug_err:
+                logger.warning(f"Failed to write debug file: {debug_err}")
+            
             # Parse JSON output from response (chart data only now)
             chart_data, _ = self._parse_agent_output(full_response)
+            if chart_data:
+                logger.info(f"Chart data parsed: {chart_data.title}")
+            else:
+                logger.warning(f"NO CHART DATA PARSED from response (trace_id={trace_id})")
             
             # Generate LLM-powered follow-up questions based on response content
+            # Pass the same callbacks to group follow-up generation under the same trace
             if settings.enable_followup_questions:
                 suggested_questions = await self.followup_service.generate_followups(
                     original_question=query,
-                    system_response=self._clean_answer(full_response)
+                    system_response=self._clean_answer(full_response),
+                    callbacks=callbacks  # Group under same trace
                 )
             else:
                 suggested_questions = []
@@ -373,12 +359,47 @@ Use this to search unstructured text, notes, and semantic descriptions.
             )
             
             duration = (datetime.utcnow() - start_time).total_seconds()
-            logger.info(f" Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
+            logger.info(f"✅ Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
+            
+            # ============================================================
+            # Track usage metrics for observability dashboard
+            # ============================================================
+            try:
+                from backend.services.observability_service import get_observability_service
+                obs_service = get_observability_service()
+                
+                # Estimate token counts (rough approximation)
+                # In production, you'd get this from LLM response metadata
+                input_tokens = len(query.split()) * 1.3  # ~1.3 tokens per word
+                output_tokens = len(full_response.split()) * 1.3
+                
+                await obs_service.track_usage(
+                    operation="rag_pipeline",
+                    model=settings.openai_model,
+                    input_tokens=int(input_tokens),
+                    output_tokens=int(output_tokens),
+                    latency_ms=int(duration * 1000),
+                    metadata={
+                        "trace_id": trace_id,
+                        "rag_used": rag_used,
+                        "chart_generated": chart_data is not None,
+                        "tools_used": [step.tool for step in reasoning_steps],
+                        "user_id": user_id
+                    }
+                )
+                logger.debug(f"Usage tracked for trace_id={trace_id}")
+            except Exception as track_err:
+                logger.warning(f"Failed to track usage metrics: {track_err}")
+            
+            # Flush Langfuse to ensure trace is sent
+            tracer.flush()
             
             return response.model_dump()
             
         except Exception as e:
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
+            # Flush even on error to capture partial trace
+            tracer.flush()
             raise
     
 
@@ -450,10 +471,39 @@ Use this to search unstructured text, notes, and semantic descriptions.
             try:
                 data = json.loads(json_str)
                 
-                # Extract chart data
-                if chart_json := data.get("chart_json"):
-                    chart_data = ChartData(**chart_json)
-                    logger.info(f"Successfully parsed chart data: {chart_json.get('title', 'Untitled')}")
+                # Extract chart data - handle both wrapped and direct formats
+                chart_json = None
+                if "chart_json" in data:
+                    chart_json = data["chart_json"]
+                elif "type" in data and "data" in data:
+                    # LLM returned the chart object directly
+                    chart_json = data
+                
+                if chart_json:
+                    # Compatibility fix for Chart.js style output (datasets) -> Frontend style (values)
+                    if "data" in chart_json and isinstance(chart_json["data"], dict):
+                        cdata = chart_json["data"]
+                        if "datasets" in cdata and "values" not in cdata:
+                            # Extract data from first dataset
+                            try:
+                                datasets = cdata["datasets"]
+                                if datasets and isinstance(datasets, list):
+                                    cdata["values"] = datasets[0].get("data", [])
+                                    logger.info("Transformed Chart.js style 'datasets' to 'values'")
+                            except Exception as e:
+                                logger.warning(f"Failed to transform chart datasets: {e}")
+                    
+                    # Fallback: Auto-generate title if missing (LLM sometimes omits it)
+                    if "title" not in chart_json or not chart_json["title"]:
+                        chart_type = chart_json.get("type", "Chart")
+                        chart_json["title"] = f"{chart_type.capitalize()} Visualization"
+                        logger.info(f"Auto-generated missing chart title: {chart_json['title']}")
+
+                    try:
+                        chart_data = ChartData(**chart_json)
+                        logger.info(f"Successfully parsed chart data: {chart_json.get('title', 'Untitled')}")
+                    except Exception as ve:
+                        logger.warning(f"Validation failed for chart data: {ve}")
                 
                 # Extract suggestions
                 if questions := data.get("suggested_questions"):
