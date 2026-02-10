@@ -112,21 +112,27 @@ class TracingManager:
         """
         span = None
         try:
-            # Start Langfuse span
-            if self.langfuse_enabled:
-                span = langfuse_context.update_current_trace(
-                    name=name,
-                    **kwargs
-                )
+            # Start Langfuse span only if langfuse_context is available
+            if self.langfuse_enabled and langfuse_context is not None:
+                try:
+                    span = langfuse_context.update_current_trace(
+                        name=name,
+                        **kwargs
+                    )
+                except Exception as e:
+                    logger.debug(f"Could not update langfuse trace: {e}")
             
             yield span
             
         except Exception as e:
-            if self.langfuse_enabled:
-                langfuse_context.update_current_observation(
-                    level="ERROR",
-                    status_message=str(e)
-                )
+            if self.langfuse_enabled and langfuse_context is not None:
+                try:
+                    langfuse_context.update_current_observation(
+                        level="ERROR",
+                        status_message=str(e)
+                    )
+                except Exception:
+                    pass  # Don't fail on tracing errors
             raise e
 
 
@@ -156,20 +162,17 @@ def observe_embedding(func):
     @functools.wraps(func)
     @observe(as_type="generation")
     def wrapper(self, *args, **kwargs):
-        # Extract input text to count tokens (estimation)
-        texts = []
-        if args:
-            texts = args[0] if isinstance(args[0], list) else [args[0]]
-        
         # Execute
-        start_time = os.times()
         result = func(self, *args, **kwargs)
         
-        # Update trace with model info if available
-        if hasattr(self, 'model_name'):
-             langfuse_context.update_current_observation(
-                model=self.model_name
-            )
+        # Update trace with model info if available and langfuse_context exists
+        if hasattr(self, 'model_name') and langfuse_context is not None:
+            try:
+                langfuse_context.update_current_observation(
+                    model=self.model_name
+                )
+            except Exception:
+                pass  # Don't fail on tracing errors
             
         return result
     return wrapper
@@ -186,14 +189,18 @@ def observe_vector_search(func):
         # Execute
         results = func(self, query, top_k, *args, **kwargs)
         
-        # Log metadata
-        langfuse_context.update_current_observation(
-            input=query,
-            metadata={
-                "top_k": top_k,
-                "results_count": len(results) if results else 0
-            }
-        )
+        # Log metadata only if langfuse_context exists
+        if langfuse_context is not None:
+            try:
+                langfuse_context.update_current_observation(
+                    input=query,
+                    metadata={
+                        "top_k": top_k,
+                        "results_count": len(results) if results else 0
+                    }
+                )
+            except Exception:
+                pass  # Don't fail on tracing errors
         return results
     return wrapper
 

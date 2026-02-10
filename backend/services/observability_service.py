@@ -12,6 +12,7 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import sqlite3
+from pathlib import Path
 
 from backend.config import get_settings
 from backend.core.logging import get_logger, setup_logging
@@ -21,17 +22,32 @@ from backend.services.settings_service import get_settings_service
 settings = get_settings()
 logger = get_logger(__name__)
 
+# Get the SQLite database path (app.db in sqliteDb folder)
+SQLITE_DB_PATH = Path(__file__).parent.parent / "sqliteDb" / "app.db"
+
+
 class ObservabilityService:
     """Service for managing observability configuration and usage tracking."""
     
     def __init__(self):
         self.db_service = get_db_service()
         self.settings_service = get_settings_service()
+        self.sqlite_db_path = str(SQLITE_DB_PATH)
         
     async def get_config(self) -> Dict[str, Any]:
         """Get current observability configuration."""
-        obs_settings = self.settings_service.get_settings_by_category("observability")
-        return obs_settings
+        try:
+            obs_settings = self.settings_service.get_category_settings("observability")
+            return obs_settings
+        except Exception as e:
+            logger.warning(f"Could not load observability settings: {e}")
+            # Return defaults
+            return {
+                "log_level": settings.log_level,
+                "langfuse_enabled": settings.enable_langfuse,
+                "tracing_provider": "langfuse" if settings.enable_langfuse else "none",
+                "log_destinations": ["console"]
+            }
         
     async def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -43,25 +59,21 @@ class ObservabilityService:
         Returns:
             Updated configuration
         """
-        # Update settings in DB
-        # We need to map the flat updates to the category structure expected by settings service
-        # But settings service update takes a full object usually. 
-        # Here we'll use the update_category_settings method if exposed or update individual keys.
-        # Ideally, we should use settings_service.update_settings("observability", updates)
-        
-        # For now, let's assume we can update via settings service
-        # Since settings_service.update_category_settings expects the Pydantic model
-        # We fetch current, patch it, and save back.
-        
-        current = self.settings_service.get_settings_by_category("observability")
-        merged = {**current, **updates}
-        
-        updated = self.settings_service.update_category_settings("observability", merged)
-        
-        # Apply changes to runtime
-        self._apply_runtime_changes(updates)
-        
-        return updated
+        try:
+            current = await self.get_config()
+            merged = {**current, **updates}
+            
+            # Update each setting individually
+            for key, value in updates.items():
+                self.settings_service.update_setting("observability", key, value)
+            
+            # Apply changes to runtime
+            self._apply_runtime_changes(updates)
+            
+            return merged
+        except Exception as e:
+            logger.error(f"Failed to update observability config: {e}")
+            raise
 
     def _apply_runtime_changes(self, changes: Dict[str, Any]):
         """Apply configuration changes to running application."""
@@ -74,19 +86,21 @@ class ObservabilityService:
             
         # 2. Tracing Provider
         if 'tracing_provider' in changes or 'langfuse_enabled' in changes:
-            # We can't easily unload libraries, but we can set flags in TracingManager
-            from backend.core.tracing import get_tracing_manager
-            tm = get_tracing_manager()
-            
-            if 'langfuse_enabled' in changes:
-                tm.langfuse_enabled = changes['langfuse_enabled']
+            try:
+                from backend.core.tracing import get_tracing_manager
+                tm = get_tracing_manager()
                 
-            if 'tracing_provider' in changes:
-                provider = changes['tracing_provider']
-                tm.langfuse_enabled = provider in ['langfuse', 'both']
-                tm.otel_enabled = provider in ['opentelemetry', 'both']
-                
-            logger.info(f"Tracing configuration updated: Langfuse={tm.langfuse_enabled}, OTEL={tm.otel_enabled}")
+                if 'langfuse_enabled' in changes:
+                    tm.langfuse_enabled = changes['langfuse_enabled']
+                    
+                if 'tracing_provider' in changes:
+                    provider = changes['tracing_provider']
+                    tm.langfuse_enabled = provider in ['langfuse', 'both']
+                    tm.otel_enabled = provider in ['opentelemetry', 'both']
+                    
+                logger.info(f"Tracing configuration updated: Langfuse={tm.langfuse_enabled}, OTEL={tm.otel_enabled}")
+            except Exception as e:
+                logger.warning(f"Could not update tracing config: {e}")
 
     async def track_usage(self, 
                           trace_id: str, 
@@ -99,27 +113,16 @@ class ObservabilityService:
                           user_id: Optional[str] = None):
         """
         Record usage metrics for an operation.
-        
-        Args:
-            trace_id: Unique trace identifier
-            operation_type: 'llm', 'embedding', 'vector_search'
-            model_name: Name of the model used
-            input_tokens: Number of input tokens
-            output_tokens: Number of output tokens
-            duration_ms: Duration in milliseconds
-            metadata: Additional metadata
-            user_id: User who triggered the operation
         """
         try:
-            # simple cost estimation (placeholders)
-            # In a real app, this would use a pricing catalog
+            # Simple cost estimation
             cost = 0.0
             if "gpt-4" in model_name:
                 cost = (input_tokens * 0.00003) + (output_tokens * 0.00006)
             elif "gpt-3.5" in model_name:
                 cost = (input_tokens * 0.0000005) + (output_tokens * 0.0000015)
             elif "embedding" in operation_type:
-                 cost = (input_tokens * 0.0000001) # Very cheap
+                cost = (input_tokens * 0.0000001)
             
             query = """
                 INSERT INTO usage_metrics 
@@ -134,11 +137,7 @@ class ObservabilityService:
                 cost, duration_ms, json.dumps(metadata or {}), user_id
             )
             
-            # Using direct SQLite connection for speed/simplicity independent of main DB session
-            # Or use the db_service if it supports raw queries well
-            # For logging/metrics, fire-and-forget is often best, but here we'll await
-            
-            with sqlite3.connect(settings.sqlite_db_path) as conn:
+            with sqlite3.connect(self.sqlite_db_path) as conn:
                 conn.execute(query, params)
                 conn.commit()
                 
@@ -160,18 +159,6 @@ class ObservabilityService:
         elif period == "7d": time_filter = "'-7 days'"
         elif period == "30d": time_filter = "'-30 days'"
         
-        query = f"""
-            SELECT 
-                operation_type,
-                COUNT(*) as call_count,
-                SUM(total_tokens) as total_tokens,
-                SUM(estimated_cost_usd) as total_cost,
-                AVG(duration_ms) as avg_duration
-            FROM usage_metrics
-            WHERE created_at >= datetime('now', {time_filter})
-            GROUP BY operation_type
-        """
-        
         stats = {
             "period": period,
             "llm": {"calls": 0, "tokens": 0, "cost": 0.0, "latency": 0},
@@ -181,19 +168,38 @@ class ObservabilityService:
         }
         
         try:
-            with sqlite3.connect(settings.sqlite_db_path) as conn:
+            # Check if usage_metrics table exists
+            with sqlite3.connect(self.sqlite_db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='usage_metrics'"
+                )
+                if not cursor.fetchone():
+                    logger.debug("usage_metrics table does not exist yet")
+                    return stats
+                
+                query = f"""
+                    SELECT 
+                        operation_type,
+                        COUNT(*) as call_count,
+                        SUM(total_tokens) as total_tokens,
+                        SUM(estimated_cost_usd) as total_cost,
+                        AVG(duration_ms) as avg_duration
+                    FROM usage_metrics
+                    WHERE created_at >= datetime('now', {time_filter})
+                    GROUP BY operation_type
+                """
+                
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(query)
                 rows = cursor.fetchall()
                 
                 for row in rows:
-                    op_type = row["operation_type"]
-                    # Map rag_pipeline to a category or ignore
+                    op_type = row["operation_type"] or ""
                     category = "llm" if "llm" in op_type else op_type
                     if "vector" in op_type: category = "vector_search"
                     
                     if category in stats:
-                        stats[category]["calls"] = row["call_count"]
+                        stats[category]["calls"] = row["call_count"] or 0
                         stats[category]["tokens"] = row["total_tokens"] or 0
                         stats[category]["cost"] = row["total_cost"] or 0.0
                         stats[category]["latency"] = round(row["avg_duration"] or 0, 2)
@@ -203,6 +209,7 @@ class ObservabilityService:
             logger.error(f"Failed to get usage stats: {e}")
             
         return stats
+
 
 # Singleton
 _service_instance = None
