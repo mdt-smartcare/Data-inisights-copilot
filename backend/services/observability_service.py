@@ -156,9 +156,12 @@ class ObservabilityService:
             Aggregated stats dictionary
         """
         time_filter = "'-24 hours'"
-        if period == "1h": time_filter = "'-1 hour'"
-        elif period == "7d": time_filter = "'-7 days'"
-        elif period == "30d": time_filter = "'-30 days'"
+        if period == "1h":
+            time_filter = "'-1 hour'"
+        elif period == "7d":
+            time_filter = "'-7 days'"
+        elif period == "30d":
+            time_filter = "'-30 days'"
         
         stats = {
             "period": period,
@@ -195,16 +198,27 @@ class ObservabilityService:
                 rows = cursor.fetchall()
                 
                 for row in rows:
-                    op_type = row["operation_type"] or ""
-                    category = "llm" if "llm" in op_type else op_type
-                    if "vector" in op_type: category = "vector_search"
+                    op_type = (row["operation_type"] or "").lower()
                     
-                    if category in stats:
-                        stats[category]["calls"] = row["call_count"] or 0
-                        stats[category]["tokens"] = row["total_tokens"] or 0
-                        stats[category]["cost"] = row["total_cost"] or 0.0
-                        stats[category]["latency"] = round(row["avg_duration"] or 0, 2)
-                        stats["total_cost"] += row["total_cost"] or 0.0
+                    # Map operation types to UI categories
+                    if "rag" in op_type or "pipeline" in op_type or "llm" in op_type or "chat" in op_type:
+                        category = "llm"
+                    elif "embed" in op_type:
+                        category = "embedding"
+                    elif "vector" in op_type or "search" in op_type:
+                        category = "vector_search"
+                    else:
+                        # Default: count as LLM if it has tokens
+                        category = "llm"
+                    
+                    # Accumulate stats (in case multiple operation types map to same category)
+                    stats[category]["calls"] += row["call_count"] or 0
+                    stats[category]["tokens"] += row["total_tokens"] or 0
+                    stats[category]["cost"] += row["total_cost"] or 0.0
+                    # For latency, we take the latest value (or could average)
+                    if row["avg_duration"]:
+                        stats[category]["latency"] = round(row["avg_duration"], 2)
+                    stats["total_cost"] += row["total_cost"] or 0.0
                         
         except Exception as e:
             logger.error(f"Failed to get usage stats: {e}")
