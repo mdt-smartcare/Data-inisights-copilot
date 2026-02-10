@@ -327,6 +327,36 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 duration = (datetime.utcnow() - start_time).total_seconds()
                 logger.info(f" Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
                 
+                # ============================================================
+                # Track usage metrics for observability dashboard
+                # ============================================================
+                try:
+                    from backend.services.observability_service import get_observability_service
+                    obs_service = get_observability_service()
+                    
+                    # Estimate token counts (rough approximation)
+                    # In production, you'd get this from LLM response metadata
+                    input_tokens = len(query.split()) * 1.3  # ~1.3 tokens per word
+                    output_tokens = len(full_response.split()) * 1.3
+                    
+                    await obs_service.track_usage(
+                        trace_id=trace_id,
+                        operation_type="rag_pipeline",
+                        model_name=settings.openai_model,
+                        input_tokens=int(input_tokens),
+                        output_tokens=int(output_tokens),
+                        duration_ms=int(duration * 1000),
+                        metadata={
+                            "rag_used": rag_used,
+                            "chart_generated": chart_data is not None,
+                            "tools_used": [step.tool for step in reasoning_steps]
+                        },
+                        user_id=user_id
+                    )
+                    logger.debug(f"Usage tracked for trace_id={trace_id}")
+                except Exception as track_err:
+                    logger.warning(f"Failed to track usage metrics: {track_err}")
+                
                 # Update trace output
                 if trace_span:
                     try:
