@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from pydantic import BaseModel
 
 from backend.services.observability_service import ObservabilityService, get_observability_service
-from backend.core.authentication import get_current_user, require_super_admin
+from backend.api.deps import get_current_user, require_super_admin
 from backend.models.schemas import User
 
 router = APIRouter(prefix="/observability", tags=["observability"])
