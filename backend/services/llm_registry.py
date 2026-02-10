@@ -234,14 +234,49 @@ class LLMRegistry:
             raise RuntimeError("No active LLM provider configured")
         return self._active_provider
     
-    def get_langchain_llm(self):
+    def get_langchain_llm(self, with_tracing: bool = True):
         """
         Convenience method to get LangChain-compatible LLM from active provider.
         
+        Args:
+            with_tracing: If True, attaches Langfuse callback for tracing (if enabled)
+        
         Returns:
-            LangChain BaseChatModel instance
+            LangChain BaseChatModel instance (with callbacks if tracing enabled)
         """
-        return self.get_active_provider().get_langchain_llm()
+        llm = self.get_active_provider().get_langchain_llm()
+        
+        if with_tracing:
+            try:
+                from backend.core.tracing import get_tracing_manager
+                tracer = get_tracing_manager()
+                callback = tracer.get_langchain_callback()
+                
+                if callback:
+                    # Attach Langfuse callback to LLM for automatic tracing
+                    if hasattr(llm, 'callbacks') and llm.callbacks:
+                        llm.callbacks.append(callback)
+                    else:
+                        llm.callbacks = [callback]
+                    logger.debug("Langfuse callback attached to LLM")
+            except Exception as e:
+                logger.warning(f"Could not attach tracing callback: {e}")
+        
+        return llm
+    
+    def get_langfuse_callback(self):
+        """
+        Get Langfuse callback handler for manual attachment to LangChain chains.
+        
+        Returns:
+            LangfuseCallbackHandler if enabled, None otherwise
+        """
+        try:
+            from backend.core.tracing import get_tracing_manager
+            return get_tracing_manager().get_langchain_callback()
+        except Exception as e:
+            logger.warning(f"Could not get Langfuse callback: {e}")
+            return None
     
     def set_active_provider(
         self,
