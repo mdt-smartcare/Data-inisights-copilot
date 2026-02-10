@@ -329,11 +329,14 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 
                 # Update trace output
                 if trace_span:
-                    from langfuse.decorators import langfuse_context
-                    langfuse_context.update_current_trace(
-                        output=response.model_dump(),
-                        metadata={"rag_used": rag_used, "chart_generated": chart_data is not None}
-                    )
+                    try:
+                        from langfuse import langfuse_context
+                        langfuse_context.update_current_trace(
+                            output=response.model_dump(),
+                            metadata={"rag_used": rag_used, "chart_generated": chart_data is not None}
+                        )
+                    except ImportError:
+                        pass
                 
                 return response.model_dump()
                 
