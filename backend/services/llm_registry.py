@@ -234,12 +234,14 @@ class LLMRegistry:
             raise RuntimeError("No active LLM provider configured")
         return self._active_provider
     
-    def get_langchain_llm(self, with_tracing: bool = True):
+    def get_langchain_llm(self, with_tracing: bool = False):
         """
         Convenience method to get LangChain-compatible LLM from active provider.
         
         Args:
             with_tracing: If True, attaches Langfuse callback for tracing (if enabled)
+                         NOTE: Set to False by default - tracing callbacks should be 
+                         attached at query time with session_id/user_id context.
         
         Returns:
             LangChain BaseChatModel instance (with callbacks if tracing enabled)
@@ -250,6 +252,8 @@ class LLMRegistry:
             try:
                 from backend.core.tracing import get_tracing_manager
                 tracer = get_tracing_manager()
+                # NOTE: This creates callbacks WITHOUT user_id/session_id context.
+                # For proper tracing, pass callbacks at query time via agent_service.py
                 callback = tracer.get_langchain_callback()
                 
                 if callback:
@@ -258,7 +262,7 @@ class LLMRegistry:
                         llm.callbacks.append(callback)
                     else:
                         llm.callbacks = [callback]
-                    logger.debug("Langfuse callback attached to LLM")
+                    logger.debug("Langfuse callback attached to LLM (no user/session context)")
             except Exception as e:
                 logger.warning(f"Could not attach tracing callback: {e}")
         

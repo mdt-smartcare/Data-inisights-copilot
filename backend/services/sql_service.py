@@ -6,6 +6,7 @@ from functools import lru_cache
 from typing import Optional, Tuple, List, Dict, Any
 from datetime import datetime
 import re
+import time
 
 from sqlalchemy import inspect
 from langchain_community.utilities import SQLDatabase
@@ -13,6 +14,13 @@ from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.outputs import LLMResult
+
+# Langfuse imports for tracing
+from langfuse import observe
+try:
+    from langfuse import langfuse_context
+except ImportError:
+    langfuse_context = None
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -308,6 +316,7 @@ class SQLService:
         
         return is_simple
     
+    @observe
     def query(self, question: str) -> str:
         logger.info(f"Executing SQL query for: '{question[:100]}...'")
         
@@ -326,11 +335,14 @@ class SQLService:
             return self._execute_with_agent(question)
     
 
-    
+    @observe(as_type="span")
     def _execute_optimized(self, question: str) -> str:
         logger.info("=" * 80)
         logger.info("OPTIMIZED SQL EXECUTION:")
         logger.info("=" * 80)
+        
+        # Track start time for SQL execution
+        start_time = time.time()
         
         try:
             sql_query = None
@@ -376,6 +388,19 @@ SQL Query:"""
                 
                 sql_query = re.sub(r'```\n?', '', sql_query)
                 sql_query = sql_query.strip()
+            
+            # Update Langfuse trace with generated SQL
+            if langfuse_context:
+                try:
+                    langfuse_context.update_current_observation(
+                        input=question,
+                        metadata={
+                            "generated_sql": sql_query[:500],
+                            "execution_type": "optimized"
+                        }
+                    )
+                except:
+                    pass
             
             # =================================================================
             # REFLECTION LOOP: Validate and Fix SQL Algorithm
@@ -439,9 +464,25 @@ Return ONLY the corrected SQL query."""
                 logger.warning("  Final SQL validation failed, falling back to agent")
                 return self._execute_with_agent(question)
             
+            # Execute SQL and track time
             logger.info(" Executing query against database (no API call)")
+            sql_start = time.time()
             result = self.db.run(sql_query)
+            sql_duration_ms = (time.time() - sql_start) * 1000
             logger.info(f" Query result: {result}")
+            
+            # Update Langfuse with SQL execution metrics
+            if langfuse_context:
+                try:
+                    langfuse_context.update_current_observation(
+                        metadata={
+                            "sql_execution_time_ms": sql_duration_ms,
+                            "result_length": len(str(result)),
+                            "final_sql": sql_query
+                        }
+                    )
+                except:
+                    pass
             
             logger.info(f" API Call {api_call_count + 1}: Format natural language response")
             api_call_count += 1
@@ -482,10 +523,25 @@ Response:"""
             formatted_response = self.llm.invoke(format_prompt)
             output = formatted_response.content.strip()
             
+            total_duration_ms = (time.time() - start_time) * 1000
             logger.info("=" * 80)
             logger.info(f" Optimized execution completed with {api_call_count} API call(s) (vs 7 with agent)")
+            logger.info(f" Total duration: {total_duration_ms:.0f}ms, SQL execution: {sql_duration_ms:.0f}ms")
             logger.info(f" Final Answer: {output[:300]}...")
             logger.info("=" * 80)
+            
+            # Final Langfuse update
+            if langfuse_context:
+                try:
+                    langfuse_context.update_current_observation(
+                        output=output[:500],
+                        metadata={
+                            "total_duration_ms": total_duration_ms,
+                            "api_calls": api_call_count
+                        }
+                    )
+                except:
+                    pass
             
             return output
             
@@ -525,6 +581,7 @@ Response:"""
         
         return True
     
+    @observe
     def _execute_with_agent(self, question: str) -> str:
         logger.info("=" * 80)
         logger.info(" SQL AGENT EXECUTION TRACE:")

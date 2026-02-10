@@ -3,10 +3,11 @@ Follow-Up Question Generation Service.
 Generates context-aware follow-up questions based on response content.
 """
 import asyncio
-from typing import List
+from typing import List, Optional
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
+from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, Field
 
 from backend.core.logging import get_logger
@@ -78,7 +79,8 @@ System Response: {system_response}
     async def generate_followups(
         self, 
         original_question: str, 
-        system_response: str
+        system_response: str,
+        callbacks: Optional[List[BaseCallbackHandler]] = None
     ) -> List[str]:
         """
         Generate 3 context-aware follow-up questions with timeout protection.
@@ -86,6 +88,7 @@ System Response: {system_response}
         Args:
             original_question: The user's original query
             system_response: The system's response text
+            callbacks: Optional list of callback handlers for tracing
             
         Returns:
             List of 3 follow-up question strings
@@ -93,7 +96,7 @@ System Response: {system_response}
         try:
             # Use asyncio.wait_for to enforce timeout
             return await asyncio.wait_for(
-                self._generate_followups_internal(original_question, system_response),
+                self._generate_followups_internal(original_question, system_response, callbacks),
                 timeout=FOLLOWUP_TIMEOUT_SECONDS
             )
         except asyncio.TimeoutError:
@@ -110,17 +113,26 @@ System Response: {system_response}
     async def _generate_followups_internal(
         self, 
         original_question: str, 
-        system_response: str
+        system_response: str,
+        callbacks: Optional[List[BaseCallbackHandler]] = None
     ) -> List[str]:
         """Internal method that performs the actual LLM call."""
         # Build and execute the chain
         chain = self.prompt | self.llm | self.parser
         
-        result = await chain.ainvoke({
-            "original_question": original_question,
-            "system_response": system_response,
-            "format_instructions": self.parser.get_format_instructions()
-        })
+        # Build config with callbacks if provided (for Langfuse tracing)
+        config = {}
+        if callbacks:
+            config["callbacks"] = callbacks
+        
+        result = await chain.ainvoke(
+            {
+                "original_question": original_question,
+                "system_response": system_response,
+                "format_instructions": self.parser.get_format_instructions()
+            },
+            config=config if config else None
+        )
         
         questions = result.get("questions", [])
         
