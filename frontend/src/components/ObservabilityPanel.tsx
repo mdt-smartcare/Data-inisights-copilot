@@ -9,10 +9,38 @@ import { useToast } from './Toast';
 
 interface UsageStats {
     period: string;
-    llm: { calls: number; tokens: number; cost: number; latency: number };
-    embedding: { calls: number; tokens: number; cost: number; latency: number };
-    vector_search: { calls: number; tokens: number; cost: number; latency: number };
-    total_cost: number;
+    from_timestamp: string;
+    to_timestamp: string;
+    langfuse_enabled: boolean;
+    langfuse_host: string;
+    summary: {
+        total_traces: number;
+        total_observations: number;
+        total_generations: number;
+        total_cost: number;
+        total_tokens: number;
+    };
+    by_model: Array<{
+        model: string;
+        calls: number;
+        input_tokens: number;
+        output_tokens: number;
+        total_tokens: number;
+        total_cost: number;
+        avg_latency_ms: number;
+    }>;
+    by_operation: {
+        llm: { calls: number; tokens: number; cost: number; avg_latency_ms: number };
+        embedding: { calls: number; tokens: number; cost: number; avg_latency_ms: number };
+        retrieval: { calls: number; tokens: number; cost: number; avg_latency_ms: number };
+    };
+    latency_percentiles: {
+        p50: number;
+        p75: number;
+        p90: number;
+        p95: number;
+        p99: number;
+    };
 }
 
 const ObservabilityPanel: React.FC = () => {
@@ -91,7 +119,20 @@ const ObservabilityPanel: React.FC = () => {
         }
     };
 
+    // Safe accessor helpers
+    const getSummary = () => stats?.summary || { total_traces: 0, total_observations: 0, total_generations: 0, total_cost: 0, total_tokens: 0 };
+    const getByOperation = () => stats?.by_operation || { 
+        llm: { calls: 0, tokens: 0, cost: 0, avg_latency_ms: 0 },
+        embedding: { calls: 0, tokens: 0, cost: 0, avg_latency_ms: 0 },
+        retrieval: { calls: 0, tokens: 0, cost: 0, avg_latency_ms: 0 }
+    };
+    const getLatencyPercentiles = () => stats?.latency_percentiles || { p50: 0, p75: 0, p90: 0, p95: 0, p99: 0 };
+
     if (loading) return <div className="p-8 text-center text-gray-500">Loading observability settings...</div>;
+
+    const summary = getSummary();
+    const byOperation = getByOperation();
+    const latencyPercentiles = getLatencyPercentiles();
 
     return (
         <div className="space-y-6">
@@ -105,9 +146,21 @@ const ObservabilityPanel: React.FC = () => {
                         </svg>
                         Observability Settings
                     </h2>
-                    <button onClick={handleTestLog} className="text-xs text-gray-500 hover:text-purple-600 underline">
-                        Emit Test Log
-                    </button>
+                    <div className="flex items-center gap-4">
+                        {stats?.langfuse_enabled && (
+                            <a 
+                                href={stats.langfuse_host} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                className="text-xs text-purple-600 hover:text-purple-800 underline"
+                            >
+                                Open Langfuse Dashboard →
+                            </a>
+                        )}
+                        <button onClick={handleTestLog} className="text-xs text-gray-500 hover:text-purple-600 underline">
+                            Emit Test Log
+                        </button>
+                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -177,12 +230,14 @@ const ObservabilityPanel: React.FC = () => {
                                 <span className="ml-2 text-sm text-gray-700">Both</span>
                             </label>
                         </div>
-                        <p className="mt-1 text-xs text-gray-500">Destination for RAG pipeline traces.</p>
+                        <p className="mt-1 text-xs text-gray-500">
+                            {stats?.langfuse_enabled ? '✓ Langfuse connected' : 'Destination for RAG pipeline traces.'}
+                        </p>
                     </div>
                 </div>
             </div>
 
-            {/* 2. Usage Statistics */}
+            {/* 2. Usage Statistics Summary */}
             <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
@@ -206,42 +261,146 @@ const ObservabilityPanel: React.FC = () => {
                     </div>
                 </div>
 
-                {stats && (
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <StatCard
-                            label="Total Cost (Est.)"
-                            value={`$${stats.total_cost.toFixed(4)}`}
-                            subtext="Combined LLM & Embedding"
-                            color="text-green-600"
-                        />
-                        <StatCard
-                            label="LLM Calls"
-                            value={stats.llm.calls.toLocaleString()}
-                            subtext={`${(stats.llm.tokens / 1000).toFixed(1)}k tokens`}
-                        />
-                        <StatCard
-                            label="Embeddings"
-                            value={stats.embedding.calls.toLocaleString()}
-                            subtext={`${(stats.embedding.tokens / 1000).toFixed(1)}k tokens`}
-                        />
-                        <StatCard
-                            label="Vector Searches"
-                            value={stats.vector_search.calls.toLocaleString()}
-                            subtext={`Avg Latency: ${stats.vector_search.latency}ms`}
-                        />
-                    </div>
-                )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <StatCard
+                        label="Total Cost"
+                        value={`$${(summary.total_cost || 0).toFixed(4)}`}
+                        subtext="From Langfuse"
+                        color="text-green-600"
+                    />
+                    <StatCard
+                        label="Total Traces"
+                        value={(summary.total_traces || 0).toLocaleString()}
+                        subtext={`${(summary.total_generations || 0).toLocaleString()} generations`}
+                    />
+                    <StatCard
+                        label="Total Tokens"
+                        value={`${((summary.total_tokens || 0) / 1000).toFixed(1)}k`}
+                        subtext="Input + Output"
+                    />
+                    <StatCard
+                        label="P95 Latency"
+                        value={`${((latencyPercentiles.p95 || 0) * 1000).toFixed(0)}ms`}
+                        subtext={`P50: ${((latencyPercentiles.p50 || 0) * 1000).toFixed(0)}ms`}
+                    />
+                </div>
             </div>
+
+            {/* 3. By Operation */}
+            <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                    </svg>
+                    Usage by Operation Type
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <OperationCard
+                        title="LLM Calls"
+                        calls={byOperation.llm?.calls || 0}
+                        tokens={byOperation.llm?.tokens || 0}
+                        cost={byOperation.llm?.cost || 0}
+                        latency={byOperation.llm?.avg_latency_ms || 0}
+                        color="purple"
+                    />
+                    <OperationCard
+                        title="Embeddings"
+                        calls={byOperation.embedding?.calls || 0}
+                        tokens={byOperation.embedding?.tokens || 0}
+                        cost={byOperation.embedding?.cost || 0}
+                        latency={byOperation.embedding?.avg_latency_ms || 0}
+                        color="blue"
+                    />
+                    <OperationCard
+                        title="Retrieval"
+                        calls={byOperation.retrieval?.calls || 0}
+                        tokens={byOperation.retrieval?.tokens || 0}
+                        cost={byOperation.retrieval?.cost || 0}
+                        latency={byOperation.retrieval?.avg_latency_ms || 0}
+                        color="green"
+                    />
+                </div>
+            </div>
+
+            {/* 4. By Model */}
+            {stats?.by_model && stats.by_model.length > 0 && (
+                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                        <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                        </svg>
+                        Usage by Model
+                    </h2>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
+                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Calls</th>
+                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Input Tokens</th>
+                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Output Tokens</th>
+                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cost</th>
+                                    <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Avg Latency</th>
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                                {stats.by_model.map((model, idx) => (
+                                    <tr key={idx} className="hover:bg-gray-50">
+                                        <td className="px-4 py-3 text-sm font-medium text-gray-900">{model.model}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-500 text-right">{model.calls.toLocaleString()}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-500 text-right">{model.input_tokens.toLocaleString()}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-500 text-right">{model.output_tokens.toLocaleString()}</td>
+                                        <td className="px-4 py-3 text-sm text-green-600 text-right font-medium">${model.total_cost.toFixed(4)}</td>
+                                        <td className="px-4 py-3 text-sm text-gray-500 text-right">{model.avg_latency_ms.toFixed(0)}ms</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
-const StatCard = ({ label, value, subtext, color = "text-gray-900" }: any) => (
+const StatCard = ({ label, value, subtext, color = "text-gray-900" }: { label: string; value: string; subtext: string; color?: string }) => (
     <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
         <p className="text-sm font-medium text-gray-500">{label}</p>
         <p className={`text-2xl font-semibold mt-1 ${color}`}>{value}</p>
         <p className="text-xs text-gray-400 mt-1">{subtext}</p>
     </div>
 );
+
+const OperationCard = ({ title, calls, tokens, cost, latency, color }: { title: string; calls: number; tokens: number; cost: number; latency: number; color: string }) => {
+    const colorClasses: Record<string, string> = {
+        purple: 'border-purple-200 bg-purple-50',
+        blue: 'border-blue-200 bg-blue-50',
+        green: 'border-green-200 bg-green-50',
+    };
+    
+    return (
+        <div className={`p-4 rounded-lg border ${colorClasses[color] || 'border-gray-200 bg-gray-50'}`}>
+            <h3 className="font-medium text-gray-900 mb-3">{title}</h3>
+            <div className="space-y-2 text-sm">
+                <div className="flex justify-between">
+                    <span className="text-gray-500">Calls</span>
+                    <span className="font-medium">{calls.toLocaleString()}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-gray-500">Tokens</span>
+                    <span className="font-medium">{(tokens / 1000).toFixed(1)}k</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-gray-500">Cost</span>
+                    <span className="font-medium text-green-600">${cost.toFixed(4)}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span className="text-gray-500">Avg Latency</span>
+                    <span className="font-medium">{latency.toFixed(0)}ms</span>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 export default ObservabilityPanel;
