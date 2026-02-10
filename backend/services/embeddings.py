@@ -11,7 +11,13 @@ from typing import List
 from pathlib import Path
 from functools import lru_cache
 from langchain_core.embeddings import Embeddings
-from langfuse.decorators import observe
+
+# Langfuse imports - v3.x uses direct imports from langfuse
+from langfuse import observe
+try:
+    from langfuse import langfuse_context
+except ImportError:
+    langfuse_context = None
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -115,11 +121,11 @@ class LocalHuggingFaceEmbeddings(Embeddings):
         
         # Add metadata to trace
         try:
-            from langfuse.decorators import langfuse_context
-            langfuse_context.update_current_observation(
-                model=self._get_provider().model_name if self._use_registry else "sentence-transformers",
-                metadata={"batch_size": len(texts)}
-            )
+            if langfuse_context:
+                langfuse_context.update_current_observation(
+                    model=self._get_provider().model_name if self._use_registry else "sentence-transformers",
+                    metadata={"batch_size": len(texts)}
+                )
         except:
             pass
         
