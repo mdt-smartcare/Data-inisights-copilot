@@ -1,0 +1,51 @@
+# Langfuse Local Setup
+# Run with: docker-compose -f docker-compose.langfuse.yml up -d
+
+version: "3.9"
+
+services:
+  langfuse-server:
+    image: langfuse/langfuse:2
+    container_name: langfuse
+    restart: unless-stopped
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "3001:3000"  # Langfuse UI at http://localhost:3001
+    environment:
+      - DATABASE_URL=postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      - NEXTAUTH_SECRET=mysecretkey-change-in-production
+      - SALT=mysalt-change-in-production
+      - NEXTAUTH_URL=http://localhost:3001
+      - TELEMETRY_ENABLED=${TELEMETRY_ENABLED:-false}
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
+      # Optional: Enable sign-up (set to false after creating your user)
+      - AUTH_DISABLE_SIGNUP=false
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: langfuse-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=langfuse
+      - POSTGRES_PASSWORD=langfuse
+      - POSTGRES_DB=langfuse
+    ports:
+      - "5433:5432"  # Expose on different port to avoid conflict with main DB
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  langfuse_postgres_data:
+    driver: local

@@ -11,6 +11,7 @@ Data Insights Copilot is an advanced RAG (Retrieval-Augmented Generation) chatbo
 - **Interactive Visualizations**: Automatically generates charts (Bar, Pie, Line) based on data.
 - **Dynamic Configuration**: Supports connecting to external databases and managing system prompts.
 - **Admin Dashboard**: Comprehensive tools for user management, audit logging, and system monitoring.
+- **LLM Observability**: Full tracing and cost tracking via Langfuse integration.
 
 ## Quick Start
 
@@ -29,6 +30,8 @@ Data Insights Copilot is an advanced RAG (Retrieval-Augmented Generation) chatbo
     - [API Reference](API.md), [Database Schema](Database.md), [RBAC](RBAC.md), Services.
 - **[Frontend Guide](Frontend.md)**
     - Component Structure, State Management, UI/UX Guidelines.
+- **[Observability & Tracing](Observability.md)** ⭐ NEW
+    - Langfuse Integration, Logging, Usage Metrics, Local Setup.
 - **[Deployment & Setup](Deployment.md)**
     - Installation, Environment Configuration, Production Deployment.
 - **[Troubleshooting](Troubleshooting.md)**
@@ -38,3 +41,4 @@ Data Insights Copilot is an advanced RAG (Retrieval-Augmented Generation) chatbo
 
 - [GitHub Repository](https://github.com/mdt-smartcare/Data-inisights-copilot)
 - [API Documentation (Local)](http://localhost:8000/api/v1/docs)
+- [Langfuse Dashboard (Local)](http://localhost:3001)

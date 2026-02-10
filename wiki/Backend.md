@@ -341,3 +341,60 @@ Log level can be controlled via `LOG_LEVEL` in `.env`.
 3.  **Missing Tables in Chat**:
     -   Ensure the Schema has been "Refreshed" in the Data Settings.
     -   Check if the tables are excluded in `SQLService` (e.g., demo tables).
+
+## 11. Observability & Tracing
+
+The backend includes comprehensive observability features for monitoring LLM usage, costs, and performance.
+
+### Langfuse Integration
+
+All LLM calls are automatically traced via [Langfuse](https://langfuse.com):
+
+```python
+# Automatic tracing via LLMRegistry
+llm = registry.get_langchain_llm(with_tracing=True)  # Attaches Langfuse callback
+
+# Manual decoration for custom operations
+from langfuse import observe
+
+@observe(as_type="span")
+def my_custom_operation():
+    ...
+```
+
+### Local Langfuse Setup
+
+```bash
+# Start local Langfuse
+docker-compose -f docker-compose.langfuse.yml up -d
+
+# Access at http://localhost:3001
+```
+
+### Environment Variables
+
+```bash
+ENABLE_LANGFUSE=true
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=http://localhost:3001
+```
+
+### Observability API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/observability/config` | GET | Get current observability settings |
+| `/observability/config` | PUT | Update log level, tracing settings |
+| `/observability/usage` | GET | Get usage statistics (tokens, costs) |
+| `/observability/test-log` | POST | Emit a test log message |
+
+**[View Full Observability Documentation](Observability.md)**
+
+## 12. Related Documentation
+
+- [API Reference](API.md)
+- [Database Schema](Database.md)
+- [RBAC & Permissions](RBAC.md)
+- [Observability & Tracing](Observability.md)
+- [Deployment Guide](Deployment.md)
