@@ -1,22 +1,26 @@
 """
 Follow-Up Question Generation Service.
 Generates context-aware follow-up questions based on response content.
+
+OPTIMIZED: Uses gpt-3.5-turbo for faster generation with reduced timeout.
 """
 import asyncio
 from typing import List, Optional
 
+from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import BaseModel, Field
 
+from backend.config import get_settings
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
+settings = get_settings()
 
-# Timeout for follow-up generation (seconds)
-# Allow enough time for context-aware generation, but prevent blocking
-FOLLOWUP_TIMEOUT_SECONDS = 10
+# Reduced timeout for faster response - follow-ups are nice-to-have, not critical
+FOLLOWUP_TIMEOUT_SECONDS = 5
 
 
 class FollowUpQuestions(BaseModel):
@@ -32,8 +36,8 @@ class FollowUpService:
     """
     Service for generating context-aware follow-up questions.
     
-    Uses an LLM to analyze the response content and generate
-    relevant questions that help users explore deeper insights.
+    OPTIMIZED: Uses gpt-3.5-turbo (faster & cheaper) instead of gpt-4o.
+    Follow-up questions don't require advanced reasoning.
     """
     
     # Fallback questions when generation fails
@@ -43,38 +47,39 @@ class FollowUpService:
         "What trends are visible in this data?"
     ]
     
-    def __init__(self, llm):
+    def __init__(self, llm=None):
         """
         Initialize the FollowUpService.
         
         Args:
-            llm: LangChain LLM instance (shared with AgentService)
+            llm: LangChain LLM instance (ignored - we use dedicated fast model)
         """
-        self.llm = llm
+        # Use dedicated fast model for follow-ups (gpt-3.5-turbo is 10x faster)
+        self.llm = ChatOpenAI(
+            model="gpt-3.5-turbo",
+            temperature=0.7,  # Slightly creative for diverse questions
+            api_key=settings.openai_api_key,
+            max_tokens=200,  # Follow-ups are short
+            request_timeout=5,  # Fast timeout
+        )
+        
         self.parser = JsonOutputParser(pydantic_object=FollowUpQuestions)
         
+        # Simplified prompt for faster processing
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert data analyst helping users explore insights.
-
-Generate exactly 3 follow-up questions based on the system's response content that:
-1. Reference specific details from the response (numbers, trends, segments, key findings)
-2. Use simple, natural language for non-technical users
-3. Cover different analytical angles: comparison, drill-down, causation, trends, or actions
-4. Help users discover related insights or explore deeper
-
-Focus on the RESPONSE content, not just the original question. Extract specific data points, 
-metrics, or findings mentioned in the response and build questions around them.
-
-NOTE: Do NOT suggest creating charts or visualizations, as these are automatically generated 
-when appropriate. Focus on exploring the data from different analytical perspectives.
+            ("system", """Generate 3 brief follow-up questions based on the response.
+Questions should:
+- Reference specific details from the response
+- Be simple and natural
+- Cover different angles: comparison, drill-down, trends
 
 Original Question: {original_question}
-System Response: {system_response}
+Response Summary: {system_response}
 
 {format_instructions}""")
         ])
         
-        logger.info("FollowUpService initialized")
+        logger.info("FollowUpService initialized with fast model (gpt-3.5-turbo)")
     
     async def generate_followups(
         self, 
@@ -87,16 +92,19 @@ System Response: {system_response}
         
         Args:
             original_question: The user's original query
-            system_response: The system's response text
+            system_response: The system's response text (truncated for speed)
             callbacks: Optional list of callback handlers for tracing
             
         Returns:
             List of 3 follow-up question strings
         """
         try:
+            # Truncate response to first 500 chars for faster processing
+            truncated_response = system_response[:500] if len(system_response) > 500 else system_response
+            
             # Use asyncio.wait_for to enforce timeout
             return await asyncio.wait_for(
-                self._generate_followups_internal(original_question, system_response, callbacks),
+                self._generate_followups_internal(original_question, truncated_response, callbacks),
                 timeout=FOLLOWUP_TIMEOUT_SECONDS
             )
         except asyncio.TimeoutError:
