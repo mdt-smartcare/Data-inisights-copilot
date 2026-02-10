@@ -49,12 +49,13 @@ class ObservabilityService:
                 "log_destinations": ["console"]
             }
         
-    async def update_config(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+    async def update_config(self, updates: Dict[str, Any], updated_by: str = "system") -> Dict[str, Any]:
         """
         Update observability configuration and apply changes immediately.
         
         Args:
             updates: Dictionary of settings to update
+            updated_by: Username making the update
             
         Returns:
             Updated configuration
@@ -65,7 +66,7 @@ class ObservabilityService:
             
             # Update each setting individually
             for key, value in updates.items():
-                self.settings_service.update_setting("observability", key, value)
+                self.settings_service.update_setting("observability", key, value, updated_by)
             
             # Apply changes to runtime
             self._apply_runtime_changes(updates)

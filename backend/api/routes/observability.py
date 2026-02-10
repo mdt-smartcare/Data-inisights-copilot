@@ -31,7 +31,7 @@ async def update_observability_config(
 ):
     """Update observability settings and apply changes immediately."""
     try:
-        return await service.update_config(updates)
+        return await service.update_config(updates, updated_by=current_user.username)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
 
