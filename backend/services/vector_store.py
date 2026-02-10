@@ -14,7 +14,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from backend.rag.retrieve import AdvancedRAGRetriever
 from langchain_core.documents import Document
-from langfuse.decorators import observe
+
+# Langfuse imports - v3.x uses direct imports from langfuse
+from langfuse import observe
+try:
+    from langfuse import langfuse_context
+except ImportError:
+    langfuse_context = None
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -139,11 +145,11 @@ class VectorStoreService:
         try:
             # Add metadata to trace
             try:
-                from langfuse.decorators import langfuse_context
-                langfuse_context.update_current_observation(
-                input=query,
-                metadata={"top_k": k, "method": "search"}
-                )
+                if langfuse_context:
+                    langfuse_context.update_current_observation(
+                        input=query,
+                        metadata={"top_k": k, "method": "search"}
+                    )
             except:
                 pass
 
@@ -163,10 +169,10 @@ class VectorStoreService:
             
             # Log result count
             try:
-                from langfuse.decorators import langfuse_context
-                langfuse_context.update_current_observation(
-                metadata={"results_count": len(docs)}
-                )
+                if langfuse_context:
+                    langfuse_context.update_current_observation(
+                        metadata={"results_count": len(docs)}
+                    )
             except:
                 pass
                 
@@ -194,11 +200,11 @@ class VectorStoreService:
         try:
             # Add metadata to trace
             try:
-                from langfuse.decorators import langfuse_context
-                langfuse_context.update_current_observation(
-                input=query,
-                metadata={"top_k": k, "method": "search_with_scores"}
-                )
+                if langfuse_context:
+                    langfuse_context.update_current_observation(
+                        input=query,
+                        metadata={"top_k": k, "method": "search_with_scores"}
+                    )
             except:
                 pass
 
@@ -209,10 +215,10 @@ class VectorStoreService:
                 
                 # Log result count
                 try:
-                    from langfuse.decorators import langfuse_context
-                    langfuse_context.update_current_observation(
-                    metadata={"results_count": len(results)}
-                    )
+                    if langfuse_context:
+                        langfuse_context.update_current_observation(
+                            metadata={"results_count": len(results)}
+                        )
                 except:
                     pass
                     
