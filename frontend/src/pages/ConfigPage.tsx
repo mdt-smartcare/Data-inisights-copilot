@@ -7,6 +7,7 @@ import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
 import AdvancedSettings from '../components/AdvancedSettings';
+import ObservabilityPanel from '../components/ObservabilityPanel';
 import Alert from '../components/Alert';
 import EmbeddingProgress from '../components/EmbeddingProgress';
 import { ChatHeader } from '../components/chat';
@@ -375,6 +376,11 @@ const ConfigPage: React.FC = () => {
                                                     </button>
                                                 </div>
                                             )}
+                                        </div>
+
+                                        {/* Observability Section */}
+                                        <div className="mt-8 mb-8">
+                                            <ObservabilityPanel />
                                         </div>
                                     </div>
                                 ) : (
