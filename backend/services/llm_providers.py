@@ -159,11 +159,18 @@ class OpenAIProvider(LLMProvider):
             if not self._api_key:
                 raise ValueError("OpenAI API key not provided")
             
+            # Add Langfuse callback if enabled
+            from backend.core.tracing import get_tracing_manager
+            tracer = get_tracing_manager()
+            langfuse_handler = tracer.get_langchain_callback()
+            callbacks = [langfuse_handler] if langfuse_handler else []
+
             self._llm = ChatOpenAI(
                 model=self._model_name,
                 api_key=self._api_key,
                 temperature=self._temperature,
-                max_tokens=self._max_tokens
+                max_tokens=self._max_tokens,
+                callbacks=callbacks
             )
             logger.info(f"OpenAI provider initialized with model: {self._model_name}")
         except Exception as e:
@@ -244,13 +251,20 @@ class AzureOpenAIProvider(LLMProvider):
             if not self._azure_endpoint:
                 raise ValueError("Azure OpenAI endpoint not provided")
             
+            # Add Langfuse callback if enabled
+            from backend.core.tracing import get_tracing_manager
+            tracer = get_tracing_manager()
+            langfuse_handler = tracer.get_langchain_callback()
+            callbacks = [langfuse_handler] if langfuse_handler else []
+
             self._llm = AzureChatOpenAI(
                 azure_deployment=self._deployment_name,
                 api_key=self._api_key,
                 azure_endpoint=self._azure_endpoint,
                 api_version=self._api_version,
                 temperature=self._temperature,
-                max_tokens=self._max_tokens
+                max_tokens=self._max_tokens,
+                callbacks=callbacks
             )
             logger.info(f"Azure OpenAI provider initialized with deployment: {self._deployment_name}")
         except Exception as e:
@@ -332,11 +346,18 @@ class AnthropicProvider(LLMProvider):
             if not self._api_key:
                 raise ValueError("Anthropic API key not provided")
             
+            # Add Langfuse callback if enabled
+            from backend.core.tracing import get_tracing_manager
+            tracer = get_tracing_manager()
+            langfuse_handler = tracer.get_langchain_callback()
+            callbacks = [langfuse_handler] if langfuse_handler else []
+
             self._llm = ChatAnthropic(
                 model=self._model_name,
                 api_key=self._api_key,
                 temperature=self._temperature,
-                max_tokens=self._max_tokens
+                max_tokens=self._max_tokens,
+                callbacks=callbacks
             )
             logger.info(f"Anthropic provider initialized with model: {self._model_name}")
         except Exception as e:

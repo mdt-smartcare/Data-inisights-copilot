@@ -11,6 +11,7 @@ from typing import List
 from pathlib import Path
 from functools import lru_cache
 from langchain_core.embeddings import Embeddings
+from langfuse.decorators import observe
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -96,6 +97,7 @@ class LocalHuggingFaceEmbeddings(Embeddings):
             return self._registry.get_active_provider()
         return None
     
+    @observe(as_type="generation")
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
         Embed a list of documents.
@@ -111,12 +113,23 @@ class LocalHuggingFaceEmbeddings(Embeddings):
         
         logger.debug(f"Embedding {len(texts)} documents")
         
+        # Add metadata to trace
+        try:
+            from langfuse.decorators import langfuse_context
+            langfuse_context.update_current_observation(
+                model=self._get_provider().model_name if self._use_registry else "sentence-transformers",
+                metadata={"batch_size": len(texts)}
+            )
+        except:
+            pass
+        
         if self._use_registry:
             return self._get_provider().embed_documents(texts)
         else:
             embeddings = self.model.encode(texts, normalize_embeddings=True, show_progress_bar=True)
             return embeddings.tolist()
     
+    @observe(as_type="generation")
     def embed_query(self, text: str) -> List[float]:
         """
         Embed a single query text.

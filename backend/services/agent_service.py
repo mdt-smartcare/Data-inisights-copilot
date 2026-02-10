@@ -222,111 +222,124 @@ Use this to search unstructured text, notes, and semantic descriptions.
         trace_id = str(uuid.uuid4())
         start_time = datetime.utcnow()
         
-        logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
+        # Start Langfuse Trace for the entire pipeline
+        from backend.core.tracing import get_tracing_manager
+        tracer = get_tracing_manager()
         
-        try:
-            # =================================================================
-            # STANDARD PATH: Use agent for all queries
-            # Domain-specific logic removed in favor of dynamic prompt configuration
-            # =================================================================
-            # Fetch prompt fresh on every request
-            active_prompt = self.db_service.get_latest_active_prompt()
-            logger.info(f"Active prompt fetched for trace_id={trace_id}")
+        with tracer.trace_operation(name="rag_pipeline", input=query, user_id=user_id, session_id=session_id) as trace_span:
+            logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
             
-            if not active_prompt:
-                logger.warning("No active system prompt found in DB. Using default generic prompt.")
-                active_prompt = DEFAULT_SYSTEM_PROMPT
-                
-            # Retrieve relevant few-shot examples
-            few_shot_examples = self._get_relevant_examples(query)
-            formatted_examples = ""
-            if few_shot_examples:
-                formatted_examples = "\n\nRELEVANT SQL EXAMPLES:\n" + "\n".join(few_shot_examples)
-                logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
-
-            # Execute agent with conversation memory
-            # Pass system_prompt variable to the agent, creating a combined prompt
-            final_prompt = f"{active_prompt}\n{formatted_examples}"
-            
-            logger.info(f"Invoking agent for trace_id={trace_id}")
-            # Use stateful execution with session-based history
-            result = await self.agent_with_history.ainvoke(
-                {"input": query, "system_prompt": final_prompt},
-                config={"configurable": {"session_id": session_id or "default"}}
-            )
-            
-            logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
-
-            # Extract response
-            full_response = result.get("output", "An error occurred.")
-            intermediate_steps = result.get("intermediate_steps", [])
-            
-            # Check if RAG was used
-            rag_used = any(
-                action.tool == "rag_document_search_tool"
-                for action, _ in intermediate_steps
-            )
-            
-            # Only get embedding info if RAG was actually used
-            if rag_used:
-                embedding_info = self._get_embedding_info(query)
-            else:
-                embedding_info = {}
-            
-            # DEBUG: Write full response to file for diagnosis
             try:
-                with open("/tmp/llm_response_debug.txt", "w") as f:
-                    f.write(f"=== LLM RESPONSE (trace_id={trace_id}) ===\n")
-                    f.write(full_response)
-                    f.write("\n=== END RESPONSE ===\n")
-            except Exception as debug_err:
-                logger.warning(f"Failed to write debug file: {debug_err}")
-            
-            # Parse JSON output from response (chart data only now)
-            chart_data, _ = self._parse_agent_output(full_response)
-            if chart_data:
-                logger.info(f"Chart data parsed: {chart_data.title}")
-            else:
-                logger.warning(f"NO CHART DATA PARSED from response (trace_id={trace_id})")
-            
-            # Generate LLM-powered follow-up questions based on response content
-            if settings.enable_followup_questions:
-                suggested_questions = await self.followup_service.generate_followups(
-                    original_question=query,
-                    system_response=self._clean_answer(full_response)
+                # =================================================================
+                # STANDARD PATH: Use agent for all queries
+                # Domain-specific logic removed in favor of dynamic prompt configuration
+                # =================================================================
+                # Fetch prompt fresh on every request
+                active_prompt = self.db_service.get_latest_active_prompt()
+                logger.info(f"Active prompt fetched for trace_id={trace_id}")
+                
+                if not active_prompt:
+                    logger.warning("No active system prompt found in DB. Using default generic prompt.")
+                    active_prompt = DEFAULT_SYSTEM_PROMPT
+                    
+                # Retrieve relevant few-shot examples
+                few_shot_examples = self._get_relevant_examples(query)
+                formatted_examples = ""
+                if few_shot_examples:
+                    formatted_examples = "\n\nRELEVANT SQL EXAMPLES:\n" + "\n".join(few_shot_examples)
+                    logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
+
+                # Execute agent with conversation memory
+                # Pass system_prompt variable to the agent, creating a combined prompt
+                final_prompt = f"{active_prompt}\n{formatted_examples}"
+                
+                logger.info(f"Invoking agent for trace_id={trace_id}")
+                # Use stateful execution with session-based history
+                result = await self.agent_with_history.ainvoke(
+                    {"input": query, "system_prompt": final_prompt},
+                    config={"configurable": {"session_id": session_id or "default"}}
                 )
-            else:
-                suggested_questions = []
-            
-            # Format reasoning steps
-            reasoning_steps = self._format_reasoning(intermediate_steps)
-            
-            # Build response
-            response = ChatResponse(
-                answer=self._clean_answer(full_response),
-                chart_data=chart_data,
-                suggested_questions=suggested_questions,
-                reasoning_steps=reasoning_steps,
-                embedding_info=EmbeddingInfo(
-                    model=settings.embedding_model_name,
-                    dimensions=self.embedding_model.dimension,
-                    search_method="hybrid" if rag_used else "structured",
-                    vector_norm=embedding_info.get("norm"),
-                    docs_retrieved=len([s for a, s in intermediate_steps if a.tool == "rag_document_search_tool"])
-                ),
-                trace_id=trace_id,
-                session_id=session_id,
-                timestamp=start_time
-            )
-            
-            duration = (datetime.utcnow() - start_time).total_seconds()
-            logger.info(f" Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
-            
-            return response.model_dump()
-            
-        except Exception as e:
-            logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
-            raise
+                
+                logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
+
+                # Extract response
+                full_response = result.get("output", "An error occurred.")
+                intermediate_steps = result.get("intermediate_steps", [])
+                
+                # Check if RAG was used
+                rag_used = any(
+                    action.tool == "rag_document_search_tool"
+                    for action, _ in intermediate_steps
+                )
+                
+                # Only get embedding info if RAG was actually used
+                if rag_used:
+                    embedding_info = self._get_embedding_info(query)
+                else:
+                    embedding_info = {}
+                
+                # DEBUG: Write full response to file for diagnosis
+                try:
+                    with open("/tmp/llm_response_debug.txt", "w") as f:
+                        f.write(f"=== LLM RESPONSE (trace_id={trace_id}) ===\n")
+                        f.write(full_response)
+                        f.write("\n=== END RESPONSE ===\n")
+                except Exception as debug_err:
+                    logger.warning(f"Failed to write debug file: {debug_err}")
+                
+                # Parse JSON output from response (chart data only now)
+                chart_data, _ = self._parse_agent_output(full_response)
+                if chart_data:
+                    logger.info(f"Chart data parsed: {chart_data.title}")
+                else:
+                    logger.warning(f"NO CHART DATA PARSED from response (trace_id={trace_id})")
+                
+                # Generate LLM-powered follow-up questions based on response content
+                if settings.enable_followup_questions:
+                    suggested_questions = await self.followup_service.generate_followups(
+                        original_question=query,
+                        system_response=self._clean_answer(full_response)
+                    )
+                else:
+                    suggested_questions = []
+                
+                # Format reasoning steps
+                reasoning_steps = self._format_reasoning(intermediate_steps)
+                
+                # Build response
+                response = ChatResponse(
+                    answer=self._clean_answer(full_response),
+                    chart_data=chart_data,
+                    suggested_questions=suggested_questions,
+                    reasoning_steps=reasoning_steps,
+                    embedding_info=EmbeddingInfo(
+                        model=settings.embedding_model_name,
+                        dimensions=self.embedding_model.dimension,
+                        search_method="hybrid" if rag_used else "structured",
+                        vector_norm=embedding_info.get("norm"),
+                        docs_retrieved=len([s for a, s in intermediate_steps if a.tool == "rag_document_search_tool"])
+                    ),
+                    trace_id=trace_id,
+                    session_id=session_id,
+                    timestamp=start_time
+                )
+                
+                duration = (datetime.utcnow() - start_time).total_seconds()
+                logger.info(f" Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
+                
+                # Update trace output
+                if trace_span:
+                    from langfuse.decorators import langfuse_context
+                    langfuse_context.update_current_trace(
+                        output=response.model_dump(),
+                        metadata={"rag_used": rag_used, "chart_generated": chart_data is not None}
+                    )
+                
+                return response.model_dump()
+                
+            except Exception as e:
+                logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
+                raise
     
 
     def _get_relevant_examples(self, query: str) -> List[str]:
