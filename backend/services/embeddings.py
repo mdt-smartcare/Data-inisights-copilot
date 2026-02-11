@@ -6,18 +6,14 @@ dynamic EmbeddingRegistry system for hot-swappable provider management.
 
 Legacy classes are kept for backward compatibility with existing code.
 New code should use `get_embedding_model()` or the EmbeddingRegistry directly.
+
+Note: Tracing is handled by the parent LangChain callback handler
+to ensure all RAG operations are grouped under a single trace.
 """
 from typing import List
 from pathlib import Path
 from functools import lru_cache
 from langchain_core.embeddings import Embeddings
-
-# Langfuse imports - v3.x uses direct imports from langfuse
-from langfuse import observe
-try:
-    from langfuse import langfuse_context
-except ImportError:
-    langfuse_context = None
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
@@ -103,10 +99,11 @@ class LocalHuggingFaceEmbeddings(Embeddings):
             return self._registry.get_active_provider()
         return None
     
-    @observe(as_type="generation")
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """
         Embed a list of documents.
+        
+        Note: Tracing handled by parent LangChain callback for unified traces.
         
         Args:
             texts: List of text documents to embed
@@ -119,26 +116,17 @@ class LocalHuggingFaceEmbeddings(Embeddings):
         
         logger.debug(f"Embedding {len(texts)} documents")
         
-        # Add metadata to trace
-        try:
-            if langfuse_context:
-                langfuse_context.update_current_observation(
-                    model=self._get_provider().model_name if self._use_registry else "sentence-transformers",
-                    metadata={"batch_size": len(texts)}
-                )
-        except:
-            pass
-        
         if self._use_registry:
             return self._get_provider().embed_documents(texts)
         else:
             embeddings = self.model.encode(texts, normalize_embeddings=True, show_progress_bar=True)
             return embeddings.tolist()
     
-    @observe(as_type="generation")
     def embed_query(self, text: str) -> List[float]:
         """
         Embed a single query text.
+        
+        Note: Tracing handled by parent LangChain callback for unified traces.
         
         Args:
             text: Query text to embed

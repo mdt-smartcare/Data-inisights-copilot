@@ -50,7 +50,14 @@ KNOWN_VALID_TABLES = [
     'patient_current_medication', 'patient_lifestyle', 'patient_symptom',
     'patient_general_information', 'patient_history', 'patient_transfer',
     'patient_eye_care', 'patient_cataract', 'patient_pregnancy_details',
-    'patient_nutrition_lifestyle', 'patient_para_counselling', 'patient_medical_compliance'
+    'patient_nutrition_lifestyle', 'patient_para_counselling', 'patient_medical_compliance',
+    # Core data tables (not prefixed with patient_)
+    'bp_log', 'glucose_log', 'screening_log', 'lab_test', 'lab_test_result',
+    'site', 'organization', 'country', 'account', 'user', 'role',
+    'medication_country_detail', 'dosage_form', 'dosage_frequency',
+    'patient_bp_log', 'patient_glucose_log', 'patient_screening',
+    'region', 'district', 'health_facility', 'program', 'clinical_workflow',
+    'country_customization', 'form_meta', 'menu', 'culture'
 ]
 
 class SQLCritiqueService:
@@ -99,6 +106,8 @@ class SQLCritiqueService:
         """
         Perform quick validation without LLM for simple, obviously valid queries.
         Returns CritiqueResponse if validation is conclusive, None if LLM critique needed.
+        
+        OPTIMIZED: More aggressive about passing simple queries to reduce latency.
         """
         sql_lower = sql_query.lower()
         schema_lower = schema_context.lower()
@@ -114,9 +123,10 @@ class SQLCritiqueService:
             return None  # Can't validate without table names
         
         # Check for demo 'patient' table misuse
-        if 'patient' in tables and 'patient' not in [t for t in tables if t != 'patient']:
+        if 'patient' in tables and len([t for t in tables if t == 'patient']) > 0:
             # Query uses just 'patient' table (not patient_tracker, etc.)
-            if 'patient_tracker' in schema_lower:
+            other_patient_tables = [t for t in tables if t.startswith('patient_')]
+            if not other_patient_tables and 'patient_tracker' in schema_lower:
                 logger.warning("Rejecting 'patient' table - should use 'patient_tracker' instead")
                 return CritiqueResponse(
                     is_valid=False,
@@ -124,33 +134,33 @@ class SQLCritiqueService:
                     issues=["Use 'patient_tracker' table instead of 'patient' for patient data queries"]
                 )
         
-        # For known valid tables, do quick schema presence check
+        # OPTIMIZATION: For known valid tables, skip LLM entirely
+        all_tables_known = True
         for table in tables:
-            # Skip if it's just the demo 'patient' table
             if table == 'patient':
                 continue
-                
-            # Check if table is a known valid table OR exists in schema
+            
             is_known_table = table in KNOWN_VALID_TABLES
             is_in_schema = table in schema_lower
             
             if is_known_table or is_in_schema:
                 logger.info(f"Table '{table}' validated (known={is_known_table}, in_schema={is_in_schema})")
             else:
-                # Table not found - let LLM handle
+                all_tables_known = False
                 logger.info(f"Table '{table}' not found in quick validation, deferring to LLM")
-                return None
+                break
         
-        # All tables validated - for simple queries, pass them through
-        if self._is_simple_query(sql_query):
-            logger.info(f"Quick validation PASSED for simple query on tables: {tables}")
+        # OPTIMIZATION: If all tables are known/valid, pass the query
+        # This saves an LLM call (~1-2s) for most queries
+        if all_tables_known:
+            logger.info(f"Quick validation PASSED - all tables known: {tables}")
             return CritiqueResponse(
                 is_valid=True,
-                reasoning=f"Simple SELECT query on valid tables: {', '.join(tables)}",
+                reasoning=f"All tables validated against known tables and schema: {', '.join(tables)}",
                 issues=[]
             )
         
-        return None  # Complex query - let LLM validate
+        return None  # Unknown table - let LLM validate
 
     def _is_simple_query(self, sql_query: str) -> bool:
         """Check if query is simple enough to skip LLM critique."""
@@ -222,7 +232,7 @@ class SQLCritiqueService:
                 for table in tables:
                     if table in KNOWN_VALID_TABLES and table in schema_context.lower():
                         # LLM incorrectly rejected a known valid table
-                        for issue in response.issues:
+                        for issue in response.issues or []:
                             if table in issue.lower() and ('not found' in issue.lower() or 'missing' in issue.lower() or "doesn't exist" in issue.lower()):
                                 logger.warning(f"LLM false negative detected for table '{table}' - overriding")
                                 false_negative = True
