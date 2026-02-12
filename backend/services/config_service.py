@@ -130,7 +130,8 @@ class ConfigService:
                               schema_selection: Optional[str] = None, 
                               data_dictionary: Optional[str] = None,
                               reasoning: Optional[str] = None,
-                              example_questions: Optional[str] = None) -> Dict[str, Any]:
+                              example_questions: Optional[str] = None,
+                              agent_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Publishes a drafted system prompt as the new active version.
         Includes optional configuration metadata for reproducibility and explainability.
@@ -142,16 +143,17 @@ class ConfigService:
             schema_selection, 
             data_dictionary,
             reasoning,
-            example_questions
+            example_questions,
+            agent_id=agent_id
         )
 
-    def get_prompt_history(self):
+    def get_prompt_history(self, agent_id: Optional[int] = None):
         """Get history of all system prompts."""
-        return self.db_service.get_all_prompts()
+        return self.db_service.get_all_prompts(agent_id=agent_id)
 
-    def get_active_config(self) -> Optional[dict]:
+    def get_active_config(self, agent_id: Optional[int] = None) -> Optional[dict]:
         """Get the active prompt configuration."""
-        return self.db_service.get_active_config()
+        return self.db_service.get_active_config(agent_id=agent_id)
 
 # Singleton instance pattern not strictly requested but good practice if needed.
 # For now, just the class is requested, but usually services are singletons or instantiated per request.

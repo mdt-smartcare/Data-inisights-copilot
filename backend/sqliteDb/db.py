@@ -378,7 +378,7 @@ class DatabaseService:
         logger.info(f"Authentication successful: {username}")
         return user
     
-    def get_latest_active_prompt(self) -> Optional[str]:
+    def get_latest_active_prompt(self, agent_id: Optional[int] = None) -> Optional[str]:
         """Get the latest active system prompt.
         
         Returns:
@@ -388,9 +388,16 @@ class DatabaseService:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute(
-            "SELECT prompt_text FROM system_prompts WHERE is_active = 1 ORDER BY version DESC LIMIT 1"
-        )
+        if agent_id:
+            cursor.execute(
+                "SELECT prompt_text FROM system_prompts WHERE is_active = 1 AND agent_id = ? ORDER BY version DESC LIMIT 1",
+                (agent_id,)
+            )
+        else:
+            cursor.execute(
+                "SELECT prompt_text FROM system_prompts WHERE is_active = 1 AND agent_id IS NULL ORDER BY version DESC LIMIT 1"
+            )
+        
         row = cursor.fetchone()
         conn.close()
         
@@ -405,7 +412,8 @@ class DatabaseService:
                               reasoning: Optional[str] = None,
                               example_questions: Optional[str] = None,
                               embedding_config: Optional[str] = None,
-                              retriever_config: Optional[str] = None) -> Dict[str, Any]:
+                              retriever_config: Optional[str] = None,
+                              agent_id: Optional[int] = None) -> Dict[str, Any]:
         """Publish a new version of the system prompt with optional config metadata.
         
         Args:
@@ -418,6 +426,7 @@ class DatabaseService:
             example_questions: JSON string list of questions
             embedding_config: JSON string of embedding parameters (ignored - for compatibility)
             retriever_config: JSON string of retrieval parameters (ignored - for compatibility)
+            agent_id: ID of the agent this prompt belongs to
             
         Returns:
             Dictionary with the new prompt details
@@ -426,23 +435,34 @@ class DatabaseService:
         cursor = conn.cursor()
         
         try:
-            # 1. Get the current max version number
+            # 1. Get the current max version number (global or per agent? technically global versioning is fine for now but per agent is better)
+            # For simplicity, we keep versioning global or scoped? 
+            # Let's keep version simplified: distinct prompt rows.
+            
+            # If agent_id is provided, we should deactivate active prompts FOR THIS AGENT
+            # If agent_id is None (legacy/global), we deactivate global active prompts?
+            # Or should we enforce agent_id?
+            # For backward compatibility, if agent_id is None, it acts as "default" or "global".
+            
             cursor.execute("SELECT MAX(version) FROM system_prompts")
             result = cursor.fetchone()
             current_max = result[0] if result and result[0] is not None else 0
             new_version = current_max + 1
 
-            # 2. Deactivate all existing prompts
-            cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE is_active = 1")
+            # 2. Deactivate all existing prompts for this agent (or global if None)
+            if agent_id:
+                cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE is_active = 1 AND agent_id = ?", (agent_id,))
+            else:
+                cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE is_active = 1 AND agent_id IS NULL")
 
             # 3. Insert the new prompt into system_prompts
             cursor.execute("""
                 INSERT INTO system_prompts (
-                    prompt_text, version, is_active, created_by
+                    prompt_text, version, is_active, created_by, agent_id
                 )
-                VALUES (?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?)
             """, (
-                prompt_text, new_version, 1, user_id
+                prompt_text, new_version, 1, user_id, agent_id
             ))
             
             prompt_id = cursor.lastrowid
@@ -467,7 +487,8 @@ class DatabaseService:
                 "prompt_text": prompt_text,
                 "version": str(new_version),
                 "is_active": 1,
-                "created_by": user_id
+                "created_by": user_id,
+                "agent_id": agent_id
             }
             
         except Exception as e:
@@ -477,31 +498,55 @@ class DatabaseService:
         finally:
             conn.close()
 
-    def get_active_config(self) -> Optional[Dict[str, Any]]:
+    def get_active_config(self, agent_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         """Get the configuration metadata for the currently active prompt."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        query = """
-            SELECT 
-                sp.id as prompt_id,
-                sp.version,
-                sp.prompt_text,
-                sp.created_at,
-                sp.created_by,
-                u.username as created_by_username,
-                pc.connection_id,
-                pc.schema_selection,
-                pc.data_dictionary,
-                pc.reasoning,
-                pc.example_questions
-            FROM system_prompts sp
-            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
-            LEFT JOIN users u ON sp.created_by = u.username
-            WHERE sp.is_active = 1
-            LIMIT 1
-        """
-        cursor.execute(query)
+        # Build query based on agent_id
+        if agent_id:
+            query = """
+                SELECT 
+                    sp.id as prompt_id,
+                    sp.version,
+                    sp.prompt_text,
+                    sp.created_at,
+                    sp.created_by,
+                    u.username as created_by_username,
+                    pc.connection_id,
+                    pc.schema_selection,
+                    pc.data_dictionary,
+                    pc.reasoning,
+                    pc.example_questions
+                FROM system_prompts sp
+                LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
+                LEFT JOIN users u ON sp.created_by = u.username
+                WHERE sp.is_active = 1 AND sp.agent_id = ?
+                LIMIT 1
+            """
+            cursor.execute(query, (agent_id,))
+        else:
+            query = """
+                SELECT 
+                    sp.id as prompt_id,
+                    sp.version,
+                    sp.prompt_text,
+                    sp.created_at,
+                    sp.created_by,
+                    u.username as created_by_username,
+                    pc.connection_id,
+                    pc.schema_selection,
+                    pc.data_dictionary,
+                    pc.reasoning,
+                    pc.example_questions
+                FROM system_prompts sp
+                LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
+                LEFT JOIN users u ON sp.created_by = u.username
+                WHERE sp.is_active = 1 AND sp.agent_id IS NULL
+                LIMIT 1
+            """
+            cursor.execute(query)
+
         row = cursor.fetchone()
         conn.close()
         
@@ -510,12 +555,12 @@ class DatabaseService:
             return data
         return None
 
-    def get_all_prompts(self) -> list[Dict[str, Any]]:
+    def get_all_prompts(self, agent_id: Optional[int] = None) -> list[Dict[str, Any]]:
         """Get all system prompt versions history."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        cursor.execute("""
+        base_query = """
             SELECT 
                 sp.id, 
                 sp.prompt_text, 
@@ -526,8 +571,13 @@ class DatabaseService:
                 u.username as created_by_username
             FROM system_prompts sp
             LEFT JOIN users u ON sp.created_by = u.username
-            ORDER BY sp.version DESC
-        """)
+        """
+        
+        if agent_id:
+            cursor.execute(base_query + " WHERE sp.agent_id = ? ORDER BY sp.version DESC", (agent_id,))
+        else:
+            cursor.execute(base_query + " WHERE sp.agent_id IS NULL ORDER BY sp.version DESC")
+            
         rows = cursor.fetchall()
         conn.close()
         
@@ -704,6 +754,45 @@ class DatabaseService:
         return True
 
 
+    def list_all_agents(self) -> list[Dict[str, Any]]:
+        """List all agents (Admin only)."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM agents")
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def assign_user_to_agent(self, agent_id: int, user_id: int, role: str = 'viewer', granted_by: int = None) -> bool:
+        """Assign a user to an agent with a specific role."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT OR REPLACE INTO user_agents (user_id, agent_id, role, granted_by)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, agent_id, role, granted_by))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to assign user {user_id} to agent {agent_id}: {e}")
+            return False
+        finally:
+            conn.close()
+
+    def revoke_user_access(self, agent_id: int, user_id: int) -> bool:
+        """Revoke a user's access to an agent."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM user_agents WHERE user_id = ? AND agent_id = ?", (user_id, agent_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        except Exception as e:
+            logger.error(f"Failed to revoke access for user {user_id} from agent {agent_id}: {e}")
+            return False
+        finally:
+            conn.close()
 
 # Global database instance (Singleton pattern)
 # This ensures all parts of the application share the same database connection pool
