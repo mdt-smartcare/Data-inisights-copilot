@@ -127,11 +127,11 @@ GROUP BY diagnosis_type;`,
 
 function getMockResponse(query: string): ChatResponse {
   const lowerQuery = query.toLowerCase();
-  
+
   if (lowerQuery.includes('diabetes') || lowerQuery.includes('diabetic')) {
     return { ...mockResponses.diabetes, timestamp: new Date().toISOString() };
   }
-  
+
   return { ...mockResponses.default, timestamp: new Date().toISOString() };
 }
 
@@ -142,7 +142,8 @@ export const chatService = {
       await new Promise(resolve => setTimeout(resolve, 1500));
       return getMockResponse(request.query);
     }
-    
+
+    // Pass everything, including agent_id
     const response = await apiClient.post<ChatResponse>(
       API_ENDPOINTS.CHAT,
       request
@@ -155,7 +156,7 @@ export const chatService = {
       await new Promise(resolve => setTimeout(resolve, 500));
       return { messages: [], conversation_id: conversationId };
     }
-    
+
     const response = await apiClient.get(
       `${API_ENDPOINTS.CHAT}/${conversationId}`
     );

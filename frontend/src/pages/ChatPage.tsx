@@ -25,10 +25,38 @@ export default function ChatPage() {
     "What is the average glucose level for patients who are described as 'smokers' in their clinical notes?"
   ]);
 
+  // Agent selection state
+  const [agents, setAgents] = useState<any[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<number | undefined>(undefined);
+  const [isLoadingAgents, setIsLoadingAgents] = useState(false);
+
   useEffect(() => {
+    // Load agents on mount
+    const loadAgents = async () => {
+      try {
+        setIsLoadingAgents(true);
+        // We need to import getAgents from api.ts. 
+        // Note: ensure getAgents is exported in api.ts
+        const { getAgents } = await import('../services/api');
+        const agentList = await getAgents();
+        setAgents(agentList);
+
+        // Auto-select first agent if available
+        if (agentList.length > 0) {
+          setSelectedAgentId(agentList[0].id);
+        }
+      } catch (err) {
+        console.error("Failed to load agents", err);
+      } finally {
+        setIsLoadingAgents(false);
+      }
+    };
+    loadAgents();
+
     const loadSuggestions = async () => {
       try {
         const config = await getActiveConfigMetadata();
+        // ... existing suggestion loading code ...
         if (config && config.example_questions) {
           try {
             const parsed = JSON.parse(config.example_questions);
@@ -47,7 +75,7 @@ export default function ChatPage() {
   }, []);
 
   const chatMutation = useMutation({
-    mutationFn: chatService.sendMessage,
+    mutationFn: (data: any) => chatService.sendMessage({ ...data, agent_id: selectedAgentId }),
     onSuccess: (data) => {
       const assistantMessage: Message = {
         id: Date.now().toString(),
@@ -104,6 +132,25 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       <ChatHeader title={APP_CONFIG.APP_NAME} />
+
+      {/* Agent Selector Bar */}
+      {agents.length > 0 && (
+        <div className="px-4 py-2 bg-white border-b border-gray-200 flex items-center gap-2">
+          <span className="text-sm font-medium text-gray-700">Active Agent:</span>
+          <select
+            value={selectedAgentId || ''}
+            onChange={(e) => setSelectedAgentId(Number(e.target.value))}
+            className="text-sm border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+            disabled={isLoadingAgents}
+          >
+            {agents.map(agent => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name} {agent.type !== 'sql' ? `(${agent.type})` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Clear Chat Button - shown when messages exist */}
       {messages.length > 0 && (
