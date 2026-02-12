@@ -141,6 +141,38 @@ class DatabaseService:
                 cursor.execute("ALTER TABLE prompt_configs ADD COLUMN example_questions TEXT")
                 logger.info("Added example_questions column to prompt_configs table")
             
+            # Create agents table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS agents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    type TEXT DEFAULT 'sql', -- 'sql', 'rag', 'supervisor'
+                    db_connection_uri TEXT, -- Encrypted/Secure URI
+                    rag_config_id INTEGER,
+                    system_prompt TEXT,
+                    created_by INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY(rag_config_id) REFERENCES rag_configurations(id),
+                    FOREIGN KEY(created_by) REFERENCES users(id)
+                )
+            """)
+
+            # Create user_agents table for RBAC
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_agents (
+                    user_id INTEGER,
+                    agent_id INTEGER,
+                    role TEXT DEFAULT 'viewer', -- 'viewer', 'editor', 'admin'
+                    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    granted_by INTEGER,
+                    PRIMARY KEY (user_id, agent_id),
+                    FOREIGN KEY(user_id) REFERENCES users(id),
+                    FOREIGN KEY(agent_id) REFERENCES agents(id),
+                    FOREIGN KEY(granted_by) REFERENCES users(id)
+                )
+            """)
+
             # Get admin credentials from environment variables
             admin_username = os.getenv('ADMIN_USERNAME', 'admin')
             admin_password = os.getenv('ADMIN_PASSWORD', 'admin123')
@@ -600,6 +632,76 @@ class DatabaseService:
             return []
         finally:
             conn.close()
+
+    def create_agent(self, name: str, description: str = None, agent_type: str = 'sql', 
+                    db_connection_uri: str = None, rag_config_id: int = None, 
+                    system_prompt: str = None, created_by: int = None) -> Dict[str, Any]:
+        """Create a new agent."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO agents (name, description, type, db_connection_uri, rag_config_id, system_prompt, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (name, description, agent_type, db_connection_uri, rag_config_id, system_prompt, created_by))
+            conn.commit()
+            agent_id = cursor.lastrowid
+            
+            # Auto-assign creator as admin
+            if created_by:
+                cursor.execute("""
+                    INSERT INTO user_agents (user_id, agent_id, role, granted_by)
+                    VALUES (?, ?, 'admin', ?)
+                """, (created_by, agent_id, created_by))
+                conn.commit()
+                
+            return self.get_agent_by_id(agent_id)
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Agent with name '{name}' already exists")
+        finally:
+            conn.close()
+
+    def get_agent_by_id(self, agent_id: int) -> Optional[Dict[str, Any]]:
+        """Get agent by ID."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+        row = cursor.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def get_agents_for_user(self, user_id: int) -> list[Dict[str, Any]]:
+        """Get all agents a user has access to."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT a.*, ua.role as user_role 
+            FROM agents a
+            JOIN user_agents ua ON a.id = ua.agent_id
+            WHERE ua.user_id = ?
+        """, (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def check_user_access(self, user_id: int, agent_id: int, required_role: str = None) -> bool:
+        """Check if user has access to an agent."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT role FROM user_agents WHERE user_id = ? AND agent_id = ?", (user_id, agent_id))
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row:
+            return False
+            
+        if required_role:
+            user_role = row['role']
+            # Simple role hierarchy
+            roles = {'viewer': 1, 'editor': 2, 'admin': 3}
+            return roles.get(user_role, 0) >= roles.get(required_role, 0)
+            
+        return True
 
 
 

@@ -17,7 +17,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 
 from backend.config import get_settings
 from backend.core.logging import get_logger
-from backend.services.sql_service import get_sql_service
+from backend.services.sql_service import get_sql_service, SQLService
 from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
 from backend.services.followup_service import FollowUpService
@@ -38,13 +38,21 @@ Please contact the administrator to configure the active system prompt in the da
 class AgentService:
     """Main RAG agent service for processing user queries."""
     
-    def __init__(self):
+    def __init__(self, agent_config: Optional[Dict[str, Any]] = None):
         """Initialize the agent with tools and LLM."""
-        logger.info("Initializing AgentService")
+        logger.info(f"Initializing AgentService (Config: {agent_config.get('name') if agent_config else 'Default'})")
         
         # Initialize services
-        self.sql_service = get_sql_service()
         self.db_service = get_db_service()
+        self.agent_config = agent_config
+
+        if agent_config and agent_config.get('db_connection_uri'):
+            logger.info(f"Connecting to dedicated agent database: {agent_config['db_connection_uri']}")
+            self.sql_service = SQLService(database_url=agent_config['db_connection_uri'])
+            self.fixed_system_prompt = agent_config.get('system_prompt')
+        else:
+            self.sql_service = get_sql_service()
+            self.fixed_system_prompt = None
         # Don't load vector store on init - lazy load it when needed!
         self._vector_store = None
         self.embedding_model = get_embedding_model()
@@ -247,8 +255,12 @@ Use this to search unstructured text, notes, and semantic descriptions.
             # Domain-specific logic removed in favor of dynamic prompt configuration
             # =================================================================
             # Fetch prompt fresh on every request
-            active_prompt = self.db_service.get_latest_active_prompt()
-            logger.info(f"Active prompt fetched for trace_id={trace_id}")
+            if self.fixed_system_prompt:
+                active_prompt = self.fixed_system_prompt
+                logger.info(f"Using agent-specific system prompt for trace_id={trace_id}")
+            else:
+                active_prompt = self.db_service.get_latest_active_prompt()
+                logger.info(f"Active global prompt fetched for trace_id={trace_id}")
             
             if not active_prompt:
                 logger.warning("No active system prompt found in DB. Using default generic prompt.")
@@ -543,12 +555,42 @@ Use this to search unstructured text, notes, and semantic descriptions.
         return steps
 
 
-# Singleton instance
+# Singleton instance for default agent
 _agent_service: Optional[AgentService] = None
 
+# Cache for dedicated agent instances: {agent_id: AgentService}
+_agent_cache: Dict[int, AgentService] = {}
 
-def get_agent_service() -> AgentService:
-    """Get singleton agent service instance."""
+
+def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = None) -> AgentService:
+    """Get agent service instance.
+    
+    If agent_id is provided, checks specific user access and returns a dedicated instance.
+    Dedicated instances are cached to reuse database connections.
+    Otherwise returns the singleton default instance (legacy behavior).
+    """
+    if agent_id:
+        db = get_db_service()
+        # Verify access if user_id is provided (skip for internal system calls if user_id is None)
+        if user_id:
+            has_access = db.check_user_access(user_id, agent_id)
+            if not has_access:
+                logger.warning(f"Access denied for user {user_id} to agent {agent_id}")
+                raise PermissionError(f"User {user_id} does not have access to agent {agent_id}")
+        
+        # Check cache first
+        if agent_id in _agent_cache:
+            return _agent_cache[agent_id]
+            
+        agent_config = db.get_agent_by_id(agent_id)
+        if not agent_config:
+             raise ValueError(f"Agent {agent_id} not found")
+             
+        # Create and cache new instance
+        service = AgentService(agent_config=agent_config)
+        _agent_cache[agent_id] = service
+        return service
+
     global _agent_service
     if _agent_service is None:
         _agent_service = AgentService()

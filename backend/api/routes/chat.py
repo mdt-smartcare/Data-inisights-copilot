@@ -46,8 +46,28 @@ async def chat(
     )
     
     try:
-        # Get agent service and process query
-        agent_service = get_agent_service()
+        # Get agent service (dedicated instance if agent_id provided)
+        # Verify RBAC via user_id
+        current_user_id = current_user.id if hasattr(current_user, 'id') else None
+        
+        # If user_id is not available in current_user object (depends on auth implementation), 
+        # we might need to fetch it or rely on username. 
+        # For now assuming current_user has id or we look it up.
+        # Actually, get_agent_service takes user_id as int.
+        
+        # Let's resolve the user ID from the database if we only have username
+        # This is a bit of overhead but necessary for RBAC if IDs are used
+        
+        from backend.sqliteDb.db import get_db_service
+        db = get_db_service()
+        user_record = db.get_user_by_username(current_user.username)
+        user_int_id = user_record['id'] if user_record else None
+
+        agent_service = get_agent_service(
+            agent_id=request.agent_id,
+            user_id=user_int_id
+        )
+        
         result = await agent_service.process_query(
             query=request.query,
             user_id=user_id,
