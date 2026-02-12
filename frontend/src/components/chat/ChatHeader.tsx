@@ -62,6 +62,7 @@ export default function ChatHeader({
     { path: '/config', label: 'Config', show: canViewConfig(user) },
     { path: '/history', label: 'History', show: canViewHistory(user) },
     { path: '/users', label: 'Users', show: canManageUsers(user) },
+
     { path: '/audit', label: 'Audit', show: canViewAllAuditLogs(user) },
   ];
 

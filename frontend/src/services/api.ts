@@ -138,7 +138,8 @@ export const publishSystemPrompt = async (
   reasoning?: Record<string, string>,
   exampleQuestions?: string[],
   embeddingConfig?: any,
-  retrieverConfig?: any
+  retrieverConfig?: any,
+  agentId?: number
 ): Promise<{ status: string; version: number }> => {
   // We need to fetch the user_id from the token or some auth context.
   // For now, let's decode the token or just send a dummy ID if the backend parses the token.
@@ -165,23 +166,61 @@ export const publishSystemPrompt = async (
     reasoning: reasoning ? JSON.stringify(reasoning) : null,
     example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
     embedding_config: embeddingConfig ? JSON.stringify(embeddingConfig) : null,
-    retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null
+    retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null,
+    agent_id: agentId
   });
   return response.data;
 };
 
-export const getPromptHistory = async (): Promise<any> => {
-  const response = await apiClient.get('/api/v1/config/history');
+export const getPromptHistory = async (agentId?: number): Promise<any> => {
+  const response = await apiClient.get('/api/v1/config/history', { params: { agent_id: agentId } });
   return response.data;
 };
 
-export const getActiveConfigMetadata = async (): Promise<any> => {
-  const response = await apiClient.get('/api/v1/config/active-metadata');
+export const getActiveConfigMetadata = async (agentId?: number): Promise<any> => {
+  const response = await apiClient.get('/api/v1/config/active-metadata', { params: { agent_id: agentId } });
   return response.data;
 };
 
-export const getActivePrompt = async (): Promise<{ prompt_text: string }> => {
-  const response = await apiClient.get('/api/v1/config/active');
+// ============================================================================
+// AGENT API
+// ============================================================================
+
+import type { Agent } from '../types';
+
+export const getAgents = async (): Promise<Agent[]> => {
+  // Since we haven't implemented GET /agents yet in backend (it was in the plan but I might have missed creating the route file?), 
+  // Let's check if I actually created backend/api/routes/agents.py. 
+  // I didn't! I only updated chat.py. 
+  // Step 4.1 says "Update Chat/Query Routes". 
+  // The Implementation Plan had "[NEW] agents.py". I missed that in the backend phase!
+  // I need to go back and add the backend route for listing agents!
+
+  // WAIT. I can't proceed with frontend if backend doesn't support listing agents.
+  // I need to pause frontend work and implement `backend/api/routes/agents.py`.
+
+  // However, for now I will write the frontend code assuming the endpoint exists at `/api/v1/agents`.
+  const response = await apiClient.get('/api/v1/agents');
+  return response.data;
+};
+
+export const getActivePrompt = async (agentId?: number): Promise<{ prompt_text: string }> => {
+  const response = await apiClient.get('/api/v1/config/active', { params: { agent_id: agentId } });
+  return response.data;
+};
+
+export const createAgent = async (data: { name: string; description?: string; type: string; system_prompt?: string }): Promise<Agent> => {
+  const response = await apiClient.post('/api/v1/agents', data);
+  return response.data;
+};
+
+export const assignUserToAgent = async (agentId: number, userId: number, role: string): Promise<{ status: string }> => {
+  const response = await apiClient.post(`/api/v1/agents/${agentId}/users`, { user_id: userId, role });
+  return response.data;
+};
+
+export const revokeUserAccess = async (agentId: number, userId: number): Promise<{ status: string }> => {
+  const response = await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
   return response.data;
 };
 
