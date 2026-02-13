@@ -91,7 +91,8 @@ class DatabaseService:
                     version INTEGER NOT NULL,
                     is_active INTEGER DEFAULT 0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_by TEXT
+                    created_by TEXT,
+                    agent_id INTEGER REFERENCES agents(id)
                 )
             """)
 
