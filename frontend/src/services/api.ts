@@ -189,18 +189,12 @@ export const getActiveConfigMetadata = async (agentId?: number): Promise<any> =>
 import type { Agent } from '../types';
 
 export const getAgents = async (): Promise<Agent[]> => {
-  // Since we haven't implemented GET /agents yet in backend (it was in the plan but I might have missed creating the route file?), 
-  // Let's check if I actually created backend/api/routes/agents.py. 
-  // I didn't! I only updated chat.py. 
-  // Step 4.1 says "Update Chat/Query Routes". 
-  // The Implementation Plan had "[NEW] agents.py". I missed that in the backend phase!
-  // I need to go back and add the backend route for listing agents!
-
-  // WAIT. I can't proceed with frontend if backend doesn't support listing agents.
-  // I need to pause frontend work and implement `backend/api/routes/agents.py`.
-
-  // However, for now I will write the frontend code assuming the endpoint exists at `/api/v1/agents`.
   const response = await apiClient.get('/api/v1/agents');
+  return response.data;
+};
+
+export const getUsers = async (): Promise<User[]> => {
+  const response = await apiClient.get('/api/v1/users');
   return response.data;
 };
 
