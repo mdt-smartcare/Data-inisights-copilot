@@ -70,6 +70,7 @@ class AgentService:
         self.llm = self._llm_registry.get_langchain_llm()
         
         # Create tools
+        # SQL Agent tool accepts natural language questions and handles SQL generation internally.
         self.tools = [
             Tool(
                 name="sql_query_tool",
@@ -90,6 +91,7 @@ DO NOT generate SQL yourself - the tool handles that internally.
 
 Available data: structured tables in the database."""
             ),
+            # RAG tool for unstructured context - accepts natural language queries and returns relevant text snippets.
             Tool(
                 name="rag_document_search_tool",
                 func=self._rag_search,
