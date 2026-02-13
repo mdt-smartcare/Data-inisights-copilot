@@ -8,7 +8,6 @@ import {
   MessageList,
   ChatInput
 } from '../components/chat';
-import { AgentSelector } from '../components/chat/AgentSelector';
 import { useAuth } from '../contexts/AuthContext';
 import { canExecuteQuery } from '../utils/permissions';
 import { APP_CONFIG } from '../config';
@@ -188,24 +187,51 @@ export default function ChatPage() {
       ) : (
         // Chat Interface State
         <>
-          <div className="px-4 py-2 bg-white border-b border-gray-200 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-gray-500">Active Agent:</span>
-              <AgentSelector
-                agents={agents}
-                selectedAgentId={selectedAgentId}
-                onSelect={setSelectedAgentId}
-                isLoading={isLoadingAgents}
-              />
+          <div className="px-4 py-2 bg-white border-b border-gray-200 flex items-center justify-between shadow-sm z-10">
+            <div className="flex items-center gap-4">
+              {/* Active Agent Info */}
+              <div className="flex items-center gap-3">
+                <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${agents.find(a => a.id === selectedAgentId)?.type === 'sql' ? 'bg-indigo-50 text-indigo-600' : 'bg-orange-50 text-orange-600'}`}>
+                  {agents.find(a => a.id === selectedAgentId)?.type === 'sql' ? (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                </div>
+                <div>
+                  <span className="text-xs text-gray-500 block uppercase tracking-wider font-semibold">Current Assistant</span>
+                  <span className="text-sm font-bold text-gray-900">{agents.find(a => a.id === selectedAgentId)?.name}</span>
+                </div>
+              </div>
             </div>
-            {/* Can add styling to Clear Chat button here if needed to align */}
+
+            <button
+              onClick={() => {
+                setSelectedAgentId(undefined);
+                setMessages([]); // Optional: clear messages when switching? Or keep them? User didn't specify, but switching context usually implies fresh start or at least leaving the view.
+                // Keeping messages might be confusing if they belong to another agent.
+                // For now, let's NOT clear messages automatically unless user explicitly clears, but navigating back usually implies "I'm done with this agent".
+                // Actually, if I go back and select the SAME agent, I might expect history.
+                // Does `selectedAgentId(undefined)` clear history? No, `messages` state is in ChatPage.
+                // If I switch agents, the `chatMutation` payload changes `agent_id`.
+                // It is safer to clear messages on switch to avoid sending previous context to new agent?
+                // The prompt says "go back and select a new agent".
+                // Let's just go back for now.
+              }}
+              className="text-sm text-gray-600 hover:text-indigo-600 font-medium px-3 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
+            >
+              Change Assistant
+            </button>
           </div>
 
           {messages.length > 0 && (
             <div className="absolute top-[110px] right-4 z-10"> {/* Floating or specific placement if not in header */}
               {/* Re-evaluating placement. Putting it back into normal flow might be better or keeping it where it was.
                    The previous code had it as a separate div block. Let's keep the logic simple:
-                   If we are in Chat Interface, we render the header bars.
                */}
             </div>
           )}
