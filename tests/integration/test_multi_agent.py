@@ -143,6 +143,15 @@ async def test_multi_agent_flow():
     except PermissionError:
         print(f"✅ RBAC Check Passed: Unauthorized user {u2_id} was correctly denied access")
 
+    # 6. Test Listing Agents (mimicking API)
+    user_agents = db.get_agents_for_user(user_id)
+    print(f"✅ Found {len(user_agents)} agents for user {user_id}")
+    assert len(user_agents) >= 1
+    found_agent = next((a for a in user_agents if a['id'] == agent_id), None)
+    assert found_agent is not None
+    assert found_agent['name'] == agent_name
+    print(f"✅ Verified agent '{agent_name}' is in user's list")
+
     print("\n--- Test Completed Successfully ---")
 
 if __name__ == "__main__":
