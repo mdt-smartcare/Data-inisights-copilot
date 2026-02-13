@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Agent } from '../../types';
+import type { Agent } from '../../types/agent';
 import { getAgents, createAgent, assignUserToAgent, revokeUserAccess, getUsers, handleApiError } from '../../services/api'; // Ensure getUsers exists or add it
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../Toast';
