@@ -10,6 +10,7 @@ import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import PromptHistoryPage from './pages/PromptHistoryPage';
 import InsightsPage from './pages/InsightsPage';
+
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import type { UserRole } from './types';
 
@@ -146,6 +147,7 @@ function App() {
                   </ProtectedRoute>
                 }
               />
+
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </BrowserRouter>

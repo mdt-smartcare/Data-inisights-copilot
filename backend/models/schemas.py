@@ -56,6 +56,7 @@ class ChatRequest(BaseModel):
         default=None,
         description="Session ID for conversation tracking. Auto-generated if not provided."
     )
+    agent_id: Optional[int] = Field(default=None, description="Target agent ID")
     
     model_config = ConfigDict(json_schema_extra={
         "example": {

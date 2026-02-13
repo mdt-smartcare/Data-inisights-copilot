@@ -49,10 +49,13 @@ async def publish_prompt(
             schema_selection=request.schema_selection,
             data_dictionary=request.data_dictionary,
             reasoning=request.reasoning,
-            example_questions=request.example_questions
+            example_questions=request.example_questions,
+            agent_id=request.agent_id
         )
         
         # Reinitialize SQL service to use the new connection if changed
+        # TODO: Handle multi-agent SQL service reinitialization properly
+        # For now, this might only affect the default/global service
         if request.connection_id:
             logger.info(f"Config published with connection_id={request.connection_id}, reinitializing SQL service")
             try:
@@ -69,35 +72,38 @@ async def publish_prompt(
 
 @router.get("/history", response_model=List[PromptResponse])
 async def get_prompt_history(
+    agent_id: Optional[int] = None,
     service: ConfigService = Depends(get_config_service)
 ):
     """Get all historical versions of the system prompt."""
     try:
-        return service.get_prompt_history()
+        return service.get_prompt_history(agent_id=agent_id)
     except Exception as e:
         logger.error(f"Error fetching prompt history: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to fetch prompt history: {str(e)}")
 
 @router.get("/active-metadata", response_model=Optional[Dict[str, Any]])
 async def get_active_config(
+    agent_id: Optional[int] = None,
     service: ConfigService = Depends(get_config_service)
 ):
     """Get the configuration metadata for the active prompt."""
     try:
-        return service.get_active_config()
+        return service.get_active_config(agent_id=agent_id)
     except Exception as e:
         logger.error(f"Error fetching active config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/active", response_model=Dict[str, Optional[str]])
 async def get_active_prompt(
+    agent_id: Optional[int] = None,
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Get the current active system prompt text.
     """
     try:
-        prompt_text = db_service.get_latest_active_prompt()
+        prompt_text = db_service.get_latest_active_prompt(agent_id=agent_id)
         return {"prompt_text": prompt_text}
     except Exception as e:
         logger.error(f"Error fetching active prompt: {e}")

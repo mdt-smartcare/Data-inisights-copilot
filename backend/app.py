@@ -70,6 +70,10 @@ app.include_router(data.router, prefix=settings.api_v1_prefix)
 app.include_router(audit.router, prefix=settings.api_v1_prefix)
 app.include_router(users.router, prefix=settings.api_v1_prefix)
 
+# Agents route
+from backend.api.routes import agents
+app.include_router(agents.router, prefix=f"{settings.api_v1_prefix}/agents")
+
 # New embedding and notification routes
 app.include_router(embedding_progress.router, prefix=settings.api_v1_prefix)
 app.include_router(notifications.router, prefix=settings.api_v1_prefix)
