@@ -6,8 +6,7 @@ import RefreshButton from '../components/RefreshButton';
 import Alert from '../components/Alert';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { APP_CONFIG, CONFIRMATION_MESSAGES } from '../config';
-
-const getAuthToken = (): string | null => localStorage.getItem('auth_token');
+import { apiClient } from '../services/api';
 
 interface UserData {
     id: number;
@@ -52,15 +51,11 @@ const UsersPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = getAuthToken();
-            const res = await fetch('/api/v1/users', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Failed to load users');
-            const data = await res.json();
-            setUsers(data);
+            const res = await apiClient.get('/api/v1/auth/users');
+
+            setUsers(res.data?.users||[]);
         } catch (err: any) {
-            setError(err.message || 'Failed to load users');
+            setError(err.response?.data?.detail || err.message || 'Failed to load users');
         } finally {
             setLoading(false);
         }
@@ -74,20 +69,11 @@ const UsersPage: React.FC = () => {
     const handleSave = async () => {
         if (!editingUser) return;
         try {
-            const token = getAuthToken();
-            const res = await fetch(`/api/v1/users/${editingUser.id}`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify(editForm)
-            });
-            if (!res.ok) throw new Error('Failed to update user');
+            await apiClient.patch(`/api/v1/auth/users/${editingUser.id}`, editForm);
             setEditingUser(null);
             loadUsers();
         } catch (err: any) {
-            setError(err.message || 'Failed to update user');
+            setError(err.response?.data?.detail || err.message || 'Failed to update user');
         }
     };
 
@@ -98,21 +84,7 @@ const UsersPage: React.FC = () => {
         }
 
         try {
-            const token = getAuthToken();
-            const res = await fetch('/api/v1/users', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify(newUserForm)
-            });
-
-            if (!res.ok) {
-                const data = await res.json();
-                throw new Error(data.detail || 'Failed to create user');
-            }
-
+            await apiClient.post('/api/v1/users', newUserForm);
             setAddingUser(false);
             setNewUserForm({
                 username: '',
@@ -123,7 +95,7 @@ const UsersPage: React.FC = () => {
             });
             loadUsers();
         } catch (err: any) {
-            setError(err.message || 'Failed to create user');
+            setError(err.response?.data?.detail || err.message || 'Failed to create user');
         }
     };
 
@@ -134,16 +106,11 @@ const UsersPage: React.FC = () => {
     const confirmDeactivate = async () => {
         if (!deactivateConfirm.user) return;
         try {
-            const token = getAuthToken();
-            const res = await fetch(`/api/v1/users/${deactivateConfirm.user.id}`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Failed to deactivate user');
+            await apiClient.delete(`/api/v1/users/${deactivateConfirm.user.id}`);
             setDeactivateConfirm({ show: false, user: null });
             loadUsers();
         } catch (err: any) {
-            setError(err.message || 'Failed to deactivate user');
+            setError(err.response?.data?.detail || err.message || 'Failed to deactivate user');
         }
     };
 
@@ -232,10 +199,9 @@ const UsersPage: React.FC = () => {
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
-                                            ${u.role === 'super_admin' ? 'bg-purple-100 text-purple-800' : ''}
-                                            ${u.role === 'editor' ? 'bg-green-100 text-green-800' : ''}
+                                            ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
                                             ${u.role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
-                                            ${u.role === 'viewer' ? 'bg-gray-100 text-gray-800' : ''}
+                                          
                                         `}>
                                                     {getRoleDisplayName(u.role)}
                                                 </span>

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import type { Agent } from '../../types/agent';
-import { getAgents, createAgent, assignUserToAgent, revokeUserAccess, getUsers, handleApiError } from '../../services/api'; // Ensure getUsers exists or add it
+import { getAgents, createAgent, assignUserToAgent, handleApiError } from '../../services/api'; // Ensure getUsers exists or add it
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../Toast';
 import Alert from '../Alert';
-import { PlusIcon, UserGroupIcon, Cog6ToothIcon, TrashIcon } from '@heroicons/react/24/outline'; // Adjust icons as needed
+import { PlusIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'; // Adjust icons as needed
 
 // Helper to fetch users if not already available in api.ts
 // If getUsers is not in api.ts, we might need to add it or use a local fetch.
@@ -116,7 +116,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                     <h1 className="text-2xl font-bold text-gray-900">Agents</h1>
                     <p className="text-gray-500 text-sm mt-1">Manage AI agents and their configurations.</p>
                 </div>
-                {user?.role === 'super_admin' && (
+                {user?.role === 'admin' && (
                     <button
                         onClick={() => setShowCreateModal(true)}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-sm font-medium"
@@ -140,7 +140,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                         <UserGroupIcon className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                         <h3 className="text-lg font-medium text-gray-900">No Agents Found</h3>
                         <p className="text-gray-500 mt-2">Get started by creating your first agent.</p>
-                        {user?.role === 'super_admin' && (
+                        {user?.role === 'admin' && (
                             <button
                                 onClick={() => setShowCreateModal(true)}
                                 className="mt-6 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 font-medium"
@@ -189,7 +189,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                                         Role: {agent.user_role || 'Viewer'}
                                     </span>
                                     <div className="flex gap-2">
-                                        {user?.role === 'super_admin' && (
+                                        {user?.role === 'admin' && (
                                             <button
                                                 onClick={(e) => openUserModal(agent, e)}
                                                 className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
