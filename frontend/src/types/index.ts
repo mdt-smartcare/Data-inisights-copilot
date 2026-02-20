@@ -18,7 +18,7 @@
 // Authentication types (User, LoginRequest, LoginResponse, etc.)
 export * from './auth';
 
-export type UserRole = 'super_admin' | 'editor' | 'user';
+export type UserRole =  'admin' | 'user';
 
 export interface User {
     id?: number;

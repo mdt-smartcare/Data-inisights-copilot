@@ -1,81 +1,62 @@
-import { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { apiClient, handleApiError } from '../services/api';
-import { API_ENDPOINTS, APP_CONFIG } from '../config';
+import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import Alert from '../components/Alert';
-import type { LoginResponse } from '../types';
 import logo from '../assets/logo.svg';
 
 /**
  * Login Page Component
  * 
  * Features:
- * - Username/password authentication
- * - JWT token storage with expiration tracking
- * - Automatic redirect to chat page on success
+ * - Keycloak OIDC authentication via redirect
+ * - Automatic redirect if already authenticated
  * - Error display for failed login attempts
- * - Link to registration page for new users
  */
 export default function LoginPage() {
-  // Form state
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');          // Display error messages
-  const [isLoading, setIsLoading] = useState(false);  // Disable form during login
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const { setUser } = useAuth();  // Update global authentication state
+  const { login, isAuthenticated, isLoading: authLoading, user } = useAuth();
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      // Redirect based on role
+      if (user?.role === 'admin') {
+        navigate('/insights', { replace: true });
+      } else {
+        navigate('/chat', { replace: true });
+      }
+    }
+  }, [isAuthenticated, authLoading, navigate, user]);
 
   /**
-   * Handle login form submission
-   * Authenticates user and stores JWT token with expiration time
+   * Handle login button click
+   * Redirects to Keycloak login page
    */
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();  // Prevent default form submission
-    setError('');        // Clear previous errors
-    setIsLoading(true);  // Disable submit button
+  const handleLogin = async () => {
+    setError('');
+    setIsLoading(true);
 
     try {
-      // Send login request to backend
-      const response = await apiClient.post<LoginResponse>(API_ENDPOINTS.AUTH.LOGIN, {
-        username,
-        password,
-      });
-
-      // Calculate absolute expiration time (Unix timestamp)
-      // expires_in is in seconds, Date.now() is in milliseconds
-      const expiresAt = Math.floor(Date.now() / 1000) + response.data.expires_in;
-
-      // Store JWT token and expiration in localStorage
-      // This persists across page refreshes but not browser restarts (for security)
-      localStorage.setItem('auth_token', response.data.access_token);
-      localStorage.setItem('expiresAt', expiresAt.toString());
-
-      // Update global auth state with complete user object
-      // This includes username, email, full_name, and role from backend
-      // Use optional chaining for optional fields (email, full_name, role)
-      setUser({
-        username: response.data.user.username,
-        email: response.data.user?.email,
-        full_name: response.data.user?.full_name,
-        role: response.data.user?.role
-      });
-
-      // Redirect based on user role
-      // Super Admin goes to Config dashboard, others go to Chat
-      const userRole = response.data.user?.role;
-      if (userRole === 'super_admin') {
-        navigate('/insights');
-      } else {
-        navigate('/chat');
-      }
+      await login();
+      // login() redirects to Keycloak, so this line won't be reached
     } catch (err) {
-      // Display error message to user
-      setError(handleApiError(err));
-    } finally {
-      setIsLoading(false);  // Re-enable submit button
+      console.error('Login error:', err);
+      setError(err instanceof Error ? err.message : 'Failed to initiate login');
+      setIsLoading(false);
     }
   };
+
+  // Show loading while checking auth status
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+        <div className="animate-spin h-12 w-12 border-4 border-indigo-600 border-t-transparent rounded-full"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4">
@@ -92,41 +73,7 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
-          <div className="space-y-4">
-            <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-                Username
-              </label>
-              <input
-                id="username"
-                name="username"
-                type="text"
-                required
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                placeholder="Enter your username"
-              />
-            </div>
-
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <input
-                id="password"
-                name="password"
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
-                placeholder="Enter your password"
-              />
-            </div>
-          </div>
-
+        <div className="mt-8 space-y-6">
           {error && (
             <Alert
               type="error"
@@ -137,23 +84,35 @@ export default function LoginPage() {
 
           <div>
             <button
-              type="submit"
+              onClick={handleLogin}
               disabled={isLoading}
-              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? 'Signing in...' : 'Sign in'}
+              {isLoading ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Redirecting to login...
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                  </svg>
+                  Sign in with Keycloak
+                </>
+              )}
             </button>
           </div>
 
           <div className="text-center">
-            <p className="text-sm text-gray-600">
-              Don't have an account?{' '}
-              <Link to="/register" className="font-medium text-indigo-600 hover:text-indigo-500">
-                Sign up
-              </Link>
+            <p className="text-xs text-gray-500">
+              You will be redirected to the secure login page
             </p>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );
