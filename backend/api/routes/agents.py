@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from backend.core.permissions import require_user, get_current_user, require_super_admin
+from backend.core.permissions import require_user, get_current_user, require_admin
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import User
 
@@ -71,9 +71,9 @@ async def list_agents(current_user: User = Depends(require_user)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("", response_model=AgentResponse)
-async def create_agent(agent: AgentCreate, current_user: User = Depends(require_super_admin)):
+async def create_agent(agent: AgentCreate, current_user: User = Depends(require_admin)):
     """
-    Create a new agent (Super Admin only).
+    Create a new agent (Admin only).
     """
     db = get_db_service()
     try:
@@ -100,21 +100,21 @@ async def create_agent(agent: AgentCreate, current_user: User = Depends(require_
         logger.error(f"Error creating agent: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 @router.get("/admin", response_model=List[AgentResponse])
-async def list_all_agents(current_user: User = Depends(require_super_admin)):
+async def list_all_agents(current_user: User = Depends(require_admin)):
     """
-    List ALL agents (Super Admin only).
+    List ALL agents (Admin only).
     """
     db = get_db_service()
     return db.list_all_agents()
 
 class AgentAssignment(BaseModel):
     user_id: int
-    role: str = "viewer"
+    role: str = "user"
 
 @router.post("/{agent_id}/users")
-async def assign_user(agent_id: int, assignment: AgentAssignment, current_user: User = Depends(require_super_admin)):
+async def assign_user(agent_id: int, assignment: AgentAssignment, current_user: User = Depends(require_admin)):
     """
-    Assign a user to an agent (Super Admin only).
+    Assign a user to an agent (Admin only).
     """
     db = get_db_service()
     
@@ -135,9 +135,9 @@ async def assign_user(agent_id: int, assignment: AgentAssignment, current_user: 
     return {"status": "success", "message": f"User {assignment.user_id} assigned to agent {agent_id}"}
 
 @router.delete("/{agent_id}/users/{user_id}")
-async def revoke_access(agent_id: int, user_id: int, current_user: User = Depends(require_super_admin)):
+async def revoke_access(agent_id: int, user_id: int, current_user: User = Depends(require_admin)):
     """
-    Revoke a user's access to an agent (Super Admin only).
+    Revoke a user's access to an agent (Admin only).
     """
     db = get_db_service()
     success = db.revoke_user_access(agent_id, user_id)

@@ -10,10 +10,23 @@ logger = logging.getLogger(__name__)
 
 class ConfigService:
     def __init__(self):
-        self.sql_service = get_sql_service()
-        # Access the LLM from the agent service (reusing the configured ChatOpenAI instance)
-        self.llm = get_agent_service().llm
+        self._sql_service = None
+        self._llm = None
         self.db_service = get_db_service()
+
+    @property
+    def sql_service(self):
+        """Lazy initialization of SQL service (PostgreSQL connection)."""
+        if self._sql_service is None:
+            self._sql_service = get_sql_service()
+        return self._sql_service
+
+    @property
+    def llm(self):
+        """Lazy initialization of LLM."""
+        if self._llm is None:
+            self._llm = get_agent_service().llm
+        return self._llm
 
     def generate_draft_prompt(self, data_dictionary: str) -> Dict[str, Any]:
         """

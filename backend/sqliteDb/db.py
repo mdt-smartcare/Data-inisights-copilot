@@ -5,7 +5,7 @@ import sqlite3
 import os
 from pathlib import Path
 import bcrypt
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
 import json
 import hashlib
@@ -164,7 +164,7 @@ class DatabaseService:
                 CREATE TABLE IF NOT EXISTS user_agents (
                     user_id INTEGER,
                     agent_id INTEGER,
-                    role TEXT DEFAULT 'viewer', -- 'viewer', 'editor', 'admin'
+                    role TEXT DEFAULT 'user', -- 'admin', 'user'
                     granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     granted_by INTEGER,
                     PRIMARY KEY (user_id, agent_id),
@@ -186,7 +186,7 @@ class DatabaseService:
                 cursor.execute(
                     """INSERT INTO users (username, email, password_hash, full_name, role) 
                        VALUES (?, ?, ?, ?, ?)""",
-                    (admin_username, admin_email, admin_password_hash, "Administrator", "super_admin")
+                    (admin_username, admin_email, admin_password_hash, "Administrator", "admin")
                 )
                 logger.info(f"Default admin user '{admin_username}' created")
             
@@ -245,7 +245,7 @@ class DatabaseService:
             password: Plain text password (will be hashed before storage)
             email: Optional email address (must be unique if provided)
             full_name: Optional full name of the user
-            role: User role (default: 'user', can be 'super_admin', 'editor', 'user', 'viewer')
+            role: User role (default: 'user', can be 'admin' or 'user')
             
         Returns:
             Dictionary containing created user information (without password)
@@ -301,8 +301,242 @@ class DatabaseService:
         cursor = conn.cursor()
         
         cursor.execute(
-            "SELECT id, username, email, password_hash, full_name, role, is_active FROM users WHERE username = ?",
+            "SELECT id, username, email, password_hash, full_name, role, is_active, external_id FROM users WHERE username = ?",
             (username,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return dict(row)
+        return None
+    
+    def get_user_by_external_id(self, external_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve user information by OIDC external ID (Keycloak sub claim).
+        
+        Args:
+            external_id: The OIDC subject claim (sub) that uniquely identifies the user
+            
+        Returns:
+            Dictionary with user data, or None if not found
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT id, username, email, password_hash, full_name, role, is_active, external_id FROM users WHERE external_id = ?",
+            (external_id,)
+        )
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row:
+            return dict(row)
+        return None
+    
+    def upsert_oidc_user(
+        self,
+        external_id: str,
+        email: Optional[str] = None,
+        username: Optional[str] = None,
+        full_name: Optional[str] = None,
+        default_role: str = "user"
+    ) -> Dict[str, Any]:
+        """Create or update a user from OIDC token claims (Just-In-Time provisioning).
+        
+        This method is called when a user authenticates via Keycloak for the first time.
+        It creates a new user record if not exists, or updates the existing user's info.
+        
+        For existing users, only email and full_name are updated (not role).
+        The role is managed locally by admins after initial provisioning.
+        
+        Args:
+            external_id: OIDC subject claim (required, unique identifier from Keycloak)
+            email: User's email from OIDC token
+            username: Preferred username from OIDC token (falls back to external_id if not provided)
+            full_name: User's display name from OIDC token
+            default_role: Default role for new users (from Keycloak mapping or config)
+            
+        Returns:
+            Dictionary with user data (without password_hash)
+            
+        Raises:
+            ValueError: If external_id conflicts with existing user
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Check if user already exists by external_id
+            existing_user = self.get_user_by_external_id(external_id)
+            
+            if existing_user:
+                # Update existing user's info (but not role - that's managed locally)
+                cursor.execute(
+                    """UPDATE users 
+                       SET email = COALESCE(?, email),
+                           full_name = COALESCE(?, full_name),
+                           updated_at = CURRENT_TIMESTAMP
+                       WHERE external_id = ?""",
+                    (email, full_name, external_id)
+                )
+                conn.commit()
+                
+                # Fetch updated user
+                cursor.execute(
+                    "SELECT id, username, email, full_name, role, is_active, external_id, created_at FROM users WHERE external_id = ?",
+                    (external_id,)
+                )
+                user = dict(cursor.fetchone())
+                conn.close()
+                logger.info(f"OIDC user updated: {username or external_id}")
+                return user
+            else:
+                # Create new user with OIDC info
+                # Use external_id as username if preferred_username not provided
+                effective_username = username or external_id[:50]  # Truncate to fit column
+                
+                # For OIDC users, we don't have a password - use a placeholder
+                # The password_hash column still exists but won't be used for OIDC auth
+                placeholder_hash = "OIDC_USER_NO_PASSWORD"
+                
+                cursor.execute(
+                    """INSERT INTO users (username, email, password_hash, full_name, role, external_id, is_active) 
+                       VALUES (?, ?, ?, ?, ?, ?, 1)""",
+                    (effective_username, email, placeholder_hash, full_name, default_role, external_id)
+                )
+                conn.commit()
+                user_id = cursor.lastrowid
+                
+                # Fetch created user
+                cursor.execute(
+                    "SELECT id, username, email, full_name, role, is_active, external_id, created_at FROM users WHERE id = ?",
+                    (user_id,)
+                )
+                user = dict(cursor.fetchone())
+                conn.close()
+                logger.info(f"OIDC user created: {effective_username} with role: {default_role}")
+                return user
+                
+        except sqlite3.IntegrityError as e:
+            conn.close()
+            logger.error(f"OIDC user upsert failed (integrity error): {e}")
+            # This could happen if username conflicts with existing local user
+            raise ValueError(f"User with this identity already exists: {e}")
+        except Exception as e:
+            conn.close()
+            logger.error(f"OIDC user upsert error: {e}")
+            raise
+    
+    def update_user_role(self, user_id: int, new_role: str) -> bool:
+        """Update a user's role (admin function for local role management).
+        
+        Args:
+            user_id: The user's database ID
+            new_role: New role to assign (admin, user)
+            
+        Returns:
+            True if update succeeded, False if user not found
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "UPDATE users SET role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (new_role, user_id)
+        )
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        
+        if affected > 0:
+            logger.info(f"User {user_id} role updated to: {new_role}")
+            return True
+        return False
+    
+    def list_all_users(self) -> List[Dict[str, Any]]:
+        """List all users in the system.
+        
+        Returns:
+            List of user dictionaries (without password_hash)
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            """SELECT id, username, email, full_name, role, is_active, external_id, created_at 
+               FROM users ORDER BY created_at DESC"""
+        )
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
+    
+    def deactivate_user(self, user_id: int) -> bool:
+        """Deactivate a user account.
+        
+        Args:
+            user_id: The user's database ID
+            
+        Returns:
+            True if update succeeded, False if user not found
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "UPDATE users SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (user_id,)
+        )
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        
+        if affected > 0:
+            logger.info(f"User {user_id} deactivated")
+            return True
+        return False
+    
+    def activate_user(self, user_id: int) -> bool:
+        """Activate (reactivate) a user account.
+        
+        Args:
+            user_id: The user's database ID
+            
+        Returns:
+            True if update succeeded, False if user not found
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "UPDATE users SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (user_id,)
+        )
+        conn.commit()
+        affected = cursor.rowcount
+        conn.close()
+        
+        if affected > 0:
+            logger.info(f"User {user_id} activated")
+            return True
+        return False
+    
+    def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve user information by database ID.
+        
+        Args:
+            user_id: User's database ID
+            
+        Returns:
+            Dictionary with user data, or None if not found
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute(
+            "SELECT id, username, email, full_name, role, is_active, external_id, created_at FROM users WHERE id = ?",
+            (user_id,)
         )
         row = cursor.fetchone()
         conn.close()
@@ -748,8 +982,8 @@ class DatabaseService:
             
         if required_role:
             user_role = row['role']
-            # Simple role hierarchy
-            roles = {'viewer': 1, 'editor': 2, 'admin': 3}
+            # Simple role hierarchy (higher number = more privilege)
+            roles = {'user': 1, 'admin': 2}
             return roles.get(user_role, 0) >= roles.get(required_role, 0)
             
         return True
@@ -764,7 +998,7 @@ class DatabaseService:
         conn.close()
         return [dict(row) for row in rows]
 
-    def assign_user_to_agent(self, agent_id: int, user_id: int, role: str = 'viewer', granted_by: int = None) -> bool:
+    def assign_user_to_agent(self, agent_id: int, user_id: int, role: str = 'user', granted_by: int = None) -> bool:
         """Assign a user to an agent with a specific role."""
         conn = self.get_connection()
         cursor = conn.cursor()

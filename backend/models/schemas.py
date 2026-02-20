@@ -8,31 +8,8 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 # ============================================
-# Authentication Schemas
+# Authentication Schemas (OIDC/Keycloak)
 # ============================================
-
-class LoginRequest(BaseModel):
-    """Login request payload."""
-    username: str = Field(..., min_length=3, max_length=50, description="Username")
-    password: str = Field(..., min_length=3, description="Password")
-
-
-class RegisterRequest(BaseModel):
-    """User registration request payload."""
-    username: str = Field(..., min_length=3, max_length=50, description="Username")
-    password: str = Field(..., min_length=6, description="Password (minimum 6 characters)")
-    email: Optional[str] = Field(None, description="Email address")
-    full_name: Optional[str] = Field(None, max_length=100, description="Full name")
-    role: Optional[str] = Field(default="user", description="User role (super_admin, editor, user, viewer)")
-
-
-class TokenResponse(BaseModel):
-    """JWT token response."""
-    access_token: str = Field(..., description="JWT access token")
-    token_type: str = Field(default="bearer", description="Token type")
-    user: "User" = Field(..., description="Authenticated user information")
-    expires_in: int = Field(..., description="Token expiration in seconds")
-
 
 class User(BaseModel):
     """User information."""
@@ -41,7 +18,43 @@ class User(BaseModel):
     email: Optional[str] = None
     full_name: Optional[str] = None
     created_at: Optional[str] = None
-    role: str = Field(default="viewer", description="User role: super_admin, editor, user, or viewer")
+    role: str = Field(default="user", description="User role: super_admin, editor, user, or viewer")
+    external_id: Optional[str] = Field(None, description="OIDC subject (sub) claim from Keycloak")
+    is_active: Optional[bool] = Field(default=True, description="Whether the user account is active")
+
+
+class UserRoleUpdate(BaseModel):
+    """Request payload for updating a user's role."""
+    role: str = Field(..., description="New role to assign (super_admin, editor, user, viewer)")
+
+
+class UserListResponse(BaseModel):
+    """Response containing list of users."""
+    users: List["User"] = Field(default_factory=list, description="List of user profiles")
+
+
+# Legacy schemas kept for backward compatibility (deprecated)
+class LoginRequest(BaseModel):
+    """Login request payload (DEPRECATED - use Keycloak for authentication)."""
+    username: str = Field(..., min_length=3, max_length=50, description="Username")
+    password: str = Field(..., min_length=3, description="Password")
+
+
+class RegisterRequest(BaseModel):
+    """User registration request payload (DEPRECATED - use Keycloak for registration)."""
+    username: str = Field(..., min_length=3, max_length=50, description="Username")
+    password: str = Field(..., min_length=6, description="Password (minimum 6 characters)")
+    email: Optional[str] = Field(None, description="Email address")
+    full_name: Optional[str] = Field(None, max_length=100, description="Full name")
+    role: Optional[str] = Field(default="user", description="User role (super_admin, editor, user, viewer)")
+
+
+class TokenResponse(BaseModel):
+    """JWT token response (DEPRECATED - tokens now issued by Keycloak)."""
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(default="bearer", description="Token type")
+    user: User = Field(..., description="Authenticated user information")
+    expires_in: int = Field(..., description="Token expiration in seconds")
 
 
 # ============================================

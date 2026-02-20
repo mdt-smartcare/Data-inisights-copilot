@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from typing import List, Dict, Any, Optional
 
 from backend.services.audit_service import get_audit_service, AuditService
-from backend.core.permissions import require_super_admin, User
+from backend.core.permissions import require_admin, User
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -14,7 +14,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/audit", tags=["Audit Logs"])
 
 
-@router.get("/logs", response_model=List[Dict[str, Any]], dependencies=[Depends(require_super_admin)])
+@router.get("/logs", response_model=List[Dict[str, Any]], dependencies=[Depends(require_admin)])
 async def get_audit_logs(
     actor: Optional[str] = Query(None, description="Filter by actor username"),
     action: Optional[str] = Query(None, description="Filter by action prefix (e.g., 'prompt')"),
@@ -47,7 +47,7 @@ async def get_audit_logs(
     )
 
 
-@router.get("/logs/count", response_model=Dict[str, int], dependencies=[Depends(require_super_admin)])
+@router.get("/logs/count", response_model=Dict[str, int], dependencies=[Depends(require_admin)])
 async def get_audit_log_count(
     actor: Optional[str] = Query(None),
     action: Optional[str] = Query(None),
@@ -67,12 +67,12 @@ async def get_audit_log_count(
     return {"count": count}
 
 
-@router.get("/actions", response_model=List[str], dependencies=[Depends(require_super_admin)])
+@router.get("/actions", response_model=List[str], dependencies=[Depends(require_admin)])
 async def get_audit_action_types():
     """
     Get list of all possible audit action types.
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     from backend.services.audit_service import AuditAction
     return [action.value for action in AuditAction]
