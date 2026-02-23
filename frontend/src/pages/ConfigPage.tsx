@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob } from '../services/api';
+import type { IngestionResponse } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
+import FileUploadSource from '../components/FileUploadSource';
 import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
@@ -21,7 +23,7 @@ import { ArrowLeftIcon } from '@heroicons/react/24/outline'; // Add back button 
 
 const steps = [
     { id: 0, name: 'Dashboard' },
-    { id: 1, name: 'Connect Database' },
+    { id: 1, name: 'Data Source' },
     { id: 2, name: 'Select Schema' },
     { id: 3, name: 'Data Dictionary' },
     { id: 4, name: 'Advanced Settings' },
@@ -44,6 +46,10 @@ const ConfigPage: React.FC = () => {
     const [connectionId, setConnectionId] = useState<number | null>(null);
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
+
+    // Data source type: 'database' or 'file'
+    const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
+    const [fileUploadResult, setFileUploadResult] = useState<IngestionResponse | null>(null);
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
@@ -137,9 +143,21 @@ const ConfigPage: React.FC = () => {
     };
 
     const handleNext = () => {
-        if (currentStep === 1 && !connectionId) {
-            setError("Please select a database connection.");
-            return;
+        if (currentStep === 1) {
+            if (dataSourceType === 'database' && !connectionId) {
+                setError("Please select a database connection.");
+                return;
+            }
+            if (dataSourceType === 'file' && !fileUploadResult) {
+                setError("Please upload a file first.");
+                return;
+            }
+            setError(null);
+            if (dataSourceType === 'file') {
+                // Skip schema selection (step 2), go straight to data dictionary
+                setCurrentStep(3);
+                return;
+            }
         }
         if (currentStep === 2 && Object.keys(selectedSchema).length === 0) {
             setError("Please select at least one table/column.");
@@ -150,7 +168,22 @@ const ConfigPage: React.FC = () => {
     };
 
     const handleBack = () => {
+        if (currentStep === 3 && dataSourceType === 'file') {
+            // Skip schema selection going back too
+            setCurrentStep(1);
+            return;
+        }
         if (currentStep > 0) setCurrentStep(currentStep - 1);
+    };
+
+    const handleFileExtractionComplete = (result: IngestionResponse) => {
+        setFileUploadResult(result);
+        // Auto-populate data dictionary with extracted content summary
+        const preview = result.documents.slice(0, 10).map((doc, i) =>
+            `--- Document ${i + 1} ---\n${doc.page_content}`
+        ).join('\n\n');
+        const header = `# Extracted from: ${result.file_name} (${result.file_type.toUpperCase()})\n# Total documents: ${result.total_documents}\n\n`;
+        setDataDictionary(header + preview);
     };
 
     const handleStartNew = () => {
@@ -159,6 +192,8 @@ const ConfigPage: React.FC = () => {
         setSelectedSchema({});
         setDataDictionary('');
         setDraftPrompt('');
+        setDataSourceType('database');
+        setFileUploadResult(null);
         setCurrentStep(1);
     };
 
@@ -444,15 +479,69 @@ const ConfigPage: React.FC = () => {
                                 )}
                                 {currentStep === 1 && (
                                     <div className="max-w-2xl mx-auto">
-                                        <h2 className="text-xl font-semibold mb-4">Select Database Connection</h2>
-                                        <p className="text-gray-500 text-sm mb-6">
-                                            Choose the database you want to generate insights from. You can add multiple connections (e.g., Staging, Production).
+                                        <h2 className="text-xl font-semibold mb-4">Connect Data Source</h2>
+                                        <p className="text-gray-500 text-sm mb-4">
+                                            Choose how you want to provide data to this agent.
                                         </p>
-                                        <ConnectionManager
-                                            onSelect={setConnectionId}
-                                            selectedId={connectionId}
-                                            readOnly={!canManageConnections(user)}
-                                        />
+
+                                        {/* Data Source Toggle */}
+                                        <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-6">
+                                            <button
+                                                type="button"
+                                                onClick={() => { setDataSourceType('database'); setFileUploadResult(null); }}
+                                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                                                    ${dataSourceType === 'database'
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                                                </svg>
+                                                Database
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setDataSourceType('file'); setConnectionId(null); }}
+                                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                                                    ${dataSourceType === 'file'
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                                </svg>
+                                                File Upload
+                                            </button>
+                                        </div>
+
+                                        {/* Database Source */}
+                                        {dataSourceType === 'database' && (
+                                            <>
+                                                <p className="text-gray-500 text-sm mb-4">
+                                                    Choose the database you want to generate insights from.
+                                                </p>
+                                                <ConnectionManager
+                                                    onSelect={setConnectionId}
+                                                    selectedId={connectionId}
+                                                    readOnly={!canManageConnections(user)}
+                                                />
+                                            </>
+                                        )}
+
+                                        {/* File Upload Source */}
+                                        {dataSourceType === 'file' && (
+                                            <>
+                                                <p className="text-gray-500 text-sm mb-4">
+                                                    Upload a PDF, CSV, Excel, or JSON file to extract data from.
+                                                </p>
+                                                <FileUploadSource
+                                                    onExtractionComplete={handleFileExtractionComplete}
+                                                    disabled={!canEdit}
+                                                />
+                                            </>
+                                        )}
                                     </div>
                                 )}
 
@@ -702,9 +791,9 @@ const ConfigPage: React.FC = () => {
                                 ) : (
                                     <button
                                         onClick={handleNext}
-                                        disabled={generating || publishing || (currentStep === 1 && !connectionId)}
+                                        disabled={generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult)}
                                         className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
-                                ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                ${generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                     >
                                         {publishing ? 'Publishing...' : currentStep === 6 ? 'Done' : 'Next'}
                                     </button>
