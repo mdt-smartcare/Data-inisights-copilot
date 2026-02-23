@@ -119,7 +119,7 @@ class CSVExtractor(BaseExtractor):
                         content_parts = [
                             f"{key}: {value}"
                             for key, value in row.items()
-                            if value is not None and str(value).strip()
+                            if value and str(value).strip()
                         ]
                         if not content_parts:
                             continue
