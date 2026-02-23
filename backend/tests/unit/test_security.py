@@ -1,126 +1,17 @@
 """
 Unit tests for backend/core/security.py
 
-Tests JWT token creation, decoding, and password hashing utilities.
+Tests JWT token creation, decoding, and OIDC utilities.
 """
 import pytest
 from datetime import timedelta
 from unittest.mock import patch
 import os
-import hashlib
 
 # Set test environment before imports
 os.environ["SECRET_KEY"] = "test-secret-key-minimum-32-chars-long-for-jwt-signing"
 os.environ["ALGORITHM"] = "HS256"
 os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "30"
-
-
-# Helper to create a mock hash (avoiding bcrypt compatibility issues)
-def mock_hash(password):
-    """Create a deterministic hash for testing."""
-    return "$2b$12$" + hashlib.sha256(password.encode()).hexdigest()[:53]
-
-
-def mock_verify(plain, hashed):
-    """Mock verification for testing."""
-    expected = mock_hash(plain)
-    return expected == hashed
-
-
-class TestPasswordHashing:
-    """Tests for password hashing utilities."""
-    
-    def test_hash_password_returns_string(self):
-        """Test that hash_password returns a string."""
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.hash.return_value = "$2b$12$hashedpasswordvalue123456789012345678901234567890123"
-            
-            from backend.core.security import get_password_hash
-            
-            password = "test_password123"
-            hashed = get_password_hash(password)
-            
-            assert isinstance(hashed, str)
-            assert hashed != password
-            assert len(hashed) > 0
-    
-    def test_hash_password_unique_each_time(self):
-        """Test that hashing same password produces different hashes (salt)."""
-        call_count = [0]
-        def hash_side_effect(pwd):
-            call_count[0] += 1
-            return f"$2b$12$uniquehash{call_count[0]}{'0' * 40}"
-        
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.hash.side_effect = hash_side_effect
-            
-            from backend.core.security import get_password_hash
-            
-            password = "test_password123"
-            hash1 = get_password_hash(password)
-            hash2 = get_password_hash(password)
-            
-            # Bcrypt uses random salt, so hashes should differ
-            assert hash1 != hash2
-    
-    def test_verify_password_correct(self):
-        """Test password verification with correct password."""
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.verify.return_value = True
-            
-            from backend.core.security import verify_password
-            
-            result = verify_password("my_secure_password", "$2b$12$somehash")
-            
-            assert result is True
-    
-    def test_verify_password_incorrect(self):
-        """Test password verification with incorrect password."""
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.verify.return_value = False
-            
-            from backend.core.security import verify_password
-            
-            result = verify_password("wrong_password", "$2b$12$somehash")
-            
-            assert result is False
-    
-    def test_verify_password_empty_password(self):
-        """Test verification with empty password fails."""
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.verify.return_value = False
-            
-            from backend.core.security import verify_password
-            
-            result = verify_password("", "$2b$12$somehash")
-            
-            assert result is False
-    
-    def test_hash_password_special_characters(self):
-        """Test hashing passwords with special characters."""
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.hash.return_value = "$2b$12$specialcharhash123456789012345678901234567890"
-            mock_ctx.verify.return_value = True
-            
-            from backend.core.security import get_password_hash, verify_password
-            
-            password = "p@$$w0rd!#$%^&*()_+-=[]{}|;':\",./<>?"
-            hashed = get_password_hash(password)
-            
-            assert verify_password(password, hashed) is True
-    
-    def test_hash_password_unicode(self):
-        """Test hashing passwords with unicode characters."""
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.hash.return_value = "$2b$12$unicodehash1234567890123456789012345678901234"
-            mock_ctx.verify.return_value = True
-            
-            from backend.core.security import get_password_hash, verify_password
-            
-            password = "密码パスワード🔐"
-            hashed = get_password_hash(password)
-            
-            assert verify_password(password, hashed) is True
 
 
 class TestJWTTokenCreation:
@@ -313,34 +204,11 @@ class TestGetTokenUsername:
         assert exc_info.value.status_code == 401
 
 
-class TestPasswordContextConfiguration:
-    """Tests for password context configuration."""
+class TestHTTPBearerScheme:
+    """Tests for HTTP Bearer scheme configuration."""
     
-    def test_pwd_context_uses_bcrypt(self):
-        """Test that password context is configured for bcrypt."""
-        from backend.core.security import pwd_context
+    def test_http_bearer_exists(self):
+        """Test HTTP Bearer scheme is configured."""
+        from backend.core.security import http_bearer
         
-        assert "bcrypt" in pwd_context.schemes()
-    
-    def test_pwd_context_hash_starts_with_bcrypt_prefix(self):
-        """Test that generated hashes have bcrypt prefix."""
-        with patch('backend.core.security.pwd_context') as mock_ctx:
-            mock_ctx.hash.return_value = "$2b$12$testbcrypthash12345678901234567890123456789012345"
-            
-            from backend.core.security import get_password_hash
-            
-            hashed = get_password_hash("password")
-            
-            # Bcrypt hashes start with $2a$, $2b$, or $2y$
-            assert hashed.startswith(("$2a$", "$2b$", "$2y$"))
-
-
-class TestOAuth2Scheme:
-    """Tests for OAuth2 scheme configuration."""
-    
-    def test_oauth2_scheme_token_url(self):
-        """Test OAuth2 scheme has correct token URL."""
-        from backend.core.security import oauth2_scheme
-        
-        # OAuth2PasswordBearer has tokenUrl attribute
-        assert oauth2_scheme.scheme_name == "OAuth2PasswordBearer"
+        assert http_bearer is not None

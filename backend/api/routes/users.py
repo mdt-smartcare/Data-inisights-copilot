@@ -1,14 +1,22 @@
 """
 User Management API endpoints.
-Only accessible by Super Admin.
+Provides CRUD operations for user accounts.
+
+With OIDC/Keycloak integration:
+- Users are created automatically on first login (JIT provisioning)
+- This API manages local user attributes (role, active status)
+- User creation with password is deprecated (handled by Keycloak)
+
+Only accessible by Admin role.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from backend.sqliteDb.db import get_db_service, DatabaseService
-from backend.core.permissions import require_super_admin, User
+from backend.core.permissions import require_admin, User
 from backend.core.logging import get_logger
+from backend.core.roles import get_all_roles, is_valid_role
 from backend.services.audit_service import get_audit_service, AuditAction
 
 logger = get_logger(__name__)
@@ -20,17 +28,8 @@ class UserUpdateRequest(BaseModel):
     """Request to update a user."""
     email: Optional[str] = None
     full_name: Optional[str] = None
-    role: Optional[str] = Field(None, description="Role: super_admin, editor, user, viewer")
+    role: Optional[str] = Field(None, description="Role: admin, user")
     is_active: Optional[bool] = None
-
-
-class UserCreateRequest(BaseModel):
-    """Request to create a new user."""
-    username: str
-    password: str
-    email: Optional[str] = None
-    full_name: Optional[str] = None
-    role: str = Field("user", description="Role: super_admin, editor, user, viewer")
 
 
 class UserResponse(BaseModel):
@@ -42,78 +41,25 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool = True
     created_at: Optional[str] = None
+    external_id: Optional[str] = Field(None, description="OIDC subject claim from IdP")
 
 
-
-@router.post("", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
-async def create_user(
-    request: UserCreateRequest,
-    current_user: User = Depends(require_super_admin),
-    db_service: DatabaseService = Depends(get_db_service)
-):
-    """
-    Create a new user.
-    
-    **Requires Super Admin role.**
-    """
-    try:
-        # Validate role
-        valid_roles = ['super_admin', 'editor', 'user', 'viewer']
-        if request.role not in valid_roles:
-            raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
-        
-        user = db_service.create_user(
-            username=request.username,
-            password=request.password,
-            email=request.email,
-            full_name=request.full_name,
-            role=request.role
-        )
-        
-        # Log audit event
-        audit = get_audit_service()
-        audit.log(
-            action=AuditAction.USER_CREATE,
-            actor_id=current_user.id,
-            actor_username=current_user.username,
-            actor_role=current_user.role,
-            resource_type="user",
-            resource_id=str(user['id']),
-            resource_name=user['username'],
-            details={"role": request.role}
-        )
-        
-        return user
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(f"Error creating user: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create user")
-
-
-@router.get("", response_model=List[UserResponse], dependencies=[Depends(require_super_admin)])
+@router.get("", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
 async def list_users(
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     List all users in the system.
     
-    **Requires Super Admin role.**
-    """
-    conn = db_service.get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, username, email, full_name, role, is_active, created_at 
-        FROM users 
-        ORDER BY created_at DESC
-    """)
-    columns = [desc[0] for desc in cursor.description]
-    rows = cursor.fetchall()
+    Returns all users that have been provisioned (via OIDC or legacy).
     
-    return [dict(zip(columns, row)) for row in rows]
+    **Requires Admin role.**
+    """
+    users = db_service.list_all_users()
+    return users
 
 
-@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
+@router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
 async def get_user(
     user_id: int,
     db_service: DatabaseService = Depends(get_db_service)
@@ -121,7 +67,7 @@ async def get_user(
     """
     Get a specific user by ID.
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -139,17 +85,17 @@ async def get_user(
     return dict(zip(columns, row))
 
 
-@router.patch("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_super_admin)])
+@router.patch("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
 async def update_user(
     user_id: int,
     request: UserUpdateRequest,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Update a user's profile or role.
     
-    **Requires Super Admin role.**
+    **Requires Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -176,10 +122,9 @@ async def update_user(
         params.append(request.full_name)
     
     if request.role is not None:
-        # Validate role
-        valid_roles = ['super_admin', 'editor', 'user', 'viewer']
-        if request.role not in valid_roles:
-            raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {valid_roles}")
+        # Validate role using centralized role config
+        if not is_valid_role(request.role):
+            raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {get_all_roles()}")
         updates.append("role = ?")
         params.append(request.role)
     
@@ -212,16 +157,18 @@ async def update_user(
     return await get_user(user_id, db_service)
 
 
-@router.delete("/{user_id}", dependencies=[Depends(require_super_admin)])
-async def delete_user(
+@router.post("/{user_id}/deactivate", dependencies=[Depends(require_admin)])
+async def deactivate_user(
     user_id: int,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
-    Delete a user (soft delete by deactivating).
+    Deactivate a user (soft delete).
     
-    **Requires Super Admin role.**
+    Deactivated users cannot authenticate even with valid Keycloak tokens.
+    
+    **Requires Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -255,3 +202,49 @@ async def delete_user(
     )
     
     return {"status": "success", "message": f"User '{username}' has been deactivated"}
+
+
+@router.post("/{user_id}/activate", dependencies=[Depends(require_admin)])
+async def activate_user(
+    user_id: int,
+    current_user: User = Depends(require_admin),
+    db_service: DatabaseService = Depends(get_db_service)
+):
+    """
+    Reactivate a deactivated user account.
+    
+    **Requires Admin role.**
+    """
+    conn = db_service.get_connection()
+    cursor = conn.cursor()
+    
+    # Get user to activate
+    cursor.execute("SELECT username, is_active FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    username, is_active = row
+    
+    if is_active:
+        return {"status": "success", "message": f"User '{username}' is already active"}
+    
+    # Activate user
+    cursor.execute("UPDATE users SET is_active = 1 WHERE id = ?", (user_id,))
+    conn.commit()
+    
+    # Log audit event
+    audit = get_audit_service()
+    audit.log(
+        action=AuditAction.USER_UPDATE,
+        actor_id=current_user.id,
+        actor_username=current_user.username,
+        actor_role=current_user.role,
+        resource_type="user",
+        resource_id=str(user_id),
+        resource_name=username,
+        details={"is_active": True, "action": "activate"}
+    )
+    
+    logger.info(f"User {user_id} ({username}) activated by {current_user.username}")
+    return {"status": "success", "message": f"User '{username}' has been activated"}
