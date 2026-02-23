@@ -27,6 +27,7 @@ class PromptPublishRequest(BaseModel):
     example_questions: Optional[str] = None  # JSON string list
     embedding_config: Optional[str] = None # JSON string
     retriever_config: Optional[str] = None # JSON string
+    agent_id: Optional[int] = None
 
 class PromptResponse(BaseModel):
     id: int

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
@@ -11,10 +11,13 @@ import ObservabilityPanel from '../components/ObservabilityPanel';
 import Alert from '../components/Alert';
 import EmbeddingProgress from '../components/EmbeddingProgress';
 import { ChatHeader } from '../components/chat';
+import AgentsTab from '../components/config/AgentsTab'; // Import the new AgentsTab
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
-
+import type { Agent } from '../types/agent';
+import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
+import { ArrowLeftIcon } from '@heroicons/react/24/outline'; // Add back button icon
 
 const steps = [
     { id: 0, name: 'Dashboard' },
@@ -26,8 +29,6 @@ const steps = [
     { id: 6, name: 'Summary' }
 ];
 
-import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
-
 const ConfigPage: React.FC = () => {
     const { user, isLoading } = useAuth();
     const { success: showSuccess, error: showError } = useToast();
@@ -35,7 +36,9 @@ const ConfigPage: React.FC = () => {
     const canPublish = canPublishPrompt(user);
     const isViewer = !canEdit;
 
-    // MOVED HOOKS UP BEFORE CONDITIONAL RETURN
+    // Agent Selection State
+    const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+
     const [currentStep, setCurrentStep] = useState(1);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [connectionId, setConnectionId] = useState<number | null>(null);
@@ -73,43 +76,31 @@ const ConfigPage: React.FC = () => {
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     // Initial Load - moved into effect
-    React.useEffect(() => {
-        if (!isLoading) {
+    // Wait for agent selection
+    useEffect(() => {
+        if (!isLoading && selectedAgent) {
             loadDashboard();
         }
-    }, [isLoading]);
+    }, [isLoading, selectedAgent]);
 
     // Sync state to window for API use (temporary solution for simple passing)
-    React.useEffect(() => {
+    useEffect(() => {
         (window as any).__config_connectionId = connectionId;
         (window as any).__config_schema = selectedSchema;
         (window as any).__config_dictionary = dataDictionary;
     }, [connectionId, selectedSchema, dataDictionary]);
 
     // Load history when entering step 4
-    React.useEffect(() => {
-        if (currentStep === 4) {
+    useEffect(() => {
+        if (currentStep === 4 && selectedAgent) {
             loadHistory();
         }
-    }, [currentStep]);
-
-    if (isLoading) {
-        return (
-            <div className="flex flex-col h-screen bg-gray-50">
-                <ChatHeader title={APP_CONFIG.APP_NAME} />
-                <div className="flex-1 flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    <span className="ml-3 text-gray-500">Loading user profile...</span>
-                </div>
-            </div>
-        );
-    }
-
-
+    }, [currentStep, selectedAgent]);
 
     const loadDashboard = async () => {
+        if (!selectedAgent) return;
         try {
-            const config = await getActiveConfigMetadata();
+            const config = await getActiveConfigMetadata(selectedAgent.id);
             if (config) {
                 setActiveConfig(config);
                 // Pre-fill state
@@ -127,8 +118,6 @@ const ConfigPage: React.FC = () => {
                     try {
                         setReasoning(JSON.parse(config.reasoning));
                     } catch (e) {
-                        // ignore if not json string or already obj?
-                        // config.reasoning might be string if coming from DB
                         setReasoning(typeof config.reasoning === 'string' ? JSON.parse(config.reasoning) : config.reasoning);
                     }
                 }
@@ -146,8 +135,6 @@ const ConfigPage: React.FC = () => {
             setCurrentStep(1);
         }
     };
-
-
 
     const handleNext = () => {
         if (currentStep === 1 && !connectionId) {
@@ -184,8 +171,6 @@ const ConfigPage: React.FC = () => {
         setGenerating(true);
         setError(null);
         try {
-            // Create a context string that includes selected schema
-            // Create a context string that includes selected schema
             let schemaContext = "Selected Tables and Columns:\n";
             Object.entries(selectedSchema).forEach(([table, cols]) => {
                 schemaContext += `- ${table}: [${cols.join(', ')}]\n`;
@@ -207,7 +192,7 @@ const ConfigPage: React.FC = () => {
     };
 
     const handlePublish = async () => {
-        if (!draftPrompt.trim()) return;
+        if (!draftPrompt.trim() || !selectedAgent) return;
         setPublishing(true);
         setError(null);
         try {
@@ -216,7 +201,8 @@ const ConfigPage: React.FC = () => {
                 reasoning,
                 exampleQuestions,
                 advancedSettings.embedding,
-                advancedSettings.retriever
+                advancedSettings.retriever,
+                selectedAgent.id
             );
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
             loadHistory(); // Refresh history
@@ -230,8 +216,9 @@ const ConfigPage: React.FC = () => {
     };
 
     const loadHistory = async () => {
+        if (!selectedAgent) return;
         try {
-            const data = await getPromptHistory();
+            const data = await getPromptHistory(selectedAgent.id);
             setHistory(data);
         } catch (err) {
             console.error("Failed to load history", err);
@@ -255,8 +242,31 @@ const ConfigPage: React.FC = () => {
         }
     };
 
+    if (isLoading) {
+        return (
+            <div className="flex flex-col h-screen bg-gray-50">
+                <ChatHeader title={APP_CONFIG.APP_NAME} />
+                <div className="flex-1 flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <span className="ml-3 text-gray-500">Loading user profile...</span>
+                </div>
+            </div>
+        );
+    }
 
+    // Agent Selection View
+    if (!selectedAgent) {
+        return (
+            <div className="flex flex-col h-screen bg-gray-50">
+                <ChatHeader title={APP_CONFIG.APP_NAME} />
+                <div className="flex-1 overflow-hidden">
+                    <AgentsTab onSelectAgent={setSelectedAgent} />
+                </div>
+            </div>
+        );
+    }
 
+    // Configuration View
     return (
         <div className="flex flex-col h-screen bg-gray-50">
             <ChatHeader title={APP_CONFIG.APP_NAME} />
@@ -265,13 +275,29 @@ const ConfigPage: React.FC = () => {
                     {/* Header & Steps - Hide steps on Dashboard */}
                     {currentStep > 0 && (
                         <div className="mb-8">
-                            <div className="flex justify-between items-center mb-6">
-                                <h1 className="text-2xl font-bold text-gray-900">
-                                    Configure AI Agent
-                                    <span className="ml-2 text-xs font-normal text-gray-500 bg-gray-100 px-2 py-1 rounded">Role: {getRoleDisplayName(user?.role)}</span>
-                                </h1>
-                                <span className="text-sm text-gray-500">Step {currentStep} of 5</span>
+                            <div className="flex items-center gap-4 mb-6">
+                                <button
+                                    onClick={() => setSelectedAgent(null)}
+                                    className="p-2 -ml-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
+                                    title="Back to Agents"
+                                >
+                                    <ArrowLeftIcon className="w-6 h-6" />
+                                </button>
+                                <div className="flex-1 flex justify-between items-center">
+                                    <div>
+                                        <h1 className="text-2xl font-bold text-gray-900">
+                                            Configure {selectedAgent.name}
+                                        </h1>
+                                        <div className="flex gap-2 text-sm mt-1">
+                                            <span className="text-gray-500">Role: {getRoleDisplayName(user?.role)}</span>
+                                            <span className="text-gray-300">|</span>
+                                            <span className="text-gray-500">Agent Type: {selectedAgent.type}</span>
+                                        </div>
+                                    </div>
+                                    <span className="text-sm text-gray-500">Step {currentStep} of 5</span>
+                                </div>
                             </div>
+
 
                             {/* Progress Bar */}
                             <div className="w-full bg-gray-200 rounded-full h-2 mb-6">
@@ -306,14 +332,18 @@ const ConfigPage: React.FC = () => {
                             // DASHBOARD VIEW
                             <div className="h-full flex flex-col overflow-y-auto p-6">
                                 <header className="flex justify-between items-center mb-8 px-1">
-                                    <div>
-                                        <h1 className="text-3xl font-bold text-gray-900">AI Agent Dashboard</h1>
-                                        <p className="text-gray-500 mt-1">Manage your Data Intelligence Agent configuration</p>
-                                        {isViewer && (
-                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800 mt-2">
-                                                Read-Only Mode
-                                            </span>
-                                        )}
+                                    <div className="flex items-center gap-4">
+                                        <button
+                                            onClick={() => setSelectedAgent(null)}
+                                            className="p-2 -ml-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
+                                            title="Back to Agents"
+                                        >
+                                            <ArrowLeftIcon className="w-6 h-6" />
+                                        </button>
+                                        <div>
+                                            <h1 className="text-3xl font-bold text-gray-900">{selectedAgent.name} Dashboard</h1>
+                                            <p className="text-gray-500 mt-1">Manage configuration for this agent</p>
+                                        </div>
                                     </div>
                                     <div className="flex gap-3">
                                         {canEdit && (
@@ -352,7 +382,6 @@ const ConfigPage: React.FC = () => {
                                                     jobId={embeddingJobId}
                                                     onComplete={() => {
                                                         showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
-                                                        // Optional: clear job ID after delay or kept for display
                                                     }}
                                                     onError={(err) => showError('Embedding Failed', err)}
                                                     onCancel={() => {
@@ -385,7 +414,7 @@ const ConfigPage: React.FC = () => {
                                     </div>
                                 ) : (
                                     <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 rounded-xl">
-                                        <p className="text-lg font-medium mb-2">No active configuration found</p>
+                                        <p className="text-lg font-medium mb-2">No active configuration found for {selectedAgent.name}</p>
                                         <p className="text-sm">Get started by creating a new configuration</p>
                                         <button
                                             onClick={handleStartNew}

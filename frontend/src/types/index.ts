@@ -33,3 +33,7 @@ export * from './chat';
 
 // Feedback types (FeedbackRequest)
 export * from './feedback';
+
+// Agent types
+export * from './agent';
+

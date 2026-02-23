@@ -53,6 +53,7 @@ export interface Source {
 export interface ChatRequest {
   query: string;              // User's question or prompt
   session_id?: string;        // Optional session ID for conversation tracking
+  agent_id?: number;          // Optional target agent ID
 }
 
 /**
