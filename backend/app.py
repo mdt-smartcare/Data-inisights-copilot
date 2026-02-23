@@ -92,6 +92,10 @@ app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
 # Observability routes
 app.include_router(observability.router, prefix=settings.api_v1_prefix)
 
+# Ingestion routes (file upload / extraction testing)
+from backend.api.routes import ingestion
+app.include_router(ingestion.router, prefix=settings.api_v1_prefix)
+
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)
 
