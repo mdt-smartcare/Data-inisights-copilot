@@ -428,3 +428,35 @@ export const testLogEmission = async (level: string, message: string) => {
   const response = await apiClient.post(`/api/v1/observability/test-log?level=${level}&message=${encodeURIComponent(message)}`);
   return response.data;
 };
+
+// ============================================================================
+// INGESTION API
+// ============================================================================
+
+export interface ExtractedDocument {
+  page_content: string;
+  metadata: Record<string, any>;
+}
+
+export interface IngestionResponse {
+  status: string;
+  file_name: string;
+  file_type: string;
+  total_documents: number;
+  documents: ExtractedDocument[];
+}
+
+/**
+ * Upload a file for ingestion testing.
+ * Sends file as multipart/form-data and returns extracted document previews.
+ */
+export const uploadForIngestion = async (file: File): Promise<IngestionResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await apiClient.post('/api/v1/ingestion/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120 * 1000, // 2 min for large files
+  });
+  return response.data;
+};
