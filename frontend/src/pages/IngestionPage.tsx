@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from 'react';
 import ChatHeader from '../components/chat/ChatHeader';
 import { uploadForIngestion, handleApiError } from '../services/api';
-import type { IngestionResponse, ExtractedDocument } from '../services/api';
+import type { IngestionResponse } from '../services/api';
 
 const ACCEPTED_EXTENSIONS = '.pdf,.csv,.xlsx,.json';
 const FILE_TYPE_COLORS: Record<string, string> = {

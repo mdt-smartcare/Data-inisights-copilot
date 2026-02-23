@@ -72,6 +72,10 @@ export const canViewInsights = (user: User | null): boolean => {
     return user?.role === 'super_admin' || user?.role === 'editor';
 };
 
+export const canViewIngestion = (user: User | null): boolean => {
+    return user?.role === 'super_admin' || user?.role === 'editor';
+};
+
 // Helper for UI disabled states
 export const isReadOnly = (user: User | null): boolean => {
     return !canEditPrompt(user);

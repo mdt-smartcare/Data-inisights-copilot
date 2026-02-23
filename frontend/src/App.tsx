@@ -10,6 +10,7 @@ import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import PromptHistoryPage from './pages/PromptHistoryPage';
 import InsightsPage from './pages/InsightsPage';
+import IngestionPage from './pages/IngestionPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import type { UserRole } from './types';
@@ -144,6 +145,14 @@ function App() {
                 element={
                   <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
                     <InsightsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/ingestion"
+                element={
+                  <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
+                    <IngestionPage />
                   </ProtectedRoute>
                 }
               />

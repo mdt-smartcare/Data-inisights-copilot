@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { canManageUsers, canViewAllAuditLogs, canViewConfig, canViewHistory, canViewInsights, getRoleDisplayName } from '../../utils/permissions';
+import { canManageUsers, canViewAllAuditLogs, canViewConfig, canViewHistory, canViewInsights, canViewIngestion, getRoleDisplayName } from '../../utils/permissions';
 import logo from '../../assets/logo.svg';
 import NotificationCenter from '../NotificationCenter';
 
@@ -59,6 +59,7 @@ export default function ChatHeader({
   const navLinks = [
     { path: '/chat', label: 'Chat', show: true },
     { path: '/insights', label: 'Insights', show: canViewInsights(user) },
+    { path: '/ingestion', label: 'Ingestion', show: canViewIngestion(user) },
     { path: '/config', label: 'Config', show: canViewConfig(user) },
     { path: '/history', label: 'History', show: canViewHistory(user) },
     { path: '/users', label: 'Users', show: canManageUsers(user) },
