@@ -12,7 +12,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from pydantic import BaseModel
 
 from backend.pipeline.ingestion.factory import DocumentLoaderFactory
-from backend.api.routes.auth import get_current_user
+from backend.core.permissions import get_current_user, User
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ MAX_CONTENT_LENGTH = 500  # chars per document preview
 @router.post("/upload", response_model=IngestionResponse)
 async def upload_and_extract(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     """Upload a file and extract documents using the ingestion engine.
 
@@ -83,7 +83,7 @@ async def upload_and_extract(
             "Ingestion upload: file='%s', size=%d bytes, user='%s'",
             file.filename,
             len(contents),
-            current_user.get("username", "unknown"),
+            current_user.username,
         )
 
         # Run extraction
