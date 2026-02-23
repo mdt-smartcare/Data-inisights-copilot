@@ -63,8 +63,8 @@ sequenceDiagram
 
     User->>API: Send Query ("Show sales stats")
     API->>Agent: Route Request
-    Agent->>Agent: Decide Tool (SQL vs RAG)
-    alt Structured Query
+    Agent->>Agent: Decide Data Source (SQL vs RAG / File Upload)
+    alt Structured Query (Database)
         Agent->>Service: invoke sql_query_tool
         Service->>DB: Execute SQL
         DB-->>Service: Return Rows
@@ -135,9 +135,10 @@ The backend logic is distributed across specialized services in the `services/` 
 The central brain of the application. It determines whether to use SQL (structured data) or RAG (unstructured text) to answer a user's question.
 
 -   **Routing Logic**:
-    -   **Structured Queries**: "How many patients...", "Average age...", "Sales by region..." -> Routes to `SQLService`.
-    -   **Unstructured Queries**: "Summarize the report...", "What does the policy say about..." -> Routes to `VectorStore`.
+    -   **Structured Queries**: "How many patients...", "Average age...", "Sales by region..." -> Routes to `SQLService` (if configured with a Database source).
+    -   **Unstructured Queries**: "Summarize the report...", "What does the policy say about..." -> Routes to `VectorStore` (RAG from ingested files or custom texts).
 -   **Conversation Memory**: Manages session history to support follow-up questions.
+-   **Multi-modal Support**: The agent architecture natively understands if it is querying a structured database schema or answering from an uploaded set of documents (File-based source).
 -   **Tools**:
     -   `sql_query_tool`: Generates and executes SQL.
 ### 3.5 Authorization Service (`authorization_service.py`)
@@ -191,8 +192,12 @@ A Singleton service handling core database operations for the application itself
 -   **User Management**: Registration, Login, Password Hashing (bcrypt).
 -   **Configuration Management**: Storing and retrieving RAG configurations and System Prompts.
 ### 3.10 Config Service (`config_service.py`)
-Provides access to system configuration.
-- **Features**: Loads environment variables, manages secrets, and provides typed configuration objects.
+Provides access to system configuration and manages prompts.
+- **Features**: Generates bespoke system prompts tailored to either Database deployments (schema-driven) or File Upload deployments (content-centric). Manages persistence of agent payloads to the SQLite database.
+
+### 3.11 Ingestion Engine (`ingestion/`)
+A modular pipeline for extracting raw text from various document formats for RAG storage or direct prompt injection.
+- **Features**: Supports `.pdf` (via `pdfplumber`), `.xlsx`/`.csv` (via `pandas`), and structured `.json`. Extracts metadata and paginated chunks.
 
 ## 4. Embedding System
 

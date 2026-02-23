@@ -47,10 +47,11 @@ The primary user interaction point.
     - Markdown rendering for text responses.
 
 ### Configuration (`src/pages/ConfigPage.tsx`)
-Admin panel for managing system behavior.
+Admin panel for managing system behavior and agent context.
 - **Features**:
-    - Database connection management.
-    - System prompt versioning.
+    - Database connection management (`database` sources).
+    - Multi-modal file uploads (`file` sources) for document extraction.
+    - System prompt versioning and tailored AI prompt generation.
     - Embedding job monitoring.
 
 ## State Management

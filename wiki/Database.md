@@ -34,11 +34,15 @@ Configuration associated with a specific system prompt version.
 | Column | Type | Description |
 |--------|------|-------------|
 | `prompt_id` | INTEGER PK | FK to `system_prompts.id`. |
-| `connection_id` | INTEGER | FK to `db_connections.id`. |
+| `connection_id` | INTEGER | FK to `db_connections.id` (if data_source_type is 'database'). |
+| `data_source_type` | TEXT | Source type for this agent ('database' or 'file'). |
 | `schema_selection` | TEXT | JSON list of enabled tables. |
 | `data_dictionary` | TEXT | Markdown data dictionary content. |
 | `reasoning` | TEXT | JSON configuration for reasoning steps. |
 | `example_questions` | TEXT | JSON list of few-shot examples. |
+| `ingestion_documents` | TEXT | JSON list of extracted document sections. |
+| `ingestion_file_name` | TEXT | Original uploaded filename. |
+| `ingestion_file_type` | TEXT | Extracted file extension (e.g. 'pdf'). |
 
 ### `db_connections`
 External database connections that the Agent can query.
