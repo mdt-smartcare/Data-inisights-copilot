@@ -5,6 +5,7 @@ import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
 import FileUploadSource from '../components/FileUploadSource';
+import { DocumentPreview } from '../components/config/DocumentPreview';
 import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
@@ -36,7 +37,6 @@ const ConfigPage: React.FC = () => {
     const { success: showSuccess, error: showError } = useToast();
     const canEdit = canEditPrompt(user);
     const canPublish = canPublishPrompt(user);
-    const isViewer = !canEdit;
 
     // Agent Selection State
     const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
@@ -50,7 +50,6 @@ const ConfigPage: React.FC = () => {
     // Data source type: 'database' or 'file'
     const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
     const [fileUploadResult, setFileUploadResult] = useState<IngestionResponse | null>(null);
-    const [expandedPreviewDoc, setExpandedPreviewDoc] = useState<number | null>(null);
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
@@ -168,12 +167,6 @@ const ConfigPage: React.FC = () => {
 
     const handleFileExtractionComplete = (result: IngestionResponse) => {
         setFileUploadResult(result);
-        // Auto-populate data dictionary with extracted content summary
-        const preview = result.documents.slice(0, 10).map((doc, i) =>
-            `--- Document ${i + 1} ---\n${doc.page_content}`
-        ).join('\n\n');
-        const header = `# Extracted from: ${result.file_name} (${result.file_type.toUpperCase()})\n# Total documents: ${result.total_documents}\n\n`;
-        setDataDictionary(header + preview);
     };
 
     const handleStartNew = () => {
@@ -196,15 +189,24 @@ const ConfigPage: React.FC = () => {
         setGenerating(true);
         setError(null);
         try {
-            let schemaContext = "Selected Tables and Columns:\n";
-            Object.entries(selectedSchema).forEach(([table, cols]) => {
-                schemaContext += `- ${table}: [${cols.join(', ')}]\n`;
-            });
-            schemaContext += "\n";
+            let fullContext = dataDictionary;
 
-            const fullContext = schemaContext + dataDictionary;
+            if (dataSourceType === 'database') {
+                let schemaContext = "Selected Tables and Columns:\n";
+                Object.entries(selectedSchema).forEach(([table, cols]) => {
+                    schemaContext += `- ${table}: [${cols.join(', ')}]\n`;
+                });
+                schemaContext += "\n";
+                fullContext = schemaContext + dataDictionary;
+            } else if (dataSourceType === 'file' && fileUploadResult) {
+                let documentContext = "Extracted Document Content:\n";
+                documentContext += fileUploadResult.documents.map((doc, i) =>
+                    `--- Document ${i + 1} ---\n${doc.page_content}`
+                ).join('\n\n');
+                fullContext = documentContext + "\n\nUser Notes / Context:\n" + dataDictionary;
+            }
 
-            const result = await generateSystemPrompt(fullContext);
+            const result = await generateSystemPrompt(fullContext, dataSourceType);
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
             if (result.example_questions) setExampleQuestions(result.example_questions);
@@ -227,7 +229,11 @@ const ConfigPage: React.FC = () => {
                 exampleQuestions,
                 advancedSettings.embedding,
                 advancedSettings.retriever,
-                selectedAgent.id
+                selectedAgent.id,
+                dataSourceType,
+                fileUploadResult ? JSON.stringify(fileUploadResult.documents) : undefined,
+                fileUploadResult?.file_name,
+                fileUploadResult?.file_type
             );
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
             loadHistory(); // Refresh history
@@ -551,85 +557,38 @@ const ConfigPage: React.FC = () => {
                                 )}
 
                                 {currentStep === 2 && dataSourceType === 'file' && fileUploadResult && (
-                                    <div className="max-w-4xl mx-auto">
-                                        <h2 className="text-xl font-semibold mb-4">Review Extracted Data</h2>
-                                        <p className="text-gray-500 text-sm mb-6">
-                                            Review the documents extracted from <strong>{fileUploadResult.file_name}</strong>. These will be used to generate context for the AI agent.
-                                        </p>
-
-                                        {/* Summary bar */}
-                                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex flex-wrap items-center gap-4 mb-4">
-                                            <div className="flex items-center gap-2">
-                                                <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                                                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                                </svg>
-                                                <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
-                                                    {fileUploadResult.file_type.toUpperCase()}
-                                                </span>
-                                                <span className="text-sm font-medium text-gray-900">{fileUploadResult.file_name}</span>
-                                            </div>
-                                            <span className="ml-auto text-sm text-gray-600">
-                                                <strong className="text-gray-900">{fileUploadResult.total_documents}</strong> document{fileUploadResult.total_documents !== 1 ? 's' : ''} extracted
-                                            </span>
-                                        </div>
-
-                                        {/* Document list */}
-                                        <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                                            {fileUploadResult.documents.slice(0, 20).map((doc, idx) => (
-                                                <div key={idx} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setExpandedPreviewDoc(expandedPreviewDoc === idx ? null : idx)}
-                                                        className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-gray-50"
-                                                    >
-                                                        <div className="flex items-center gap-3 min-w-0">
-                                                            <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center text-xs font-semibold">
-                                                                {idx + 1}
-                                                            </span>
-                                                            <span className="text-sm text-gray-700 truncate">
-                                                                {doc.page_content.slice(0, 120)}{doc.page_content.length > 120 ? '…' : ''}
-                                                            </span>
-                                                        </div>
-                                                        <svg
-                                                            className={`w-4 h-4 text-gray-400 flex-shrink-0 ml-2 transition-transform ${expandedPreviewDoc === idx ? 'rotate-180' : ''}`}
-                                                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                                                        >
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                                        </svg>
-                                                    </button>
-
-                                                    {expandedPreviewDoc === idx && (
-                                                        <div className="px-4 pb-4 border-t border-gray-100">
-                                                            <pre className="mt-3 text-sm text-gray-800 whitespace-pre-wrap bg-gray-50 rounded-md p-3 max-h-48 overflow-y-auto font-mono leading-relaxed">
-                                                                {doc.page_content}
-                                                            </pre>
-                                                            <div className="mt-2 flex flex-wrap gap-1.5">
-                                                                {Object.entries(doc.metadata).map(([key, value]) => (
-                                                                    <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-xs text-gray-600">
-                                                                        <span className="font-medium text-gray-800">{key}:</span>
-                                                                        {typeof value === 'object' ? JSON.stringify(value) : String(value)}
-                                                                    </span>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))}
-                                            {fileUploadResult.total_documents > 20 && (
-                                                <p className="text-xs text-center text-gray-400 pt-2">
-                                                    Showing 20 of {fileUploadResult.total_documents} documents
-                                                </p>
-                                            )}
-                                        </div>
-                                    </div>
+                                    <DocumentPreview
+                                        documents={fileUploadResult.documents}
+                                        fileName={fileUploadResult.file_name}
+                                        fileType={fileUploadResult.file_type}
+                                        totalDocuments={fileUploadResult.total_documents}
+                                    />
                                 )}
 
                                 {currentStep === 3 && (
                                     <div className="h-full flex flex-col">
-                                        <h2 className="text-xl font-semibold mb-2">Add Data Dictionary</h2>
+                                        <h2 className="text-xl font-semibold mb-2">Add Data Dictionary / Context</h2>
                                         <p className="text-gray-500 text-sm mb-4">
-                                            Provide context to help the AI understand your data. Upload a file or paste definitions below.
+                                            {dataSourceType === 'database'
+                                                ? "Provide context to help the AI understand your data. Upload a file or paste definitions below."
+                                                : "Provide any additional context or instructions the AI should know about these documents."}
                                         </p>
+
+                                        {dataSourceType === 'file' && fileUploadResult && (
+                                            <div className="mb-4">
+                                                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Reference Documents</h3>
+                                                    <div className="max-h-40 overflow-y-auto pr-2">
+                                                        <DocumentPreview
+                                                            documents={fileUploadResult.documents}
+                                                            fileName={fileUploadResult.file_name}
+                                                            fileType={fileUploadResult.file_type}
+                                                            totalDocuments={fileUploadResult.total_documents}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
 
                                         <div className="flex-1 flex flex-col min-h-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm">
                                             {/* Toolbar */}

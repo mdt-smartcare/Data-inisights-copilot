@@ -128,8 +128,11 @@ export const handleApiError = (error: unknown): string => {
 // SYSTEM PROMPT CONFIGURATION API
 // ============================================================================
 
-export const generateSystemPrompt = async (dataDictionary: string): Promise<{ draft_prompt: string; reasoning?: Record<string, string>; example_questions?: string[] }> => {
-  const response = await apiClient.post('/api/v1/config/generate', { data_dictionary: dataDictionary });
+export const generateSystemPrompt = async (dataDictionary: string, dataSourceType: string = 'database'): Promise<{ draft_prompt: string; reasoning?: Record<string, string>; example_questions?: string[] }> => {
+  const response = await apiClient.post('/api/v1/config/generate', {
+    data_dictionary: dataDictionary,
+    data_source_type: dataSourceType
+  });
   return response.data;
 };
 
@@ -139,7 +142,11 @@ export const publishSystemPrompt = async (
   exampleQuestions?: string[],
   embeddingConfig?: any,
   retrieverConfig?: any,
-  agentId?: number
+  agentId?: number,
+  dataSourceType: string = 'database',
+  ingestionDocuments?: string,
+  ingestionFileName?: string,
+  ingestionFileType?: string
 ): Promise<{ status: string; version: number }> => {
   // We need to fetch the user_id from the token or some auth context.
   // For now, let's decode the token or just send a dummy ID if the backend parses the token.
@@ -167,7 +174,11 @@ export const publishSystemPrompt = async (
     example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
     embedding_config: embeddingConfig ? JSON.stringify(embeddingConfig) : null,
     retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null,
-    agent_id: agentId
+    agent_id: agentId,
+    data_source_type: dataSourceType,
+    ingestion_documents: ingestionDocuments,
+    ingestion_file_name: ingestionFileName,
+    ingestion_file_type: ingestionFileType
   });
   return response.data;
 };

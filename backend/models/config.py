@@ -3,6 +3,7 @@ from typing import Optional, Dict
 
 class PromptGenerationRequest(BaseModel):
     data_dictionary: str
+    data_source_type: str = 'database'
     # Schema selection could be passed here, but frontend currently packs it into data_dictionary for simplicity
     # or we can be explicit. The implementation plan says "accept schema_selection".
     # However, Step 345 (ConfigPage.tsx) does:
@@ -28,6 +29,10 @@ class PromptPublishRequest(BaseModel):
     embedding_config: Optional[str] = None # JSON string
     retriever_config: Optional[str] = None # JSON string
     agent_id: Optional[int] = None
+    data_source_type: str = 'database'
+    ingestion_documents: Optional[str] = None # JSON string list
+    ingestion_file_name: Optional[str] = None
+    ingestion_file_type: Optional[str] = None
 
 class PromptResponse(BaseModel):
     id: int
