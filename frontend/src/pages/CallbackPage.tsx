@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { oidcService } from '../services/oidcService';
 import { apiClient } from '../services/api';
@@ -15,9 +15,15 @@ export default function CallbackPage() {
   const navigate = useNavigate();
   const { setUser } = useAuth();
   const [error, setError] = useState<string | null>(null);
+  const callbackProcessed = useRef(false);
 
   useEffect(() => {
     const handleCallback = async () => {
+      // Prevent double execution due to React StrictMode
+      if (callbackProcessed.current) {
+        return;
+      }
+      callbackProcessed.current = true;
       try {
         // Process the OIDC callback and exchange code for tokens
         const oidcUser = await oidcService.handleCallback();
