@@ -20,7 +20,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import type { Agent } from '../types/agent';
 import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
-import { ArrowLeftIcon } from '@heroicons/react/24/outline'; // Add back button icon
+import { ArrowLeftIcon, ServerStackIcon, DocumentTextIcon, CheckCircleIcon } from '@heroicons/react/24/outline'; // Add back button icon
 
 const steps = [
     { id: 0, name: 'Dashboard' },
@@ -46,6 +46,15 @@ const ConfigPage: React.FC = () => {
     const [connectionId, setConnectionId] = useState<number | null>(null);
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
+
+    // Vector DB Status State
+    const [vectorDbStatus, setVectorDbStatus] = useState<{
+        name: string;
+        exists: boolean;
+        total_documents_indexed: number;
+        total_vectors: number;
+        last_updated_at: string | null;
+    } | null>(null);
 
     // Data source type: 'database' or 'file'
     const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
@@ -136,6 +145,24 @@ const ConfigPage: React.FC = () => {
                     } catch (e) {
                         setReasoning(typeof config.reasoning === 'string' ? JSON.parse(config.reasoning) : config.reasoning);
                     }
+                }
+
+                // Fetch Vector DB Status if possible
+                try {
+                    const embConf = config.embedding_config ? JSON.parse(config.embedding_config) : {};
+                    const vDbName = embConf.vectorDbName || (config.data_source_type === 'database' && config.connection_id ? `db_connection_${config.connection_id}_data` : 'default_vector_db');
+                    if (vDbName) {
+                        import('../services/api').then(api => {
+                            api.getVectorDbStatus(vDbName).then(status => {
+                                setVectorDbStatus(status);
+                            }).catch(err => {
+                                console.log("Vector DB not found or error:", err);
+                                setVectorDbStatus(null);
+                            });
+                        });
+                    }
+                } catch (e) {
+                    console.log("Could not load Vector DB status");
                 }
 
                 // If we have config, stay on Dashboard (Step 0)
@@ -434,33 +461,74 @@ const ConfigPage: React.FC = () => {
                                                     }}
                                                 />
                                             ) : (
-                                                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex items-center justify-between">
-                                                    <div>
-                                                        <h3 className="font-medium text-gray-900">Manage Knowledge Base</h3>
-                                                        <p className="text-sm text-gray-500 mt-1">
-                                                            Keep your agent's knowledge up-to-date with your latest data.
-                                                        </p>
+                                                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
+                                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                                                        <div>
+                                                            <h3 className="font-medium text-gray-900">Manage Knowledge Base</h3>
+                                                            <p className="text-sm text-gray-500 mt-1">
+                                                                Keep your agent's vector representations up-to-date with your latest data.
+                                                            </p>
+                                                        </div>
+                                                        <div className="flex gap-3">
+                                                            <button
+                                                                onClick={() => handleStartEmbedding(true)}
+                                                                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
+                                                                title="Only index new or modified files/rows"
+                                                            >
+                                                                Update Vector DB
+                                                            </button>
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (window.confirm('Are you sure you want to rebuild the vector database? This will delete all existing knowledge and re-index everything from scratch. This may take a long time and consume LLM tokens.')) {
+                                                                        handleStartEmbedding(false);
+                                                                    }
+                                                                }}
+                                                                className="px-4 py-2 bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors"
+                                                                title="Delete everything and start fresh"
+                                                            >
+                                                                Rebuild DB
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex gap-3">
-                                                        <button
-                                                            onClick={() => handleStartEmbedding(true)}
-                                                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
-                                                            title="Only index new or modified files/rows"
-                                                        >
-                                                            Update Vector DB
-                                                        </button>
-                                                        <button
-                                                            onClick={() => {
-                                                                if (window.confirm('Are you sure you want to rebuild the vector database? This will delete all existing knowledge and re-index everything from scratch. This may take a long time and consume LLM tokens.')) {
-                                                                    handleStartEmbedding(false);
-                                                                }
-                                                            }}
-                                                            className="px-4 py-2 bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors"
-                                                            title="Delete everything and start fresh"
-                                                        >
-                                                            Rebuild Vector DB
-                                                        </button>
-                                                    </div>
+
+                                                    {/* Vector DB Stats Sub-Component */}
+                                                    {vectorDbStatus && (
+                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-gray-100 pt-5 mt-2">
+                                                            <div className="flex items-start gap-3">
+                                                                <div className="p-2 bg-blue-50 text-blue-600 rounded-md">
+                                                                    <DocumentTextIcon className="w-5 h-5" />
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-xs text-gray-500 font-medium uppercase">Tracked Docs</p>
+                                                                    <p className="text-lg font-semibold text-gray-900">{vectorDbStatus.total_documents_indexed.toLocaleString()}</p>
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="flex items-start gap-3">
+                                                                <div className="p-2 bg-purple-50 text-purple-600 rounded-md">
+                                                                    <ServerStackIcon className="w-5 h-5" />
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-xs text-gray-500 font-medium uppercase">Vector DB Embeddings</p>
+                                                                    <p className="text-lg font-semibold text-gray-900">{vectorDbStatus.total_vectors.toLocaleString()}</p>
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="flex items-start gap-3">
+                                                                <div className="p-2 bg-green-50 text-green-600 rounded-md">
+                                                                    <CheckCircleIcon className="w-5 h-5" />
+                                                                </div>
+                                                                <div>
+                                                                    <p className="text-xs text-gray-500 font-medium uppercase">Last Updated</p>
+                                                                    <p className="text-sm font-medium text-gray-900 mt-1">
+                                                                        {vectorDbStatus.last_updated_at
+                                                                            ? new Date(vectorDbStatus.last_updated_at + 'Z').toLocaleString()
+                                                                            : 'Never run'}
+                                                                    </p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>

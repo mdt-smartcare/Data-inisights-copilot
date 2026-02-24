@@ -1,66 +1,71 @@
-import re
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
 from typing import Dict, Any, Optional
-
 from backend.sqliteDb.db import get_db_service, DatabaseService
+from backend.core.permissions import require_super_admin, User
 from backend.core.logging import get_logger
-from backend.core.permissions import require_editor, User, get_current_user
+import os
+import chromadb
+from chromadb.config import Settings
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/vector-db", tags=["Vector DB"])
+router = APIRouter(prefix="/vector-db", tags=["Vector Database"])
 
-class VectorDBRegisterRequest(BaseModel):
-    name: str
-    data_source_id: str
-
-@router.get("/check-name")
-async def check_vector_db_name(
-    name: str,
+@router.get("/status/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+async def get_vector_db_status(
+    vector_db_name: str,
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
-    Check if a vector DB name exists and is valid.
+    Get detailed statistics for a Vector Database including index count and vectors.
+    Requires Super Admin role.
     """
-    # Validate rules: Alphanumeric + underscores, no spaces
-    if not re.match(r'^[a-zA-Z0-9_]+$', name):
-        return {"valid": False, "message": "Name must contain only alphanumeric characters and underscores, no spaces."}
-        
-    db = db_service.get_vector_db_by_name(name)
-    if db:
-        return {"valid": False, "message": f"Vector DB '{name}' already exists."}
-        
-    return {"valid": True, "message": "Name is valid and available."}
-
-@router.post("/register")
-async def register_vector_db(
-    request: VectorDBRegisterRequest,
-    current_user: User = Depends(require_editor),
-    db_service: DatabaseService = Depends(get_db_service)
-):
-    """
-    Register a new Vector DB namespace.
-    """
-    if not re.match(r'^[a-zA-Z0-9_]+$', request.name):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="Name must contain only alphanumeric characters and underscores, no spaces."
-        )
-        
-    db = db_service.get_vector_db_by_name(request.name)
-    if db:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail=f"Vector DB '{request.name}' already exists."
-        )
-        
     try:
-        db_id = db_service.register_vector_db(request.name, request.data_source_id, current_user.username)
-        return {"id": db_id, "name": request.name, "message": "Vector DB registered successfully."}
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        
+        # 1. Get statistics from SQLite document_index
+        cursor.execute('''
+            SELECT COUNT(*) as count, MAX(updated_at) as last_updated
+            FROM document_index
+            WHERE vector_db_name = ?
+        ''', (vector_db_name,))
+        
+        row = cursor.fetchone()
+        document_count = row['count'] if row else 0
+        last_updated = row['last_updated'] if row else None
+        
+        conn.close()
+
+        # 2. Get vector count directly from ChromaDB
+        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../data/indexes/{vector_db_name}"))
+        vector_count = 0
+        chroma_exists = False
+        
+        if os.path.exists(chroma_path):
+            try:
+                client = chromadb.PersistentClient(path=chroma_path, settings=Settings(anonymized_telemetry=False))
+                try:
+                    collection = client.get_collection(name=vector_db_name)
+                    vector_count = collection.count()
+                    chroma_exists = True
+                except ValueError:
+                    # Collection doesn't exist
+                    pass
+            except Exception as e:
+                logger.warning(f"Could not connect to ChromaDB at {chroma_path}: {e}")
+
+        return {
+            "name": vector_db_name,
+            "exists": document_count > 0 or chroma_exists,
+            "total_documents_indexed": document_count,
+            "total_vectors": vector_count,
+            "last_updated_at": last_updated
+        }
+        
     except Exception as e:
-        logger.error(f"Error registering vector DB: {e}")
+        logger.error(f"Error fetching Vector DB status for {vector_db_name}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail="Failed to register Vector DB"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch Vector DB status: {str(e)}"
         )

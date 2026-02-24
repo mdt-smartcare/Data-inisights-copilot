@@ -238,6 +238,17 @@ export const revokeUserAccess = async (agentId: number, userId: number): Promise
 // DATA SETUP & CONNECTION API (Phase 6 & 7)
 // ============================================================================
 
+export const getVectorDbStatus = async (vectorDbName: string): Promise<{
+  name: string;
+  exists: boolean;
+  total_documents_indexed: number;
+  total_vectors: number;
+  last_updated_at: string | null;
+}> => {
+  const response = await apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`);
+  return response.data;
+};
+
 export const getUserProfile = async (): Promise<User> => {
   const response = await apiClient.get('/api/v1/auth/me');
   return response.data;
