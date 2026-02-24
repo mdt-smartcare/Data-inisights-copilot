@@ -10,8 +10,10 @@ Key Feature: All LLM calls and tool executions for a single user query
 are grouped under ONE parent trace for easy debugging.
 """
 import functools
+import uuid
 from typing import Optional, Dict, Any, List
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 
 # Langfuse Imports - v3.x uses direct imports from langfuse
 from langfuse import Langfuse, observe
@@ -32,6 +34,33 @@ logger = get_logger(__name__)
 
 # Global tracer instance
 _tracer = None
+
+
+@dataclass
+class TraceContext:
+    """
+    Simple trace context object for tracking trace state.
+    Used as a replacement for the removed Langfuse trace object in v3.x.
+    """
+    id: str
+    name: str
+    input: Any = None
+    output: Any = None
+    user_id: Optional[str] = None
+    session_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    tags: List[str] = field(default_factory=list)
+    _langfuse: Any = None
+    
+    def update(self, output: Any = None, metadata: Dict[str, Any] = None, 
+               level: str = None, status_message: str = None, **kwargs):
+        """Update trace with output and metadata."""
+        if output is not None:
+            self.output = output
+        if metadata:
+            self.metadata.update(metadata)
+        # In v3.x, we update via langfuse_context or span
+        # For now, just store locally - the callback handler will capture the output
 
 
 class TracingManager:
@@ -79,11 +108,6 @@ class TracingManager:
             except Exception as e:
                 logger.error(f"Failed to initialize Langfuse: {e}")
                 self.langfuse_enabled = False
-        
-        # 2. Initialize OpenTelemetry (if configured)
-        # Note: We'll add OTEL initialization logic here in future phases
-        # when fully integrating the distributed tracing side
-        pass
 
     def get_langchain_callback(
         self, 
@@ -95,60 +119,33 @@ class TracingManager:
         """
         Get LangChain callback handler with trace context.
         
-        This ensures all LLM calls within a single query are grouped
-        under one parent trace in Langfuse.
+        In Langfuse v3.x, the CallbackHandler only accepts:
+        - public_key (optional, uses env var if not provided)
+        - update_trace (bool)
         
-        IMPORTANT: In Langfuse v3.x, user_id and session_id must be passed via
-        metadata keys in the LangChain config, NOT via the callback handler constructor.
-        The SDK looks for these keys in the metadata passed to invoke():
-        - langfuse_user_id -> user_id
-        - langfuse_session_id -> session_id
-        - langfuse_tags -> tags
-        
-        Args:
-            trace_id: Unique identifier for this trace (used for trace_context)
-            session_id: Session ID (for reference only - actual value comes from metadata)
-            user_id: User identifier (for reference only - actual value comes from metadata)
-            trace_name: Name of the parent trace (e.g., "rag_query", "followup_generation")
-        
-        Returns:
-            Configured LangfuseCallbackHandler or None if disabled
+        User/session metadata must be passed via LangChain config metadata:
+        - langfuse_user_id
+        - langfuse_session_id
+        - langfuse_tags
         """
         if not self.langfuse_enabled:
             return None
             
         try:
-            # In Langfuse v3.x, the CallbackHandler only accepts:
-            # - public_key
-            # - update_trace (bool)
-            # - trace_context (dict with trace_id)
-            #
-            # user_id and session_id are NOT constructor params.
-            # They must be passed via metadata in the LangChain config:
-            #   config={"metadata": {"langfuse_user_id": "...", "langfuse_session_id": "..."}}
-            #
-            # The SDK's _parse_langfuse_trace_attributes_from_metadata() extracts these
-            # and sets them on the trace when the root chain starts.
-            
-            # Build trace_context if trace_id is provided
-            trace_context = None
-            if trace_id:
-                trace_context = {"trace_id": trace_id}
-            
-            # Create callback handler - user_id/session_id come from metadata in config
+            # In Langfuse v3.x, CallbackHandler has minimal constructor params
+            # Metadata is passed via LangChain invoke() config
             handler = LangfuseCallbackHandler(
                 public_key=settings.langfuse_public_key,
-                trace_context=trace_context,
-                update_trace=True,  # Allow updating the trace with chain input/output/name
+                update_trace=True,
             )
             
-            # Store metadata on handler for reference (not used by Langfuse, just for debugging)
-            handler._session_id = session_id
-            handler._user_id = user_id
+            # Store metadata for reference (will be passed via config in invoke())
             handler._trace_name = trace_name
+            handler._user_id = user_id
+            handler._session_id = session_id
+            handler._trace_id = trace_id
             
-            logger.debug(f"Created Langfuse callback: trace_name={trace_name}, trace_context={trace_context}")
-            logger.debug(f"Note: user_id={user_id} and session_id={session_id} will be set via langfuse_* metadata keys in LangChain config")
+            logger.debug(f"Created Langfuse callback: trace_name={trace_name}")
             return handler
             
         except Exception as e:
@@ -165,31 +162,9 @@ class TracingManager:
     ):
         """
         Update the current trace with session_id, user_id, and other metadata.
-        
-        Call this after starting a LangChain operation to set trace-level
-        attributes that couldn't be set via the callback handler constructor.
-        
-        Args:
-            name: Trace name (e.g., "rag_query")
-            session_id: Session ID for grouping conversations
-            user_id: User identifier
-            metadata: Additional metadata dict
-            tags: List of tags for filtering
+        In v3.x, this is a no-op as metadata is passed via callback handler.
         """
-        if not self.langfuse_enabled or not self.langfuse:
-            return
-            
-        try:
-            self.langfuse.update_current_trace(
-                name=name,
-                session_id=session_id,
-                user_id=user_id,
-                metadata=metadata,
-                tags=tags
-            )
-            logger.debug(f"Updated current trace: name={name}, session_id={session_id}, user_id={user_id}")
-        except Exception as e:
-            logger.warning(f"Failed to update current trace: {e}")
+        pass  # Metadata is passed via LangfuseCallbackHandler in v3.x
 
     def create_trace(
         self,
@@ -199,32 +174,25 @@ class TracingManager:
         session_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
         tags: Optional[List[str]] = None
-    ):
+    ) -> Optional[TraceContext]:
         """
-        Create a new Langfuse trace manually.
-        
-        Use this when you need direct control over the trace lifecycle,
-        not via LangChain callbacks.
-        
-        Returns:
-            Langfuse trace object or None if disabled
+        Create a new trace context manually.
+        Returns a TraceContext object for tracking.
         """
-        if not self.langfuse_enabled or not self.langfuse:
+        if not self.langfuse_enabled:
             return None
             
-        try:
-            trace = self.langfuse.trace(
-                name=name,
-                input=input,
-                user_id=user_id,
-                session_id=session_id,
-                metadata=metadata or {},
-                tags=tags or []
-            )
-            return trace
-        except Exception as e:
-            logger.warning(f"Failed to create Langfuse trace: {e}")
-            return None
+        trace_id = str(uuid.uuid4())
+        return TraceContext(
+            id=trace_id,
+            name=name,
+            input=input,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata or {},
+            tags=tags or [],
+            _langfuse=self.langfuse
+        )
 
     @contextmanager
     def trace_operation(
@@ -239,8 +207,8 @@ class TracingManager:
         """
         Context manager for tracing a complete operation.
         
-        Creates a parent trace that can contain child spans.
-        All operations within the context will be grouped under this trace.
+        In Langfuse v3.x, we create a TraceContext and let the 
+        LangfuseCallbackHandler handle the actual tracing.
         
         Usage:
             with tracer.trace_operation("rag_query", input=query, session_id=sid) as trace:
@@ -250,28 +218,25 @@ class TracingManager:
         """
         trace = None
         try:
-            if self.langfuse_enabled and self.langfuse:
-                trace = self.langfuse.trace(
+            if self.langfuse_enabled:
+                trace_id = str(uuid.uuid4())
+                trace = TraceContext(
+                    id=trace_id,
                     name=name,
                     input=input,
                     user_id=user_id,
                     session_id=session_id,
                     metadata=metadata or {},
-                    **kwargs
+                    tags=kwargs.get('tags', []),
+                    _langfuse=self.langfuse
                 )
-                logger.debug(f"Started trace: {name} (id={trace.id if trace else 'N/A'})")
+                logger.debug(f"Started trace context: {name} (id={trace.id})")
             
             yield trace
             
         except Exception as e:
             if trace:
-                try:
-                    trace.update(
-                        level="ERROR",
-                        status_message=str(e)
-                    )
-                except Exception:
-                    pass  # Don't fail on tracing errors
+                trace.update(level="ERROR", status_message=str(e))
             raise e
         finally:
             # Flush to ensure trace is sent

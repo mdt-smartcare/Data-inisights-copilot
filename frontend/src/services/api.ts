@@ -128,8 +128,11 @@ export const handleApiError = (error: unknown): string => {
 // SYSTEM PROMPT CONFIGURATION API
 // ============================================================================
 
-export const generateSystemPrompt = async (dataDictionary: string): Promise<{ draft_prompt: string; reasoning?: Record<string, string>; example_questions?: string[] }> => {
-  const response = await apiClient.post('/api/v1/config/generate', { data_dictionary: dataDictionary });
+export const generateSystemPrompt = async (dataDictionary: string, dataSourceType: string = 'database'): Promise<{ draft_prompt: string; reasoning?: Record<string, string>; example_questions?: string[] }> => {
+  const response = await apiClient.post('/api/v1/config/generate', {
+    data_dictionary: dataDictionary,
+    data_source_type: dataSourceType
+  });
   return response.data;
 };
 
@@ -139,7 +142,11 @@ export const publishSystemPrompt = async (
   exampleQuestions?: string[],
   embeddingConfig?: any,
   retrieverConfig?: any,
-  agentId?: number
+  agentId?: number,
+  dataSourceType: string = 'database',
+  ingestionDocuments?: string,
+  ingestionFileName?: string,
+  ingestionFileType?: string
 ): Promise<{ status: string; version: number }> => {
   // We need to fetch the user_id from the token or some auth context.
   // For now, let's decode the token or just send a dummy ID if the backend parses the token.
@@ -167,7 +174,11 @@ export const publishSystemPrompt = async (
     example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
     embedding_config: embeddingConfig ? JSON.stringify(embeddingConfig) : null,
     retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null,
-    agent_id: agentId
+    agent_id: agentId,
+    data_source_type: dataSourceType,
+    ingestion_documents: ingestionDocuments,
+    ingestion_file_name: ingestionFileName,
+    ingestion_file_type: ingestionFileType
   });
   return response.data;
 };
@@ -426,5 +437,37 @@ export const getUsageStats = async (period: string = '24h') => {
 
 export const testLogEmission = async (level: string, message: string) => {
   const response = await apiClient.post(`/api/v1/observability/test-log?level=${level}&message=${encodeURIComponent(message)}`);
+  return response.data;
+};
+
+// ============================================================================
+// INGESTION API
+// ============================================================================
+
+export interface ExtractedDocument {
+  page_content: string;
+  metadata: Record<string, any>;
+}
+
+export interface IngestionResponse {
+  status: string;
+  file_name: string;
+  file_type: string;
+  total_documents: number;
+  documents: ExtractedDocument[];
+}
+
+/**
+ * Upload a file for ingestion testing.
+ * Sends file as multipart/form-data and returns extracted document previews.
+ */
+export const uploadForIngestion = async (file: File): Promise<IngestionResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await apiClient.post('/api/v1/ingestion/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120 * 1000, // 2 min for large files
+  });
   return response.data;
 };

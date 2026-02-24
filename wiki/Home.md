@@ -8,8 +8,9 @@ Data Insights Copilot is an advanced RAG (Retrieval-Augmented Generation) chatbo
 
 ### Key Features
 - **Hybrid Search**: Seamlessly routes queries between SQL generation and Vector Search (RAG).
+- **Multi-modal Ingestion**: Support for Database schemas and File Uploads (.pdf, .csv, .xlsx, .json) as contexts for agents.
 - **Interactive Visualizations**: Automatically generates charts (Bar, Pie, Line) based on data.
-- **Dynamic Configuration**: Supports connecting to external databases and managing system prompts.
+- **Dynamic Configuration**: Supports connecting to external databases, uploading documents, and managing system prompts.
 - **Admin Dashboard**: Comprehensive tools for user management, audit logging, and system monitoring.
 - **LLM Observability**: Full tracing and cost tracking via Langfuse integration.
 

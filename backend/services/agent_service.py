@@ -5,6 +5,7 @@ Coordinates SQL and vector search tools to answer user queries.
 import re
 import json
 import uuid
+import asyncio
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
@@ -132,6 +133,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
         # Initialize follow-up question service (shares LLM instance)
         self.followup_service = FollowUpService(llm=self.llm)
         
+        self._initialized = True
         logger.info("AgentService initialized successfully")
     
     @property
@@ -144,7 +146,12 @@ Use this to search unstructured text, notes, and semantic descriptions.
         return self._vector_store
     
     def _rag_search(self, query: str) -> str:
-        """RAG tool wrapper that returns string for agent."""
+        """
+        RAG tool wrapper that returns string for agent.
+        
+        Note: Tracing is handled by the parent LangChain callback handler
+        to ensure all operations are grouped under a single trace.
+        """
         docs = self.vector_store.search(query)  # Uses lazy-loaded property
         if not docs:
             return "No relevant documents found."
@@ -232,13 +239,14 @@ Use this to search unstructured text, notes, and semantic descriptions.
         trace_id = str(uuid.uuid4())
         start_time = datetime.utcnow()
         
-        # Get Langfuse callback handler for tracing
-        # This groups ALL LLM calls for this query under ONE trace
+        # Get tracing manager
         from backend.core.tracing import get_tracing_manager
         tracer = get_tracing_manager()
         
-        # Create callback handler with trace context - this is the KEY fix
-        # All LangChain operations will be grouped under this single trace
+        logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
+        
+        # Create LangChain callback with user input visible
+        # In Langfuse v3.x, all tracing is done via the callback handler
         langfuse_handler = tracer.get_langchain_callback(
             trace_id=trace_id,
             session_id=session_id,
@@ -249,12 +257,9 @@ Use this to search unstructured text, notes, and semantic descriptions.
         # Build callbacks list for LangChain
         callbacks = [langfuse_handler] if langfuse_handler else []
         
-        logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
-        
         try:
             # =================================================================
             # STANDARD PATH: Use agent for all queries
-            # Domain-specific logic removed in favor of dynamic prompt configuration
             # =================================================================
             # Fetch prompt fresh on every request
             if self.fixed_system_prompt:
@@ -276,34 +281,28 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
 
             # Execute agent with conversation memory
-            # Pass system_prompt variable to the agent, creating a combined prompt
             final_prompt = f"{active_prompt}\n{formatted_examples}"
             
             logger.info(f"Invoking agent for trace_id={trace_id}")
-            # Use stateful execution with session-based history
-            # Pass callbacks to group all LLM calls under one trace
-            # Include langfuse metadata in config for proper trace-level user/session mapping
             result = await self.agent_with_history.ainvoke(
                 {"input": query, "system_prompt": final_prompt},
                 config={
                     "configurable": {"session_id": session_id or "default"},
-                    "callbacks": callbacks,  # This links all LLM calls to our trace
+                    "callbacks": callbacks,
+                    # Set run_name to override the default "RunnableWithMessageHistory" name
+                    "run_name": "rag_query",
                     "metadata": {
+                        # Langfuse v3.x reads these special keys from metadata
                         "langfuse_user_id": user_id,
                         "langfuse_session_id": session_id,
                         "langfuse_tags": ["rag_query"],
+                        # Store the clean user query for better visibility
+                        "langfuse_input": query,
+                        # Additional metadata for debugging
                         "trace_id": trace_id,
+                        "user_query": query,
                     }
                 }
-            )
-            
-            # Update trace with session_id, user_id, and name for proper filtering in Langfuse UI
-            # This must be called AFTER the LangChain operation creates the trace
-            tracer.update_current_trace_metadata(
-                name="rag_query",
-                session_id=session_id,
-                user_id=user_id,
-                metadata={"query_length": len(query), "trace_id": trace_id}
             )
             
             logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
@@ -312,26 +311,13 @@ Use this to search unstructured text, notes, and semantic descriptions.
             full_response = result.get("output", "An error occurred.")
             intermediate_steps = result.get("intermediate_steps", [])
             
-            # Check if RAG was used
-            rag_used = any(
-                action.tool == "rag_document_search_tool"
-                for action, _ in intermediate_steps
-            )
+            # Determine which tool was used (SQL vs RAG)
+            tools_used = [action.tool for action, _ in intermediate_steps]
+            rag_used = "rag_document_search_tool" in tools_used
+            sql_used = "sql_query_tool" in tools_used
             
             # Only get embedding info if RAG was actually used
-            if rag_used:
-                embedding_info = self._get_embedding_info(query)
-            else:
-                embedding_info = {}
-            
-            # DEBUG: Write full response to file for diagnosis
-            try:
-                with open("/tmp/llm_response_debug.txt", "w") as f:
-                    f.write(f"=== LLM RESPONSE (trace_id={trace_id}) ===\n")
-                    f.write(full_response)
-                    f.write("\n=== END RESPONSE ===\n")
-            except Exception as debug_err:
-                logger.warning(f"Failed to write debug file: {debug_err}")
+            embedding_info = self._get_embedding_info(query) if rag_used else {}
             
             # Parse JSON output from response (chart data only now)
             chart_data, _ = self._parse_agent_output(full_response)
@@ -340,19 +326,33 @@ Use this to search unstructured text, notes, and semantic descriptions.
             else:
                 logger.warning(f"NO CHART DATA PARSED from response (trace_id={trace_id})")
             
-            # Generate LLM-powered follow-up questions based on response content
-            # Pass the same callbacks to group follow-up generation under the same trace
+            # ============================================================
+            # OPTIMIZATION: Start follow-up generation as background task
+            # ============================================================
+            followup_task = None
             if settings.enable_followup_questions:
-                suggested_questions = await self.followup_service.generate_followups(
-                    original_question=query,
-                    system_response=self._clean_answer(full_response),
-                    callbacks=callbacks  # Group under same trace
+                followup_task = asyncio.create_task(
+                    self.followup_service.generate_followups(
+                        original_question=query,
+                        system_response=self._clean_answer(full_response),
+                        callbacks=[]
+                    )
                 )
-            else:
-                suggested_questions = []
             
             # Format reasoning steps
             reasoning_steps = self._format_reasoning(intermediate_steps)
+            
+            # Wait for follow-ups with short timeout
+            suggested_questions = []
+            if followup_task:
+                try:
+                    suggested_questions = await asyncio.wait_for(followup_task, timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.warning(f"Follow-up generation timed out for trace_id={trace_id}")
+                    suggested_questions = []
+                except Exception as e:
+                    logger.warning(f"Follow-up generation failed: {e}")
+                    suggested_questions = []
             
             # Build response
             response = ChatResponse(
@@ -375,44 +375,39 @@ Use this to search unstructured text, notes, and semantic descriptions.
             duration = (datetime.utcnow() - start_time).total_seconds()
             logger.info(f"✅ Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
             
-            # ============================================================
-            # Track usage metrics for observability dashboard
-            # ============================================================
-            try:
-                from backend.services.observability_service import get_observability_service
-                obs_service = get_observability_service()
-                
-                # Estimate token counts (rough approximation)
-                # In production, you'd get this from LLM response metadata
-                input_tokens = len(query.split()) * 1.3  # ~1.3 tokens per word
-                output_tokens = len(full_response.split()) * 1.3
-                
-                await obs_service.track_usage(
-                    operation="rag_pipeline",
-                    model=settings.openai_model,
-                    input_tokens=int(input_tokens),
-                    output_tokens=int(output_tokens),
-                    latency_ms=int(duration * 1000),
-                    metadata={
-                        "trace_id": trace_id,
-                        "rag_used": rag_used,
-                        "chart_generated": chart_data is not None,
-                        "tools_used": [step.tool for step in reasoning_steps],
-                        "user_id": user_id
-                    }
-                )
-                logger.debug(f"Usage tracked for trace_id={trace_id}")
-            except Exception as track_err:
-                logger.warning(f"Failed to track usage metrics: {track_err}")
+            # Background tracking
+            async def _track_and_flush():
+                try:
+                    from backend.services.observability_service import get_observability_service
+                    obs_service = get_observability_service()
+                    input_tokens = len(query.split()) * 1.3
+                    output_tokens = len(full_response.split()) * 1.3
+                    await obs_service.track_usage(
+                        operation="rag_pipeline",
+                        model=settings.openai_model,
+                        input_tokens=int(input_tokens),
+                        output_tokens=int(output_tokens),
+                        latency_ms=int(duration * 1000),
+                        metadata={
+                            "trace_id": trace_id,
+                            "rag_used": rag_used,
+                            "sql_used": sql_used,
+                            "chart_generated": chart_data is not None,
+                            "tools_used": [step.tool for step in reasoning_steps],
+                            "user_id": user_id
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Background tracking failed: {e}")
+                finally:
+                    tracer.flush()
             
-            # Flush Langfuse to ensure trace is sent
-            tracer.flush()
+            asyncio.create_task(_track_and_flush())
             
             return response.model_dump()
             
         except Exception as e:
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
-            # Flush even on error to capture partial trace
             tracer.flush()
             raise
     
@@ -431,16 +426,9 @@ Use this to search unstructured text, notes, and semantic descriptions.
             if len(examples) <= 3:
                 return [f"Q: {ex['question']}\nSQL: {ex['sql_query']}" for ex in examples]
 
-            # Semantic search
-            query_embedding = self.embedding_model.embed_query(query)
-            
+            # Simple keyword overlap as baseline score (fast, no embedding call)
             scored_examples = []
             for ex in examples:
-                # In a real prod env, embeddings should be cached/stored in DB
-                # For now, we compute on fly or rely on keyword fallback if too slow
-                # Optimisation: caching this in memory would be good if list grows
-                
-                # Simple keyword overlap as baseline score
                 score = 0
                 q_words = set(query.lower().split())
                 ex_words = set(ex['question'].lower().split())
