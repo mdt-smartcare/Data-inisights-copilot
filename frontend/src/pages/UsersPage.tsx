@@ -271,7 +271,7 @@ const UsersPage: React.FC = () => {
                     <ConfirmationModal
                         show={deactivateConfirm.show}
                         title="Deactivate User"
-                        message={deactivateConfirm.user ? `Are you sure you want to deactivate ${deactivateConfirm.user.username}? ${CONFIRMATION_MESSAGES.DEACTIVATE_USER}` : CONFIRMATION_MESSAGES.DEACTIVATE_USER}
+                        message={deactivateConfirm.user ? `Are you sure you want to deactivate ${deactivateConfirm.user.username}? They will no longer be able to log in or access the system.` : CONFIRMATION_MESSAGES.DEACTIVATE_USER}
                         confirmText="Deactivate"
                         onConfirm={confirmDeactivate}
                         onCancel={() => setDeactivateConfirm({ show: false, user: null })}
