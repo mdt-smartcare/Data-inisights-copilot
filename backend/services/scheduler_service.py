@@ -212,8 +212,9 @@ class SchedulerService:
         
         # Update next_run_at in database
         job = self.scheduler.get_job(job_id)
-        if job and job.next_run_time:
-            self._update_next_run_time(vector_db_name, job.next_run_time)
+        next_run = getattr(job, 'next_run_time', None)
+        if job and next_run:
+            self._update_next_run_time(vector_db_name, next_run)
         
         logger.info(f"Registered scheduled job for {vector_db_name}: {schedule_type.value}")
     
@@ -310,8 +311,9 @@ class SchedulerService:
         
         # Update next run time after execution
         job = self.scheduler.get_job(f"sync_{vector_db_name}")
-        if job and job.next_run_time:
-            self._update_next_run_time(vector_db_name, job.next_run_time)
+        next_run = getattr(job, 'next_run_time', None)
+        if job and next_run:
+            self._update_next_run_time(vector_db_name, next_run)
     
     def _update_next_run_time(self, vector_db_name: str, next_run: datetime):
         """Update the next_run_at timestamp in database."""
@@ -446,11 +448,12 @@ class SchedulerService:
             
             # Get real-time next_run_time from APScheduler
             job = self.scheduler.get_job(f"sync_{vector_db_name}")
-            if job and job.next_run_time:
-                schedule['next_run_at'] = job.next_run_time.isoformat()
+            next_run = getattr(job, 'next_run_time', None)
+            if job and next_run:
+                schedule['next_run_at'] = next_run.isoformat()
                 # Calculate countdown in seconds using local time
-                now = datetime.now(job.next_run_time.tzinfo)
-                delta = job.next_run_time - now
+                now = datetime.now(next_run.tzinfo)
+                delta = next_run - now
                 schedule['countdown_seconds'] = max(0, int(delta.total_seconds()))
             else:
                 schedule['countdown_seconds'] = None
