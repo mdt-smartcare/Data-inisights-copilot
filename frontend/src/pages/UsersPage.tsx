@@ -24,10 +24,12 @@ const UsersPage: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [editingUser, setEditingUser] = useState<UserData | null>(null);
-    const [editForm, setEditForm] = useState({ role: '', is_active: true });
+    const [editForm, setEditForm] = useState({ role: '' });
 
     // Deactivate Modal State
     const [deactivateConfirm, setDeactivateConfirm] = useState<{ show: boolean; user: UserData | null }>({ show: false, user: null });
+    // Activate Modal State
+    const [activateConfirm, setActivateConfirm] = useState<{ show: boolean; user: UserData | null }>({ show: false, user: null });
 
     const hasAccess = canManageUsers(user);
 
@@ -53,7 +55,7 @@ const UsersPage: React.FC = () => {
 
     const handleEdit = (u: UserData) => {
         setEditingUser(u);
-        setEditForm({ role: u.role, is_active: u.is_active });
+        setEditForm({ role: u.role });
     };
 
     const handleSave = async () => {
@@ -74,11 +76,26 @@ const UsersPage: React.FC = () => {
     const confirmDeactivate = async () => {
         if (!deactivateConfirm.user) return;
         try {
-            await apiClient.delete(`/api/v1/users/${deactivateConfirm.user.id}`);
+            await apiClient.post(`/api/v1/users/${deactivateConfirm.user.id}/deactivate`);
             setDeactivateConfirm({ show: false, user: null });
             loadUsers();
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to deactivate user');
+        }
+    };
+
+    const handleActivate = (u: UserData) => {
+        setActivateConfirm({ show: true, user: u });
+    };
+
+    const confirmActivate = async () => {
+        if (!activateConfirm.user) return;
+        try {
+            await apiClient.post(`/api/v1/users/${activateConfirm.user.id}/activate`);
+            setActivateConfirm({ show: false, user: null });
+            loadUsers();
+        } catch (err: any) {
+            setError(err.response?.data?.detail || err.message || 'Failed to activate user');
         }
     };
 
@@ -175,12 +192,31 @@ const UsersPage: React.FC = () => {
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                                 {u.username !== user?.username && (
-                                                    <>
-                                                        <button onClick={() => handleEdit(u)} className="text-blue-600 hover:text-blue-900 mr-4">Edit</button>
-                                                        {u.is_active && (
-                                                            <button onClick={() => handleDeactivate(u)} className="text-red-600 hover:text-red-900">Deactivate</button>
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        {u.is_active ? (
+                                                            <>
+                                                                <button 
+                                                                    onClick={() => handleEdit(u)} 
+                                                                    className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
+                                                                >
+                                                                    Edit
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => handleDeactivate(u)} 
+                                                                    className="px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+                                                                >
+                                                                    Deactivate
+                                                                </button>
+                                                            </>
+                                                        ) : (
+                                                            <button 
+                                                                onClick={() => handleActivate(u)} 
+                                                                className="px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-md hover:bg-green-100 transition-colors"
+                                                            >
+                                                                Activate
+                                                            </button>
                                                         )}
-                                                    </>
+                                                    </div>
                                                 )}
                                             </td>
                                         </tr>
@@ -210,16 +246,7 @@ const UsersPage: React.FC = () => {
                                             ))}
                                         </select>
                                     </div>
-                                    <div className="flex items-center">
-                                        <input
-                                            type="checkbox"
-                                            id="is_active"
-                                            checked={editForm.is_active}
-                                            onChange={(e) => setEditForm(f => ({ ...f, is_active: e.target.checked }))}
-                                            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                                        />
-                                        <label htmlFor="is_active" className="ml-2 block text-sm text-gray-900">Active</label>
-                                    </div>
+
                                 </div>
 
                                 <div className="mt-6 flex justify-end gap-3">
@@ -249,6 +276,17 @@ const UsersPage: React.FC = () => {
                         onConfirm={confirmDeactivate}
                         onCancel={() => setDeactivateConfirm({ show: false, user: null })}
                         type="danger"
+                    />
+
+                    {/* Activate Confirmation Modal */}
+                    <ConfirmationModal
+                        show={activateConfirm.show}
+                        title="Activate User"
+                        message={activateConfirm.user ? `Are you sure you want to activate ${activateConfirm.user.username}? They will be able to log in again.` : 'Are you sure you want to activate this user?'}
+                        confirmText="Activate"
+                        onConfirm={confirmActivate}
+                        onCancel={() => setActivateConfirm({ show: false, user: null })}
+                        type="info"
                     />
                 </div>
             </div>
