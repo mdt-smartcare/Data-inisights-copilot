@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob } from '../services/api';
+import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion } from '../services/api';
 import type { IngestionResponse } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
@@ -13,15 +14,16 @@ import AdvancedSettings from '../components/AdvancedSettings';
 import ObservabilityPanel from '../components/ObservabilityPanel';
 import Alert from '../components/Alert';
 import EmbeddingProgress from '../components/EmbeddingProgress';
-import ScheduleSelector from '../components/ScheduleSelector';
+
 import { ChatHeader } from '../components/chat';
+import ScheduleSelector from '../components/ScheduleSelector';
 import AgentsTab from '../components/config/AgentsTab'; // Import the new AgentsTab
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import type { Agent } from '../types/agent';
 import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
-import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon } from '@heroicons/react/24/outline'; // Add back button and new dashboard icons
+import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon, ArrowPathRoundedSquareIcon } from '@heroicons/react/24/outline'; // Add back button and new dashboard icons
 import { MessageList, ChatInput } from '../components/chat';
 import { chatService } from '../services/chatService';
 import type { Message } from '../types';
@@ -44,8 +46,11 @@ const ConfigPage: React.FC = () => {
 
     // Agent Selection State
     const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
+    const lastProcessedAgentId = useRef<string | null>(null);
 
-    const [currentStep, setCurrentStep] = useState(1);
+    const [searchParams, setSearchParams] = useSearchParams();
+    const initialStep = searchParams.get('step') ? parseInt(searchParams.get('step')!) : 1;
+    const [currentStep, setCurrentStep] = useState(initialStep);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [connectionId, setConnectionId] = useState<number | null>(null);
     const [connectionName, setConnectionName] = useState<string>(''); // Added for naming
@@ -108,6 +113,8 @@ const ConfigPage: React.FC = () => {
     const [isSandboxTyping, setIsSandboxTyping] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [compareVersions, setCompareVersions] = useState<{ v1: any; v2: any } | null>(null);
+    const [isRollingBack, setIsRollingBack] = useState(false);
 
     // Dashboard Tab State
     const [dashboardTab, setDashboardTab] = useState('overview');
@@ -133,6 +140,52 @@ const ConfigPage: React.FC = () => {
             loadHistory();
         }
     }, [currentStep, selectedAgent]);
+
+    // Handle URL changes and Auto-selection
+    useEffect(() => {
+        if (isLoading) return;
+
+        const syncFromUrl = async () => {
+            // Sync / Auto-select Agent
+            const agentIdParam = searchParams.get('agent_id');
+            const currentAgentId = selectedAgent ? selectedAgent.id.toString() : null;
+
+            if (agentIdParam && agentIdParam !== lastProcessedAgentId.current && agentIdParam !== currentAgentId) {
+                lastProcessedAgentId.current = agentIdParam;
+                try {
+                    const { getAgents } = await import('../services/api');
+                    const agentList = await getAgents();
+
+                    const agent = agentList.find(a => a.id === parseInt(agentIdParam));
+                    if (agent) setSelectedAgent(agent);
+                } catch (e) {
+                    console.error("Failed to auto-select agent", e);
+                }
+            }
+        };
+
+        syncFromUrl();
+    }, [isLoading, searchParams, selectedAgent]);
+
+    // Sync state TO URL
+    useEffect(() => {
+        // Only update if changes detected
+        const currentStepParam = searchParams.get('step');
+        const currentAgentParam = searchParams.get('agent_id');
+
+        const stepChanged = currentStep.toString() !== currentStepParam;
+        const agentChanged = (selectedAgent ? selectedAgent.id.toString() : null) !== currentAgentParam;
+
+        if (stepChanged || agentChanged) {
+            const newParams: any = { step: currentStep.toString() };
+            if (selectedAgent) {
+                newParams.agent_id = selectedAgent.id.toString();
+            }
+            // Keep lastProcessedAgentId in sync with the fact that we've processed it out
+            lastProcessedAgentId.current = selectedAgent ? selectedAgent.id.toString() : null;
+            setSearchParams(newParams, { replace: true });
+        }
+    }, [currentStep, selectedAgent, searchParams, setSearchParams]);
 
     const loadDashboard = async () => {
         if (!selectedAgent) return;
@@ -200,8 +253,7 @@ const ConfigPage: React.FC = () => {
                     console.log("Could not load Vector DB status");
                 }
 
-                // If we have config, stay on Dashboard (Step 0)
-                // If not, go to Step 1
+                // If we have config, default to Dashboard (Step 0)
                 setCurrentStep(0);
             } else {
                 setCurrentStep(1);
@@ -385,6 +437,32 @@ const ConfigPage: React.FC = () => {
         } finally {
             setPublishing(false);
         }
+    };
+    const handleRollback = async (version: any) => {
+        if (!selectedAgent) return;
+        if (!window.confirm(`Are you sure you want to rollback ${selectedAgent.name} to Version ${version.version}? This will make it the active production configuration.`)) {
+            return;
+        }
+
+        setIsRollingBack(true);
+        try {
+            await rollbackToVersion(version.id);
+            showSuccess('Rollback Successful', `Agent ${selectedAgent.name} is now running Version ${version.version}`);
+            await loadDashboard();
+            await loadHistory();
+        } catch (err) {
+            showError('Rollback Failed', handleApiError(err));
+        } finally {
+            setIsRollingBack(false);
+        }
+    };
+
+    const handleCompare = (v1: any, v2: any) => {
+        setCompareVersions({ v1, v2 });
+    };
+
+    const handleCloseCompare = () => {
+        setCompareVersions(null);
     };
 
     const loadHistory = async () => {
@@ -698,36 +776,23 @@ const ConfigPage: React.FC = () => {
                                                                                 </p>
                                                                             </div>
                                                                         </div>
+
+                                                                        {(() => {
+                                                                            const embConf = activeConfig?.embedding_config ? (typeof activeConfig.embedding_config === 'string' ? JSON.parse(activeConfig.embedding_config) : activeConfig.embedding_config) : {};
+                                                                            const vDbName = embConf.vectorDbName || (activeConfig?.data_source_type === 'database' && activeConfig.connection_id ? `db_connection_${activeConfig.connection_id}_data` : 'default_vector_db');
+                                                                            return vDbName ? (
+                                                                                <div className="col-span-1 md:col-span-3 mt-4 pt-6 border-t border-gray-100">
+                                                                                    <ScheduleSelector vectorDbName={vDbName} />
+                                                                                </div>
+                                                                            ) : null;
+                                                                        })()}
                                                                     </div>
                                                                 )}
                                                             </div>
                                                         )}
                                                     </div>
 
-                                                    {/* Sync Schedule Section */}
-                                                    {activeConfig && (() => {
-                                                        const embConf = activeConfig.embedding_config
-                                                            ? (typeof activeConfig.embedding_config === 'string'
-                                                                ? JSON.parse(activeConfig.embedding_config)
-                                                                : activeConfig.embedding_config)
-                                                            : {};
-                                                        const vDbName = embConf.vectorDbName ||
-                                                            (activeConfig.data_source_type === 'database' && activeConfig.connection_id
-                                                                ? `db_connection_${activeConfig.connection_id}_data`
-                                                                : 'default_vector_db');
-                                                        return vDbName ? (
-                                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
-                                                                <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
-                                                                    <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                                                    Automatic Sync Schedule
-                                                                </h2>
-                                                                <ScheduleSelector
-                                                                    vectorDbName={vDbName}
-                                                                    readOnly={!canEdit}
-                                                                />
-                                                            </div>
-                                                        ) : null;
-                                                    })()}
+
                                                 </div>
                                             )}
 
@@ -912,12 +977,94 @@ const ConfigPage: React.FC = () => {
                                                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                                                         <PromptHistory
                                                             history={history}
-                                                            onSelect={(item) => {
-                                                                // Show preview or navigate to edit
-                                                                setReplaceConfirm({ show: true, version: item });
-                                                            }}
+                                                            onRollback={handleRollback}
+                                                            onCompare={handleCompare}
                                                         />
                                                     </div>
+
+                                                    {/* Comparison Modal */}
+                                                    {compareVersions && (
+                                                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                                                            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+                                                                <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                                                                    <div>
+                                                                        <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                                                                            Configuration Comparison
+                                                                        </h3>
+                                                                        <p className="text-xs text-gray-500">Comparing Version {compareVersions.v1.version} with Version {compareVersions.v2.version}</p>
+                                                                    </div>
+                                                                    <button onClick={handleCloseCompare} className="p-2 hover:bg-white rounded-full transition-colors">
+                                                                        <svg className="w-6 h-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                                                    </button>
+                                                                </div>
+                                                                <div className="flex-1 overflow-y-auto p-6 md:p-8">
+                                                                    <div className="grid grid-cols-2 gap-8 h-full">
+                                                                        {/* Version 1 */}
+                                                                        <div className="space-y-6">
+                                                                            <div className="flex items-center justify-between pb-4 border-b border-gray-100">
+                                                                                <div className="flex items-center gap-3">
+                                                                                    <span className="w-10 h-10 rounded-xl bg-gray-100 text-gray-700 flex items-center justify-center font-bold">V{compareVersions.v1.version}</span>
+                                                                                    <div>
+                                                                                        <p className="text-sm font-bold text-gray-900">Historical Version</p>
+                                                                                        <p className="text-xs text-gray-500">{new Date(compareVersions.v1.created_at).toLocaleString()}</p>
+                                                                                    </div>
+                                                                                </div>
+                                                                                <button
+                                                                                    onClick={() => { handleRollback(compareVersions.v1); handleCloseCompare(); }}
+                                                                                    disabled={isRollingBack}
+                                                                                    className={`px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 transition-colors flex items-center gap-2 ${isRollingBack ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                                                >
+                                                                                    <ArrowPathRoundedSquareIcon className="w-4 h-4" />
+                                                                                    {isRollingBack ? 'Rolling back...' : 'Rollback'}
+                                                                                </button>
+                                                                            </div>
+
+                                                                            <section>
+                                                                                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">System Prompt</h4>
+                                                                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 text-[11px] font-mono whitespace-pre-wrap leading-relaxed max-h-[400px] overflow-y-auto">
+                                                                                    {compareVersions.v1.prompt_text}
+                                                                                </div>
+                                                                            </section>
+
+                                                                        </div>
+
+                                                                        {/* Version 2 (Active) */}
+                                                                        <div className="space-y-6">
+                                                                            <div className="flex items-center justify-between pb-4 border-b border-blue-100">
+                                                                                <div className="flex items-center gap-3">
+                                                                                    <span className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">V{compareVersions.v2.version}</span>
+                                                                                    <div>
+                                                                                        <p className="text-sm font-bold text-gray-900 flex items-center gap-1.5">
+                                                                                            Active Version
+                                                                                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                                                                                        </p>
+                                                                                        <p className="text-xs text-gray-500">{new Date(compareVersions.v2.created_at).toLocaleString()}</p>
+                                                                                    </div>
+                                                                                </div>
+                                                                                <span className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-bold border border-green-100 flex items-center gap-2">
+                                                                                    <CheckCircleIcon className="w-4 h-4" />
+                                                                                    Active Production
+                                                                                </span>
+                                                                            </div>
+
+                                                                            <section>
+                                                                                <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">System Prompt</h4>
+                                                                                <div className="bg-blue-50/30 p-4 rounded-xl border border-blue-100 text-[11px] font-mono whitespace-pre-wrap leading-relaxed max-h-[400px] overflow-y-auto">
+                                                                                    {compareVersions.v2.prompt_text}
+                                                                                </div>
+                                                                            </section>
+
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="px-8 py-4 bg-gray-50 border-t border-gray-100 flex justify-end">
+                                                                    <button onClick={handleCloseCompare} className="px-6 py-2 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-bold shadow-sm hover:bg-gray-100 transition-all">
+                                                                        Close Comparison
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -1378,7 +1525,7 @@ const ConfigPage: React.FC = () => {
                         )
                     }
                 </div>
-            </div>
+            </div >
 
             {/* Clear Confirmation Modal */}
             {

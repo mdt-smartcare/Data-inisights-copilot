@@ -192,6 +192,11 @@ export const getPromptHistory = async (agentId?: number): Promise<any> => {
   return response.data;
 };
 
+export const rollbackToVersion = async (versionId: number): Promise<{ status: string; message: string; version: number }> => {
+  const response = await apiClient.post(`/api/v1/config/rollback/${versionId}`);
+  return response.data;
+};
+
 export const getActiveConfigMetadata = async (agentId?: number): Promise<any> => {
   const response = await apiClient.get('/api/v1/config/active-metadata', { params: { agent_id: agentId } });
   return response.data;

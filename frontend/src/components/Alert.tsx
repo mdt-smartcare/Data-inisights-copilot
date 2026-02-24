@@ -1,5 +1,3 @@
-import React from 'react';
-
 export type AlertType = 'error' | 'success' | 'warning' | 'info';
 
 interface AlertProps {
