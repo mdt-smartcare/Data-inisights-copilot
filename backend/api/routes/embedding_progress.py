@@ -56,10 +56,9 @@ async def start_embedding_job(
         if not model_name:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Embedding model is missing in configuration")
             
-        from backend.services.llm_registry import LLMRegistry
-        registry = LLMRegistry()
-        if not registry.get_model_config(model_name):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Embedding model '{model_name}' is not registered")
+        # Optional: Check if model exists, but don't strictly require it to be in the local LLM Registry 
+        # since embeddings might use a different service or external provider.
+        # We assume if the model string exists, it's valid enough to queue the job.
             
         total_documents = 100  # Placeholder
         
