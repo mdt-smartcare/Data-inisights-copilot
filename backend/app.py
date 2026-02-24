@@ -17,6 +17,7 @@ from backend.api.routes import auth, chat, feedback, health, config, data, audit
 from backend.api.routes import embedding_progress, notifications, settings as settings_routes, observability
 from backend.api.websocket import embedding_progress as embedding_ws
 from backend.services.embeddings import preload_embedding_model
+from backend.services.scheduler_service import get_scheduler_service
 
 # Initialize settings and logging
 settings = get_settings()
@@ -32,6 +33,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"Starting {settings.project_name} v{settings.version}")
     preload_embedding_model()
+    
+    # Start the scheduler service for vector DB sync jobs
+    scheduler_service = get_scheduler_service()
+    scheduler_service.start()
+    logger.info("Scheduler service started")
+    
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"API prefix: {settings.api_v1_prefix}")
     
@@ -39,6 +46,8 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down application")
+    scheduler_service.shutdown()
+    logger.info("Scheduler service stopped")
 
 
 # Create FastAPI application
