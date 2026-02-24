@@ -4,6 +4,7 @@ Requires SuperAdmin role for all operations.
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+import json
 
 from backend.models.schemas import User
 from backend.models.rag_models import (
@@ -134,7 +135,6 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
             documents_raw = config.get('ingestion_documents')
             if not documents_raw:
                 raise ValueError("No documents found for file data source")
-            import json
             try:
                 parsed_docs = json.loads(documents_raw)
                 for i, doc in enumerate(parsed_docs):
@@ -165,18 +165,36 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
             # schema is stored as schema_selection in prompt_configs
             schema_snapshot_raw = config.get('schema_selection', '{}')
             try:
+                if schema_snapshot_raw is None:
+                    schema_snapshot_raw = '{}'
+                
+                # In case of double JSON encoding
+                if isinstance(schema_snapshot_raw, str) and schema_snapshot_raw.startswith('"') and schema_snapshot_raw.endswith('"'):
+                    try:
+                        schema_snapshot_raw = json.loads(schema_snapshot_raw)
+                    except json.JSONDecodeError:
+                        pass
+
                 schema_selection = json.loads(schema_snapshot_raw)
+                
+                # If still a string after first parse, parse again (double encoded)
+                if isinstance(schema_selection, str):
+                    schema_selection = json.loads(schema_selection)
+                    
                 if isinstance(schema_selection, dict):
                     target_tables = list(schema_selection.keys())
                 elif isinstance(schema_selection, list):
                     target_tables = schema_selection
                 else:
                     target_tables = []
-            except:
+            except Exception as e:
+                logger.error(f"Failed to parse schema_selection: {e}. Raw was: {schema_snapshot_raw}")
                 target_tables = []
+                parse_error = str(e)
                 
             if not target_tables:
-                raise ValueError("No tables selected in configuration")
+                err_msg = parse_error if 'parse_error' in locals() else 'None'
+                raise ValueError(f"Schema parsing failed. Error: {err_msg}, Raw repr: {repr(schema_snapshot_raw)}, Target tables: {target_tables}")
 
             # 4. Fetch Live Schema Metadata
             schema_info = sql_service.get_schema_info_for_connection(
