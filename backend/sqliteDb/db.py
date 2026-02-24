@@ -489,16 +489,23 @@ class DatabaseService:
         
         query = """
             SELECT 
-                rc.id,
-                rc.version,
-                rc.prompt_template,
-                rc.connection_id,
-                rc.schema_snapshot,
-                rc.data_dictionary,
-                rc.embedding_config,
-                rc.retriever_config
-            FROM rag_configurations rc
-            WHERE rc.id = ?
+                sp.id as prompt_id,
+                sp.version,
+                sp.prompt_text,
+                pc.connection_id,
+                pc.schema_selection,
+                pc.data_dictionary,
+                pc.embedding_config,
+                pc.retriever_config,
+                pc.chunking_config,
+                pc.llm_config,
+                pc.data_source_type,
+                pc.ingestion_documents,
+                pc.ingestion_file_name,
+                pc.ingestion_file_type
+            FROM system_prompts sp
+            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            WHERE sp.id = ?
         """
         cursor.execute(query, (config_id,))
         row = cursor.fetchone()
@@ -809,6 +816,7 @@ class DatabaseService:
         cursor.execute("SELECT id, name, uri, engine_type FROM db_connections WHERE id = ?", (connection_id,))
         row = cursor.fetchone()
         conn.close()
+        return dict(row) if row else None
         
     def get_vector_db_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """Get vector db by name to check existence/collisions."""
@@ -836,7 +844,6 @@ class DatabaseService:
             raise ValueError(f"Vector DB with name '{name}' already exists.")
         finally:
             conn.close()
-        return dict(row) if row else None
 
     def get_active_metrics(self) -> list[Dict[str, Any]]:
         """Get all active metric definitions ordered by priority.
