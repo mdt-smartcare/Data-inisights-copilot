@@ -453,6 +453,16 @@ const ConfigPage: React.FC = () => {
                                                     jobId={embeddingJobId}
                                                     onComplete={() => {
                                                         showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
+                                                        setEmbeddingJobId(null);
+                                                        if (activeConfig) {
+                                                            const embConf = activeConfig.embedding_config ? (typeof activeConfig.embedding_config === 'string' ? JSON.parse(activeConfig.embedding_config) : activeConfig.embedding_config) : {};
+                                                            const vDbName = embConf.vectorDbName || (activeConfig.data_source_type === 'database' && activeConfig.connection_id ? `db_connection_${activeConfig.connection_id}_data` : 'default_vector_db');
+                                                            if (vDbName) {
+                                                                import('../services/api').then(api => {
+                                                                    api.getVectorDbStatus(vDbName).then(status => setVectorDbStatus(status)).catch(err => console.log(err));
+                                                                });
+                                                            }
+                                                        }
                                                     }}
                                                     onError={(err) => showError('Embedding Failed', err)}
                                                     onCancel={() => {
@@ -826,6 +836,7 @@ const ConfigPage: React.FC = () => {
                                                     jobId={embeddingJobId}
                                                     onComplete={React.useCallback(() => {
                                                         showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
+                                                        setEmbeddingJobId(null);
                                                     }, [showSuccess])}
                                                     onError={React.useCallback((err: string) => showError('Embedding Failed', err), [showError])}
                                                     onCancel={React.useCallback(() => {
