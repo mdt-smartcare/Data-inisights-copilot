@@ -32,9 +32,14 @@ import json
 class VectorStoreService:
     """Service for managing vector store operations."""
     
-    def __init__(self):
-        """Initialize the vector store with advanced retrieval."""
-        logger.info("Initializing vector store service")
+    def __init__(self, agent_id: Optional[int] = None):
+        """Initialize the vector store with advanced retrieval.
+        
+        Args:
+            agent_id: Optional agent ID to load specific configuration.
+        """
+        self.agent_id = agent_id
+        logger.info(f"Initializing vector store service (Agent: {agent_id if agent_id else 'Global'})")
         
         # Load RAG configuration - resolve path relative to backend directory
         config_path = Path(settings.rag_config_path)
@@ -60,10 +65,10 @@ class VectorStoreService:
         # ------------------------------------------------------------------
         try:
             db_service = get_db_service()
-            active_config = db_service.get_active_config()
+            active_config = db_service.get_active_config(agent_id=self.agent_id)
             
             if active_config:
-                logger.info("Found active RAG config in database. Applying overrides...")
+                logger.info(f"Found active RAG config for agent {self.agent_id}. Applying overrides...")
                 
                 # Override Embedding Config
                 if active_config.get('embedding_config'):
@@ -77,6 +82,17 @@ class VectorStoreService:
                         
                         if 'model' in emb_conf and emb_conf['model']:
                             self.rag_config['embedding']['model_name'] = emb_conf['model']
+                        
+                        # Apply Vector DB Name override if present
+                        if 'vectorDbName' in emb_conf and emb_conf['vectorDbName']:
+                            vdb_name = emb_conf['vectorDbName']
+                            # Update chroma path and collection name
+                            # Path is relative to data/indexes/
+                            backend_root = Path(__file__).parent.parent
+                            new_chroma_path = (backend_root / "data" / "indexes" / vdb_name).resolve()
+                            self.rag_config['vector_store']['chroma_path'] = str(new_chroma_path)
+                            self.rag_config['vector_store']['collection_name'] = vdb_name
+                            logger.info(f"Overrode vector store path to: {new_chroma_path}")
                             
                         logger.info(f"Applied embedding config overrides from DB: {emb_conf}")
                     except Exception as e:
@@ -236,12 +252,12 @@ class VectorStoreService:
 
 
 @lru_cache()
-def get_vector_store() -> VectorStoreService:
+def get_vector_store(agent_id: Optional[int] = None) -> VectorStoreService:
     """
     Get cached vector store service instance.
-    Singleton pattern to avoid reloading the vector database.
+    Cached by agent_id to support multi-tenant configurations while avoiding redundant loading.
     
     Returns:
-        Cached vector store service
+        Context-aware vector store service
     """
-    return VectorStoreService()
+    return VectorStoreService(agent_id=agent_id)

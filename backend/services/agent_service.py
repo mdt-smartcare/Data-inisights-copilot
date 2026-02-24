@@ -162,9 +162,10 @@ Use this to search unstructured text, notes, and semantic descriptions.
     def vector_store(self):
         """Lazy load vector store only when needed."""
         if self._vector_store is None:
-            logger.info("⚡ Lazy loading vector store on first use...")
-            self._vector_store = get_vector_store()
-            logger.info("✅ Vector store loaded")
+            agent_id = self.agent_config.get('id') if self.agent_config else None
+            logger.info(f"⚡ Lazy loading vector store on first use (Agent ID: {agent_id})...")
+            self._vector_store = get_vector_store(agent_id=agent_id)
+            logger.info(f"✅ Vector store loaded for agent: {agent_id}")
         return self._vector_store
     
     def _rag_search(self, query: str) -> str:

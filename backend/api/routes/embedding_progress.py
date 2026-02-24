@@ -50,8 +50,18 @@ async def start_embedding_job(
         import json
         emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
         vector_db_name = emb_conf.get('vectorDbName')
+        
+        # Robust naming fallback for multi-tenant isolation
         if not vector_db_name:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="vectorDbName is missing in configuration")
+            agent_id = config.get('agent_id')
+            conn_id = config.get('connection_id')
+            if agent_id:
+                vector_db_name = f"agent_{agent_id}_data"
+            elif conn_id:
+                vector_db_name = f"db_connection_{conn_id}_data"
+            else:
+                vector_db_name = "default_vector_db"
+            logger.info(f"Derived missing vectorDbName as: {vector_db_name}")
             
         model_name = emb_conf.get('model')
         if not model_name:
@@ -222,12 +232,20 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                 dictionary_content=data_dictionary
             )
             
-        # Get Vector DB Name
+        # Get Vector DB Name with multi-tenant awareness
         vector_db_name = "default_vector_db"
         try:
             emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
-            if emb_conf and 'vectorDbName' in emb_conf:
+            if emb_conf and emb_conf.get('vectorDbName'):
                 vector_db_name = emb_conf['vectorDbName']
+            else:
+                # Fallback matching the start endpoint logic
+                agent_id = config.get('agent_id')
+                conn_id = config.get('connection_id')
+                if agent_id:
+                    vector_db_name = f"agent_{agent_id}_data"
+                elif conn_id:
+                    vector_db_name = f"db_connection_{conn_id}_data"
         except Exception as e:
             logger.warning(f"Failed to parse embedding config: {e}")
 
