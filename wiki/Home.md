@@ -31,7 +31,9 @@ Data Insights Copilot is an advanced RAG (Retrieval-Augmented Generation) chatbo
     - [API Reference](API.md), [Database Schema](Database.md), [RBAC](RBAC.md), Services.
 - **[Frontend Guide](Frontend.md)**
     - Component Structure, State Management, UI/UX Guidelines.
-- **[Observability & Tracing](Observability.md)** ⭐ NEW
+- **[Architecture Diagrams](Architecture-Diagrams.md)** ⭐ NEW
+    - System Architecture, Auth Flow, RAG Pipeline, Prompt Lifecycle, Embedding Pipeline, Ingestion, Observability.
+- **[Observability & Tracing](Observability.md)**
     - Langfuse Integration, Logging, Usage Metrics, Local Setup.
 - **[Deployment & Setup](Deployment.md)**
     - Installation, Environment Configuration, Production Deployment.

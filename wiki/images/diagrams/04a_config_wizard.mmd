@@ -1,0 +1,51 @@
+sequenceDiagram
+    autonumber
+    actor Admin as SuperAdmin
+    participant CFG as ConfigPage Wizard
+    participant GW as FastAPI
+    participant CS as ConfigService
+    participant SQL as SQLService
+    participant LLM as LLM
+    participant DB as SQLite DB
+
+    Note over Admin, DB: Step 1 Select Data Source
+    Admin ->> CFG: Choose Database or File Upload
+    alt Database source
+        Admin ->> CFG: Select saved DB connection
+        CFG ->> GW: GET /api/v1/data/connections/id/schema
+        GW ->> SQL: get_schema_info_for_connection(uri)
+        SQL -->> GW: tables and column details
+        GW -->> CFG: Schema tree
+        Admin ->> CFG: Select tables and add notes
+    else File upload source
+        Admin ->> CFG: Upload file
+        CFG ->> GW: POST /api/v1/ingestion/upload
+        GW -->> CFG: Extracted document previews
+    end
+
+    Note over Admin, DB: Step 2 Generate Draft Prompt
+    Admin ->> CFG: Click Generate Prompt
+    CFG ->> GW: POST /api/v1/config/generate
+    GW ->> CS: generate_draft_prompt(data_dictionary)
+    CS ->> LLM: Generate system prompt from schema
+    LLM -->> CS: draft_prompt reasoning example_questions
+    CS -->> GW: Draft response
+    GW -->> CFG: Display editable prompt
+
+    Note over Admin, DB: Step 3 Review and Publish
+    Admin ->> CFG: Edit prompt and review
+    Admin ->> CFG: Click Publish
+    CFG ->> GW: POST /api/v1/config/publish
+    GW ->> GW: RBAC require_super_admin
+    GW ->> CS: publish_system_prompt
+    CS ->> DB: Deactivate previous prompts
+    CS ->> DB: Insert new prompt is_active=true
+    CS ->> DB: Store config metadata
+    CS -->> GW: status success version N
+
+    opt Reinitialize SQL Service
+        GW ->> SQL: reinitialize with new connection
+    end
+
+    GW -->> CFG: Published confirmation
+    CFG -->> Admin: Success toast

@@ -1,0 +1,93 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant CP as ChatPage
+    participant GW as FastAPI /chat
+    participant AS as AgentService
+    participant LLM as LLM OpenAI
+    participant SQL as SQLService
+    participant RAG as RAGRetriever
+    participant DB as External DB
+    participant CV as ChromaDB
+    participant LF as Langfuse
+
+    User ->> CP: Enter query
+    CP ->> GW: POST /api/v1/chat
+    GW ->> GW: RBAC require_user
+
+    GW ->> AS: process_query(query, user_id, session_id)
+    AS ->> LF: Create trace
+    AS ->> AS: Fetch active system prompt
+    AS ->> AS: Retrieve few-shot SQL examples
+
+    AS ->> LLM: AgentExecutor.ainvoke(query + prompt)
+    Note right of LLM: Agent decides which tool to use
+
+    alt Agent selects sql_query_tool
+        LLM -->> AS: Tool call sql_query_tool
+        AS ->> SQL: query(question)
+
+        SQL ->> SQL: Check QueryCache 5min TTL
+        alt Cache HIT
+            SQL -->> AS: Cached result
+        else Cache MISS
+            SQL ->> SQL: Classify simple vs complex
+
+            alt Simple query optimized path
+                SQL ->> LLM: Generate SQL with gpt-3.5-turbo
+                LLM -->> SQL: Raw SQL
+
+                loop Reflection loop max 2 retries
+                    SQL ->> SQL: ReflectionService critique_sql
+                    alt SQL valid
+                        SQL ->> SQL: Break loop
+                    else SQL invalid
+                        SQL ->> LLM: Fix SQL with critique
+                        LLM -->> SQL: Fixed SQL
+                    end
+                end
+
+                SQL ->> SQL: Regex safety validation
+                SQL ->> DB: Execute SQL
+                DB -->> SQL: Result rows
+                SQL ->> LLM: Format response with gpt-3.5-turbo
+                LLM -->> SQL: Answer with chart JSON
+            else Complex query full agent
+                SQL ->> LLM: LangChain SQL Agent
+                LLM ->> DB: Auto-generated queries
+                DB -->> LLM: Results
+                LLM -->> SQL: Final answer
+            end
+
+            SQL ->> SQL: Cache result
+            SQL -->> AS: Answer string
+        end
+
+    else Agent selects rag_document_search_tool
+        LLM -->> AS: Tool call rag_document_search
+        AS ->> RAG: search(query)
+
+        par Dense and Sparse Retrieval
+            RAG ->> CV: Dense vector similarity k=50
+            CV -->> RAG: Child chunks to parent IDs
+            RAG ->> RAG: Sparse BM25 on parent docs
+        end
+
+        RAG ->> RAG: Merge and de-duplicate
+        RAG ->> RAG: CrossEncoder rerank
+        RAG -->> AS: Top-k parent documents
+    end
+
+    LLM -->> AS: Final agent output
+
+    AS ->> AS: Parse chart_data from JSON
+    AS ->> AS: Format reasoning steps
+
+    par Background tasks
+        AS ->> AS: FollowUpService generate_followups
+        AS ->> LF: Track usage and flush
+    end
+
+    AS -->> GW: ChatResponse
+    GW -->> CP: JSON response
+    CP -->> User: Render answer and chart

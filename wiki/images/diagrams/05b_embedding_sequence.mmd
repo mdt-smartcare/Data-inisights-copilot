@@ -1,0 +1,52 @@
+sequenceDiagram
+    autonumber
+    actor Admin as SuperAdmin
+    participant UI as Admin UI
+    participant GW as FastAPI /embeddings
+    participant EJS as EmbeddingJobService
+    participant DOC as DocumentGenerator
+    participant BP as BatchProcessor
+    participant EMB as Embedding Model
+    participant IDX as ChromaDB Index Builder
+    participant DB as SQLite DB
+    participant NS as NotificationService
+
+    Admin ->> UI: Click Generate Embeddings
+    UI ->> GW: POST /api/v1/embeddings/start
+    GW ->> GW: RBAC require_super_admin
+
+    GW ->> EJS: create_job(config_id, total_docs, user)
+    EJS ->> DB: Insert job record status=QUEUED
+    EJS -->> GW: job_id
+    GW -->> UI: job_id status queued
+
+    Note over EJS, IDX: Background Processing
+
+    EJS ->> EJS: start_job status=PREPARING
+    EJS ->> DOC: Generate LangChain documents from schema
+    DOC -->> EJS: Document list
+
+    EJS ->> EJS: transition status=EMBEDDING
+
+    loop For each batch
+        EJS ->> BP: Process batch
+        BP ->> EMB: embed_documents(batch)
+        EMB -->> BP: Embedding vectors
+        BP ->> EJS: update_progress
+        EJS ->> DB: Update progress metrics
+        EJS -->> UI: Progress update via WebSocket
+    end
+
+    EJS ->> EJS: transition status=VALIDATING
+    EJS ->> EJS: Validate embeddings
+
+    EJS ->> EJS: transition status=STORING
+    EJS ->> IDX: build_advanced_chroma_index
+    IDX ->> IDX: Create parent-child hierarchy
+    IDX ->> IDX: Store in ChromaDB and pickle docstore
+
+    EJS ->> EJS: complete_job status=COMPLETED
+    EJS ->> DB: Update job completed_at
+    EJS ->> NS: Send completion notification
+
+    NS -->> Admin: Notification Embeddings generated

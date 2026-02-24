@@ -1,0 +1,74 @@
+graph LR
+    subgraph Frontend["Frontend (React + Vite)"]
+        LP[LoginPage]
+        CP[ChatPage]
+        CFG[ConfigPage]
+        UP[UsersPage]
+        IP[InsightsPage]
+        AX[Axios Interceptor]
+    end
+
+    subgraph Gateway["FastAPI Gateway"]
+        AUTH["/auth"]
+        CHAT["/chat"]
+        CONFIG["/config"]
+        DATA["/data"]
+        EMB["/embeddings"]
+        OBS["/observability"]
+        ING["/ingestion"]
+        USR["/users"]
+        AGENT["/agents"]
+        RBAC["RBAC Middleware"]
+    end
+
+    subgraph Services["Service Layer"]
+        AS["AgentService"]
+        SQL["SQLService"]
+        VS["VectorStore"]
+        RAG["RAGRetriever"]
+        CS["ConfigService"]
+        EJS["EmbeddingJobService"]
+        FS["FollowUpService"]
+        RS["ReflectionService"]
+        NS["NotificationService"]
+        OBSSVC["ObservabilityService"]
+        AUDS["AuditService"]
+        AUTHS["AuthorizationService"]
+    end
+
+    subgraph DataStores["Data Stores"]
+        SQLITE[(SQLite)]
+        CHROMA[(ChromaDB)]
+        EXTDB[(External DB)]
+    end
+
+    subgraph External["External APIs"]
+        LLM["LLM Providers"]
+        EMBMOD["Embedding Models"]
+        LF["Langfuse"]
+    end
+
+    LP & CP & CFG & UP & IP --> AX
+    AX --> AUTH & CHAT & CONFIG & DATA & EMB & OBS & ING & USR & AGENT
+
+    AUTH & CHAT & CONFIG --> RBAC
+
+    CHAT --> AS
+    CONFIG --> CS
+    EMB --> EJS
+    OBS --> OBSSVC
+
+    AS --> SQL
+    AS --> RAG
+    AS --> FS
+    SQL --> RS
+    RAG --> VS
+
+    SQL --> EXTDB
+    VS --> CHROMA
+    CS & EJS & AUDS & NS --> SQLITE
+    AUTH --> SQLITE
+
+    AS & SQL & FS --> LLM
+    RAG & EJS --> EMBMOD
+    AS & OBSSVC --> LF

@@ -1,0 +1,21 @@
+stateDiagram-v2
+    [*] --> QUEUED: create_job
+
+    QUEUED --> PREPARING: start_job
+    PREPARING --> EMBEDDING: transition_to_embedding
+    EMBEDDING --> VALIDATING: transition_to_validating
+    VALIDATING --> STORING: transition_to_storing
+    STORING --> COMPLETED: complete_job
+
+    QUEUED --> CANCELLED: cancel_job
+    PREPARING --> CANCELLED: cancel_job
+    EMBEDDING --> CANCELLED: cancel_job
+
+    PREPARING --> FAILED: fail_job
+    EMBEDDING --> FAILED: fail_job
+    VALIDATING --> FAILED: fail_job
+    STORING --> FAILED: fail_job
+
+    COMPLETED --> [*]
+    CANCELLED --> [*]
+    FAILED --> [*]
