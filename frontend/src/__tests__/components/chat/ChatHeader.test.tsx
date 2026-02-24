@@ -14,12 +14,22 @@ vi.mock('../../../components/NotificationCenter', () => ({ default: () => <div d
 vi.mock('../../../assets/logo.svg', () => ({ default: 'logo.svg' }));
 
 const mockLogout = vi.fn();
-const createMockAuth = (user: User | null) => ({ user, isLoading: false, isAuthenticated: !!user, logout: mockLogout, setUser: vi.fn() });
+const mockLogin = vi.fn();
+const mockGetAccessToken = vi.fn().mockReturnValue('mock_token');
+const createMockAuth = (user: User | null) => ({ 
+  user, 
+  isLoading: false, 
+  isAuthenticated: !!user, 
+  logout: mockLogout, 
+  setUser: vi.fn(),
+  login: mockLogin,
+  getAccessToken: mockGetAccessToken,
+});
 
 const mockUsers: Record<string, User> = {
   viewer: { id: 1, username: 'viewer', role: 'user' as UserRole, email: 'v@test.com' },
-  editor: { id: 2, username: 'editor', role: 'editor' as UserRole, email: 'e@test.com' },
-  superAdmin: { id: 3, username: 'admin', role: 'super_admin' as UserRole, email: 'a@test.com' },
+  editor: { id: 2, username: 'editor', role: 'user' as UserRole, email: 'e@test.com' },  // Changed to 'user'
+  superAdmin: { id: 3, username: 'admin', role: 'admin' as UserRole, email: 'a@test.com' },  // Changed to 'admin'
 };
 
 const renderWithRouter = (user: User, initialPath = '/chat') => {

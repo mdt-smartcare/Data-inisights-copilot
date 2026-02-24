@@ -96,27 +96,27 @@ const renderWithRouter = (initialRoute = '/', authState: ReturnType<typeof creat
             </ProtectedRoute>
           } />
           <Route path="/config" element={
-            <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
+            <ProtectedRoute allowedRoles={['user', 'admin']}>
               <div data-testid="config-page">Config Page</div>
             </ProtectedRoute>
           } />
           <Route path="/users" element={
-            <ProtectedRoute allowedRoles={['super_admin']}>
+            <ProtectedRoute allowedRoles={['admin']}>
               <div data-testid="users-page">Users Page</div>
             </ProtectedRoute>
           } />
           <Route path="/audit" element={
-            <ProtectedRoute allowedRoles={['super_admin']}>
+            <ProtectedRoute allowedRoles={['admin']}>
               <div data-testid="audit-page">Audit Logs Page</div>
             </ProtectedRoute>
           } />
           <Route path="/history" element={
-            <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
+            <ProtectedRoute allowedRoles={['user', 'admin']}>
               <div data-testid="history-page">History Page</div>
             </ProtectedRoute>
           } />
           <Route path="/insights" element={
-            <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
+            <ProtectedRoute allowedRoles={['user', 'admin']}>
               <div data-testid="insights-page">Insights Page</div>
             </ProtectedRoute>
           } />
@@ -129,6 +129,8 @@ const renderWithRouter = (initialRoute = '/', authState: ReturnType<typeof creat
 
 const mockLogout = vi.fn();
 const mockSetUser = vi.fn();
+const mockLogin = vi.fn();
+const mockGetAccessToken = vi.fn().mockReturnValue('mock_token');
 
 const createAuthState = (user: User | null, isLoading = false) => ({
   user,
@@ -136,12 +138,14 @@ const createAuthState = (user: User | null, isLoading = false) => ({
   isAuthenticated: !!user,
   logout: mockLogout,
   setUser: mockSetUser,
+  login: mockLogin,
+  getAccessToken: mockGetAccessToken,
 });
 
 const mockUsers: Record<string, User> = {
   viewer: { id: 1, username: 'viewer', role: 'user' as UserRole, email: 'v@test.com' },
-  editor: { id: 2, username: 'editor', role: 'editor' as UserRole, email: 'e@test.com' },
-  superAdmin: { id: 3, username: 'admin', role: 'super_admin' as UserRole, email: 'a@test.com' },
+  editor: { id: 2, username: 'editor', role: 'user' as UserRole, email: 'e@test.com' },  // Changed to 'user'
+  superAdmin: { id: 3, username: 'admin', role: 'admin' as UserRole, email: 'a@test.com' },  // Changed to 'admin'
 };
 
 describe('App Routing and ProtectedRoute', () => {
