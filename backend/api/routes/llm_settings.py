@@ -1,6 +1,7 @@
 """
 LLM Settings API Routes - CRUD endpoints for LLM provider configuration.
-Provides REST API for managing LLM providers and validating credentials.
+Provides REST API for managing LLM providers, validating credentials,
+and DB-backed model registry operations (list, register, activate, compatibility).
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -8,6 +9,10 @@ from typing import Dict, Any, List, Optional, Literal
 
 from backend.services.llm_registry import get_llm_registry, LLMRegistry
 from backend.core.permissions import require_super_admin, require_editor, get_current_user, User
+from backend.services.model_registry_service import (
+    get_model_registry_service, ModelRegistryService,
+    LLMModelCreate,
+)
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -201,3 +206,102 @@ async def check_llm_health(
             "healthy": False,
             "error": str(e)
         }
+
+
+# ============================================================================
+# Model Registry Endpoints (DB-backed)
+# ============================================================================
+
+@router.get(
+    "/models",
+    response_model=List[Dict[str, Any]],
+    summary="List registered LLM models",
+    description="List all LLM models from the model registry (built-in + custom)."
+)
+async def list_llm_models(
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    current_user: User = Depends(require_editor)
+):
+    """List all registered LLM models from the DB."""
+    try:
+        return model_registry.list_llm_models()
+    except Exception as e:
+        logger.error(f"Error listing LLM models: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list LLM models: {str(e)}"
+        )
+
+
+@router.post(
+    "/models",
+    response_model=Dict[str, Any],
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a custom LLM model",
+    description="Add a new custom LLM model to the registry. Requires Super Admin."
+)
+async def register_llm_model(
+    data: LLMModelCreate,
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    current_user: User = Depends(require_super_admin)
+):
+    """Register a new custom LLM model."""
+    try:
+        result = model_registry.add_llm_model(data, created_by=current_user.username)
+        logger.info(f"LLM model '{data.model_name}' registered by {current_user.username}")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error registering LLM model: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register LLM model: {str(e)}"
+        )
+
+
+@router.put(
+    "/models/{model_id}/activate",
+    response_model=Dict[str, Any],
+    summary="Activate an LLM model",
+    description="Set a registered LLM model as active. Validates compatibility with active embedding. Requires Super Admin."
+)
+async def activate_llm_model(
+    model_id: int,
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    current_user: User = Depends(require_super_admin)
+):
+    """Activate a registered LLM model by ID (validates embedding compatibility)."""
+    try:
+        result = model_registry.activate_llm_model(model_id, updated_by=current_user.username)
+        logger.info(f"LLM model {model_id} activated by {current_user.username}")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error activating LLM model: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to activate LLM model: {str(e)}"
+        )
+
+
+@router.get(
+    "/models/compatible",
+    response_model=List[Dict[str, Any]],
+    summary="List compatible LLM models",
+    description="Get LLM models compatible with the currently active embedding model."
+)
+async def get_compatible_llm_models(
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    current_user: User = Depends(require_editor)
+):
+    """Get LLMs compatible with the active embedding model."""
+    try:
+        return model_registry.get_compatible_llms()
+    except Exception as e:
+        logger.error(f"Error getting compatible LLMs: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get compatible LLMs: {str(e)}"
+        )

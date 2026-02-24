@@ -86,6 +86,10 @@ app.include_router(embedding_settings.router, prefix=settings.api_v1_prefix)
 from backend.api.routes import llm_settings
 app.include_router(llm_settings.router, prefix=settings.api_v1_prefix)
 
+# Model configuration routes (compatibility + versioning)
+from backend.api.routes import model_config
+app.include_router(model_config.router, prefix=settings.api_v1_prefix)
+
 # Settings management routes (has /{category} catch-all, must come after specific routes)
 app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
 
