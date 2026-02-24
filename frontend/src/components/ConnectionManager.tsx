@@ -6,7 +6,7 @@ import { CONFIRMATION_MESSAGES } from '../config';
 import type { DbConnection } from '../services/api';
 
 interface ConnectionManagerProps {
-    onSelect: (connectionId: number | null) => void;
+    onSelect: (connectionId: number | null, name?: string) => void;
     selectedId: number | null;
     readOnly?: boolean;
 }
@@ -169,7 +169,7 @@ const ConnectionManager: React.FC<ConnectionManagerProps> = ({ onSelect, selecte
                 {connections.map((conn) => (
                     <div
                         key={conn.id}
-                        onClick={() => onSelect(conn.id)}
+                        onClick={() => onSelect(conn.id, conn.name)}
                         className={`p-3 rounded border cursor-pointer flex justify-between items-center transition-colors ${selectedId === conn.id
                             ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
                             : 'border-gray-200 hover:bg-gray-50'

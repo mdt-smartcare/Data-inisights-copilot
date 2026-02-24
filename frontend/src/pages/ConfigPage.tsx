@@ -13,6 +13,7 @@ import AdvancedSettings from '../components/AdvancedSettings';
 import ObservabilityPanel from '../components/ObservabilityPanel';
 import Alert from '../components/Alert';
 import EmbeddingProgress from '../components/EmbeddingProgress';
+import ScheduleSelector from '../components/ScheduleSelector';
 import { ChatHeader } from '../components/chat';
 import AgentsTab from '../components/config/AgentsTab'; // Import the new AgentsTab
 import { APP_CONFIG } from '../config';
@@ -20,7 +21,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import type { Agent } from '../types/agent';
 import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
-import { ArrowLeftIcon, ServerStackIcon, DocumentTextIcon, CheckCircleIcon } from '@heroicons/react/24/outline'; // Add back button icon
+import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon } from '@heroicons/react/24/outline'; // Add back button and new dashboard icons
+import { MessageList, ChatInput } from '../components/chat';
+import { chatService } from '../services/chatService';
+import type { Message } from '../types';
 
 const steps = [
     { id: 0, name: 'Dashboard' },
@@ -44,6 +48,7 @@ const ConfigPage: React.FC = () => {
     const [currentStep, setCurrentStep] = useState(1);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [connectionId, setConnectionId] = useState<number | null>(null);
+    const [connectionName, setConnectionName] = useState<string>(''); // Added for naming
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
 
@@ -97,8 +102,15 @@ const ConfigPage: React.FC = () => {
     // Status
     const [generating, setGenerating] = useState(false);
     const [publishing, setPublishing] = useState(false);
+
+    // Sandbox State
+    const [sandboxMessages, setSandboxMessages] = useState<Message[]>([]);
+    const [isSandboxTyping, setIsSandboxTyping] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+    // Dashboard Tab State
+    const [dashboardTab, setDashboardTab] = useState('overview');
 
     // Initial Load - moved into effect
     // Wait for agent selection
@@ -115,9 +127,9 @@ const ConfigPage: React.FC = () => {
         (window as any).__config_dictionary = dataDictionary;
     }, [connectionId, selectedSchema, dataDictionary]);
 
-    // Load history when entering step 4
+    // Load history when entering step 4 or dashboard
     useEffect(() => {
-        if (currentStep === 4 && selectedAgent) {
+        if ((currentStep === 4 || currentStep === 0) && selectedAgent) {
             loadHistory();
         }
     }, [currentStep, selectedAgent]);
@@ -129,7 +141,16 @@ const ConfigPage: React.FC = () => {
             if (config) {
                 setActiveConfig(config);
                 // Pre-fill state
-                if (config.connection_id) setConnectionId(config.connection_id);
+                if (config.connection_id) {
+                    setConnectionId(config.connection_id);
+                    // Also fetch name for UI consistency
+                    import('../services/api').then(api => {
+                        api.getConnections().then(conns => {
+                            const c = conns.find(x => x.id === config.connection_id);
+                            if (c) setConnectionName(c.name);
+                        });
+                    });
+                }
                 if (config.schema_selection) {
                     try {
                         setSelectedSchema(JSON.parse(config.schema_selection));
@@ -146,6 +167,20 @@ const ConfigPage: React.FC = () => {
                         setReasoning(typeof config.reasoning === 'string' ? JSON.parse(config.reasoning) : config.reasoning);
                     }
                 }
+
+                // Pre-fill Advanced Settings
+                const parseConf = (c: any) => c ? (typeof c === 'string' ? JSON.parse(c) : c) : null;
+                const newSettings = { ...advancedSettings };
+                const emb = parseConf(config.embedding_config);
+                const llm = parseConf(config.llm_config);
+                const chunk = parseConf(config.chunking_config);
+                const ret = parseConf(config.retriever_config);
+
+                if (emb) newSettings.embedding = { ...newSettings.embedding, ...emb };
+                if (llm) newSettings.llm = { ...newSettings.llm, ...llm };
+                if (chunk) newSettings.chunking = { ...newSettings.chunking, ...chunk };
+                if (ret) newSettings.retriever = { ...newSettings.retriever, ...ret };
+                setAdvancedSettings(newSettings);
 
                 // Fetch Vector DB Status if possible
                 try {
@@ -176,6 +211,52 @@ const ConfigPage: React.FC = () => {
         } catch (e) {
             console.error("Failed to load active config", e);
             setCurrentStep(1);
+        }
+    };
+
+    const handleSandboxSend = async (content: string) => {
+        if (!selectedAgent) return;
+
+        const userMsg: Message = {
+            id: Date.now().toString(),
+            role: 'user',
+            content,
+            timestamp: new Date()
+        };
+
+        setSandboxMessages(prev => [...prev, userMsg]);
+        setIsSandboxTyping(true);
+
+        try {
+            const response = await chatService.sendMessage({
+                query: content,
+                agent_id: selectedAgent.id,
+                session_id: 'sandbox-' + selectedAgent.id
+            });
+
+            const aiMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                role: 'assistant',
+                content: response.answer,
+                timestamp: new Date(response.timestamp),
+                sources: response.sources,
+                sqlQuery: response.sql_query,
+                chartData: response.chart_data,
+                traceId: response.trace_id,
+                processingTime: response.processing_time
+            };
+            setSandboxMessages(prev => [...prev, aiMsg]);
+        } catch (err: any) {
+            console.error("Sandbox chat error", err);
+            const errorMsg: Message = {
+                id: Date.now().toString(),
+                role: 'assistant',
+                content: `Error: ${err.message || 'Failed to get response from agent'}`,
+                timestamp: new Date()
+            };
+            setSandboxMessages(prev => [...prev, errorMsg]);
+        } finally {
+            setIsSandboxTyping(false);
         }
     };
 
@@ -259,12 +340,33 @@ const ConfigPage: React.FC = () => {
         if (!draftPrompt.trim() || !selectedAgent) return;
         setPublishing(true);
         setError(null);
+
+        // Derive vector db name if missing to ensure multi-tenant isolation
+        const finalEmbeddingConfig = { ...advancedSettings.embedding } as any;
+        if (!finalEmbeddingConfig.vectorDbName) {
+            // Try to use a descriptive name first
+            let baseName = '';
+            if (dataSourceType === 'database' && connectionName) {
+                baseName = connectionName;
+            } else if (dataSourceType === 'file' && fileUploadResult) {
+                baseName = fileUploadResult.file_name.split('.')[0];
+            }
+
+            if (baseName) {
+                const formatted = baseName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+                finalEmbeddingConfig.vectorDbName = `${formatted}_data`;
+            } else {
+                // Absolute fallback to agent ID
+                finalEmbeddingConfig.vectorDbName = `agent_${selectedAgent.id}_data`;
+            }
+        }
+
         try {
             const result = await publishSystemPrompt(
                 draftPrompt,
                 reasoning,
                 exampleQuestions,
-                advancedSettings.embedding,
+                finalEmbeddingConfig,
                 advancedSettings.retriever,
                 advancedSettings.chunking,
                 advancedSettings.llm,
@@ -401,166 +503,444 @@ const ConfigPage: React.FC = () => {
                     <div className={`flex-1 min-h-0 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden ${currentStep === 0 ? 'bg-gray-50 border-none shadow-none' : ''}`}>
                         {currentStep === 0 ? (
                             // DASHBOARD VIEW
-                            <div className="h-full flex flex-col overflow-y-auto p-6">
-                                <header className="flex justify-between items-center mb-8 px-1">
-                                    <div className="flex items-center gap-4">
-                                        <button
-                                            onClick={() => setSelectedAgent(null)}
-                                            className="p-2 -ml-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
-                                            title="Back to Agents"
-                                        >
-                                            <ArrowLeftIcon className="w-6 h-6" />
-                                        </button>
-                                        <div>
-                                            <h1 className="text-3xl font-bold text-gray-900">{selectedAgent.name} Dashboard</h1>
-                                            <p className="text-gray-500 mt-1">Manage configuration for this agent</p>
+                            <div className="h-full flex flex-col overflow-y-auto">
+                                <header className="bg-white px-8 pt-8 pb-4 border-b border-gray-200">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <div className="flex items-center gap-4">
+                                            <button
+                                                onClick={() => setSelectedAgent(null)}
+                                                className="p-2 -ml-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                                                title="Back to Agents"
+                                            >
+                                                <ArrowLeftIcon className="w-6 h-6" />
+                                            </button>
+                                            <div>
+                                                <h1 className="text-2xl font-bold text-gray-900">{selectedAgent.name}</h1>
+                                                <p className="text-sm text-gray-500">Agent Configuration & Insights Dashboard</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            {canEdit && (
+                                                <button
+                                                    onClick={handleStartNew}
+                                                    className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-100"
+                                                >
+                                                    New Configuration
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={handleEditCurrent}
+                                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200"
+                                            >
+                                                {canEdit ? 'Edit Active Config' : 'View Configuration'}
+                                            </button>
                                         </div>
                                     </div>
-                                    <div className="flex gap-3">
-                                        {canEdit && (
+
+                                    {/* Tabs */}
+                                    <div className="flex gap-8 border-t border-gray-100 pt-2">
+                                        {[
+                                            { id: 'overview', name: 'Overview', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg> },
+                                            { id: 'knowledge', name: 'Knowledge Base', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg> },
+                                            { id: 'sandbox', name: 'Sandbox', icon: (props: any) => <CommandLineIcon {...props} /> },
+                                            { id: 'specs', name: 'Settings & Specs', icon: (props: any) => <AdjustmentsVerticalIcon {...props} /> },
+                                            { id: 'monitoring', name: 'Monitoring', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> },
+                                            { id: 'history', name: 'History', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> }
+                                        ].map(tab => (
                                             <button
-                                                onClick={handleStartNew}
-                                                className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium shadow-sm"
+                                                key={tab.id}
+                                                onClick={() => setDashboardTab(tab.id)}
+                                                className={`flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-all
+                                                    ${dashboardTab === tab.id
+                                                        ? 'border-blue-600 text-blue-600'
+                                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                                    }`}
                                             >
-                                                New Configuration
+                                                <tab.icon className={`w-5 h-5 ${dashboardTab === tab.id ? 'text-blue-600' : 'text-gray-400'}`} />
+                                                {tab.name}
                                             </button>
-                                        )}
-                                        <button
-                                            onClick={handleEditCurrent}
-                                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm"
-                                        >
-                                            {canEdit ? 'Edit Active Config' : 'View Configuration'}
-                                        </button>
+                                        ))}
                                     </div>
                                 </header>
 
-                                {activeConfig ? (
-                                    <div className="flex-1">
-                                        <ConfigSummary
-                                            connectionId={activeConfig.connection_id}
-                                            schema={activeConfig.schema_selection ? JSON.parse(activeConfig.schema_selection) : {}}
-                                            dataDictionary={activeConfig.data_dictionary || ''}
-                                            activePromptVersion={activeConfig.version}
-                                            totalPromptVersions={history.length}
-                                            lastUpdatedBy={activeConfig.created_by_username}
-                                        />
+                                <div className="p-8 pb-16">
+                                    {activeConfig ? (
+                                        <div className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                            {dashboardTab === 'overview' && (
+                                                <div className="space-y-8">
+                                                    <ConfigSummary
+                                                        connectionId={activeConfig.connection_id}
+                                                        dataSourceType={activeConfig.data_source_type as any || 'database'}
+                                                        fileInfo={activeConfig.data_source_type === 'file' ? { name: activeConfig.file_name, type: activeConfig.file_type } : undefined}
+                                                        schema={activeConfig.schema_selection ? JSON.parse(activeConfig.schema_selection) : {}}
+                                                        dataDictionary={activeConfig.data_dictionary || ''}
+                                                        activePromptVersion={activeConfig.version}
+                                                        totalPromptVersions={history.length}
+                                                        lastUpdatedBy={activeConfig.created_by_username}
+                                                        settings={advancedSettings}
+                                                    />
 
-                                        {/* Embedding Section */}
-                                        <div className="mt-8">
-                                            <h2 className="text-xl font-semibold mb-4 text-gray-900">Embedding Status</h2>
-                                            {embeddingJobId ? (
-                                                <EmbeddingProgress
-                                                    jobId={embeddingJobId}
-                                                    onComplete={() => {
-                                                        showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
-                                                        setEmbeddingJobId(null);
-                                                        if (activeConfig) {
-                                                            const embConf = activeConfig.embedding_config ? (typeof activeConfig.embedding_config === 'string' ? JSON.parse(activeConfig.embedding_config) : activeConfig.embedding_config) : {};
-                                                            const vDbName = embConf.vectorDbName || (activeConfig.data_source_type === 'database' && activeConfig.connection_id ? `db_connection_${activeConfig.connection_id}_data` : 'default_vector_db');
-                                                            if (vDbName) {
-                                                                import('../services/api').then(api => {
-                                                                    api.getVectorDbStatus(vDbName).then(status => setVectorDbStatus(status)).catch(err => console.log(err));
-                                                                });
-                                                            }
-                                                        }
-                                                    }}
-                                                    onError={(err) => showError('Embedding Failed', err)}
-                                                    onCancel={() => {
-                                                        showError('Job Cancelled', 'Embedding generation cancelled');
-                                                        setEmbeddingJobId(null);
-                                                    }}
-                                                />
-                                            ) : (
-                                                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                                                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                                                        <div>
-                                                            <h3 className="font-medium text-gray-900">Manage Knowledge Base</h3>
-                                                            <p className="text-sm text-gray-500 mt-1">
-                                                                Keep your agent's vector representations up-to-date with your latest data.
-                                                            </p>
+                                                    {/* Quick Stats Grid */}
+                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                                        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                                                            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-2">Agent Status</h3>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="flex h-3 w-3 rounded-full bg-green-500"></span>
+                                                                <span className="text-xl font-bold text-gray-900">Active</span>
+                                                            </div>
                                                         </div>
-                                                        <div className="flex gap-3">
-                                                            <button
-                                                                onClick={() => handleStartEmbedding(true)}
-                                                                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
-                                                                title="Only index new or modified files/rows"
-                                                            >
-                                                                Update Vector DB
-                                                            </button>
-                                                            <button
-                                                                onClick={() => {
-                                                                    if (window.confirm('Are you sure you want to rebuild the vector database? This will delete all existing knowledge and re-index everything from scratch. This may take a long time and consume LLM tokens.')) {
-                                                                        handleStartEmbedding(false);
-                                                                    }
-                                                                }}
-                                                                className="px-4 py-2 bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors"
-                                                                title="Delete everything and start fresh"
-                                                            >
-                                                                Rebuild DB
-                                                            </button>
+                                                        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                                                            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-2">Total Versions</h3>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xl font-bold text-gray-900">{history.length}</span>
+                                                                <span className="text-xs text-gray-400 font-medium">Published Prompts</span>
+                                                            </div>
+                                                        </div>
+                                                        <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                                                            <h3 className="text-sm font-medium text-gray-500 uppercase tracking-wider mb-2">Knowledge Freshness</h3>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xl font-bold text-gray-900">
+                                                                    {vectorDbStatus?.last_updated_at ? 'Synced' : 'Not Run'}
+                                                                </span>
+                                                                <span className="text-xs text-gray-400 font-medium">Vector DB</span>
+                                                            </div>
                                                         </div>
                                                     </div>
+                                                </div>
+                                            )}
 
-                                                    {/* Vector DB Stats Sub-Component */}
-                                                    {vectorDbStatus && (
-                                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-t border-gray-100 pt-5 mt-2">
-                                                            <div className="flex items-start gap-3">
-                                                                <div className="p-2 bg-blue-50 text-blue-600 rounded-md">
-                                                                    <DocumentTextIcon className="w-5 h-5" />
+                                            {dashboardTab === 'knowledge' && (
+                                                <div className="space-y-8">
+                                                    {/* Embedding Section */}
+                                                    <div>
+                                                        <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
+                                                            <svg className="w-5 h-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                                                            Knowledge Base Management
+                                                        </h2>
+                                                        {embeddingJobId ? (
+                                                            <EmbeddingProgress
+                                                                jobId={embeddingJobId}
+                                                                onComplete={() => {
+                                                                    showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
+                                                                    setEmbeddingJobId(null);
+                                                                    if (activeConfig) {
+                                                                        const embConf = activeConfig.embedding_config ? (typeof activeConfig.embedding_config === 'string' ? JSON.parse(activeConfig.embedding_config) : activeConfig.embedding_config) : {};
+                                                                        const vDbName = embConf.vectorDbName || (activeConfig.data_source_type === 'database' && activeConfig.connection_id ? `db_connection_${activeConfig.connection_id}_data` : 'default_vector_db');
+                                                                        if (vDbName) {
+                                                                            import('../services/api').then(api => {
+                                                                                api.getVectorDbStatus(vDbName).then(status => setVectorDbStatus(status)).catch(err => console.log(err));
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                }}
+                                                                onError={(err) => showError('Embedding Failed', err)}
+                                                                onCancel={() => {
+                                                                    showError('Job Cancelled', 'Embedding generation cancelled');
+                                                                    setEmbeddingJobId(null);
+                                                                }}
+                                                            />
+                                                        ) : (
+                                                            <div className="bg-white p-8 rounded-xl border border-gray-200 shadow-sm transition-all hover:shadow-md">
+                                                                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+                                                                    <div className="max-w-xl">
+                                                                        <h3 className="text-lg font-semibold text-gray-900">Manage Knowledge Base</h3>
+                                                                        <p className="text-gray-500 mt-2">
+                                                                            Keep your agent's vector representations up-to-date with your latest data. Update manually or set an automatic sync schedule below.
+                                                                        </p>
+                                                                    </div>
+                                                                    <div className="flex gap-3">
+                                                                        <button
+                                                                            onClick={() => handleStartEmbedding(true)}
+                                                                            className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all hover:scale-105 active:scale-95"
+                                                                        >
+                                                                            Update Knowledge
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                if (window.confirm('Are you sure you want to rebuild the vector database? This will delete all existing knowledge and re-index everything from scratch. This may take a long time and consume LLM tokens.')) {
+                                                                                    handleStartEmbedding(false);
+                                                                                }
+                                                                            }}
+                                                                            className="px-6 py-2.5 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold transition-all hover:border-red-300"
+                                                                        >
+                                                                            Rebuild DB
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Vector DB Stats Card */}
+                                                                {vectorDbStatus && (
+                                                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-8 border-t border-gray-100">
+                                                                        <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                                                                            <p className="text-xs text-blue-600 font-bold uppercase tracking-wider mb-2">Stored Documents</p>
+                                                                            <div className="flex items-end gap-2">
+                                                                                <p className="text-3xl font-bold text-gray-900">{vectorDbStatus.total_documents_indexed.toLocaleString()}</p>
+                                                                                <p className="text-sm text-gray-500 font-medium mb-1">Items</p>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        <div className="p-4 bg-purple-50/50 rounded-xl border border-purple-100">
+                                                                            <p className="text-xs text-purple-600 font-bold uppercase tracking-wider mb-2">Vector Embeddings</p>
+                                                                            <div className="flex items-end gap-2">
+                                                                                <p className="text-3xl font-bold text-gray-900">{vectorDbStatus.total_vectors.toLocaleString()}</p>
+                                                                                <p className="text-sm text-gray-500 font-medium mb-1">Vectors</p>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        <div className="p-4 bg-green-50/50 rounded-xl border border-green-100">
+                                                                            <p className="text-xs text-green-600 font-bold uppercase tracking-wider mb-2">Last Synchronized</p>
+                                                                            <div className="flex items-center gap-2 mt-2">
+                                                                                <CheckCircleIcon className="w-6 h-6 text-green-600" />
+                                                                                <p className="text-base font-semibold text-gray-900">
+                                                                                    {vectorDbStatus.last_updated_at
+                                                                                        ? new Date(vectorDbStatus.last_updated_at + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+                                                                                        : 'Never run'}
+                                                                                </p>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Sync Schedule Section */}
+                                                    {activeConfig && (() => {
+                                                        const embConf = activeConfig.embedding_config
+                                                            ? (typeof activeConfig.embedding_config === 'string'
+                                                                ? JSON.parse(activeConfig.embedding_config)
+                                                                : activeConfig.embedding_config)
+                                                            : {};
+                                                        const vDbName = embConf.vectorDbName ||
+                                                            (activeConfig.data_source_type === 'database' && activeConfig.connection_id
+                                                                ? `db_connection_${activeConfig.connection_id}_data`
+                                                                : 'default_vector_db');
+                                                        return vDbName ? (
+                                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 delay-200">
+                                                                <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
+                                                                    <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                                    Automatic Sync Schedule
+                                                                </h2>
+                                                                <ScheduleSelector
+                                                                    vectorDbName={vDbName}
+                                                                    readOnly={!canEdit}
+                                                                />
+                                                            </div>
+                                                        ) : null;
+                                                    })()}
+                                                </div>
+                                            )}
+
+                                            {dashboardTab === 'sandbox' && (
+                                                <div className="bg-white rounded-2xl border border-gray-200 shadow-xl overflow-hidden flex flex-col h-[700px] animate-in zoom-in-95 duration-300">
+                                                    <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                                                        <div>
+                                                            <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                                                                <CommandLineIcon className="w-5 h-5 text-indigo-600" />
+                                                                Agent Sandbox
+                                                            </h3>
+                                                            <p className="text-xs text-gray-500">Test the current configuration in real-time</p>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => setSandboxMessages([])}
+                                                            className="text-xs font-semibold text-gray-500 hover:text-red-600 transition-colors"
+                                                        >
+                                                            Clear Session
+                                                        </button>
+                                                    </div>
+                                                    <div className="flex-1 overflow-hidden flex flex-col relative bg-gray-50/30">
+                                                        <MessageList
+                                                            messages={sandboxMessages}
+                                                            isLoading={isSandboxTyping}
+                                                            username={user?.username}
+                                                            emptyStateProps={{
+                                                                title: `Testing ${selectedAgent.name}`,
+                                                                subtitle: 'Type a message to see how the agent responds with its current settings.',
+                                                                suggestions: activeConfig.example_questions ? JSON.parse(activeConfig.example_questions) : [
+                                                                    "What can you do?",
+                                                                    "Show me the available data",
+                                                                    "Summarize the recent records"
+                                                                ]
+                                                            }}
+                                                        />
+                                                    </div>
+                                                    <div className="p-4 bg-white border-t border-gray-100">
+                                                        <ChatInput
+                                                            onSendMessage={handleSandboxSend}
+                                                            isDisabled={isSandboxTyping}
+                                                            placeholder="Test the agent..."
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {dashboardTab === 'specs' && (
+                                                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                        {/* LLM Specs */}
+                                                        <div className="bg-white p-8 rounded-2xl border border-gray-200 shadow-sm transition-all hover:shadow-md">
+                                                            <div className="flex items-center gap-4 mb-6">
+                                                                <div className="w-12 h-12 bg-indigo-50 rounded-xl flex items-center justify-center">
+                                                                    <CommandLineIcon className="w-6 h-6 text-indigo-600" />
                                                                 </div>
                                                                 <div>
-                                                                    <p className="text-xs text-gray-500 font-medium uppercase">Tracked Docs</p>
-                                                                    <p className="text-lg font-semibold text-gray-900">{vectorDbStatus.total_documents_indexed.toLocaleString()}</p>
+                                                                    <h3 className="text-lg font-bold text-gray-900">Logic Engine (LLM)</h3>
+                                                                    <p className="text-sm text-gray-500">Core reasoning configuration</p>
                                                                 </div>
                                                             </div>
-
-                                                            <div className="flex items-start gap-3">
-                                                                <div className="p-2 bg-purple-50 text-purple-600 rounded-md">
-                                                                    <ServerStackIcon className="w-5 h-5" />
-                                                                </div>
-                                                                <div>
-                                                                    <p className="text-xs text-gray-500 font-medium uppercase">Vector DB Embeddings</p>
-                                                                    <p className="text-lg font-semibold text-gray-900">{vectorDbStatus.total_vectors.toLocaleString()}</p>
-                                                                </div>
-                                                            </div>
-
-                                                            <div className="flex items-start gap-3">
-                                                                <div className="p-2 bg-green-50 text-green-600 rounded-md">
-                                                                    <CheckCircleIcon className="w-5 h-5" />
-                                                                </div>
-                                                                <div>
-                                                                    <p className="text-xs text-gray-500 font-medium uppercase">Last Updated</p>
-                                                                    <p className="text-sm font-medium text-gray-900 mt-1">
-                                                                        {vectorDbStatus.last_updated_at
-                                                                            ? new Date(vectorDbStatus.last_updated_at + 'Z').toLocaleString()
-                                                                            : 'Never run'}
-                                                                    </p>
-                                                                </div>
+                                                            <div className="space-y-4">
+                                                                {(() => {
+                                                                    const conf = activeConfig.llm_config ? (typeof activeConfig.llm_config === 'string' ? JSON.parse(activeConfig.llm_config) : activeConfig.llm_config) : {};
+                                                                    return (
+                                                                        <div className="grid grid-cols-2 gap-4">
+                                                                            <div className="col-span-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Model Name</p>
+                                                                                <p className="text-sm font-mono font-bold text-gray-700">{conf.model || 'gpt-4o'}</p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Temperature</p>
+                                                                                <p className="text-sm font-semibold text-gray-700">{conf.temperature ?? 0.0}</p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Max Tokens</p>
+                                                                                <p className="text-sm font-semibold text-gray-700">{conf.maxTokens || 4096}</p>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })()}
                                                             </div>
                                                         </div>
-                                                    )}
+
+                                                        {/* Embedding Specs */}
+                                                        <div className="bg-white p-8 rounded-2xl border border-gray-200 shadow-sm transition-all hover:shadow-md">
+                                                            <div className="flex items-center gap-4 mb-6">
+                                                                <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center">
+                                                                    <svg className="w-6 h-6 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                                                                </div>
+                                                                <div>
+                                                                    <h3 className="text-lg font-bold text-gray-900">Knowledge Engine</h3>
+                                                                    <p className="text-sm text-gray-500">Vectorization & Chunking</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="space-y-4">
+                                                                {(() => {
+                                                                    const emb = activeConfig.embedding_config ? (typeof activeConfig.embedding_config === 'string' ? JSON.parse(activeConfig.embedding_config) : activeConfig.embedding_config) : {};
+                                                                    const chunk = activeConfig.chunking_config ? (typeof activeConfig.chunking_config === 'string' ? JSON.parse(activeConfig.chunking_config) : activeConfig.chunking_config) : {};
+                                                                    return (
+                                                                        <div className="grid grid-cols-2 gap-4">
+                                                                            <div className="col-span-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Embedding Model</p>
+                                                                                <p className="text-sm font-mono font-bold text-gray-700">{emb.model || 'BAAI/bge-m3'}</p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Parent Size</p>
+                                                                                <p className="text-sm font-semibold text-gray-700">{chunk.parentChunkSize || 800} chars</p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Child Size</p>
+                                                                                <p className="text-sm font-semibold text-gray-700">{chunk.childChunkSize || 200} chars</p>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })()}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Retriever Specs */}
+                                                        <div className="bg-white p-8 rounded-2xl border border-gray-200 shadow-sm transition-all hover:shadow-md col-span-1 md:col-span-2">
+                                                            <div className="flex items-center gap-4 mb-6">
+                                                                <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center">
+                                                                    <svg className="w-6 h-6 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                                                                </div>
+                                                                <div>
+                                                                    <h3 className="text-lg font-bold text-gray-900">Retrieval Strategy</h3>
+                                                                    <p className="text-sm text-gray-500">Search weights and reranking</p>
+                                                                </div>
+                                                            </div>
+                                                            <div className="space-y-4">
+                                                                {(() => {
+                                                                    const ret = activeConfig.retriever_config ? (typeof activeConfig.retriever_config === 'string' ? JSON.parse(activeConfig.retriever_config) : activeConfig.retriever_config) : {};
+                                                                    return (
+                                                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                                                            {ret.hybridWeights && (
+                                                                                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Semantic Weight</p>
+                                                                                    <p className="text-sm font-bold text-purple-700">{(ret.hybridWeights[0] * 100).toFixed(0)}%</p>
+                                                                                </div>
+                                                                            )}
+                                                                            {ret.hybridWeights && (
+                                                                                <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                    <p className="text-xs font-bold text-gray-400 uppercase mb-1">Keyword Weight</p>
+                                                                                    <p className="text-sm font-bold text-purple-700">{(ret.hybridWeights[1] * 100).toFixed(0)}%</p>
+                                                                                </div>
+                                                                            )}
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Top-K Final</p>
+                                                                                <p className="text-sm font-bold text-gray-700">{ret.topKFinal || 10}</p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-xs font-bold text-gray-400 uppercase mb-1">Reranking</p>
+                                                                                <p className={`text-sm font-bold ${ret.rerankEnabled ? 'text-green-600' : 'text-gray-400'}`}>
+                                                                                    {ret.rerankEnabled ? 'Enabled' : 'Disabled'}
+                                                                                </p>
+                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })()}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {dashboardTab === 'monitoring' && (
+                                                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                                    <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
+                                                        <svg className="w-5 h-5 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                                        Agent Performance & Tracing
+                                                    </h2>
+                                                    <ObservabilityPanel />
+                                                </div>
+                                            )}
+
+                                            {dashboardTab === 'history' && (
+                                                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                                    <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
+                                                        <svg className="w-5 h-5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                                                        Configuration History
+                                                    </h2>
+                                                    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                                                        <PromptHistory
+                                                            history={history}
+                                                            onSelect={(item) => {
+                                                                // Show preview or navigate to edit
+                                                                setReplaceConfirm({ show: true, version: item });
+                                                            }}
+                                                        />
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
-
-                                        {/* Observability Section */}
-                                        <div className="mt-8 mb-8">
-                                            <ObservabilityPanel />
+                                    ) : (
+                                        <div className="min-h-[400px] flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border-2 border-dashed border-gray-200 shadow-sm">
+                                            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
+                                                <Cog6ToothIcon className="w-10 h-10 text-blue-500" />
+                                            </div>
+                                            <h2 className="text-2xl font-bold text-gray-900 mb-3">No Active Configuration</h2>
+                                            <p className="text-gray-500 max-w-sm mx-auto mb-8">
+                                                This agent has not been configured yet. Start the setup wizard to connect a data source and define behavior.
+                                            </p>
+                                            <button
+                                                onClick={handleStartNew}
+                                                className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-all hover:-translate-y-1 active:translate-y-0"
+                                            >
+                                                Start Setup Wizard
+                                            </button>
                                         </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex-1 flex flex-col items-center justify-center text-gray-400 border-2 border-dashed border-gray-300 rounded-xl">
-                                        <p className="text-lg font-medium mb-2">No active configuration found for {selectedAgent.name}</p>
-                                        <p className="text-sm">Get started by creating a new configuration</p>
-                                        <button
-                                            onClick={handleStartNew}
-                                            className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-                                        >
-                                            Start Setup Wizard
-                                        </button>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
                             </div>
+
                         ) : (
                             <div className="p-6 h-full flex flex-col">
                                 {successMessage && (
@@ -624,7 +1004,10 @@ const ConfigPage: React.FC = () => {
                                                     Choose the database you want to generate insights from.
                                                 </p>
                                                 <ConnectionManager
-                                                    onSelect={setConnectionId}
+                                                    onSelect={(id, name) => {
+                                                        setConnectionId(id);
+                                                        setConnectionName(name || '');
+                                                    }}
                                                     selectedId={connectionId}
                                                     readOnly={!canManageConnections(user)}
                                                 />
@@ -743,7 +1126,7 @@ const ConfigPage: React.FC = () => {
                                             settings={advancedSettings}
                                             onChange={setAdvancedSettings}
                                             readOnly={!canEdit}
-                                            dataSourceName={dataSourceType === 'file' && fileUploadResult ? fileUploadResult.file_name.split('.')[0] : `db_connection_${connectionId || 'default'}`}
+                                            dataSourceName={dataSourceType === 'file' && fileUploadResult ? fileUploadResult.file_name.split('.')[0] : (connectionName || `db_connection_${connectionId || 'default'}`)}
                                         />
                                     </div>
                                 )}
@@ -806,75 +1189,124 @@ const ConfigPage: React.FC = () => {
                                 {currentStep === 6 && (
                                     <div className="h-full flex flex-col overflow-y-auto p-6">
                                         <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
-                                        <div className="bg-blue-50 p-4 rounded-md mb-6 border border-blue-100 flex justify-between items-center">
-                                            <div>
-                                                <h3 className="font-bold text-blue-900">Setup Complete!</h3>
-                                                <p className="text-sm text-blue-700">Your agent is now configured with this prompt version.</p>
+
+                                        {/* Success Banner */}
+                                        <div className="bg-green-50 p-4 rounded-md mb-4 border border-green-200 flex items-center gap-3">
+                                            <div className="flex-shrink-0">
+                                                <CheckCircleIcon className="w-6 h-6 text-green-600" />
+                                            </div>
+                                            <div className="flex-1">
+                                                <h3 className="font-bold text-green-900">Configuration Published!</h3>
+                                                <p className="text-sm text-green-700">Your agent configuration has been saved successfully.</p>
                                             </div>
                                             <button
                                                 onClick={() => setCurrentStep(0)}
-                                                className="px-4 py-2 bg-white text-blue-600 border border-blue-200 rounded font-medium shadow-sm hover:bg-gray-50"
+                                                className="px-4 py-2 bg-white text-green-700 border border-green-300 rounded font-medium shadow-sm hover:bg-green-50"
                                             >
                                                 Go to Dashboard
                                             </button>
                                         </div>
 
+                                        {/* PROMINENT: Vector DB Required Warning */}
+                                        {!embeddingJobId && (
+                                            <div className="bg-amber-50 border-2 border-amber-400 rounded-lg p-6 mb-6 shadow-md">
+                                                <div className="flex items-start gap-4">
+                                                    <div className="flex-shrink-0 mt-0.5">
+                                                        <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                                        </svg>
+                                                    </div>
+                                                    <div className="flex-1">
+                                                        <h3 className="text-lg font-bold text-amber-800 mb-2">
+                                                            ⚡ Action Required: Build Knowledge Base
+                                                        </h3>
+                                                        <p className="text-amber-700 mb-4">
+                                                            Your configuration is saved, but <strong>the agent cannot answer questions yet</strong>.
+                                                            You must create the Vector Database to enable the agent's knowledge base.
+                                                        </p>
+                                                        <div className="flex flex-wrap gap-3">
+                                                            <button
+                                                                onClick={() => handleStartEmbedding(false)}
+                                                                className="px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-semibold transition-colors shadow-md flex items-center gap-2"
+                                                            >
+                                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                                                </svg>
+                                                                Create Vector DB Now
+                                                            </button>
+                                                            <span className="text-sm text-amber-600 self-center">
+                                                                This may take a few minutes depending on your data size.
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {/* Embedding Progress (shown when job is running) */}
+                                        {embeddingJobId && (
+                                            <div className="mb-6">
+                                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                                                    <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                                                        <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                        </svg>
+                                                        Building Knowledge Base...
+                                                    </h3>
+                                                    <p className="text-sm text-blue-700">Your agent will be ready to answer questions once this completes.</p>
+                                                </div>
+                                                <EmbeddingProgress
+                                                    jobId={embeddingJobId}
+                                                    onComplete={() => {
+                                                        showSuccess('Knowledge Base Ready!', 'Your agent can now answer questions based on your data.');
+                                                        setEmbeddingJobId(null);
+                                                    }}
+                                                    onError={(err) => showError('Embedding Failed', err)}
+                                                    onCancel={() => {
+                                                        showError('Job Cancelled', 'Knowledge base creation was cancelled.');
+                                                        setEmbeddingJobId(null);
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
+
                                         <ConfigSummary
                                             connectionId={connectionId}
+                                            dataSourceType={dataSourceType}
+                                            fileInfo={fileUploadResult ? { name: fileUploadResult.file_name, type: fileUploadResult.file_type } : undefined}
                                             schema={selectedSchema}
                                             dataDictionary={dataDictionary}
                                             activePromptVersion={history.find(p => p.is_active)?.version || null}
                                             totalPromptVersions={history.length}
                                             lastUpdatedBy={history.find(p => p.is_active)?.created_by_username}
+                                            settings={advancedSettings}
                                         />
 
-                                        {/* Embedding Section */}
-                                        <div className="mt-8">
-                                            <h2 className="text-xl font-semibold mb-4 text-gray-900">Embedding Status</h2>
-                                            {embeddingJobId ? (
-                                                <EmbeddingProgress
-                                                    jobId={embeddingJobId}
-                                                    onComplete={React.useCallback(() => {
-                                                        showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
-                                                        setEmbeddingJobId(null);
-                                                    }, [showSuccess])}
-                                                    onError={React.useCallback((err: string) => showError('Embedding Failed', err), [showError])}
-                                                    onCancel={React.useCallback(() => {
-                                                        showError('Job Cancelled', 'Embedding generation cancelled');
-                                                        setEmbeddingJobId(null);
-                                                    }, [showError])}
-                                                />
-                                            ) : (
-                                                <div className="bg-white p-6 rounded-lg border border-blue-100 shadow-sm flex items-center justify-between">
-                                                    <div>
-                                                        <h3 className="font-medium text-gray-900">Manage Knowledge Base</h3>
-                                                        <p className="text-sm text-gray-500 mt-1">
-                                                            Required to make your new configuration searchable. Keep your agent's knowledge up-to-date with your latest data.
-                                                        </p>
-                                                    </div>
-                                                    <div className="flex gap-3">
-                                                        <button
-                                                            onClick={() => handleStartEmbedding(true)}
-                                                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
-                                                            title="Only index new or modified files/rows"
-                                                        >
-                                                            Update Vector DB
-                                                        </button>
-                                                        <button
-                                                            onClick={() => {
-                                                                if (window.confirm('Are you sure you want to rebuild the vector database? This will delete all existing knowledge and re-index everything from scratch. This may take a long time and consume LLM tokens.')) {
-                                                                    handleStartEmbedding(false);
-                                                                }
-                                                            }}
-                                                            className="px-4 py-2 bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors"
-                                                            title="Delete everything and start fresh"
-                                                        >
-                                                            Rebuild Vector DB
-                                                        </button>
-                                                    </div>
+                                        {/* Additional Options (smaller, secondary) */}
+                                        {!embeddingJobId && (
+                                            <div className="mt-6 pt-6 border-t border-gray-200">
+                                                <h3 className="text-sm font-medium text-gray-500 mb-3">Additional Options</h3>
+                                                <div className="flex gap-3">
+                                                    <button
+                                                        onClick={() => handleStartEmbedding(true)}
+                                                        className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium transition-colors text-sm"
+                                                        title="Only process new or changed data"
+                                                    >
+                                                        Incremental Update
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setCurrentStep(0)}
+                                                        className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium transition-colors text-sm"
+                                                    >
+                                                        Skip for Now (Go to Dashboard)
+                                                    </button>
                                                 </div>
-                                            )}
-                                        </div>
+                                                <p className="text-xs text-gray-400 mt-2">
+                                                    You can always create or update the vector database later from the Dashboard.
+                                                </p>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>
