@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { canEditPrompt, canRollback } from '../utils/permissions';
+import { canRollback } from '../utils/permissions';
 import { ChatHeader } from '../components/chat';
 import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
-
-const getAuthToken = (): string | null => localStorage.getItem('auth_token');
+import { apiClient } from '../services/api';
 
 interface PromptVersion {
     id: number;
@@ -33,7 +32,6 @@ const PromptHistoryPage: React.FC = () => {
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
     const [rollbackConfirm, setRollbackConfirm] = useState<{ show: boolean; version: PromptVersion | null }>({ show: false, version: null });
 
-    const canEdit = canEditPrompt(user);
     const hasRollbackPermission = canRollback(user);
     const activeVersion = versions.find(v => v.is_active);
 
@@ -45,19 +43,15 @@ const PromptHistoryPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = getAuthToken();
-            const res = await fetch('/api/v1/config/history', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Failed to load prompt history');
-            const data = await res.json();
+            const res = await apiClient.get('/api/v1/config/history');
+            const data = res.data;
             setVersions(data);
             if (data.length > 0) {
                 const active = data.find((v: PromptVersion) => v.is_active);
                 setSelectedVersion(active || data[0]);
             }
         } catch (err: any) {
-            setError(err.message || 'Failed to load prompt history');
+            setError(err.response?.data?.detail || err.message || 'Failed to load prompt history');
         } finally {
             setLoading(false);
         }
@@ -87,22 +81,13 @@ const PromptHistoryPage: React.FC = () => {
         setRollbackLoading(true);
         setError(null);
         try {
-            const token = getAuthToken();
-            const res = await fetch(`/api/v1/config/rollback/${rollbackConfirm.version.id}`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) {
-                const data = await res.json();
-                throw new Error(data.detail || 'Failed to rollback');
-            }
-            const data = await res.json();
-            setSuccessMessage(`Rolled back to version ${data.version}`);
+            const res = await apiClient.post(`/api/v1/config/rollback/${rollbackConfirm.version.id}`);
+            setSuccessMessage(`Rolled back to version ${res.data.version}`);
             setRollbackConfirm({ show: false, version: null });
             loadVersions();
             setTimeout(() => setSuccessMessage(null), 3000);
         } catch (err: any) {
-            setError(err.message || 'Failed to rollback');
+            setError(err.response?.data?.detail || err.message || 'Failed to rollback');
         } finally {
             setRollbackLoading(false);
         }

@@ -1,129 +1,118 @@
 """
 Role-based access control dependencies.
-Defines roles, permission utilities, and FastAPI dependencies.
+Defines FastAPI dependencies for enforcing role-based access.
+
+Role definitions and permission logic are centralized in core/roles.py.
 """
-from enum import Enum
-from typing import List, Callable
-from functools import wraps
+from typing import List
 from fastapi import Depends, HTTPException, status
-from backend.core.security import oauth2_scheme
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 from backend.config import get_settings
-from jose import JWTError, jwt
+from backend.core.security import (
+    decode_keycloak_token,
+    extract_user_claims,
+)
+from backend.core.roles import (
+    Role,
+    UserRole,  # Backward compatibility alias
+    ROLE_HIERARCHY,
+    VALID_ROLES,
+    DEFAULT_ROLE,
+    role_at_least,
+    map_keycloak_role,
+    # Permission helpers
+    can_manage_users,
+    can_view_all_audit_logs,
+    can_manage_connections,
+    can_edit_config,
+    can_publish_prompt,
+    can_execute_queries,
+    can_view_config,
+    can_manage_agents,
+    get_all_roles,
+    is_valid_role,
+)
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import User
 
 
-# ============================================
-# Role Definitions
-# ============================================
-
-class UserRole(str, Enum):
-    """
-    User roles with descending privilege levels.
-    SUPER_ADMIN > EDITOR > USER > VIEWER
-    """
-    SUPER_ADMIN = "super_admin"
-    EDITOR = "editor"
-    USER = "user"
-    VIEWER = "viewer"
-
-
-# Role hierarchy for permission checks (higher index = less privilege)
-# Role hierarchy for permission checks
-ROLE_HIERARCHY = [
-    UserRole.SUPER_ADMIN.value,
-    UserRole.EDITOR.value,
-    UserRole.USER.value,
-]
-
-
-def role_at_least(user_role: str, required_role: str) -> bool:
-    """
-    Check if user_role has at least the privilege level of required_role.
-    Returns True if user_role >= required_role in the hierarchy.
-    """
-    if user_role not in ROLE_HIERARCHY or required_role not in ROLE_HIERARCHY:
-        return False
-    return ROLE_HIERARCHY.index(user_role) <= ROLE_HIERARCHY.index(required_role)
-
-
-# ============================================
-# Permission Helpers
-# ============================================
-
-def can_manage_users(role: str) -> bool:
-    """Super Admin can manage users."""
-    return role == UserRole.SUPER_ADMIN.value
-
-
-def can_view_all_audit_logs(role: str) -> bool:
-    """Only Super Admin can view all audit logs."""
-    return role == UserRole.SUPER_ADMIN.value
-
-
-def can_manage_connections(role: str) -> bool:
-    """Super Admin can manage database connections."""
-    return role == UserRole.SUPER_ADMIN.value
-
-
-def can_edit_config(role: str) -> bool:
-    """Super Admin, Admin, and Editor can edit config (schema, dictionary, prompt)."""
-    return role_at_least(role, UserRole.EDITOR.value)
-
-
-def can_publish_prompt(role: str) -> bool:
-    """Only Super Admin can publish prompts."""
-    return role == UserRole.SUPER_ADMIN.value
-
-
-def can_execute_queries(role: str) -> bool:
-    """Super Admin, Admin, Editor, and User can execute queries."""
-    return role_at_least(role, UserRole.USER.value)
-
-
-def can_view_config(role: str) -> bool:
-    """All authenticated users can view config summary."""
-    return role in ROLE_HIERARCHY
+# HTTP Bearer for extracting tokens
+_security = HTTPBearer()
 
 
 # ============================================
 # FastAPI Dependencies
 # ============================================
 
-async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(_security)
+) -> User:
     """
-    Validate the token and return the current user.
+    Validate the OIDC token and return the current user.
+    
+    This performs Just-In-Time (JIT) user provisioning:
+    1. Validates the token against Keycloak's JWKS
+    2. Extracts user claims (sub, email, name, roles)
+    3. Looks up or creates the user in local database
+    4. Uses local role if set, otherwise maps Keycloak roles
     """
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
     settings = get_settings()
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        username: str = payload.get("sub")
-        if username is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
+    token = credentials.credentials
+    
+    # Validate token with Keycloak
+    payload = await decode_keycloak_token(
+        token=token,
+        issuer_url=settings.oidc_issuer_url,
+        client_id=settings.oidc_client_id,
+        audience=settings.oidc_audience,
+        jwks_cache_ttl=settings.oidc_jwks_cache_ttl
+    )
+    
+    # Extract user claims from token
+    claims = extract_user_claims(payload, role_claim=settings.oidc_role_claim)
+    
+    # Get or create user in local database (JIT provisioning)
+    db_service = get_db_service()
+    user_data = db_service.get_user_by_external_id(claims.sub)
+    
+    if user_data:
+        # User exists - check if active
+        if not user_data.get('is_active'):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account is inactive"
+            )
         
-    db = get_db_service()
-    user_dict = db.get_user_by_username(username)
-    if user_dict is None:
-        raise credentials_exception
+        # Use local role (hybrid approach - local takes precedence)
+        role = user_data.get('role', settings.oidc_default_role)
+    else:
+        # First-time login - create user with default role from Keycloak
+        keycloak_default_role = map_keycloak_role(claims.roles)
         
-    # Remove password hash before creating User model
-    if 'password_hash' in user_dict:
-        del user_dict['password_hash']
-        
-    return User(**user_dict)
+        user_data = db_service.upsert_oidc_user(
+            external_id=claims.sub,
+            email=claims.email,
+            username=claims.preferred_username,
+            full_name=claims.name or f"{claims.given_name or ''} {claims.family_name or ''}".strip(),
+            default_role=keycloak_default_role or settings.oidc_default_role
+        )
+        role = user_data.get('role', settings.oidc_default_role)
+    
+    return User(
+        username=user_data.get('username'),
+        role=role,
+        id=user_data.get('id'),
+        email=user_data.get('email'),
+        full_name=user_data.get('full_name'),
+        external_id=user_data.get('external_id')
+    )
 
 
 def require_role(allowed_roles: List[str]):
     """
     Dependency to enforce role-based access control.
-    Usage: Depends(require_role([UserRole.SUPER_ADMIN.value, UserRole.EDITOR.value]))
+    Usage: Depends(require_role([Role.ADMIN.value]))
     """
     async def role_checker(current_user: User = Depends(get_current_user)):
         if current_user.role not in allowed_roles:
@@ -138,7 +127,7 @@ def require_role(allowed_roles: List[str]):
 def require_at_least(min_role: str):
     """
     Dependency to enforce minimum role level.
-    Usage: Depends(require_at_least(UserRole.EDITOR.value))
+    Usage: Depends(require_at_least(Role.USER.value))
     """
     async def role_checker(current_user: User = Depends(get_current_user)):
         if not role_at_least(current_user.role, min_role):
@@ -150,7 +139,14 @@ def require_at_least(min_role: str):
     return role_checker
 
 
-# Convenience dependencies
-require_super_admin = require_role([UserRole.SUPER_ADMIN.value])
-require_editor = require_at_least(UserRole.EDITOR.value)
-require_user = require_at_least(UserRole.USER.value)
+# ============================================
+# Convenience Dependencies
+# ============================================
+# These use the centralized Role enum for consistency
+
+require_admin = require_role([Role.ADMIN.value])
+require_user = require_at_least(Role.USER.value)
+
+# Backward compatibility aliases
+require_super_admin = require_admin  # Alias for migration
+require_editor = require_admin  # Alias for migration (editor -> admin)

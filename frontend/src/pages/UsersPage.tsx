@@ -6,8 +6,7 @@ import RefreshButton from '../components/RefreshButton';
 import Alert from '../components/Alert';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { APP_CONFIG, CONFIRMATION_MESSAGES } from '../config';
-
-const getAuthToken = (): string | null => localStorage.getItem('auth_token');
+import { apiClient } from '../services/api';
 
 interface UserData {
     id: number;
@@ -27,16 +26,6 @@ const UsersPage: React.FC = () => {
     const [editingUser, setEditingUser] = useState<UserData | null>(null);
     const [editForm, setEditForm] = useState({ role: '', is_active: true });
 
-    // Add User State
-    const [addingUser, setAddingUser] = useState(false);
-    const [newUserForm, setNewUserForm] = useState({
-        username: '',
-        email: '',
-        password: '',
-        full_name: '',
-        role: 'user'
-    });
-
     // Deactivate Modal State
     const [deactivateConfirm, setDeactivateConfirm] = useState<{ show: boolean; user: UserData | null }>({ show: false, user: null });
 
@@ -52,15 +41,11 @@ const UsersPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = getAuthToken();
-            const res = await fetch('/api/v1/users', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Failed to load users');
-            const data = await res.json();
-            setUsers(data);
+            const res = await apiClient.get('/api/v1/users');
+
+            setUsers(res.data || []);
         } catch (err: any) {
-            setError(err.message || 'Failed to load users');
+            setError(err.response?.data?.detail || err.message || 'Failed to load users');
         } finally {
             setLoading(false);
         }
@@ -74,56 +59,11 @@ const UsersPage: React.FC = () => {
     const handleSave = async () => {
         if (!editingUser) return;
         try {
-            const token = getAuthToken();
-            const res = await fetch(`/api/v1/users/${editingUser.id}`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify(editForm)
-            });
-            if (!res.ok) throw new Error('Failed to update user');
+            await apiClient.patch(`/api/v1/users/${editingUser.id}`, editForm);
             setEditingUser(null);
             loadUsers();
         } catch (err: any) {
-            setError(err.message || 'Failed to update user');
-        }
-    };
-
-    const handleCreateUser = async () => {
-        if (!newUserForm.username || !newUserForm.password) {
-            setError('Username and password are required');
-            return;
-        }
-
-        try {
-            const token = getAuthToken();
-            const res = await fetch('/api/v1/users', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify(newUserForm)
-            });
-
-            if (!res.ok) {
-                const data = await res.json();
-                throw new Error(data.detail || 'Failed to create user');
-            }
-
-            setAddingUser(false);
-            setNewUserForm({
-                username: '',
-                email: '',
-                password: '',
-                full_name: '',
-                role: 'user'
-            });
-            loadUsers();
-        } catch (err: any) {
-            setError(err.message || 'Failed to create user');
+            setError(err.response?.data?.detail || err.message || 'Failed to update user');
         }
     };
 
@@ -134,16 +74,11 @@ const UsersPage: React.FC = () => {
     const confirmDeactivate = async () => {
         if (!deactivateConfirm.user) return;
         try {
-            const token = getAuthToken();
-            const res = await fetch(`/api/v1/users/${deactivateConfirm.user.id}`, {
-                method: 'DELETE',
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Failed to deactivate user');
+            await apiClient.delete(`/api/v1/users/${deactivateConfirm.user.id}`);
             setDeactivateConfirm({ show: false, user: null });
             loadUsers();
         } catch (err: any) {
-            setError(err.message || 'Failed to deactivate user');
+            setError(err.response?.data?.detail || err.message || 'Failed to deactivate user');
         }
     };
 
@@ -178,15 +113,6 @@ const UsersPage: React.FC = () => {
                                 onClick={loadUsers}
                                 isLoading={loading}
                             />
-                            <button
-                                onClick={() => setAddingUser(true)}
-                                className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                </svg>
-                                Add User
-                            </button>
                         </div>
                     </div>
 
@@ -232,10 +158,9 @@ const UsersPage: React.FC = () => {
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
-                                            ${u.role === 'super_admin' ? 'bg-purple-100 text-purple-800' : ''}
-                                            ${u.role === 'editor' ? 'bg-green-100 text-green-800' : ''}
+                                            ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
                                             ${u.role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
-                                            ${u.role === 'viewer' ? 'bg-gray-100 text-gray-800' : ''}
+                                          
                                         `}>
                                                     {getRoleDisplayName(u.role)}
                                                 </span>
@@ -309,85 +234,6 @@ const UsersPage: React.FC = () => {
                                         className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
                                     >
                                         Save Changes
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                    {/* Add User Modal */}
-                    {addingUser && (
-                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                            <div className="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-                                <h3 className="text-lg font-semibold mb-4">Add New User</h3>
-
-                                <div className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Username *</label>
-                                        <input
-                                            type="text"
-                                            value={newUserForm.username}
-                                            onChange={(e) => setNewUserForm(f => ({ ...f, username: e.target.value }))}
-                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
-                                            placeholder="jdoe"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                                        <input
-                                            type="email"
-                                            value={newUserForm.email}
-                                            onChange={(e) => setNewUserForm(f => ({ ...f, email: e.target.value }))}
-                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
-                                            placeholder="john@example.com"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                                        <input
-                                            type="text"
-                                            value={newUserForm.full_name}
-                                            onChange={(e) => setNewUserForm(f => ({ ...f, full_name: e.target.value }))}
-                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
-                                            placeholder="John Doe"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">Password *</label>
-                                        <input
-                                            type="password"
-                                            value={newUserForm.password}
-                                            onChange={(e) => setNewUserForm(f => ({ ...f, password: e.target.value }))}
-                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
-                                            placeholder="********"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label htmlFor="new-role-select" className="block text-sm font-medium text-gray-700 mb-1">Role</label>
-                                        <select
-                                            id="new-role-select"
-                                            value={newUserForm.role}
-                                            onChange={(e) => setNewUserForm(f => ({ ...f, role: e.target.value }))}
-                                            className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
-                                        >
-                                            {ROLE_HIERARCHY.map(r => (
-                                                <option key={r} value={r}>{getRoleDisplayName(r)}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                </div>
-
-                                <div className="mt-6 flex justify-end gap-3">
-                                    <button
-                                        onClick={() => setAddingUser(false)}
-                                        className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        onClick={handleCreateUser}
-                                        className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
-                                    >
-                                        Create User
                                     </button>
                                 </div>
                             </div>

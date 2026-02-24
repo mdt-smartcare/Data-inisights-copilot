@@ -1,7 +1,7 @@
 """
 Unit tests for backend/sqliteDb/db.py DatabaseService
 
-Tests user CRUD, authentication, prompt management, and connection management.
+Tests user management (OIDC), prompt management, and connection management.
 """
 import pytest
 import tempfile
@@ -27,17 +27,7 @@ def db_service(temp_db):
     """Create a DatabaseService instance with temporary database."""
     from backend.sqliteDb.db import DatabaseService
     
-    # Temporarily override admin password env to avoid issues
-    original_admin = os.environ.get('ADMIN_PASSWORD')
-    os.environ['ADMIN_PASSWORD'] = 'test_admin_pass'
-    
     service = DatabaseService(db_path=temp_db)
-    
-    # Restore original
-    if original_admin:
-        os.environ['ADMIN_PASSWORD'] = original_admin
-    elif 'ADMIN_PASSWORD' in os.environ:
-        del os.environ['ADMIN_PASSWORD']
     
     return service
 
@@ -92,144 +82,134 @@ class TestDatabaseServiceInitialization:
         conn.close()
         
         assert result is not None
+
+
+class TestOIDCUserManagement:
+    """Tests for OIDC user management."""
     
-    def test_init_creates_default_admin_user(self, temp_db):
-        """Test that initialization creates default admin user."""
-        from backend.sqliteDb.db import DatabaseService
-        
-        os.environ['ADMIN_USERNAME'] = 'testadmin'
-        os.environ['ADMIN_PASSWORD'] = 'testpass123'
-        os.environ['ADMIN_EMAIL'] = 'admin@test.com'
-        
-        service = DatabaseService(db_path=temp_db)
-        user = service.get_user_by_username('testadmin')
+    def test_upsert_oidc_user_creates_new(self, db_service):
+        """Test creating a new user via OIDC JIT provisioning."""
+        user = db_service.upsert_oidc_user(
+            external_id="keycloak-sub-12345",
+            email="oidcuser@test.com",
+            username="oidcuser",
+            full_name="OIDC User",
+            default_role="user"
+        )
         
         assert user is not None
-        assert user['username'] == 'testadmin'
-        assert user['role'] == 'super_admin'
-        
-        # Cleanup env vars
-        del os.environ['ADMIN_USERNAME']
-        del os.environ['ADMIN_PASSWORD']
-        del os.environ['ADMIN_EMAIL']
-
-
-class TestPasswordHashing:
-    """Tests for DatabaseService password hashing."""
-    
-    def test_hash_password_returns_string(self, db_service):
-        """Test that hash_password returns a string."""
-        hashed = db_service.hash_password("testpassword")
-        
-        assert isinstance(hashed, str)
-        assert len(hashed) > 0
-    
-    def test_hash_password_is_bcrypt(self, db_service):
-        """Test that hash uses bcrypt format."""
-        hashed = db_service.hash_password("testpassword")
-        
-        # Bcrypt hashes start with $2a$, $2b$, or $2y$
-        assert hashed.startswith(("$2a$", "$2b$", "$2y$"))
-    
-    def test_verify_password_correct(self, db_service):
-        """Test password verification with correct password."""
-        password = "mysecretpassword"
-        hashed = db_service.hash_password(password)
-        
-        assert db_service.verify_password(password, hashed) is True
-    
-    def test_verify_password_incorrect(self, db_service):
-        """Test password verification with wrong password."""
-        password = "mysecretpassword"
-        hashed = db_service.hash_password(password)
-        
-        assert db_service.verify_password("wrongpassword", hashed) is False
-    
-    def test_hash_password_unique_salts(self, db_service):
-        """Test that same password produces different hashes (random salt)."""
-        password = "samepassword"
-        hash1 = db_service.hash_password(password)
-        hash2 = db_service.hash_password(password)
-        
-        assert hash1 != hash2
-        # But both should verify
-        assert db_service.verify_password(password, hash1)
-        assert db_service.verify_password(password, hash2)
-
-
-class TestUserCreation:
-    """Tests for user creation."""
-    
-    def test_create_user_basic(self, db_service):
-        """Test basic user creation."""
-        user = db_service.create_user(
-            username="newuser",
-            password="password123",
-            email="newuser@test.com"
-        )
-        
-        assert user['username'] == "newuser"
-        assert user['email'] == "newuser@test.com"
+        assert user['username'] == "oidcuser"
+        assert user['email'] == "oidcuser@test.com"
+        assert user['external_id'] == "keycloak-sub-12345"
         assert user['role'] == "user"
-        assert 'id' in user
     
-    def test_create_user_with_full_name(self, db_service):
-        """Test user creation with full name."""
-        user = db_service.create_user(
-            username="johndoe",
-            password="pass123",
-            email="john@test.com",
-            full_name="John Doe"
+    def test_upsert_oidc_user_updates_existing(self, db_service):
+        """Test that upsert updates existing OIDC user."""
+        # Create user
+        db_service.upsert_oidc_user(
+            external_id="keycloak-sub-12345",
+            email="original@test.com",
+            username="oidcuser",
+            full_name="Original Name",
+            default_role="user"
         )
         
-        assert user['full_name'] == "John Doe"
-    
-    def test_create_user_with_role(self, db_service):
-        """Test user creation with specific role."""
-        user = db_service.create_user(
-            username="editor1",
-            password="pass123",
-            email="editor@test.com",
-            role="editor"
+        # Update user
+        updated = db_service.upsert_oidc_user(
+            external_id="keycloak-sub-12345",
+            email="updated@test.com",
+            full_name="Updated Name"
         )
         
-        assert user['role'] == "editor"
+        assert updated['email'] == "updated@test.com"
+        assert updated['full_name'] == "Updated Name"
     
-    def test_create_user_duplicate_username_raises(self, db_service):
-        """Test that duplicate username raises ValueError."""
-        db_service.create_user(username="uniqueuser", password="pass123")
-        
-        with pytest.raises(ValueError) as exc_info:
-            db_service.create_user(username="uniqueuser", password="pass456")
-        
-        assert "already exists" in str(exc_info.value)
-    
-    def test_create_user_duplicate_email_raises(self, db_service):
-        """Test that duplicate email raises ValueError."""
-        db_service.create_user(
-            username="user1",
-            password="pass123",
-            email="same@test.com"
+    def test_get_user_by_external_id(self, db_service):
+        """Test retrieving user by OIDC external ID."""
+        db_service.upsert_oidc_user(
+            external_id="keycloak-sub-findme",
+            email="findme@test.com",
+            username="findme"
         )
         
-        with pytest.raises(ValueError) as exc_info:
-            db_service.create_user(
-                username="user2",
-                password="pass456",
-                email="same@test.com"
-            )
+        user = db_service.get_user_by_external_id("keycloak-sub-findme")
         
-        assert "already exists" in str(exc_info.value)
+        assert user is not None
+        assert user['username'] == "findme"
     
-    def test_create_user_no_email(self, db_service):
-        """Test user creation without email."""
-        user = db_service.create_user(
-            username="nomail",
-            password="pass123"
+    def test_get_user_by_external_id_not_found(self, db_service):
+        """Test that missing external_id returns None."""
+        user = db_service.get_user_by_external_id("nonexistent-sub")
+        
+        assert user is None
+    
+    def test_update_user_role(self, db_service):
+        """Test updating a user's role."""
+        user = db_service.upsert_oidc_user(
+            external_id="role-test-sub",
+            username="roletest",
+            default_role="user"
         )
         
-        assert user['username'] == "nomail"
-        assert user['email'] is None
+        result = db_service.update_user_role(user['id'], "admin")
+        
+        assert result is True
+        
+        updated = db_service.get_user_by_external_id("role-test-sub")
+        assert updated['role'] == "admin"
+    
+    def test_list_all_users(self, db_service):
+        """Test listing all users."""
+        db_service.upsert_oidc_user(external_id="user1-sub", username="user1")
+        db_service.upsert_oidc_user(external_id="user2-sub", username="user2")
+        
+        users = db_service.list_all_users()
+        
+        assert len(users) >= 2
+        usernames = [u['username'] for u in users]
+        assert "user1" in usernames
+        assert "user2" in usernames
+    
+    def test_deactivate_user(self, db_service):
+        """Test deactivating a user."""
+        user = db_service.upsert_oidc_user(
+            external_id="deactivate-sub",
+            username="deactivate"
+        )
+        
+        result = db_service.deactivate_user(user['id'])
+        
+        assert result is True
+        
+        deactivated = db_service.get_user_by_external_id("deactivate-sub")
+        assert deactivated['is_active'] == 0
+    
+    def test_activate_user(self, db_service):
+        """Test reactivating a deactivated user."""
+        user = db_service.upsert_oidc_user(
+            external_id="activate-sub",
+            username="activate"
+        )
+        db_service.deactivate_user(user['id'])
+        
+        result = db_service.activate_user(user['id'])
+        
+        assert result is True
+        
+        activated = db_service.get_user_by_external_id("activate-sub")
+        assert activated['is_active'] == 1
+    
+    def test_get_user_by_id(self, db_service):
+        """Test retrieving user by database ID."""
+        user = db_service.upsert_oidc_user(
+            external_id="getbyid-sub",
+            username="getbyid"
+        )
+        
+        retrieved = db_service.get_user_by_id(user['id'])
+        
+        assert retrieved is not None
+        assert retrieved['username'] == "getbyid"
 
 
 class TestUserRetrieval:
@@ -237,9 +217,9 @@ class TestUserRetrieval:
     
     def test_get_user_by_username_exists(self, db_service):
         """Test retrieving existing user."""
-        db_service.create_user(
+        db_service.upsert_oidc_user(
+            external_id="findme-sub",
             username="findme",
-            password="pass123",
             email="find@test.com"
         )
         
@@ -247,78 +227,12 @@ class TestUserRetrieval:
         
         assert user is not None
         assert user['username'] == "findme"
-        assert 'password_hash' in user  # Should include hash for auth
     
     def test_get_user_by_username_not_found(self, db_service):
         """Test retrieving non-existent user returns None."""
         user = db_service.get_user_by_username("nonexistent")
         
         assert user is None
-    
-    def test_get_user_includes_role(self, db_service):
-        """Test that retrieved user includes role."""
-        db_service.create_user(
-            username="roleuser",
-            password="pass123",
-            role="editor"
-        )
-        
-        user = db_service.get_user_by_username("roleuser")
-        
-        assert user['role'] == "editor"
-
-
-class TestAuthentication:
-    """Tests for user authentication."""
-    
-    def test_authenticate_user_success(self, db_service):
-        """Test successful authentication."""
-        db_service.create_user(
-            username="authuser",
-            password="correctpass"
-        )
-        
-        result = db_service.authenticate_user("authuser", "correctpass")
-        
-        assert result is not None
-        assert result['username'] == "authuser"
-        assert 'password_hash' not in result  # Should not expose hash
-    
-    def test_authenticate_user_wrong_password(self, db_service):
-        """Test authentication with wrong password."""
-        db_service.create_user(
-            username="authuser2",
-            password="correctpass"
-        )
-        
-        result = db_service.authenticate_user("authuser2", "wrongpass")
-        
-        assert result is None
-    
-    def test_authenticate_user_not_found(self, db_service):
-        """Test authentication with non-existent user."""
-        result = db_service.authenticate_user("ghostuser", "anypass")
-        
-        assert result is None
-    
-    def test_authenticate_inactive_user_fails(self, db_service, temp_db):
-        """Test that inactive user cannot authenticate."""
-        db_service.create_user(
-            username="inactive",
-            password="pass123"
-        )
-        
-        # Manually deactivate user
-        import sqlite3
-        conn = sqlite3.connect(temp_db)
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET is_active = 0 WHERE username = ?", ("inactive",))
-        conn.commit()
-        conn.close()
-        
-        result = db_service.authenticate_user("inactive", "pass123")
-        
-        assert result is None
 
 
 class TestDatabaseConnections:

@@ -1,6 +1,6 @@
 """
 Authorization service for enhanced RBAC enforcement.
-Provides SuperAdmin-only access control for RAG operations.
+Provides Admin-only access control for RAG operations.
 """
 from typing import Optional, List
 from datetime import datetime
@@ -10,7 +10,7 @@ from fastapi import HTTPException, status, Request
 
 from backend.models.schemas import User
 from backend.models.rag_models import RAGAuditAction
-from backend.core.permissions import UserRole
+from backend.core.roles import Role
 from backend.core.logging import get_logger
 from backend.sqliteDb.db import get_db_service
 
@@ -30,18 +30,18 @@ class AuthorizationService:
     def __init__(self):
         self.db = get_db_service()
     
-    def require_super_admin(self, user: User, action: str = None) -> None:
+    def require_admin(self, user: User, action: str = None) -> None:
         """
-        Verify user has SuperAdmin role. Raises 403 if not.
+        Verify user has Admin role. Raises 403 if not.
         
         Args:
             user: The user to check
             action: Optional action description for audit logging
             
         Raises:
-            HTTPException: 403 Forbidden if user is not SuperAdmin
+            HTTPException: 403 Forbidden if user is not Admin
         """
-        if user.role != UserRole.SUPER_ADMIN.value:
+        if user.role != Role.ADMIN.value:
             # Log unauthorized attempt
             self._log_unauthorized_attempt(user, action or "rag_access")
             
@@ -49,12 +49,15 @@ class AuthorizationService:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "error": "Access Denied",
-                    "message": "This feature is only available to SuperAdmin users.",
+                    "message": "This feature is only available to Admin users.",
                     "your_role": user.role,
-                    "required_role": UserRole.SUPER_ADMIN.value,
+                    "required_role": Role.ADMIN.value,
                     "action": action
                 }
             )
+    
+    # Backward compatibility alias
+    require_super_admin = require_admin
     
     def check_rag_access(self, user: User, action: str) -> bool:
         """
@@ -67,8 +70,8 @@ class AuthorizationService:
         Returns:
             True if user has permission, False otherwise
         """
-        # All RAG configuration actions require SuperAdmin
-        rag_actions_requiring_super_admin = [
+        # All RAG configuration actions require Admin
+        rag_actions_requiring_admin = [
             "wizard_access",
             "schema_select",
             "dictionary_upload",
@@ -78,8 +81,8 @@ class AuthorizationService:
             "embedding_cancel"
         ]
         
-        if action in rag_actions_requiring_super_admin:
-            return user.role == UserRole.SUPER_ADMIN.value
+        if action in rag_actions_requiring_admin:
+            return user.role == Role.ADMIN.value
         
         # Read-only actions for Admin and above
         rag_read_actions = [
@@ -89,25 +92,25 @@ class AuthorizationService:
         ]
         
         if action in rag_read_actions:
-            return user.role in [UserRole.SUPER_ADMIN.value, UserRole.EDITOR.value]
+            return user.role == Role.ADMIN.value
         
         return False
     
     def can_access_rag_wizard(self, user: User) -> bool:
         """Check if user can access the RAG configuration wizard."""
-        return user.role == UserRole.SUPER_ADMIN.value
+        return user.role == Role.ADMIN.value
     
     def can_generate_embeddings(self, user: User) -> bool:
         """Check if user can trigger embedding generation."""
-        return user.role == UserRole.SUPER_ADMIN.value
+        return user.role == Role.ADMIN.value
     
     def can_publish_config(self, user: User) -> bool:
         """Check if user can publish RAG configurations."""
-        return user.role == UserRole.SUPER_ADMIN.value
+        return user.role == Role.ADMIN.value
     
     def can_rollback_config(self, user: User) -> bool:
         """Check if user can rollback to previous configurations."""
-        return user.role == UserRole.SUPER_ADMIN.value
+        return user.role == Role.ADMIN.value
     
     def can_view_config_status(self, user: User) -> bool:
         """Check if user can view config status (read-only)."""

@@ -10,6 +10,7 @@ import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import PromptHistoryPage from './pages/PromptHistoryPage';
 import InsightsPage from './pages/InsightsPage';
+import CallbackPage from './pages/CallbackPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import type { UserRole } from './types';
@@ -31,11 +32,10 @@ interface ProtectedRouteProps {
 
 // Default redirect component - routes users based on their role
 function DefaultRedirect() {
-  const { user, isLoading } = useAuth();
-  const token = localStorage.getItem('auth_token');
+  const { user, isLoading, isAuthenticated } = useAuth();
 
   // If not authenticated, go to login
-  if (!token) {
+  if (!isAuthenticated && !isLoading) {
     return <Navigate to="/login" replace />;
   }
 
@@ -45,7 +45,7 @@ function DefaultRedirect() {
   }
 
   // Redirect based on role
-  if (user?.role === 'super_admin') {
+  if (user?.role === 'admin') {
     return <Navigate to="/config" replace />;
   }
 
@@ -55,29 +55,16 @@ function DefaultRedirect() {
 
 // Protected route wrapper
 function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
-  const { user, logout, isLoading } = useAuth();
-  const token = localStorage.getItem('auth_token');
-  const expiresAt = localStorage.getItem('expiresAt');
+  const { user, isLoading, isAuthenticated } = useAuth();
 
-  // Check if token exists
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
-
-  // Check if token has expired
-  if (expiresAt) {
-    const currentTime = Math.floor(Date.now() / 1000);
-    const expirationTime = parseInt(expiresAt, 10);
-
-    if (currentTime >= expirationTime) {
-      // Token has expired, clear auth data
-      logout();
-      return <Navigate to="/login" replace />;
-    }
-  }
-
+  // Wait for auth state to load
   if (isLoading) {
-    return <div>Loading...</div>; // Or return null/spinner
+    return <div>Loading...</div>;
+  }
+
+  // Check if authenticated via OIDC
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
   }
 
   if (allowedRoles && user?.role && !allowedRoles.includes(user.role)) {
@@ -97,6 +84,7 @@ function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
+              <Route path="/callback" element={<CallbackPage />} />
               <Route path="/" element={<DefaultRedirect />} />
               <Route
                 path="/chat"
@@ -109,7 +97,7 @@ function App() {
               <Route
                 path="/config"
                 element={
-                  <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
+                  <ProtectedRoute allowedRoles={['admin']}>
                     <ConfigPage />
                   </ProtectedRoute>
                 }
@@ -118,7 +106,7 @@ function App() {
               <Route
                 path="/users"
                 element={
-                  <ProtectedRoute allowedRoles={['super_admin']}>
+                  <ProtectedRoute allowedRoles={['admin']}>
                     <UsersPage />
                   </ProtectedRoute>
                 }
@@ -126,7 +114,7 @@ function App() {
               <Route
                 path="/audit"
                 element={
-                  <ProtectedRoute allowedRoles={['super_admin']}>
+                  <ProtectedRoute allowedRoles={['admin']}>
                     <AuditLogsPage />
                   </ProtectedRoute>
                 }
@@ -134,7 +122,7 @@ function App() {
               <Route
                 path="/history"
                 element={
-                  <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
+                  <ProtectedRoute allowedRoles={['admin']}>
                     <PromptHistoryPage />
                   </ProtectedRoute>
                 }
@@ -142,7 +130,7 @@ function App() {
               <Route
                 path="/insights"
                 element={
-                  <ProtectedRoute allowedRoles={['editor', 'super_admin']}>
+                  <ProtectedRoute allowedRoles={['admin']}>
                     <InsightsPage />
                   </ProtectedRoute>
                 }

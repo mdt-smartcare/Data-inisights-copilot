@@ -12,9 +12,9 @@ pydantic_core==2.33.2
 # ============================================
 # Security & Authentication
 # ============================================
-python-jose==3.3.0
+python-jose[cryptography]==3.3.0
+cryptography>=41.0.0
 passlib==1.7.4
-bcrypt==5.0.0
 
 # ============================================
 # Database

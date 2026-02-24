@@ -7,7 +7,7 @@ import type { User } from '../types';
  * SUPER_ADMIN > EDITOR > USER > VIEWER
  */
 
-export const ROLE_HIERARCHY = ['super_admin', 'editor', 'user'] as const;
+export const ROLE_HIERARCHY = ['admin', 'user'] as const;
 export type UserRole = typeof ROLE_HIERARCHY[number];
 
 /**
@@ -26,33 +26,33 @@ export const roleAtLeast = (userRole: string | undefined, requiredRole: UserRole
 // ============================================
 
 export const canManageUsers = (user: User | null): boolean => {
-    return user?.role === 'super_admin';
+    return user?.role === 'admin';
 };
 
 export const canViewAllAuditLogs = (user: User | null): boolean => {
-    return user?.role === 'super_admin';
+    return user?.role === 'admin';
 };
 
 export const canManageConnections = (user: User | null): boolean => {
-    return user?.role === 'super_admin';
+    return user?.role === 'admin';
 };
 
 export const canEditConfig = (user: User | null): boolean => {
-    return roleAtLeast(user?.role, 'editor');
+    return roleAtLeast(user?.role, 'admin');
 };
 
 export const canEditPrompt = (user: User | null): boolean => {
-    return roleAtLeast(user?.role, 'editor');
+    return roleAtLeast(user?.role, 'admin');
 };
 
 export const canPublishPrompt = (user: User | null): boolean => {
     // Only Super Admin can publish
-    return user?.role === 'super_admin';
+    return user?.role === 'admin';
 };
 
 // Only Super Admin can rollback
 export const canRollback = (user: User | null): boolean => {
-    return user?.role === 'super_admin';
+    return user?.role === 'admin';
 };
 
 export const canExecuteQuery = (user: User | null): boolean => {
@@ -61,15 +61,15 @@ export const canExecuteQuery = (user: User | null): boolean => {
 
 // Editor+ can view history/config/insights
 export const canViewHistory = (user: User | null): boolean => {
-    return user?.role === 'super_admin' || user?.role === 'editor';
+    return user?.role === 'admin';
 };
 
 export const canViewConfig = (user: User | null): boolean => {
-    return user?.role === 'super_admin' || user?.role === 'editor';
+    return user?.role === 'admin';
 };
 
 export const canViewInsights = (user: User | null): boolean => {
-    return user?.role === 'super_admin' || user?.role === 'editor';
+    return user?.role === 'admin';
 };
 
 // Helper for UI disabled states
@@ -79,8 +79,7 @@ export const isReadOnly = (user: User | null): boolean => {
 
 // Role display name mapping
 export const ROLE_DISPLAY_NAMES: Record<UserRole, string> = {
-    super_admin: 'Super Admin',
-    editor: 'Editor',
+    admin: 'Admin',
     user: 'User',
 };
 

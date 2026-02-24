@@ -1,9 +1,14 @@
 """
-Seed script to create users with different roles for testing RBAC.
+DEPRECATED: Seed script to create users with different roles for testing.
+
+With OIDC/Keycloak integration, users should be created in Keycloak admin console.
+This script is kept for local development/testing only where Keycloak is not available.
+
 Usage: python scripts/seed_users.py
 """
 import sys
 import os
+import warnings
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -11,6 +16,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from backend.sqliteDb.db import get_db_service
 
 def seed_users():
+    warnings.warn(
+        "seed_users.py is deprecated. With Keycloak integration, create users via Keycloak admin console. "
+        "This script is for local development only.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    
     db = get_db_service()
     
     users = [

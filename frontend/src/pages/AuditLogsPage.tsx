@@ -5,8 +5,7 @@ import { ChatHeader } from '../components/chat';
 import RefreshButton from '../components/RefreshButton';
 import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
-
-const getAuthToken = (): string | null => localStorage.getItem('auth_token');
+import { apiClient } from '../services/api';
 
 interface AuditLog {
     id: number;
@@ -46,20 +45,15 @@ const AuditLogsPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = getAuthToken();
             const params = new URLSearchParams();
             if (filters.actor) params.set('actor', filters.actor);
             if (filters.action) params.set('action', filters.action);
             if (filters.resource_type) params.set('resource_type', filters.resource_type);
 
-            const res = await fetch(`/api/v1/audit/logs?${params.toString()}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Failed to load audit logs');
-            const data = await res.json();
-            setLogs(data);
+            const res = await apiClient.get(`/api/v1/audit/logs?${params.toString()}`);
+            setLogs(res.data);
         } catch (err: any) {
-            setError(err.message || 'Failed to load audit logs');
+            setError(err.response?.data?.detail || err.message || 'Failed to load audit logs');
         } finally {
             setLoading(false);
         }
@@ -67,13 +61,8 @@ const AuditLogsPage: React.FC = () => {
 
     const loadActionTypes = async () => {
         try {
-            const token = getAuthToken();
-            const res = await fetch('/api/v1/audit/actions', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) return;
-            const data = await res.json();
-            setActionTypes(data);
+            const res = await apiClient.get('/api/v1/audit/actions');
+            setActionTypes(res.data);
         } catch (err) {
             console.error('Failed to load action types', err);
         }

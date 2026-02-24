@@ -1,12 +1,13 @@
 import axios, { AxiosError } from 'axios';
 import { API_BASE_URL } from '../config';
+import { oidcService } from './oidcService';
 
 /**
  * Configured Axios instance for all API requests
  * 
  * Features:
- * - Automatic JWT token injection in request headers
- * - Token expiration checking before each request
+ * - Automatic OIDC token injection in request headers
+ * - Token validation before each request
  * - Automatic redirect to login on authentication errors
  * - 60 second timeout for requests
  * 
@@ -28,42 +29,39 @@ import type { User } from '../types';
 /**
  * Request Interceptor
  * Runs before every API request to:
- * 1. Check if JWT token has expired (prevents unnecessary API calls)
- * 2. Automatically inject Authorization header with JWT token
- * 3. Redirect to login if token is expired
+ * 1. Check if OIDC token is valid
+ * 2. Automatically inject Authorization header with access token
+ * 3. Handle token expiration
  */
 apiClient.interceptors.request.use(
-  (config) => {
-    // Skip authentication for public endpoints (login, register, health)
-    const publicEndpoints = ['/api/v1/auth/login', '/api/v1/auth/register', '/api/v1/health'];
+  async (config) => {
+    // Skip authentication for public endpoints (health check)
+    const publicEndpoints = ['/api/v1/health'];
     const isPublicEndpoint = publicEndpoints.some(endpoint => config.url?.includes(endpoint));
 
     if (isPublicEndpoint) {
-      // Don't add auth headers or check token expiration for public endpoints
+      // Don't add auth headers for public endpoints
       return config;
     }
 
-    // Check token expiration before making request
-    const expiresAt = localStorage.getItem('expiresAt');
-    if (expiresAt) {
-      const currentTime = Math.floor(Date.now() / 1000);  // Current time in seconds
-      const expirationTime = parseInt(expiresAt, 10);      // Token expiration in seconds
-
-      if (currentTime >= expirationTime) {
-        // Token has expired - clean up and redirect
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('expiresAt');
-        window.location.href = '/login';
-        return Promise.reject(new Error('Token expired'));
+    try {
+      // Get current access token from OIDC service
+      const accessToken = await oidcService.getAccessToken();
+      
+      if (accessToken) {
+        // Add Bearer token to all authenticated requests
+        config.headers.Authorization = `Bearer ${accessToken}`;
+      } else {
+        // No token available, try silent renewal
+        const user = await oidcService.renewToken();
+        if (user?.access_token) {
+          config.headers.Authorization = `Bearer ${user.access_token}`;
+        }
       }
+    } catch (error) {
+      console.error('Error getting access token:', error);
     }
 
-    // Automatically add Authorization header if token exists
-    const token = localStorage.getItem('auth_token');
-    if (token) {
-      // Add Bearer token to all authenticated requests
-      config.headers.Authorization = `Bearer ${token}`;
-    }
     return config;
   },
   (error) => {
@@ -75,26 +73,28 @@ apiClient.interceptors.request.use(
  * Response Interceptor
  * Runs after every API response to:
  * 1. Handle 401 Unauthorized errors globally
- * 2. Clear expired/invalid tokens
- * 3. Redirect to login on authentication failure
+ * 2. Trigger re-authentication via OIDC
  */
 apiClient.interceptors.response.use(
   (response) => response,  // Pass successful responses through unchanged
-  (error: AxiosError) => {
+  async (error: AxiosError) => {
     // Handle authentication errors globally
     if (error.response?.status === 401) {
-      // Don't redirect if this is a login/register attempt (let the page handle the error)
-      const publicEndpoints = ['/auth/login', '/auth/register'];
-      const isPublicEndpoint = publicEndpoints.some(endpoint => error.config?.url?.includes(endpoint));
-
-      if (!isPublicEndpoint) {
-        // 401 = Unauthorized (invalid/expired token)
-        // Clean up authentication state
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('expiresAt');
-        // Redirect to login page
-        window.location.href = '/login';
+      // Try to renew the token
+      try {
+        const user = await oidcService.renewToken();
+        if (user && error.config) {
+          // Retry the failed request with new token
+          error.config.headers.Authorization = `Bearer ${user.access_token}`;
+          return apiClient.request(error.config);
+        }
+      } catch (renewError) {
+        console.error('Token renewal failed:', renewError);
       }
+      
+      // If renewal failed, redirect to login
+      await oidcService.removeUser();
+      window.location.href = '/login';
     }
     return Promise.reject(error);
   }

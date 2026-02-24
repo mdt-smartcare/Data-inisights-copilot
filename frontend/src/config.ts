@@ -14,6 +14,16 @@ export const API_ENDPOINTS = {
   },
 } as const;
 
+// Keycloak OIDC Configuration
+export const OIDC_CONFIG = {
+  authority: import.meta.env.VITE_OIDC_AUTHORITY || 'https://keycloak.mdtlabs.org/realms/smartcare',
+  client_id: import.meta.env.VITE_OIDC_CLIENT_ID || 'smartcare-client',
+  redirect_uri: import.meta.env.VITE_OIDC_REDIRECT_URI || `${window.location.origin}/callback`,
+  post_logout_redirect_uri: import.meta.env.VITE_OIDC_POST_LOGOUT_REDIRECT_URI || `${window.location.origin}/login`,
+  scope: import.meta.env.VITE_OIDC_SCOPE || 'openid profile email',
+  response_type: 'code',
+} as const;
+
 // App Configuration
 export const APP_CONFIG = {
   APP_NAME: 'Data Insights AI-Copilot',

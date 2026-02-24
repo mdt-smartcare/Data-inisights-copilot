@@ -5,26 +5,7 @@ import { ChatHeader } from '../components/chat';
 import RefreshButton from '../components/RefreshButton';
 import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
-
-const getAuthToken = (): string | null => localStorage.getItem('auth_token');
-
-interface InsightsSummary {
-    totalQueries: number;
-    avgProcessingTime: number;
-    successRate: number;
-    positiveFeedback: number;
-    negativeFeedback: number;
-    recentQueries: QueryExecution[];
-}
-
-interface QueryExecution {
-    id: string;
-    timestamp: string;
-    query: string;
-    sqlGenerated: boolean;
-    processingTime?: number;
-    status: 'success' | 'error';
-}
+import { apiClient } from '../services/api';
 
 const InsightsPage: React.FC = () => {
     const { user } = useAuth();
@@ -44,15 +25,10 @@ const InsightsPage: React.FC = () => {
         setLoading(true);
         setError(null);
         try {
-            const token = getAuthToken();
-            const res = await fetch('/api/v1/config/active-metadata', {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-            if (!res.ok) throw new Error('Failed to load config');
-            const data = await res.json();
-            setActiveConfig(data);
+            const res = await apiClient.get('/api/v1/config/active-metadata');
+            setActiveConfig(res.data);
         } catch (err: any) {
-            setError(err.message || 'Failed to load data');
+            setError(err.response?.data?.detail || err.message || 'Failed to load data');
         } finally {
             setLoading(false);
         }

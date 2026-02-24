@@ -50,10 +50,38 @@ class Settings(BaseSettings):
     # ============================================
     # Security Configuration
     # ============================================
-    secret_key: str = Field(..., min_length=32, description="JWT signing key")
+    secret_key: str = Field(default="development-secret-key-change-in-production", description="JWT signing key (legacy, kept for compatibility)")
     algorithm: str = Field(default="HS256")
     access_token_expire_minutes: int = Field(default=720, gt=0)  # 12 hours
     refresh_token_expire_days: int = Field(default=7, gt=0)
+    
+    # ============================================
+    # OIDC/Keycloak Configuration
+    # ============================================
+    oidc_issuer_url: str = Field(
+        default="https://keycloak.mdtlabs.org/realms/medtronicLabs",
+        description="Keycloak realm issuer URL"
+    )
+    oidc_client_id: str = Field(
+        default="data-insights-copilot",
+        description="OIDC client ID"
+    )
+    oidc_audience: Optional[str] = Field(
+        default=None,
+        description="Expected JWT audience claim (defaults to client_id if not set)"
+    )
+    oidc_jwks_cache_ttl: int = Field(
+        default=3600,
+        description="JWKS cache TTL in seconds"
+    )
+    oidc_default_role: str = Field(
+        default="user",
+        description="Default role for newly provisioned OIDC users"
+    )
+    oidc_role_claim: str = Field(
+        default="resource_access.data-insights-copilot.roles",
+        description="Claim path for roles in OIDC token (e.g., 'realm_access.roles' or 'resource_access.{client}.roles')"
+    )
     
     # ============================================
     # API Configuration
@@ -144,9 +172,9 @@ def get_settings() -> Settings:
     return Settings()
 
 
-# Default hardcoded users (will be migrated to database)
+# Default hardcoded users (legacy - kept for backward compatibility)
+# With OIDC/Keycloak integration, users are now provisioned automatically
 DEFAULT_USERS = {
     "admin": "admin",
-    "analyst": "analyst2024",
-    "viewer": "view123"
+    "user": "user123"
 }

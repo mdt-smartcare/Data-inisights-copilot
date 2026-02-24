@@ -211,99 +211,7 @@ describe('UsersPage', () => {
     });
   });
 
-  describe('Add User', () => {
-    beforeEach(() => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockUsers,
-      });
-    });
-
-    it('should show Add User button', async () => {
-      renderPage();
-      
-      await waitFor(() => {
-        expect(screen.getByText('Add User')).toBeInTheDocument();
-      });
-    });
-
-    it('should open add user form when button is clicked', async () => {
-      renderPage();
-      
-      await waitFor(() => {
-        expect(screen.getByText('Add User')).toBeInTheDocument();
-      });
-      
-      fireEvent.click(screen.getByText('Add User'));
-      
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('jdoe')).toBeInTheDocument();
-        expect(screen.getByPlaceholderText('********')).toBeInTheDocument();
-      });
-    });
-
-    it('should show validation error when username/password missing', async () => {
-      renderPage();
-      
-      await waitFor(() => {
-        expect(screen.getByText('Add User')).toBeInTheDocument();
-      });
-      
-      fireEvent.click(screen.getByText('Add User'));
-      
-      await waitFor(() => {
-        expect(screen.getByText('Add New User')).toBeInTheDocument();
-      });
-      
-      // Try to submit without filling form
-      const createButton = screen.getByText('Create User');
-      fireEvent.click(createButton);
-      
-      await waitFor(() => {
-        expect(screen.getByText(/username and password are required/i)).toBeInTheDocument();
-      });
-    });
-
-    it('should create user when form is submitted', async () => {
-      renderPage();
-      
-      await waitFor(() => {
-        expect(screen.getByText('Add User')).toBeInTheDocument();
-      });
-      
-      fireEvent.click(screen.getByText('Add User'));
-      
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('jdoe')).toBeInTheDocument();
-      });
-      
-      // Fill form
-      fireEvent.change(screen.getByPlaceholderText('jdoe'), { target: { value: 'newuser' } });
-      fireEvent.change(screen.getByPlaceholderText('********'), { target: { value: 'password123' } });
-      
-      // Mock create user response
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ id: 4, username: 'newuser' }),
-      }).mockResolvedValueOnce({
-        ok: true,
-        json: async () => [...mockUsers, { id: 4, username: 'newuser', role: 'user', is_active: true }],
-      });
-      
-      const createButton = screen.getByText('Create User');
-      fireEvent.click(createButton);
-      
-      await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith(
-          '/api/v1/users',
-          expect.objectContaining({
-            method: 'POST',
-            body: expect.stringContaining('newuser'),
-          })
-        );
-      });
-    });
-  });
+  // Note: Add User tests removed - user creation now handled by Keycloak IDP
 
   describe('Edit User', () => {
     beforeEach(() => {
@@ -502,39 +410,7 @@ describe('UsersPage', () => {
       });
     });
 
-    it('should display error when user creation fails', async () => {
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockUsers,
-      });
-      
-      renderPage();
-      
-      await waitFor(() => {
-        expect(screen.getByText('Add User')).toBeInTheDocument();
-      });
-      
-      fireEvent.click(screen.getByText('Add User'));
-      
-      await waitFor(() => {
-        expect(screen.getByPlaceholderText('jdoe')).toBeInTheDocument();
-      });
-      
-      fireEvent.change(screen.getByPlaceholderText('jdoe'), { target: { value: 'duplicate' } });
-      fireEvent.change(screen.getByPlaceholderText('********'), { target: { value: 'pass123' } });
-      
-      (global.fetch as any).mockResolvedValueOnce({
-        ok: false,
-        json: async () => ({ detail: 'Username already exists' }),
-      });
-      
-      const createButton = screen.getByText('Create User');
-      fireEvent.click(createButton);
-      
-      await waitFor(() => {
-        expect(screen.getByText(/already exists/i)).toBeInTheDocument();
-      });
-    });
+    // Note: User creation error test removed - user creation now handled by Keycloak IDP
 
     it('should allow dismissing error', async () => {
       (global.fetch as any).mockResolvedValueOnce({
