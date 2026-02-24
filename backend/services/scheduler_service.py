@@ -3,12 +3,13 @@ Scheduler Service - Native APScheduler integration for Vector DB sync jobs.
 Provides background scheduling with real-time next_run_time exposure.
 """
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from enum import Enum
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.jobstores.memory import MemoryJobStore
 from apscheduler.executors.pool import ThreadPoolExecutor
 
@@ -23,6 +24,7 @@ class ScheduleType(str, Enum):
     HOURLY = "hourly"
     DAILY = "daily"
     WEEKLY = "weekly"
+    INTERVAL = "interval"
     CUSTOM = "custom"
 
 
@@ -75,8 +77,7 @@ class SchedulerService:
         self.scheduler = BackgroundScheduler(
             jobstores=jobstores,
             executors=executors,
-            job_defaults=job_defaults,
-            timezone='UTC'
+            job_defaults=job_defaults
         )
         
         SchedulerService._initialized = True
@@ -165,6 +166,9 @@ class SchedulerService:
         """Create appropriate APScheduler trigger based on schedule type."""
         if schedule_type == ScheduleType.HOURLY:
             return CronTrigger(minute=minute)
+        elif schedule_type == ScheduleType.INTERVAL:
+            # Use minute as the interval in minutes
+            return IntervalTrigger(minutes=max(1, minute))
         elif schedule_type == ScheduleType.DAILY:
             return CronTrigger(hour=hour, minute=minute)
         elif schedule_type == ScheduleType.WEEKLY:
@@ -213,9 +217,10 @@ class SchedulerService:
         
         logger.info(f"Registered scheduled job for {vector_db_name}: {schedule_type.value}")
     
-    def _execute_sync_job(self, vector_db_name: str):
+    def _execute_sync_job(self, vector_db_name: str, is_manual: bool = False):
         """Execute the vector DB sync job."""
-        logger.info(f"Executing scheduled sync for vector DB: {vector_db_name}")
+        job_source = "manual" if is_manual else "scheduled"
+        logger.info(f"Executing {job_source} sync for vector DB: {vector_db_name}")
         
         # Update status to running
         self._update_run_status(vector_db_name, ScheduleStatus.RUNNING)
@@ -226,10 +231,11 @@ class SchedulerService:
             cursor = conn.cursor()
             
             cursor.execute('''
-                SELECT id, embedding_config 
-                FROM prompt_configs 
-                WHERE is_active = 1
-                ORDER BY id DESC
+                SELECT sp.id as prompt_id, pc.embedding_config 
+                FROM system_prompts sp
+                JOIN prompt_configs pc ON sp.id = pc.prompt_id
+                WHERE sp.is_active = 1
+                ORDER BY sp.id DESC
             ''')
             rows = cursor.fetchall()
             conn.close()
@@ -240,7 +246,7 @@ class SchedulerService:
                     import json
                     emb_conf = json.loads(row['embedding_config'] or '{}')
                     if emb_conf.get('vectorDbName') == vector_db_name:
-                        config_id = row['id']
+                        config_id = row['prompt_id']
                         break
                 except Exception:
                     continue
@@ -296,7 +302,7 @@ class SchedulerService:
                 ScheduleStatus.SUCCESS, 
                 job_id=job_id
             )
-            logger.info(f"Scheduled sync completed for {vector_db_name}, job_id={job_id}")
+            logger.info(f"{job_source.capitalize()} sync completed for {vector_db_name}, job_id={job_id}")
             
         except Exception as e:
             logger.error(f"Scheduled sync failed for {vector_db_name}: {e}")
@@ -314,9 +320,9 @@ class SchedulerService:
         try:
             cursor.execute('''
                 UPDATE vector_db_schedules 
-                SET next_run_at = ?, updated_at = CURRENT_TIMESTAMP
+                SET next_run_at = ?, updated_at = ?
                 WHERE vector_db_name = ?
-            ''', (next_run.isoformat(), vector_db_name))
+            ''', (next_run.isoformat(), datetime.now(timezone.utc).isoformat(), vector_db_name))
             conn.commit()
         finally:
             conn.close()
@@ -332,20 +338,22 @@ class SchedulerService:
         cursor = conn.cursor()
         try:
             if status == ScheduleStatus.RUNNING:
+                now_str = datetime.now(timezone.utc).isoformat()
                 cursor.execute('''
                     UPDATE vector_db_schedules 
-                    SET last_run_status = ?, updated_at = CURRENT_TIMESTAMP
+                    SET last_run_status = ?, updated_at = ?
                     WHERE vector_db_name = ?
-                ''', (status.value, vector_db_name))
+                ''', (status.value, now_str, vector_db_name))
             else:
+                now_str = datetime.now(timezone.utc).isoformat()
                 cursor.execute('''
                     UPDATE vector_db_schedules 
-                    SET last_run_at = CURRENT_TIMESTAMP,
+                    SET last_run_at = ?,
                         last_run_status = ?,
                         last_run_job_id = ?,
-                        updated_at = CURRENT_TIMESTAMP
+                        updated_at = ?
                     WHERE vector_db_name = ?
-                ''', (status.value, job_id, vector_db_name))
+                ''', (now_str, status.value, job_id, now_str, vector_db_name))
             conn.commit()
         finally:
             conn.close()
@@ -385,8 +393,8 @@ class SchedulerService:
             cursor.execute('''
                 INSERT INTO vector_db_schedules 
                     (vector_db_name, enabled, schedule_type, schedule_hour, 
-                     schedule_minute, schedule_day_of_week, schedule_cron, created_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     schedule_minute, schedule_day_of_week, schedule_cron, created_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vector_db_name) DO UPDATE SET
                     enabled = excluded.enabled,
                     schedule_type = excluded.schedule_type,
@@ -394,10 +402,10 @@ class SchedulerService:
                     schedule_minute = excluded.schedule_minute,
                     schedule_day_of_week = excluded.schedule_day_of_week,
                     schedule_cron = excluded.schedule_cron,
-                    updated_at = CURRENT_TIMESTAMP
+                    updated_at = excluded.updated_at
             ''', (
                 vector_db_name, 1 if enabled else 0, schedule_type.value,
-                hour, minute, day_of_week, cron_expression, created_by
+                hour, minute, day_of_week, cron_expression, created_by, datetime.now(timezone.utc).isoformat()
             ))
             conn.commit()
             
@@ -440,7 +448,7 @@ class SchedulerService:
             job = self.scheduler.get_job(f"sync_{vector_db_name}")
             if job and job.next_run_time:
                 schedule['next_run_at'] = job.next_run_time.isoformat()
-                # Calculate countdown in seconds
+                # Calculate countdown in seconds using local time
                 now = datetime.now(job.next_run_time.tzinfo)
                 delta = job.next_run_time - now
                 schedule['countdown_seconds'] = max(0, int(delta.total_seconds()))
@@ -511,8 +519,8 @@ class SchedulerService:
         # Execute immediately in background
         self.scheduler.add_job(
             func=self._execute_sync_job,
-            args=[vector_db_name],
-            id=f"{job_id}_manual_{datetime.utcnow().timestamp()}",
+            args=[vector_db_name, True],  # True for is_manual
+            id=f"{job_id}_manual_{datetime.now().timestamp()}",
             name=f"Manual Sync: {vector_db_name}"
         )
         

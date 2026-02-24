@@ -556,7 +556,7 @@ export const registerLLMModel = async (data: Partial<ModelInfo>): Promise<ModelI
 export interface VectorDbSchedule {
   vector_db_name: string;
   enabled: boolean;
-  schedule_type: 'hourly' | 'daily' | 'weekly' | 'custom';
+  schedule_type: 'hourly' | 'daily' | 'weekly' | 'interval' | 'custom';
   schedule_hour: number;
   schedule_minute: number;
   schedule_day_of_week?: number;
@@ -569,7 +569,7 @@ export interface VectorDbSchedule {
 }
 
 export interface ScheduleCreateRequest {
-  schedule_type: 'hourly' | 'daily' | 'weekly' | 'custom';
+  schedule_type: 'hourly' | 'daily' | 'weekly' | 'interval' | 'custom';
   hour?: number;
   minute?: number;
   day_of_week?: number;

@@ -38,22 +38,22 @@ const ScheduleSelector: React.FC<ScheduleSelectorProps> = ({
 
     // Form state
     const [enabled, setEnabled] = useState(true);
-    const [scheduleType, setScheduleType] = useState<'hourly' | 'daily' | 'weekly' | 'custom'>('daily');
+    const [scheduleType, setScheduleType] = useState<'hourly' | 'daily' | 'weekly' | 'interval' | 'custom'>('daily');
     const [hour, setHour] = useState(2);
     const [minute, setMinute] = useState(0);
     const [dayOfWeek, setDayOfWeek] = useState(0);
     const [cronExpression, setCronExpression] = useState('');
-
     // Countdown state
     const [countdown, setCountdown] = useState<number | null>(null);
+    const [isEditing, setIsEditing] = useState(false);
 
     // Load existing schedule
     const loadSchedule = useCallback(async () => {
         if (!vectorDbName) return;
-        
+
         setLoading(true);
         setError(null);
-        
+
         try {
             const data = await getVectorDbSchedule(vectorDbName);
             setSchedule(data);
@@ -139,6 +139,7 @@ const ScheduleSelector: React.FC<ScheduleSelectorProps> = ({
             setSchedule(result.schedule);
             setCountdown(result.schedule.countdown_seconds ?? null);
             setSuccess('Schedule saved successfully');
+            setIsEditing(false); // Close edit mode
             onScheduleChange?.(result.schedule);
 
             setTimeout(() => setSuccess(null), 3000);
@@ -203,12 +204,14 @@ const ScheduleSelector: React.FC<ScheduleSelectorProps> = ({
     const getScheduleDescription = (): string => {
         switch (scheduleType) {
             case 'hourly':
-                return `Every hour at :${minute.toString().padStart(2, '0')}`;
+                return `Every hour at minute :${minute.toString().padStart(2, '0')}`;
+            case 'interval':
+                return `Every ${minute} minute${minute > 1 ? 's' : ''}`;
             case 'daily':
-                return `Daily at ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} UTC`;
+                return `Daily at ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
             case 'weekly':
                 const dayName = DAYS_OF_WEEK.find(d => d.value === dayOfWeek)?.label || 'Monday';
-                return `Every ${dayName} at ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} UTC`;
+                return `Every ${dayName} at ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
             case 'custom':
                 return cronExpression || 'Custom cron schedule';
             default:
@@ -256,194 +259,251 @@ const ScheduleSelector: React.FC<ScheduleSelectorProps> = ({
                 </div>
             )}
 
-            {/* Enable/Disable Toggle */}
-            <div className="flex items-center justify-between mb-6 p-4 bg-gray-50 rounded-lg">
-                <div>
-                    <label className="block text-sm font-medium text-gray-900">Enable Automatic Sync</label>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                        Automatically sync embeddings on a schedule
-                    </p>
-                </div>
-                <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                        type="checkbox"
-                        className="sr-only peer"
-                        checked={enabled}
-                        onChange={(e) => setEnabled(e.target.checked)}
-                        disabled={readOnly}
-                    />
-                    <div className="w-11 h-6 bg-gray-300 hover:bg-gray-400 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                </label>
-            </div>
+            {!isEditing && schedule ? (
+                /* Compact Summary View */
+                <div className="space-y-4 animate-in fade-in duration-300">
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100">
+                        <div>
+                            <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Active interval</p>
+                            <p className="text-sm font-bold text-gray-700">{getScheduleDescription()}</p>
+                            <div className="flex items-center gap-2 mt-2">
+                                <span className={`h-2 w-2 rounded-full ${schedule.enabled ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></span>
+                                <span className="text-[10px] font-bold text-gray-500 uppercase">{schedule.enabled ? 'Automatic Sync Active' : 'Paused'}</span>
+                            </div>
+                        </div>
+                        <button
+                            onClick={() => setIsEditing(true)}
+                            className="px-4 py-2 text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                            Edit Schedule
+                        </button>
+                    </div>
 
-            {/* Schedule Configuration */}
-            <div className={`space-y-4 transition-opacity ${enabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
-                {/* Schedule Type */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        {(['hourly', 'daily', 'weekly', 'custom'] as const).map((type) => (
-                            <button
-                                key={type}
-                                type="button"
-                                onClick={() => setScheduleType(type)}
-                                disabled={readOnly}
-                                className={`px-4 py-2 text-sm font-medium rounded-lg border-2 transition-all ${
-                                    scheduleType === type
-                                        ? 'border-blue-500 bg-blue-50 text-blue-700'
-                                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
-                                }`}
-                            >
-                                {type.charAt(0).toUpperCase() + type.slice(1)}
-                            </button>
-                        ))}
+                    {schedule.last_run_at && (
+                        <div className="flex items-center justify-between text-[11px] text-gray-500 px-1">
+                            <span>Last sync: <span className="font-bold">{new Date(schedule.last_run_at).toLocaleString()}</span></span>
+                            {schedule.last_run_status && (
+                                <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${schedule.last_run_status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                    }`}>
+                                    {schedule.last_run_status}
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="flex gap-2 pt-2">
+                        <button
+                            onClick={handleTriggerNow}
+                            disabled={saving}
+                            className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
+                        >
+                            {saving ? 'Processing...' : 'Sync Now'}
+                        </button>
                     </div>
                 </div>
+            ) : (
+                /* Full Edit View */
+                <div className="animate-in slide-in-from-top-2 duration-300 space-y-4">
+                    {/* Enable/Disable Toggle */}
+                    <div className="flex items-center justify-between mb-6 p-4 bg-gray-50 rounded-lg">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-900">Enable Automatic Sync</label>
+                            <p className="text-xs text-gray-500 mt-0.5">
+                                Automatically sync embeddings on a schedule
+                            </p>
+                        </div>
+                        <label className="relative inline-flex items-center cursor-pointer">
+                            <input
+                                type="checkbox"
+                                className="sr-only peer"
+                                checked={enabled}
+                                onChange={(e) => setEnabled(e.target.checked)}
+                                disabled={readOnly}
+                            />
+                            <div className="w-11 h-6 bg-gray-300 hover:bg-gray-400 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        </label>
+                    </div>
 
-                {/* Time Selection */}
-                {scheduleType !== 'custom' && (
-                    <div className="grid grid-cols-2 gap-4">
-                        {scheduleType !== 'hourly' && (
+                    {/* Schedule Configuration */}
+                    <div className={`space-y-4 transition-opacity ${enabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                        {/* Schedule Type */}
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Schedule Type</label>
+                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                {(['hourly', 'interval', 'daily', 'weekly', 'custom'] as const).map((type) => (
+                                    <button
+                                        key={type}
+                                        type="button"
+                                        onClick={() => {
+                                            setScheduleType(type);
+                                            if (type === 'interval' && minute === 0) setMinute(15);
+                                        }}
+                                        disabled={readOnly}
+                                        className={`px-2 py-2 text-[11px] font-bold rounded-lg border-2 transition-all uppercase tracking-tight ${scheduleType === type
+                                            ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                            : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        {type === 'hourly' ? 'At Minute' : type.charAt(0).toUpperCase() + type.slice(1)}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Time Selection */}
+                        {scheduleType !== 'custom' && (
+                            <div className="space-y-3">
+                                <div className="flex flex-col">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        {scheduleType === 'hourly' ? 'Minute of Hour' : scheduleType === 'interval' ? 'Frequency (Minutes)' : 'Time'}
+                                    </label>
+                                    {scheduleType === 'hourly' || scheduleType === 'interval' ? (
+                                        <div className="flex items-center gap-2">
+                                            {scheduleType === 'hourly' && <span className="text-sm text-gray-400 font-mono">HH :</span>}
+                                            <input
+                                                type="number"
+                                                min={scheduleType === 'interval' ? "1" : "0"}
+                                                max="59"
+                                                value={minute}
+                                                onChange={(e) => setMinute(Math.max(scheduleType === 'interval' ? 1 : 0, Math.min(59, parseInt(e.target.value) || 0)))}
+                                                disabled={readOnly}
+                                                className="w-20 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border font-mono"
+                                            />
+                                            <span className="text-xs text-gray-400">
+                                                {scheduleType === 'hourly' ? 'minutes past the hour' : 'minutes between syncs'}
+                                            </span>
+                                        </div>
+                                    ) : (
+                                        <input
+                                            type="time"
+                                            value={`${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`}
+                                            onChange={(e) => {
+                                                const [h, m] = e.target.value.split(':').map(Number);
+                                                setHour(h);
+                                                setMinute(m);
+                                            }}
+                                            disabled={readOnly}
+                                            className="w-full sm:w-48 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border font-mono"
+                                        />
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Day of Week (for weekly) */}
+                        {scheduleType === 'weekly' && (
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Hour (UTC)</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Day of Week</label>
                                 <select
-                                    value={hour}
-                                    onChange={(e) => setHour(parseInt(e.target.value))}
+                                    value={dayOfWeek}
+                                    onChange={(e) => setDayOfWeek(parseInt(e.target.value))}
                                     disabled={readOnly}
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
                                 >
-                                    {Array.from({ length: 24 }, (_, i) => (
-                                        <option key={i} value={i}>
-                                            {i.toString().padStart(2, '0')}:00
+                                    {DAYS_OF_WEEK.map((day) => (
+                                        <option key={day.value} value={day.value}>
+                                            {day.label}
                                         </option>
                                     ))}
                                 </select>
                             </div>
                         )}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Minute</label>
-                            <select
-                                value={minute}
-                                onChange={(e) => setMinute(parseInt(e.target.value))}
-                                disabled={readOnly}
-                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                            >
-                                {[0, 15, 30, 45].map((m) => (
-                                    <option key={m} value={m}>
-                                        :{m.toString().padStart(2, '0')}
-                                    </option>
-                                ))}
-                            </select>
+
+                        {/* Custom Cron Expression */}
+                        {scheduleType === 'custom' && (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        <span className="flex items-center gap-1.5">
+                                            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                                            </svg>
+                                            Cron Expression
+                                        </span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={cronExpression}
+                                        onChange={(e) => setCronExpression(e.target.value)}
+                                        placeholder="0 2 * * *"
+                                        disabled={readOnly}
+                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border font-mono"
+                                    />
+                                    <p className="mt-1.5 text-[11px] text-gray-500 flex items-center gap-1">
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                        Format: minute hour day month day-of-week (e.g., <code className="bg-gray-100 px-1 rounded text-blue-600">*/30 * * * *</code> for every 30 mins)
+                                    </p>
+                                </div>
+
+                                <div>
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-wider">Quick Presets</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {[
+                                            { label: 'Every 5m', val: '*/5 * * * *' },
+                                            { label: 'Every 15m', val: '*/15 * * * *' },
+                                            { label: 'Every 30m', val: '*/30 * * * *' },
+                                            { label: 'Every 2h', val: '0 */2 * * *' },
+                                            { label: 'Every 6h', val: '0 */6 * * *' },
+                                            { label: 'Mon-Fri 9AM', val: '0 9 * * 1-5' }
+                                        ].map((preset) => (
+                                            <button
+                                                key={preset.val}
+                                                type="button"
+                                                onClick={() => setCronExpression(preset.val)}
+                                                disabled={readOnly}
+                                                className="px-2 py-1 text-[11px] font-semibold bg-white border border-gray-200 rounded-md text-gray-600 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-700 transition-all"
+                                            >
+                                                {preset.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Schedule Description */}
+                        <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                            <p className="text-sm text-blue-800">
+                                <span className="font-medium">Selected: </span>
+                                {getScheduleDescription()}
+                            </p>
                         </div>
                     </div>
-                )}
 
-                {/* Day of Week (for weekly) */}
-                {scheduleType === 'weekly' && (
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Day of Week</label>
-                        <select
-                            value={dayOfWeek}
-                            onChange={(e) => setDayOfWeek(parseInt(e.target.value))}
-                            disabled={readOnly}
-                            className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                        >
-                            {DAYS_OF_WEEK.map((day) => (
-                                <option key={day.value} value={day.value}>
-                                    {day.label}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                )}
-
-                {/* Custom Cron Expression */}
-                {scheduleType === 'custom' && (
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Cron Expression</label>
-                        <input
-                            type="text"
-                            value={cronExpression}
-                            onChange={(e) => setCronExpression(e.target.value)}
-                            placeholder="0 2 * * *"
-                            disabled={readOnly}
-                            className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                        />
-                        <p className="mt-1 text-xs text-gray-500">
-                            Standard cron format: minute hour day month day-of-week
-                        </p>
-                    </div>
-                )}
-
-                {/* Schedule Description */}
-                <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                    <p className="text-sm text-blue-800">
-                        <span className="font-medium">Schedule: </span>
-                        {getScheduleDescription()}
-                    </p>
-                </div>
-
-                {/* Last Run Status */}
-                {schedule?.last_run_at && (
-                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-200">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <p className="text-sm text-gray-700">
-                                    <span className="font-medium">Last run: </span>
-                                    {new Date(schedule.last_run_at).toLocaleString()}
-                                </p>
-                                {schedule.last_run_status && (
-                                    <p className="text-xs mt-1">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                            schedule.last_run_status === 'success'
-                                                ? 'bg-green-100 text-green-800'
-                                                : schedule.last_run_status === 'running'
-                                                ? 'bg-yellow-100 text-yellow-800'
-                                                : 'bg-red-100 text-red-800'
-                                        }`}>
-                                            {schedule.last_run_status}
-                                        </span>
-                                    </p>
+                    {/* Action Buttons */}
+                    {!readOnly && (
+                        <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-200">
+                            <div className="flex gap-2">
+                                {schedule && (
+                                    <>
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsEditing(false)}
+                                            className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleDelete}
+                                            disabled={saving}
+                                            className="px-4 py-2 text-sm font-medium text-red-700 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors disabled:opacity-50"
+                                        >
+                                            {saving ? '...' : 'Remove'}
+                                        </button>
+                                    </>
                                 )}
                             </div>
+                            <button
+                                type="button"
+                                onClick={handleSave}
+                                disabled={saving || !vectorDbName}
+                                className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                            >
+                                {saving ? 'Saving...' : schedule ? 'Update Schedule' : 'Create Schedule'}
+                            </button>
                         </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Action Buttons */}
-            {!readOnly && (
-                <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-200">
-                    <div className="flex gap-2">
-                        {schedule && (
-                            <>
-                                <button
-                                    type="button"
-                                    onClick={handleTriggerNow}
-                                    disabled={saving}
-                                    className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 border border-blue-200 transition-colors disabled:opacity-50"
-                                >
-                                    {saving ? 'Processing...' : 'Sync Now'}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleDelete}
-                                    disabled={saving}
-                                    className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 border border-red-200 transition-colors disabled:opacity-50"
-                                >
-                                    Delete Schedule
-                                </button>
-                            </>
-                        )}
-                    </div>
-                    <button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={saving || !vectorDbName}
-                        className="px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {saving ? 'Saving...' : schedule ? 'Update Schedule' : 'Create Schedule'}
-                    </button>
+                    )}
                 </div>
             )}
         </div>
