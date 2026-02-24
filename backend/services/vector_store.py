@@ -78,20 +78,30 @@ class VectorStoreService:
                         if 'model' in emb_conf and emb_conf['model']:
                             self.rag_config['embedding']['model_name'] = emb_conf['model']
                             
-                        # Update chunking config if provided (assuming it applies to parent/child broadly or specific)
-                        # For simplicity, we apply size/overlap to parent splitter as it's the main driver
-                        if 'chunkSize' in emb_conf:
-                            if 'chunking' not in self.rag_config: self.rag_config['chunking'] = {}
-                            if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
-                            self.rag_config['chunking']['parent_splitter']['chunk_size'] = int(emb_conf['chunkSize'])
-                            
-                        if 'chunkOverlap' in emb_conf:
-                             if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
-                             self.rag_config['chunking']['parent_splitter']['chunk_overlap'] = int(emb_conf['chunkOverlap'])
-                             
                         logger.info(f"Applied embedding config overrides from DB: {emb_conf}")
                     except Exception as e:
                         logger.error(f"Failed to parse embedding_config from DB: {e}")
+
+                # Override Chunking Config
+                if active_config.get('chunking_config'):
+                    try:
+                        chunk_conf = json.loads(active_config['chunking_config'])
+                        if 'chunking' not in self.rag_config: self.rag_config['chunking'] = {}
+                        if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
+                        if 'child_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['child_splitter'] = {}
+                        
+                        if 'parentChunkSize' in chunk_conf:
+                            self.rag_config['chunking']['parent_splitter']['chunk_size'] = int(chunk_conf['parentChunkSize'])
+                        if 'parentChunkOverlap' in chunk_conf:
+                            self.rag_config['chunking']['parent_splitter']['chunk_overlap'] = int(chunk_conf['parentChunkOverlap'])
+                        if 'childChunkSize' in chunk_conf:
+                            self.rag_config['chunking']['child_splitter']['chunk_size'] = int(chunk_conf['childChunkSize'])
+                        if 'childChunkOverlap' in chunk_conf:
+                            self.rag_config['chunking']['child_splitter']['chunk_overlap'] = int(chunk_conf['childChunkOverlap'])
+                            
+                        logger.info(f"Applied chunking config overrides from DB: {chunk_conf}")
+                    except Exception as e:
+                        logger.error(f"Failed to parse chunking_config from DB: {e}")
 
                 # Override Retriever Config
                 if active_config.get('retriever_config'):
@@ -110,6 +120,12 @@ class VectorStoreService:
                             
                         if 'hybridWeights' in ret_conf:
                             self.rag_config['retriever']['hybrid_search_weights'] = ret_conf['hybridWeights']
+                            
+                        if 'rerankEnabled' in ret_conf:
+                            self.rag_config['retriever']['rerank_enabled'] = bool(ret_conf['rerankEnabled'])
+                            
+                        if 'rerankerModel' in ret_conf:
+                            self.rag_config['retriever']['reranker_model_name'] = str(ret_conf['rerankerModel'])
                             
                         logger.info(f"Applied retriever config overrides from DB: {ret_conf}")
                     except Exception as e:

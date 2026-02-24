@@ -68,7 +68,29 @@ class AgentService:
         
         # Initialize LLM via registry (enables hot-swapping)
         self._llm_registry = get_llm_registry()
-        self.llm = self._llm_registry.get_langchain_llm()
+        base_provider = self._llm_registry.get_active_provider()
+        self.llm = base_provider.get_langchain_llm()
+        
+        # Check active config for LLM overrides (temperature, max_tokens)
+        active_config = self.db_service.get_active_config(agent_id=self.agent_config.get('id') if self.agent_config else None)
+        if active_config and active_config.get('llm_config'):
+            try:
+                llm_conf = json.loads(active_config['llm_config'])
+                overrides = {}
+                if 'temperature' in llm_conf:
+                    overrides['temperature'] = float(llm_conf['temperature'])
+                if 'maxTokens' in llm_conf:
+                    overrides['max_tokens'] = int(llm_conf['maxTokens'])
+                    
+                if overrides:
+                    from backend.services.llm_providers import create_llm_provider
+                    provider_config = base_provider.get_config()
+                    provider_config.update(overrides)
+                    custom_provider = create_llm_provider(base_provider.provider_name, provider_config)
+                    self.llm = custom_provider.get_langchain_llm()
+                    logger.info(f"Applied LLM config overrides for agent: {overrides}")
+            except Exception as e:
+                logger.error(f"Failed to apply LLM config overrides: {e}")
         
         # Create tools
         # SQL Agent tool accepts natural language questions and handles SQL generation internally.
