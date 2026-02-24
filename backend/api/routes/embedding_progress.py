@@ -131,13 +131,28 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
     sql_service = get_sql_service()
     
     try:
-        # Start the job
-        job_service.start_job(job_id)
-        
         # 1. Fetch Configuration
         config = db_service.get_config_by_id(config_id)
         if not config:
             raise ValueError(f"Configuration {config_id} not found")
+
+        agent_id = config.get('agent_id')
+
+        # Start the job
+        job_service.start_job(job_id)
+        
+        # Send start notification
+        await notification_service.create_notification(
+            user_id=user_id,
+            notification_type="embedding_started",
+            title="Embedding Generation Started",
+            message=f"Sync process started for job {job_id}.",
+            priority="low",
+            action_url=f"/config?step=0&agent_id={agent_id}" if agent_id else "/config?step=0",
+            action_label="Track Progress",
+            related_entity_type="embedding_job",
+            related_entity_id=config_id
+        )
             
         data_source_type = config.get('data_source_type', 'database')
         documents = []
@@ -252,9 +267,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         # Incremental Filtering
         import hashlib
         import os
-        import chromadb
-        from chromadb.config import Settings
-        
+        from backend.services.chroma_service import get_chroma_client
         conn = db_service.get_connection()
         cursor = conn.cursor()
         
@@ -298,7 +311,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             if stale_source_ids and os.path.exists(chroma_path):
                 # Delete old chunks for updated documents
                 try:
-                    client = chromadb.PersistentClient(path=chroma_path, settings=Settings(anonymized_telemetry=False))
+                    client = get_chroma_client(chroma_path)
                     # Check if collection exists first to avoid errors
                     try:
                         collection = client.get_collection(name=vector_db_name)
@@ -414,7 +427,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                 metadatas.append(safe_meta)
                 
         if ids:
-            client = chromadb.PersistentClient(path=chroma_path, settings=Settings(anonymized_telemetry=False))
+            client = get_chroma_client(chroma_path)
             collection = client.get_or_create_collection(name=vector_db_name)
             
             # Batch upsert to Chroma (max batch size ~5000, using 1000 to be safe)
@@ -447,13 +460,13 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         await notification_service.create_notification(
             user_id=user_id,
             notification_type="embedding_complete",
-            title="Embedding Generation Complete",
-            message=f"Successfully generated {result['processed_documents']} embeddings for v{config.get('version', 'unknown')}.",
+            title="Sync Complete",
+            message=f"Successfully updated {result['processed_documents']} embeddings for {vector_db_name}.",
             priority="medium",
-            action_url=f"/config",
-            action_label="View Configuration",
+            action_url=f"/config?step=0&agent_id={agent_id}" if agent_id else "/config?step=0",
+            action_label="View Sync Info",
             related_entity_type="embedding_job",
-            related_entity_id=0
+            related_entity_id=config_id
         )
         
     except Exception as e:

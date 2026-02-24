@@ -8,7 +8,7 @@ import uuid
 import asyncio
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import Tool
@@ -260,7 +260,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
             Dictionary containing answer, charts, suggestions, and metadata
         """
         trace_id = str(uuid.uuid4())
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         # Get tracing manager
         from backend.core.tracing import get_tracing_manager
@@ -395,7 +395,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 timestamp=start_time
             )
             
-            duration = (datetime.utcnow() - start_time).total_seconds()
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.info(f"✅ Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
             
             # Background tracking

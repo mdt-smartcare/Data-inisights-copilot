@@ -504,6 +504,7 @@ class DatabaseService:
                 sp.id as prompt_id,
                 sp.version,
                 sp.prompt_text,
+                sp.agent_id,
                 pc.connection_id,
                 pc.schema_selection,
                 pc.data_dictionary,
@@ -742,7 +743,7 @@ class DatabaseService:
         return None
 
     def get_all_prompts(self, agent_id: Optional[int] = None) -> list[Dict[str, Any]]:
-        """Get all system prompt versions history."""
+        """Get all system prompt versions history with configuration metadata."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -754,9 +755,24 @@ class DatabaseService:
                 sp.is_active, 
                 sp.created_at, 
                 sp.created_by,
-                u.username as created_by_username
+                sp.agent_id,
+                u.username as created_by_username,
+                pc.connection_id,
+                pc.schema_selection,
+                pc.data_dictionary,
+                pc.reasoning,
+                pc.example_questions,
+                pc.data_source_type,
+                pc.ingestion_documents,
+                pc.ingestion_file_name,
+                pc.ingestion_file_type,
+                pc.embedding_config,
+                pc.retriever_config,
+                pc.chunking_config,
+                pc.llm_config
             FROM system_prompts sp
             LEFT JOIN users u ON sp.created_by = u.username
+            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
         """
         
         if agent_id:

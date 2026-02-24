@@ -141,15 +141,18 @@ async def rollback_to_version(
         cursor = conn.cursor()
         
         # Get the version to rollback to
-        cursor.execute("SELECT id, version, prompt_text FROM system_prompts WHERE id = ?", (version_id,))
+        cursor.execute("SELECT id, version, prompt_text, agent_id FROM system_prompts WHERE id = ?", (version_id,))
         row = cursor.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Version not found")
         
-        prompt_id, version_num, prompt_text = row
+        prompt_id, version_num, prompt_text, agent_id = row
         
-        # Deactivate all existing prompts
-        cursor.execute("UPDATE system_prompts SET is_active = 0")
+        # Deactivate all existing prompts for THIS AGENT (or global if agent_id is None)
+        if agent_id:
+            cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE agent_id = ?", (agent_id,))
+        else:
+            cursor.execute("UPDATE system_prompts SET is_active = 0 WHERE agent_id IS NULL")
         
         # Activate the selected version
         cursor.execute("UPDATE system_prompts SET is_active = 1 WHERE id = ?", (version_id,))
@@ -165,7 +168,7 @@ async def rollback_to_version(
             resource_type="prompt",
             resource_id=str(version_id),
             resource_name=f"v{version_num}",
-            details={"rolled_back_to_version": version_num}
+            details={"rolled_back_to_version": version_num, "agent_id": agent_id}
         )
         
         logger.info(f"User {current_user.username} rolled back to prompt version {version_num}")

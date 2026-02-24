@@ -12,7 +12,7 @@ Also manages:
 """
 import logging
 from typing import Dict, Any, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import httpx
 
 from backend.config import get_settings
@@ -340,7 +340,7 @@ class ObservabilityService:
             Aggregated stats dictionary
         """
         # Calculate time range
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if period == "1h":
             from_time = now - timedelta(hours=1)
         elif period == "24h":
