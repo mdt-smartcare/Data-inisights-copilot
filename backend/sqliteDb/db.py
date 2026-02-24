@@ -123,6 +123,10 @@ class DatabaseService:
                     ingestion_documents TEXT, -- JSON string list of ExtractedDocument
                     ingestion_file_name TEXT,
                     ingestion_file_type TEXT,
+                    embedding_config TEXT, -- JSON string
+                    retriever_config TEXT, -- JSON string
+                    chunking_config TEXT, -- JSON string
+                    llm_config TEXT, -- JSON string
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
                     FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
@@ -157,6 +161,13 @@ class DatabaseService:
                 cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_name TEXT")
                 cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_type TEXT")
                 logger.info("Added ingestion columns to prompt_configs table")
+
+            if 'embedding_config' not in pc_columns:
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN embedding_config TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN retriever_config TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN chunking_config TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN llm_config TEXT")
+                logger.info("Added advanced RAG config columns to prompt_configs table")
             
             # Create agents table
             cursor.execute("""
@@ -524,6 +535,8 @@ class DatabaseService:
                               example_questions: Optional[str] = None,
                               embedding_config: Optional[str] = None,
                               retriever_config: Optional[str] = None,
+                              chunking_config: Optional[str] = None,
+                              llm_config: Optional[str] = None,
                               agent_id: Optional[int] = None,
                               data_source_type: str = 'database',
                               ingestion_documents: Optional[str] = None,
@@ -592,14 +605,18 @@ class DatabaseService:
                     prompt_id, connection_id, schema_selection, 
                     data_dictionary, reasoning, example_questions,
                     data_source_type, ingestion_documents,
-                    ingestion_file_name, ingestion_file_type
+                    ingestion_file_name, ingestion_file_type,
+                    embedding_config, retriever_config,
+                    chunking_config, llm_config
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 prompt_id, connection_id, schema_selection,
                 data_dictionary, reasoning, example_questions,
                 data_source_type, ingestion_documents,
-                ingestion_file_name, ingestion_file_type
+                ingestion_file_name, ingestion_file_type,
+                embedding_config, retriever_config,
+                chunking_config, llm_config
             ))
             
             conn.commit()
@@ -644,7 +661,11 @@ class DatabaseService:
                     pc.data_source_type,
                     pc.ingestion_documents,
                     pc.ingestion_file_name,
-                    pc.ingestion_file_type
+                    pc.ingestion_file_type,
+                    pc.embedding_config,
+                    pc.retriever_config,
+                    pc.chunking_config,
+                    pc.llm_config
                 FROM system_prompts sp
                 LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
                 LEFT JOIN users u ON sp.created_by = u.username
@@ -669,7 +690,11 @@ class DatabaseService:
                     pc.data_source_type,
                     pc.ingestion_documents,
                     pc.ingestion_file_name,
-                    pc.ingestion_file_type
+                    pc.ingestion_file_type,
+                    pc.embedding_config,
+                    pc.retriever_config,
+                    pc.chunking_config,
+                    pc.llm_config
                 FROM system_prompts sp
                 LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
                 LEFT JOIN users u ON sp.created_by = u.username

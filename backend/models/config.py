@@ -28,6 +28,8 @@ class PromptPublishRequest(BaseModel):
     example_questions: Optional[str] = None  # JSON string list
     embedding_config: Optional[str] = None # JSON string
     retriever_config: Optional[str] = None # JSON string
+    chunking_config: Optional[str] = None # JSON string
+    llm_config: Optional[str] = None # JSON string
     agent_id: Optional[int] = None
     data_source_type: str = 'database'
     ingestion_documents: Optional[str] = None # JSON string list
@@ -45,3 +47,5 @@ class PromptResponse(BaseModel):
     created_by_username: Optional[str] = None
     embedding_config: Optional[str] = None
     retriever_config: Optional[str] = None
+    chunking_config: Optional[str] = None
+    llm_config: Optional[str] = None
