@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getEmbeddingModels, getLLMModels, getCompatibleLLMs } from '../services/api';
+import { getEmbeddingModels, getLLMModels, getCompatibleLLMs, activateEmbeddingModel, activateLLMModel, handleApiError } from '../services/api';
 import type { ModelInfo } from '../services/api';
 
 interface AdvancedSettingsProps {
@@ -29,7 +29,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
     const [loadingModels, setLoadingModels] = useState(true);
     const [modelError, setModelError] = useState<string | null>(null);
 
-    // Active selections (from DB)
+    // Activation state
+    const [activatingId, setActivatingId] = useState<number | null>(null);
+    const [activationMsg, setActivationMsg] = useState<string | null>(null);
+
+    // Active selections
     const [activeEmbedding, setActiveEmbedding] = useState<ModelInfo | null>(null);
     const [activeLLM, setActiveLLM] = useState<ModelInfo | null>(null);
 
@@ -51,13 +55,11 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
             setLLMModels(llModels);
             setCompatibleLLMs(compat);
 
-            // Find active models
             const activeEmb = embModels.find(m => m.is_active === 1) || null;
             const activeLl = llModels.find(m => m.is_active === 1) || null;
             setActiveEmbedding(activeEmb);
             setActiveLLM(activeLl);
 
-            // Sync active embedding model to parent settings
             if (activeEmb && activeEmb.model_name !== localSettings.embedding.model) {
                 handleChange('embedding', 'model', activeEmb.model_name);
             }
@@ -86,12 +88,63 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
         onChange(newSettings);
     };
 
+    // Handle embedding model activation via API
+    const handleEmbeddingSelect = async (modelId: number) => {
+        if (readOnly || activatingId) return;
+        const model = embeddingModels.find(m => m.id === modelId);
+        if (!model || model.is_active === 1) return;
+
+        setActivatingId(modelId);
+        setActivationMsg(null);
+        try {
+            await activateEmbeddingModel(modelId);
+            setActivationMsg(`✓ Switched to ${model.display_name}`);
+            // Reload all models (active flags changed, compatibility may change)
+            await loadModels();
+        } catch (err) {
+            setActivationMsg(`✗ ${handleApiError(err)}`);
+        } finally {
+            setActivatingId(null);
+            setTimeout(() => setActivationMsg(null), 4000);
+        }
+    };
+
+    // Handle LLM model activation via API
+    const handleLLMSelect = async (modelId: number) => {
+        if (readOnly || activatingId) return;
+        const model = llmModels.find(m => m.id === modelId);
+        if (!model || model.is_active === 1) return;
+
+        setActivatingId(modelId);
+        setActivationMsg(null);
+        try {
+            await activateLLMModel(modelId);
+            setActivationMsg(`✓ Switched to ${model.display_name}`);
+            await loadModels();
+        } catch (err) {
+            setActivationMsg(`✗ ${handleApiError(err)}`);
+        } finally {
+            setActivatingId(null);
+            setTimeout(() => setActivationMsg(null), 4000);
+        }
+    };
+
     return (
         <div className="h-full overflow-y-auto p-1">
             <h2 className="text-xl font-semibold mb-4 text-gray-900">Advanced Configuration</h2>
             <p className="text-sm text-gray-500 mb-6">
                 Fine-tune the RAG pipeline parameters. These settings control how data is processed, indexed, and retrieved.
             </p>
+
+            {/* Activation feedback toast */}
+            {activationMsg && (
+                <div className={`mb-4 px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${activationMsg.startsWith('✓')
+                        ? 'bg-green-50 text-green-800 border border-green-200'
+                        : 'bg-red-50 text-red-800 border border-red-200'
+                    }`}>
+                    {activationMsg}
+                </div>
+            )}
 
             <div className="space-y-6">
                 {/* ============================================================ */}
@@ -112,80 +165,105 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                         )}
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Model Selector */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Embedding Model</label>
-                            {loadingModels ? (
-                                <div className="w-full rounded-md border-gray-300 shadow-sm p-2 border bg-gray-50 text-gray-400 text-sm flex items-center gap-2">
-                                    <svg className="animate-spin h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                    </svg>
-                                    Loading models...
-                                </div>
-                            ) : modelError || embeddingModels.length === 0 ? (
-                                <>
-                                    <input
-                                        type="text"
-                                        value={localSettings.embedding.model}
-                                        onChange={(e) => handleChange('embedding', 'model', e.target.value)}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                                    />
-                                    <p className="mt-1 text-xs text-gray-500">HuggingFace model ID (e.g., BAAI/bge-m3)</p>
-                                    {modelError && <p className="mt-1 text-xs text-amber-600">{modelError}</p>}
-                                </>
-                            ) : (
-                                <>
-                                    <select
-                                        value={localSettings.embedding.model}
-                                        onChange={(e) => handleChange('embedding', 'model', e.target.value)}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border bg-white"
-                                    >
-                                        {embeddingModels.map(m => (
-                                            <option key={m.id} value={m.model_name}>
-                                                {m.display_name} ({m.model_name}) {m.is_active ? '✓' : ''}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    {activeEmbedding && (
-                                        <p className="mt-1 text-xs text-gray-500">
-                                            {activeEmbedding.dimensions}d vectors • Max {activeEmbedding.max_tokens} tokens
-                                            {activeEmbedding.is_custom ? ' • Custom' : ' • Built-in'}
-                                        </p>
-                                    )}
-                                </>
-                            )}
+                    {/* Embedding Model Cards */}
+                    {loadingModels ? (
+                        <div className="flex items-center gap-2 text-sm text-gray-400 p-3">
+                            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Loading models...
                         </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Chunk Size</label>
-                                <input
-                                    type="number"
-                                    value={localSettings.embedding.chunkSize}
-                                    onChange={(e) => handleChange('embedding', 'chunkSize', parseInt(e.target.value))}
-                                    disabled={readOnly}
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Overlap</label>
-                                <input
-                                    type="number"
-                                    value={localSettings.embedding.chunkOverlap}
-                                    onChange={(e) => handleChange('embedding', 'chunkOverlap', parseInt(e.target.value))}
-                                    disabled={readOnly}
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                                />
-                            </div>
+                    ) : modelError || embeddingModels.length === 0 ? (
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Model Name</label>
+                            <input
+                                type="text"
+                                value={localSettings.embedding.model}
+                                onChange={(e) => handleChange('embedding', 'model', e.target.value)}
+                                disabled={readOnly}
+                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                            />
+                            <p className="mt-1 text-xs text-gray-500">HuggingFace model ID (e.g., BAAI/bge-m3)</p>
+                            {modelError && <p className="mt-1 text-xs text-amber-600">{modelError}</p>}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                            {embeddingModels.map(m => {
+                                const isActive = m.is_active === 1;
+                                const isLoading = activatingId === m.id;
+                                return (
+                                    <button
+                                        key={m.id}
+                                        type="button"
+                                        onClick={() => handleEmbeddingSelect(m.id)}
+                                        disabled={readOnly || isActive || !!activatingId}
+                                        className={`text-left p-4 rounded-lg border-2 transition-all duration-200 ${isActive
+                                                ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
+                                                : readOnly || activatingId
+                                                    ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                    : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50 cursor-pointer hover:shadow-sm'
+                                            }`}
+                                    >
+                                        <div className="flex items-start justify-between">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className={`text-sm font-semibold ${isActive ? 'text-indigo-900' : 'text-gray-800'}`}>
+                                                        {m.display_name}
+                                                    </span>
+                                                    {isActive && (
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Active</span>
+                                                    )}
+                                                    {m.is_custom === 1 && (
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">Custom</span>
+                                                    )}
+                                                </div>
+                                                <p className="text-xs text-gray-500 truncate">{m.provider} • {m.model_name}</p>
+                                                <p className="text-xs text-gray-400 mt-1">{m.dimensions}d • Max {m.max_tokens} tokens</p>
+                                            </div>
+                                            {isLoading && (
+                                                <svg className="animate-spin h-5 w-5 text-indigo-500 ml-2 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                            )}
+                                            {!isLoading && !isActive && !readOnly && (
+                                                <span className="text-xs text-indigo-500 font-medium ml-2 flex-shrink-0 mt-0.5">Select →</span>
+                                            )}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {/* Chunk params */}
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-100">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Chunk Size</label>
+                            <input
+                                type="number"
+                                value={localSettings.embedding.chunkSize}
+                                onChange={(e) => handleChange('embedding', 'chunkSize', parseInt(e.target.value))}
+                                disabled={readOnly}
+                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Overlap</label>
+                            <input
+                                type="number"
+                                value={localSettings.embedding.chunkOverlap}
+                                onChange={(e) => handleChange('embedding', 'chunkOverlap', parseInt(e.target.value))}
+                                disabled={readOnly}
+                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                            />
                         </div>
                     </div>
                 </div>
 
                 {/* ============================================================ */}
-                {/* LLM Configuration - NEW */}
+                {/* LLM Configuration */}
                 {/* ============================================================ */}
                 <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
                     <div className="flex items-center gap-3 mb-4">
@@ -214,43 +292,71 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                         <p className="text-sm text-gray-500">LLM model registry unavailable. Configure via backend settings.</p>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* All LLM Models */}
+                            {/* Selectable LLM Cards */}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Active LLM Model</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">Select LLM Model</label>
                                 <div className="space-y-2">
-                                    {llmModels.map(m => (
-                                        <div
-                                            key={m.id}
-                                            className={`flex items-center p-3 rounded-lg border cursor-default transition-colors ${m.is_active
-                                                    ? 'border-purple-300 bg-purple-50 ring-1 ring-purple-200'
-                                                    : 'border-gray-200 bg-gray-50'
-                                                }`}
-                                        >
-                                            <div className="flex-1">
-                                                <div className="flex items-center gap-2">
-                                                    <span className={`text-sm font-medium ${m.is_active ? 'text-purple-900' : 'text-gray-700'}`}>
-                                                        {m.display_name}
-                                                    </span>
-                                                    {m.is_active === 1 && (
-                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Active</span>
+                                    {llmModels.map(m => {
+                                        const isActive = m.is_active === 1;
+                                        const isCompatible = compatibleLLMs.some(c => c.id === m.id);
+                                        const isLoading = activatingId === m.id;
+                                        return (
+                                            <button
+                                                key={m.id}
+                                                type="button"
+                                                onClick={() => handleLLMSelect(m.id)}
+                                                disabled={readOnly || isActive || !!activatingId}
+                                                className={`w-full text-left p-3 rounded-lg border-2 transition-all duration-200 ${isActive
+                                                        ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-200 shadow-sm'
+                                                        : readOnly || activatingId
+                                                            ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                            : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/50 cursor-pointer hover:shadow-sm'
+                                                    }`}
+                                            >
+                                                <div className="flex items-center justify-between">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`text-sm font-semibold ${isActive ? 'text-purple-900' : 'text-gray-800'}`}>
+                                                                {m.display_name}
+                                                            </span>
+                                                            {isActive && (
+                                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Active</span>
+                                                            )}
+                                                            {isCompatible && !isActive && (
+                                                                <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                                                                </svg>
+                                                            )}
+                                                            {!isCompatible && !isActive && (
+                                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">Incompatible</span>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-xs text-gray-500 mt-0.5">
+                                                            {m.provider} • {m.model_name}
+                                                            {m.context_length ? ` • ${(m.context_length / 1000).toFixed(0)}K ctx` : ''}
+                                                        </p>
+                                                    </div>
+                                                    {isLoading && (
+                                                        <svg className="animate-spin h-5 w-5 text-purple-500 ml-2" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                        </svg>
                                                     )}
-                                                    {m.is_custom === 1 && (
-                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">Custom</span>
+                                                    {!isLoading && !isActive && !readOnly && (
+                                                        <span className="text-xs text-purple-500 font-medium ml-2 flex-shrink-0">Select →</span>
                                                     )}
                                                 </div>
-                                                <p className="text-xs text-gray-500 mt-0.5">
-                                                    {m.provider} • {m.model_name}
-                                                    {m.context_length ? ` • ${(m.context_length / 1000).toFixed(0)}K ctx` : ''}
-                                                </p>
-                                            </div>
-                                        </div>
-                                    ))}
+                                            </button>
+                                        );
+                                    })}
                                 </div>
                             </div>
 
-                            {/* Compatible LLMs */}
+                            {/* Compatibility Info */}
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Compatible with Active Embedding</label>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Compatible with {activeEmbedding?.display_name || 'Active Embedding'}
+                                </label>
                                 {compatibleLLMs.length === 0 ? (
                                     <div className="p-3 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg text-center">
                                         No compatibility data available
@@ -268,11 +374,9 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                                         ))}
                                     </div>
                                 )}
-                                {activeEmbedding && (
-                                    <p className="mt-2 text-xs text-gray-400">
-                                        Showing LLMs compatible with {activeEmbedding.display_name}
-                                    </p>
-                                )}
+                                <p className="mt-3 text-xs text-gray-400 leading-relaxed">
+                                    Only compatible LLMs can be activated. Selecting an incompatible model will be rejected by the server.
+                                </p>
                             </div>
                         </div>
                     )}
