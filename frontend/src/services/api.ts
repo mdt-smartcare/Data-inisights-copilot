@@ -142,6 +142,8 @@ export const publishSystemPrompt = async (
   exampleQuestions?: string[],
   embeddingConfig?: any,
   retrieverConfig?: any,
+  chunkingConfig?: any,
+  llmConfig?: any,
   agentId?: number,
   dataSourceType: string = 'database',
   ingestionDocuments?: string,
@@ -174,6 +176,8 @@ export const publishSystemPrompt = async (
     example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
     embedding_config: embeddingConfig ? JSON.stringify(embeddingConfig) : null,
     retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null,
+    chunking_config: chunkingConfig ? JSON.stringify(chunkingConfig) : null,
+    llm_config: llmConfig ? JSON.stringify(llmConfig) : null,
     agent_id: agentId,
     data_source_type: dataSourceType,
     ingestion_documents: ingestionDocuments,
@@ -519,6 +523,18 @@ export const activateEmbeddingModel = async (modelId: number): Promise<ModelInfo
 /** Activate an LLM model by ID */
 export const activateLLMModel = async (modelId: number): Promise<ModelInfo> => {
   const response = await apiClient.put(`/api/v1/settings/llm/models/${modelId}/activate`);
+  return response.data;
+};
+
+/** Register a new custom embedding model */
+export const registerEmbeddingModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
+  const response = await apiClient.post('/api/v1/settings/embedding/models', data);
+  return response.data;
+};
+
+/** Register a new custom LLM model */
+export const registerLLMModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
+  const response = await apiClient.post('/api/v1/settings/llm/models', data);
   return response.data;
 };
 

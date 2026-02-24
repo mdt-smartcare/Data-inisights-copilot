@@ -61,14 +61,24 @@ const ConfigPage: React.FC = () => {
     // Advanced Settings State
     const [advancedSettings, setAdvancedSettings] = useState({
         embedding: {
-            model: 'BAAI/bge-m3',
-            chunkSize: 800,
-            chunkOverlap: 150
+            model: 'BAAI/bge-m3'
+        },
+        llm: {
+            temperature: 0.0,
+            maxTokens: 4096
+        },
+        chunking: {
+            parentChunkSize: 800,
+            parentChunkOverlap: 150,
+            childChunkSize: 200,
+            childChunkOverlap: 50
         },
         retriever: {
             topKInitial: 50,
             topKFinal: 10,
-            hybridWeights: [0.75, 0.25] as [number, number]
+            hybridWeights: [0.75, 0.25] as [number, number],
+            rerankEnabled: true,
+            rerankerModel: 'BAAI/bge-reranker-base'
         }
     });
 
@@ -229,6 +239,8 @@ const ConfigPage: React.FC = () => {
                 exampleQuestions,
                 advancedSettings.embedding,
                 advancedSettings.retriever,
+                advancedSettings.chunking,
+                advancedSettings.llm,
                 selectedAgent.id,
                 dataSourceType,
                 fileUploadResult ? JSON.stringify(fileUploadResult.documents) : undefined,
