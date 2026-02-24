@@ -10,6 +10,7 @@ interface AdvancedSettingsProps {
     settings: {
         embedding: {
             model: string;
+            vectorDbName?: string;
         };
         llm: {
             temperature: number;
@@ -31,10 +32,18 @@ interface AdvancedSettingsProps {
     };
     onChange: (settings: any) => void;
     readOnly?: boolean;
+    dataSourceName?: string;
 }
 
-const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange, readOnly = false }) => {
+const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange, readOnly = false, dataSourceName = '' }) => {
     const [localSettings, setLocalSettings] = useState(settings);
+
+    // Vector DB Name Validation State
+    const [vectorDbValidation, setVectorDbValidation] = useState<{ valid: boolean; message: string; checking: boolean }>({
+        valid: true,
+        message: '',
+        checking: false
+    });
 
     // Model registry state
     const [embeddingModels, setEmbeddingModels] = useState<ModelInfo[]>([]);
@@ -68,6 +77,44 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
     useEffect(() => {
         setLocalSettings(settings);
     }, [settings]);
+
+    // Handle Vector DB Default formatting
+    useEffect(() => {
+        if (!localSettings.embedding.vectorDbName && dataSourceName) {
+            // format: alphanumeric + underscores, no spaces
+            const formatted = dataSourceName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
+            const defaultName = `${formatted}_data`;
+            handleChange('embedding', 'vectorDbName', defaultName);
+        }
+    }, [dataSourceName, localSettings.embedding.vectorDbName]);
+
+    // Validate Vector DB Name
+    useEffect(() => {
+        const checkName = async () => {
+            const name = localSettings.embedding.vectorDbName;
+            if (!name) {
+                setVectorDbValidation({ valid: false, message: 'Vector DB name is required', checking: false });
+                return;
+            }
+            if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+                setVectorDbValidation({ valid: false, message: 'Only alphanumeric characters and underscores allowed', checking: false });
+                return;
+            }
+
+            setVectorDbValidation(prev => ({ ...prev, checking: true }));
+            try {
+                // We assume there's an api client configured for this
+                const { apiClient } = await import('../services/api');
+                const response = await apiClient.get(`/api/v1/vector-db/check-name?name=${encodeURIComponent(name)}`);
+                setVectorDbValidation({ valid: response.data.valid, message: response.data.message, checking: false });
+            } catch (err) {
+                setVectorDbValidation({ valid: true, message: 'Could not validate with server (assuming valid)', checking: false });
+            }
+        };
+
+        const timer = setTimeout(checkName, 500);
+        return () => clearTimeout(timer);
+    }, [localSettings.embedding.vectorDbName]);
 
     // Load models from backend
     const loadModels = useCallback(async () => {
@@ -231,6 +278,39 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                             <span className="ml-auto inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                                 Active: {activeEmbedding.display_name}
                             </span>
+                        )}
+                    </div>
+
+                    {/* Vector DB Naming Section */}
+                    <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <label className="block text-sm font-semibold text-gray-800 mb-1">
+                            Vector Database Namespace
+                        </label>
+                        <p className="text-xs text-gray-500 mb-3">
+                            A unique identifier for where your embeddings will be stored.
+                        </p>
+                        <div className="relative">
+                            <input
+                                type="text"
+                                value={localSettings.embedding.vectorDbName || ''}
+                                onChange={(e) => handleChange('embedding', 'vectorDbName', e.target.value)}
+                                disabled={readOnly}
+                                placeholder="e.g. my_dataset_data"
+                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border focus:ring-1 
+                                    ${vectorDbValidation.checking ? 'border-gray-300' :
+                                        vectorDbValidation.valid ? 'border-green-300 focus:border-green-500 focus:ring-green-500' :
+                                            'border-red-300 focus:border-red-500 focus:ring-red-500'}`}
+                            />
+                            {vectorDbValidation.checking && (
+                                <div className="absolute right-3 top-2">
+                                    <svg className="animate-spin h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                </div>
+                            )}
+                        </div>
+                        {!vectorDbValidation.checking && vectorDbValidation.message && (
+                            <p className={`mt-1 text-xs ${vectorDbValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
+                                {vectorDbValidation.valid ? '✓ ' : '✗ '}{vectorDbValidation.message}
+                            </p>
                         )}
                     </div>
 

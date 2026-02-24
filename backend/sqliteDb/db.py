@@ -110,6 +110,17 @@ class DatabaseService:
                 )
             """)
 
+            # Create vector_db_registry table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS vector_db_registry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    data_source_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT
+                )
+            """)
+
             # Create prompt_configs table to link prompts to their configuration source
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS prompt_configs (
@@ -798,6 +809,33 @@ class DatabaseService:
         cursor.execute("SELECT id, name, uri, engine_type FROM db_connections WHERE id = ?", (connection_id,))
         row = cursor.fetchone()
         conn.close()
+        
+    def get_vector_db_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get vector db by name to check existence/collisions."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, data_source_id, created_at, created_by FROM vector_db_registry WHERE name = ?", (name,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return None
+
+    def register_vector_db(self, name: str, data_source_id: str, created_by: Optional[str] = None) -> int:
+        """Register a new vector DB namespace."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO vector_db_registry (name, data_source_id, created_by) VALUES (?, ?, ?)",
+                (name, data_source_id, created_by)
+            )
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Vector DB with name '{name}' already exists.")
+        finally:
+            conn.close()
         return dict(row) if row else None
 
     def get_active_metrics(self) -> list[Dict[str, Any]]:

@@ -650,6 +650,7 @@ const ConfigPage: React.FC = () => {
                                             settings={advancedSettings}
                                             onChange={setAdvancedSettings}
                                             readOnly={!canEdit}
+                                            dataSourceName={dataSourceType === 'file' && fileUploadResult ? fileUploadResult.file_name.split('.')[0] : `db_connection_${connectionId || 'default'}`}
                                         />
                                     </div>
                                 )}
