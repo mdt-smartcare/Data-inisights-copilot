@@ -47,7 +47,7 @@ apiClient.interceptors.request.use(
     try {
       // Get current access token from OIDC service
       const accessToken = await oidcService.getAccessToken();
-      
+
       if (accessToken) {
         // Add Bearer token to all authenticated requests
         config.headers.Authorization = `Bearer ${accessToken}`;
@@ -91,7 +91,7 @@ apiClient.interceptors.response.use(
       } catch (renewError) {
         console.error('Token renewal failed:', renewError);
       }
-      
+
       // If renewal failed, redirect to login
       await oidcService.removeUser();
       window.location.href = '/login';
@@ -471,3 +471,54 @@ export const uploadForIngestion = async (file: File): Promise<IngestionResponse>
   });
   return response.data;
 };
+
+// ============================================================================
+// MODEL REGISTRY API
+// ============================================================================
+
+export interface ModelInfo {
+  id: number;
+  provider: string;
+  model_name: string;
+  display_name: string;
+  is_active: number;
+  is_custom: number;
+  dimensions?: number;
+  max_tokens?: number;
+  context_length?: number;
+  max_output_tokens?: number;
+  parameters?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** List all registered embedding models from the DB */
+export const getEmbeddingModels = async (): Promise<ModelInfo[]> => {
+  const response = await apiClient.get('/api/v1/settings/embedding/models');
+  return response.data;
+};
+
+/** List all registered LLM models from the DB */
+export const getLLMModels = async (): Promise<ModelInfo[]> => {
+  const response = await apiClient.get('/api/v1/settings/llm/models');
+  return response.data;
+};
+
+/** Get LLM models compatible with the active embedding model */
+export const getCompatibleLLMs = async (): Promise<ModelInfo[]> => {
+  const response = await apiClient.get('/api/v1/settings/llm/models/compatible');
+  return response.data;
+};
+
+/** Activate an embedding model by ID */
+export const activateEmbeddingModel = async (modelId: number): Promise<ModelInfo> => {
+  const response = await apiClient.put(`/api/v1/settings/embedding/models/${modelId}/activate`);
+  return response.data;
+};
+
+/** Activate an LLM model by ID */
+export const activateLLMModel = async (modelId: number): Promise<ModelInfo> => {
+  const response = await apiClient.put(`/api/v1/settings/llm/models/${modelId}/activate`);
+  return response.data;
+};
+
