@@ -138,11 +138,23 @@ class DatabaseService:
                     retriever_config TEXT, -- JSON string
                     chunking_config TEXT, -- JSON string
                     llm_config TEXT, -- JSON string
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
                     FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
                 )
             """)
+
+            # Create document_index table for incremental embeddings
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS document_index (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    vector_db_name TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(vector_db_name, source_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_index_vdbname ON document_index(vector_db_name)")
 
             
             # Add role column if it doesn't exist (migration for existing databases)

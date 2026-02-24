@@ -89,10 +89,11 @@ async def start_embedding_job(
             _run_embedding_job,
             job_id=job_id,
             config_id=request.config_id,
-            user_id=current_user.id
+            user_id=current_user.id,
+            incremental=request.incremental
         )
         
-        logger.info(f"Started embedding job {job_id} for config {request.config_id}")
+        logger.info(f"Started embedding job {job_id} for config {request.config_id} (incremental={request.incremental})")
         
         return {
             "status": "started",
@@ -112,7 +113,7 @@ from backend.services.sql_service import get_sql_service
 from backend.sqliteDb.db import get_db_service
 import json
 
-async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
+async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremental: bool = True):
     """Background task to run embedding generation."""
     job_service = get_embedding_job_service()
     notification_service = get_notification_service()
@@ -221,6 +222,82 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
                 dictionary_content=data_dictionary
             )
             
+        # Get Vector DB Name
+        vector_db_name = "default_vector_db"
+        try:
+            emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
+            if emb_conf and 'vectorDbName' in emb_conf:
+                vector_db_name = emb_conf['vectorDbName']
+        except Exception as e:
+            logger.warning(f"Failed to parse embedding config: {e}")
+
+        # Incremental Filtering
+        import hashlib
+        import os
+        import chromadb
+        from chromadb.config import Settings
+        
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        
+        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../data/indexes/{vector_db_name}"))
+        
+        if not incremental:
+            # Rebuild: wipe index and chroma
+            cursor.execute("DELETE FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
+            conn.commit()
+            
+            import shutil
+            if os.path.exists(chroma_path):
+                shutil.rmtree(chroma_path)
+                
+            docs_to_process = documents
+            stale_source_ids = []
+            logger.info(f"Rebuild mode: Wiped existing database and Chroma indexing for {vector_db_name}")
+        else:
+            cursor.execute("SELECT source_id, checksum FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
+            existing_docs = {row['source_id']: row['checksum'] for row in cursor.fetchall()}
+            
+            docs_to_process = []
+            stale_source_ids = []
+            
+            for doc in documents:
+                doc_hash = hashlib.md5(doc.content.encode('utf-8')).hexdigest()
+                doc.metadata['checksum'] = doc_hash
+                
+                if doc.document_id in existing_docs:
+                    if existing_docs[doc.document_id] != doc_hash:
+                        stale_source_ids.append(doc.document_id)
+                        docs_to_process.append(doc)
+                else:
+                    docs_to_process.append(doc)
+            
+            if len(docs_to_process) == 0:
+                logger.info(f"Incremental run: 0 new/modified documents out of {len(documents)}. Skipping embedding.")
+                job_service.complete_job(job_id, validation_passed=True)
+                return
+
+            if stale_source_ids and os.path.exists(chroma_path):
+                # Delete old chunks for updated documents
+                try:
+                    client = chromadb.PersistentClient(path=chroma_path, settings=Settings(anonymized_telemetry=False))
+                    # Check if collection exists first to avoid errors
+                    try:
+                        collection = client.get_collection(name=vector_db_name)
+                        # Delete in batches due to potential URL length limits
+                        for i in range(0, len(stale_source_ids), 100):
+                            batch_stale = stale_source_ids[i:i+100]
+                            collection.delete(where={"source_id": {"$in": batch_stale}})
+                        logger.info(f"Deleted outdated chunks for {len(stale_source_ids)} documents.")
+                    except ValueError:
+                        pass # Collection doesn't exist yet
+                except Exception as e:
+                    logger.warning(f"Failed to cleanly delete stale chunks from Chroma: {e}")
+
+        # Override documents with only the delta to process
+        documents = docs_to_process
+
+            
         # Apply chunking
         chunk_size = 800
         chunk_overlap = 150
@@ -294,19 +371,6 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
         job_service.transition_to_storing(job_id)
         
         # Store actual vectors to vector database
-        import chromadb
-        import os
-        from chromadb.config import Settings
-        
-        vector_db_name = "default_vector_db"
-        try:
-            emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
-            if emb_conf and 'vectorDbName' in emb_conf:
-                vector_db_name = emb_conf['vectorDbName']
-        except Exception as e:
-            logger.warning(f"Failed to parse embedding config: {e}")
-            
-        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../data/indexes/{vector_db_name}"))
         os.makedirs(chroma_path, exist_ok=True)
         
         ids = []
@@ -345,6 +409,19 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
                     metadatas=metadatas[i:i+batch_size]
                 )
         
+        # Update SQLite document_index
+        for doc in documents: # documents is now docks_to_process
+            if 'checksum' in doc.metadata:
+                cursor.execute('''
+                    INSERT INTO document_index (vector_db_name, source_id, checksum)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(vector_db_name, source_id) DO UPDATE SET
+                        checksum=excluded.checksum,
+                        updated_at=CURRENT_TIMESTAMP
+                ''', (vector_db_name, doc.document_id, doc.metadata['checksum']))
+        conn.commit()
+        conn.close()
+
         # Complete the job
         job_service.complete_job(job_id, validation_passed=validation_passed)
         

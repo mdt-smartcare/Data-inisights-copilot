@@ -153,6 +153,7 @@ class EmbeddingJobCreate(BaseModel):
     config_id: int = Field(..., description="RAG configuration to generate embeddings for")
     batch_size: int = Field(default=50, ge=10, le=200, description="Documents per batch")
     max_concurrent: int = Field(default=5, ge=1, le=10, description="Max concurrent batches")
+    incremental: bool = Field(default=True, description="Whether to run incrementally")
 
 
 class EmbeddingJobProgress(BaseModel):

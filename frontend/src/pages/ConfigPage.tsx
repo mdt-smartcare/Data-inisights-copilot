@@ -268,7 +268,7 @@ const ConfigPage: React.FC = () => {
         }
     };
 
-    const handleStartEmbedding = async () => {
+    const handleStartEmbedding = async (incremental: boolean = true) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
         if (!configId) return;
 
@@ -276,7 +276,8 @@ const ConfigPage: React.FC = () => {
             const result = await startEmbeddingJob({
                 config_id: configId,
                 batch_size: 50,
-                max_concurrent: 5
+                max_concurrent: 5,
+                incremental: incremental
             });
             setEmbeddingJobId(result.job_id);
             showSuccess('Embedding Job Started', result.message);
@@ -435,17 +436,31 @@ const ConfigPage: React.FC = () => {
                                             ) : (
                                                 <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm flex items-center justify-between">
                                                     <div>
-                                                        <h3 className="font-medium text-gray-900">Generate Embeddings</h3>
+                                                        <h3 className="font-medium text-gray-900">Manage Knowledge Base</h3>
                                                         <p className="text-sm text-gray-500 mt-1">
-                                                            Update the vector knowledge base with the current schema and dictionary.
+                                                            Keep your agent's knowledge up-to-date with your latest data.
                                                         </p>
                                                     </div>
-                                                    <button
-                                                        onClick={handleStartEmbedding}
-                                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
-                                                    >
-                                                        Start Generation
-                                                    </button>
+                                                    <div className="flex gap-3">
+                                                        <button
+                                                            onClick={() => handleStartEmbedding(true)}
+                                                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
+                                                            title="Only index new or modified files/rows"
+                                                        >
+                                                            Update Vector DB
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (window.confirm('Are you sure you want to rebuild the vector database? This will delete all existing knowledge and re-index everything from scratch. This may take a long time and consume LLM tokens.')) {
+                                                                    handleStartEmbedding(false);
+                                                                }
+                                                            }}
+                                                            className="px-4 py-2 bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors"
+                                                            title="Delete everything and start fresh"
+                                                        >
+                                                            Rebuild Vector DB
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
@@ -753,17 +768,31 @@ const ConfigPage: React.FC = () => {
                                             ) : (
                                                 <div className="bg-white p-6 rounded-lg border border-blue-100 shadow-sm flex items-center justify-between">
                                                     <div>
-                                                        <h3 className="font-medium text-gray-900">Generate Embeddings</h3>
+                                                        <h3 className="font-medium text-gray-900">Manage Knowledge Base</h3>
                                                         <p className="text-sm text-gray-500 mt-1">
-                                                            Required to make your new configuration searchable.
+                                                            Required to make your new configuration searchable. Keep your agent's knowledge up-to-date with your latest data.
                                                         </p>
                                                     </div>
-                                                    <button
-                                                        onClick={handleStartEmbedding}
-                                                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
-                                                    >
-                                                        Start Generation
-                                                    </button>
+                                                    <div className="flex gap-3">
+                                                        <button
+                                                            onClick={() => handleStartEmbedding(true)}
+                                                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors"
+                                                            title="Only index new or modified files/rows"
+                                                        >
+                                                            Update Vector DB
+                                                        </button>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (window.confirm('Are you sure you want to rebuild the vector database? This will delete all existing knowledge and re-index everything from scratch. This may take a long time and consume LLM tokens.')) {
+                                                                    handleStartEmbedding(false);
+                                                                }
+                                                            }}
+                                                            className="px-4 py-2 bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-50 font-medium transition-colors"
+                                                            title="Delete everything and start fresh"
+                                                        >
+                                                            Rebuild Vector DB
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
