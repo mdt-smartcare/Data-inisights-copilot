@@ -306,7 +306,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
         except Exception as e:
             logger.warning(f"Failed to parse embedding config: {e}")
             
-        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../data/indexes/dynamic_chromadb"))
+        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../data/indexes/{vector_db_name}"))
         os.makedirs(chroma_path, exist_ok=True)
         
         ids = []
