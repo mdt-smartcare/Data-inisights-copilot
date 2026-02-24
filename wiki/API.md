@@ -102,6 +102,29 @@ Fetch the schema (tables/columns) for a specific connection ID.
 
 ---
 
+## File Ingestion (`/ingestion`)
+Process uploaded files for RAG contexts.
+
+### `POST /ingestion/upload`
+Upload a document (.pdf, .csv, .xlsx, .json) to extract its text and metadata.
+- **Request Body**: `multipart/form-data` with key `file`.
+- **Response**: `200 OK`
+    ```json
+    {
+      "file_name": "report.pdf",
+      "file_type": "pdf",
+      "total_documents": 12,
+      "documents": [
+        {
+          "page_content": "Executive Summary...",
+          "metadata": { "page": 1 }
+        }
+      ]
+    }
+    ```
+
+---
+
 ## Embedding Jobs (`/embedding-jobs`)
 Manage background ingestion of documents. *(Requires Super Admin)*
 
@@ -135,6 +158,23 @@ Check the status of a specific job.
 
 ## System Settings (`/settings`)
 Configure global application behavior.
+
+### `GET /settings/prompts`
+Get history of system prompts.
+
+### `POST /settings/prompts`
+Publish a new system prompt version and associated agent configuration.
+- **Request Body**:
+    ```json
+    {
+      "prompt_text": "You are an AI...",
+      "agent_id": 1,
+      "data_source_type": "file",
+      "ingestion_documents": "[...]",
+      "ingestion_file_name": "data.pdf",
+      "ingestion_file_type": "pdf"
+    }
+    ```
 
 ### `GET /settings`
 Retrieve all settings grouped by category (Auth, LLM, UI, etc.).

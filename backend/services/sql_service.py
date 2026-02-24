@@ -1,12 +1,16 @@
 """
 SQL service for structured database queries.
 Wraps LangChain SQL agent for database interactions.
+
+OPTIMIZED: Added query result caching and reduced agent iterations.
 """
 from functools import lru_cache
 from typing import Optional, Tuple, List, Dict, Any
 from datetime import datetime
+from collections import OrderedDict
 import re
 import time
+import hashlib
 
 from sqlalchemy import inspect
 from langchain_community.utilities import SQLDatabase
@@ -29,6 +33,58 @@ from backend.services.reflection_service import get_critique_service
 
 settings = get_settings()
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# QUERY RESULT CACHE - Avoid redundant DB hits for repeated queries
+# =============================================================================
+class QueryCache:
+    """
+    Simple LRU cache for SQL query results.
+    Caches results for 5 minutes to handle repeated similar questions.
+    """
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 300):
+        self.cache: OrderedDict[str, Tuple[str, float]] = OrderedDict()
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+    
+    def _hash_query(self, question: str) -> str:
+        """Create a hash key from the question."""
+        normalized = question.lower().strip()
+        return hashlib.md5(normalized.encode()).hexdigest()
+    
+    def get(self, question: str) -> Optional[str]:
+        """Get cached result if exists and not expired."""
+        key = self._hash_query(question)
+        if key in self.cache:
+            result, timestamp = self.cache[key]
+            if time.time() - timestamp < self.ttl_seconds:
+                # Move to end (most recently used)
+                self.cache.move_to_end(key)
+                logger.info(f"⚡ Cache HIT for query (saved ~3s)")
+                return result
+            else:
+                # Expired, remove it
+                del self.cache[key]
+        return None
+    
+    def set(self, question: str, result: str) -> None:
+        """Cache a query result."""
+        key = self._hash_query(question)
+        self.cache[key] = (result, time.time())
+        # Enforce max size
+        while len(self.cache) > self.max_size:
+            self.cache.popitem(last=False)  # Remove oldest
+        logger.debug(f"Cached query result (cache size: {len(self.cache)})")
+    
+    def clear(self) -> None:
+        """Clear all cached results."""
+        self.cache.clear()
+        logger.info("Query cache cleared")
+
+
+# Global query cache instance
+_query_cache = QueryCache(max_size=100, ttl_seconds=300)
 
 
 def _get_active_database_url() -> str:
@@ -115,7 +171,7 @@ class SQLService:
                 agent_type="openai-tools",
                 verbose=True,
                 handle_parsing_errors=True,
-                max_iterations=8,
+                max_iterations=5,  # Reduced from 8 for faster execution
                 include_tables=self.relevant_tables
             )
             logger.info(f"SQL agent initialized successfully with {len(self.relevant_tables)} cached tables")
@@ -320,19 +376,21 @@ class SQLService:
     def query(self, question: str) -> str:
         logger.info(f"Executing SQL query for: '{question[:100]}...'")
         
-        # KPI template matching disabled by domain-agnostic refactor
-        # kpi_match = self._check_dashboard_kpi(question)
-        # if kpi_match:
-        #     sql_query, description = kpi_match
-        #     logger.info(f"Using pre-defined KPI template for: {description}")
-        #     return self._execute_kpi_template(sql_query, description, question)
+        # Check cache first
+        cached_result = _query_cache.get(question)
+        if cached_result:
+            return cached_result
         
         if self._is_simple_query(question):
             logger.info(" Detected simple query - using optimized execution path")
-            return self._execute_optimized(question)
+            result = self._execute_optimized(question)
         else:
             logger.info(" Complex query detected - using full agent")
-            return self._execute_with_agent(question)
+            result = self._execute_with_agent(question)
+        
+        # Cache the result
+        _query_cache.set(question, result)
+        return result
     
 
     @observe(as_type="span")
@@ -354,40 +412,8 @@ class SQLService:
                 sql_query = sql_query.split('--')[0].strip()
                 sql_query = sql_query.rstrip(';') + ';'
             else:
-                logger.info(" API Call 1: Generate SQL query with targeted schema")
+                sql_query = self._generate_sql(question)
                 api_call_count += 1
-                
-                relevant_schema = self._get_relevant_schema(question)
-                
-                # Fetch active system prompt for domain-specific rules
-                system_prompt_rules = self._get_active_system_prompt_rules()
-                
-                prompt = f"""You are a PostgreSQL expert. Generate ONLY a SQL query to answer the question.
-
-{system_prompt_rules}
-
-DATABASE SCHEMA:
-{relevant_schema}
-
-IMPORTANT RULES:
-1. Use ONLY the exact column names shown in the schema above
-2. Use ONLY the exact table names shown in the schema above
-3. Study the sample rows to understand the data
-4. Identify primary and foreign key relationships from column names
-5. Use proper date filtering: WHERE date_column >= 'YYYY-MM-DD' AND date_column <= 'YYYY-MM-DD'
-6. ALWAYS filter by is_active = true AND is_deleted = false unless explicitly asked otherwise
-
-QUESTION: {question}
-
-Return ONLY the SQL query, no markdown, no explanation, no comments.
-
-SQL Query:"""
-
-                response = self.llm_fast.invoke(prompt)
-                sql_query = response.content.strip()
-                
-                sql_query = re.sub(r'```\n?', '', sql_query)
-                sql_query = sql_query.strip()
             
             # Update Langfuse trace with generated SQL
             if langfuse_context:
@@ -399,63 +425,12 @@ SQL Query:"""
                             "execution_type": "optimized"
                         }
                     )
-                except:
+                except Exception:
                     pass
             
-            # =================================================================
-            # REFLECTION LOOP: Validate and Fix SQL Algorithm
-            # =================================================================
-            logger.info(f"Initial SQL generated: {sql_query[:100]}...")
-            
-            max_retries = 2
-            current_try = 0
-            is_valid = False
-            critique_feedback = ""
-            
-            while current_try <= max_retries:
-                if current_try > 0:
-                    logger.warning(f"Retry attempt {current_try}/{max_retries} due to critique: {critique_feedback}")
-                    
-                    # Fix SQL based on critique
-                    fix_prompt = f"""The previous SQL query was invalid. Fix it based on the critique.
-                    
-DATABASE SCHEMA:
-{relevant_schema}
-
-CRITIQUE:
-{critique_feedback}
-
-ORIGINAL QUESTION: {question}
-
-PREVIOUS SQL: {sql_query}
-
-Return ONLY the corrected SQL query."""
-                    
-                    response = self.llm_fast.invoke(fix_prompt)
-                    sql_query = response.content.strip()
-                    sql_query = re.sub(r'```sql\n?', '', sql_query)
-                    sql_query = re.sub(r'```\n?', '', sql_query)
-                    sql_query = sql_query.strip()
-                    logger.info(f"Fixed SQL: {sql_query[:100]}...")
-
-                # Validate with Critique Service
-                # We need the full schema context for critique, or at least the relevant part
-                critique = self.critique_service.critique_sql(
-                    question=question,
-                    sql_query=sql_query,
-                    schema_context=relevant_schema
-                )
-                
-                if critique.is_valid:
-                    logger.info("SQL validated successfully via reflection")
-                    is_valid = True
-                    break
-                else:
-                    critique_feedback = "; ".join(critique.issues)
-                    current_try += 1
-            
-            if not is_valid:
-                logger.warning("SQL failed validation after retries. Executing strict safety check fallback.")
+            # Validate SQL with reflection loop
+            sql_query, validation_retries = self._validate_and_fix_sql(question, sql_query)
+            api_call_count += validation_retries
             
             logger.info(f" SQL to execute: {sql_query[:200]}...")
             
@@ -481,13 +456,136 @@ Return ONLY the corrected SQL query."""
                             "final_sql": sql_query
                         }
                     )
-                except:
+                except Exception:
                     pass
             
-            logger.info(f" API Call {api_call_count + 1}: Format natural language response")
+            # Format response using FAST model
+            output = self._format_response(question, sql_query, result)
             api_call_count += 1
             
-            format_prompt = f"""Convert this database result into a clear, natural language answer.
+            total_duration_ms = (time.time() - start_time) * 1000
+            logger.info("=" * 80)
+            logger.info(f" Optimized execution completed with {api_call_count} API call(s)")
+            logger.info(f" Total duration: {total_duration_ms:.0f}ms, SQL execution: {sql_duration_ms:.0f}ms")
+            logger.info(f" Final Answer: {output[:300]}...")
+            logger.info("=" * 80)
+            
+            # Final Langfuse update
+            if langfuse_context:
+                try:
+                    langfuse_context.update_current_observation(
+                        output=output[:500],
+                        metadata={
+                            "total_duration_ms": total_duration_ms,
+                            "api_calls": api_call_count
+                        }
+                    )
+                except Exception:
+                    pass
+            
+            return output
+            
+        except Exception as e:
+            logger.warning(f"  Optimized execution failed: {e}. Falling back to full agent.")
+            logger.error(f"Error details: {str(e)}", exc_info=True)
+            return self._execute_with_agent(question)
+
+    @observe(as_type="span", name="generate_sql")
+    def _generate_sql(self, question: str) -> str:
+        """Generate SQL query from natural language question using fast model."""
+        logger.info(" API Call: Generate SQL query with targeted schema")
+        
+        relevant_schema = self._get_relevant_schema(question)
+        system_prompt_rules = self._get_active_system_prompt_rules()
+        
+        prompt = f"""You are a PostgreSQL expert. Generate ONLY a SQL query to answer the question.
+
+{system_prompt_rules}
+
+DATABASE SCHEMA:
+{relevant_schema}
+
+IMPORTANT RULES:
+1. Use ONLY the exact column names shown in the schema above
+2. Use ONLY the exact table names shown in the schema above
+3. Study the sample rows to understand the data
+4. Identify primary and foreign key relationships from column names
+5. Use proper date filtering: WHERE date_column >= 'YYYY-MM-DD' AND date_column <= 'YYYY-MM-DD'
+6. ALWAYS filter by is_active = true AND is_deleted = false unless explicitly asked otherwise
+
+QUESTION: {question}
+
+Return ONLY the SQL query, no markdown, no explanation, no comments.
+
+SQL Query:"""
+
+        response = self.llm_fast.invoke(prompt)
+        sql_query = response.content.strip()
+        sql_query = re.sub(r'```sql\n?', '', sql_query)
+        sql_query = re.sub(r'```\n?', '', sql_query)
+        return sql_query.strip()
+
+    @observe(as_type="span", name="validate_sql")
+    def _validate_and_fix_sql(self, question: str, sql_query: str) -> tuple:
+        """Validate SQL and fix if needed. Returns (sql_query, retry_count)."""
+        logger.info(f"Initial SQL generated: {sql_query[:100]}...")
+        
+        relevant_schema = self._get_relevant_schema(question)
+        max_retries = 2
+        current_try = 0
+        retry_count = 0
+        critique_feedback = ""  # Initialize before the loop
+        
+        while current_try <= max_retries:
+            if current_try > 0:
+                logger.warning(f"Retry attempt {current_try}/{max_retries}")
+                retry_count += 1
+                
+                # Fix SQL based on critique
+                fix_prompt = f"""The previous SQL query was invalid. Fix it based on the critique.
+
+DATABASE SCHEMA:
+{relevant_schema}
+
+CRITIQUE:
+{critique_feedback}
+
+ORIGINAL QUESTION: {question}
+
+PREVIOUS SQL: {sql_query}
+
+Return ONLY the corrected SQL query."""
+                
+                response = self.llm_fast.invoke(fix_prompt)
+                sql_query = response.content.strip()
+                sql_query = re.sub(r'```sql\n?', '', sql_query)
+                sql_query = re.sub(r'```\n?', '', sql_query)
+                sql_query = sql_query.strip()
+                logger.info(f"Fixed SQL: {sql_query[:100]}...")
+
+            # Validate with Critique Service
+            critique = self.critique_service.critique_sql(
+                question=question,
+                sql_query=sql_query,
+                schema_context=relevant_schema
+            )
+            
+            if critique.is_valid:
+                logger.info("SQL validated successfully via reflection")
+                return sql_query, retry_count
+            else:
+                critique_feedback = "; ".join(critique.issues)
+                current_try += 1
+        
+        logger.warning("SQL failed validation after retries. Proceeding with safety check.")
+        return sql_query, retry_count
+
+    @observe(as_type="span", name="format_response")
+    def _format_response(self, question: str, sql_query: str, result: str) -> str:
+        """Format SQL result into natural language response with chart. Uses FAST model."""
+        logger.info(" API Call: Format natural language response (using gpt-3.5-turbo)")
+        
+        format_prompt = f"""Convert this database result into a clear, natural language answer.
 Also, generate a JSON chart specification if the data is suitable for visualization.
 
 SQL Query: {sql_query}
@@ -520,36 +618,11 @@ Chart type guidelines:
 
 Response:"""
 
-            formatted_response = self.llm.invoke(format_prompt)
-            output = formatted_response.content.strip()
-            
-            total_duration_ms = (time.time() - start_time) * 1000
-            logger.info("=" * 80)
-            logger.info(f" Optimized execution completed with {api_call_count} API call(s) (vs 7 with agent)")
-            logger.info(f" Total duration: {total_duration_ms:.0f}ms, SQL execution: {sql_duration_ms:.0f}ms")
-            logger.info(f" Final Answer: {output[:300]}...")
-            logger.info("=" * 80)
-            
-            # Final Langfuse update
-            if langfuse_context:
-                try:
-                    langfuse_context.update_current_observation(
-                        output=output[:500],
-                        metadata={
-                            "total_duration_ms": total_duration_ms,
-                            "api_calls": api_call_count
-                        }
-                    )
-                except:
-                    pass
-            
-            return output
-            
-        except Exception as e:
-            logger.warning(f"  Optimized execution failed: {e}. Falling back to full agent.")
-            logger.error(f"Error details: {str(e)}", exc_info=True)
-            return self._execute_with_agent(question)
-    
+        # OPTIMIZATION: Use fast model (gpt-3.5-turbo) for response formatting
+        # This saves ~3-5 seconds compared to gpt-4o
+        formatted_response = self.llm_fast.invoke(format_prompt)
+        return formatted_response.content.strip()
+
     def _validate_sql_query(self, sql_query: str) -> bool:
         sql_lower = sql_query.lower().strip()
         

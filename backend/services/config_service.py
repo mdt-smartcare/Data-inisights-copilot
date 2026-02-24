@@ -28,13 +28,14 @@ class ConfigService:
             self._llm = get_agent_service().llm
         return self._llm
 
-    def generate_draft_prompt(self, data_dictionary: str) -> Dict[str, Any]:
+    def generate_draft_prompt(self, data_dictionary: str, data_source_type: str = 'database') -> Dict[str, Any]:
         """
         Generates a draft system prompt based on the provided data dictionary / context.
         
         Args:
             data_dictionary: A string containing schema info, selected tables, and user notes.
                              (Constructed by the frontend wizard)
+            data_source_type: The type of data source ('database' or 'file').
         """
         system_role = "You are a Data Architect and AI System Prompt Engineer."
         # Standard Chart Rules to append (Single Source of Truth)
@@ -49,7 +50,7 @@ class ConfigService:
         7. For "Radar" charts, compare entities across variables.
         8. For "Treemap" charts, visualize hierarchical or categorical distributions.
 
-        JSON FORMAT:ß
+        JSON FORMAT:
         You MUST append a single JSON block at the end of your response:
         ```json
         {
@@ -63,20 +64,36 @@ class ConfigService:
         IMPORTANT: DO NOT use Chart.js structure (datasets). Use simple "values" array matching the "labels" array.
         """
 
-        instruction = (
-            "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will query a structured database.\\n\\n"
-            "CONTEXT PROVIDED:\\n"
-            f"{data_dictionary}\\n\\n"
-            "INSTRUCTIONS:\\n"
-            "1. Define a suitable persona based strictly on the table names and column definitions provided in the context.\\n"
-            "2. List the KEY tables and columns available based on the context above.\\n"
-            "3. Define strict rules for SQL generation (e.g., joins, filters).\\n"
-            "   - When multiple specific entities are mentioned (e.g., 'at Site A and Site B'), Use 'GROUP BY' to provide a breakdown/comparison, NOT a single total sum.\\n"
-            "4. **OUTPUT FORMAT:**\\n"
-            "   - Do NOT include generic chart generation rules or JSON formats in your output (these will be appended automatically).\\n"
-            "   - Focus on domain-specific examples and logic.\\n"
-            "5. Return ONLY the prompt text (Persona + SQL Rules), no markdown formatting."
-        )
+        if data_source_type == 'file':
+            instruction = (
+                "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will answer questions based on a set of provided documents.\\n\\n"
+                "DOCUMENT CONTENT PROVIDED:\\n"
+                f"{data_dictionary}\\n\\n"
+                "INSTRUCTIONS:\\n"
+                "1. Define a suitable persona based strictly on the content provided in the context above.\\n"
+                "2. Summarize the key topics and types of information available in the documents.\\n"
+                "3. Define strict rules for answering questions.\\n"
+                "   - Instruct the assistant to only answer based on the provided text.\\n"
+                "   - If the answer is not in the text, instruct the assistant to say it does not know.\\n"
+                "4. **OUTPUT FORMAT:**\\n"
+                "   - Do NOT include generic chart generation rules or JSON formats in your output (these will be appended automatically).\\n"
+                "5. Return ONLY the prompt text (Persona + Extraction Rules), no markdown formatting."
+            )
+        else:
+            instruction = (
+                "Your task is to write a comprehensive SYSTEM PROMPT for an AI assistant that will query a structured database.\\n\\n"
+                "CONTEXT PROVIDED:\\n"
+                f"{data_dictionary}\\n\\n"
+                "INSTRUCTIONS:\\n"
+                "1. Define a suitable persona based strictly on the table names and column definitions provided in the context.\\n"
+                "2. List the KEY tables and columns available based on the context above.\\n"
+                "3. Define strict rules for SQL generation (e.g., joins, filters).\\n"
+                "   - When multiple specific entities are mentioned (e.g., 'at Site A and Site B'), Use 'GROUP BY' to provide a breakdown/comparison, NOT a single total sum.\\n"
+                "4. **OUTPUT FORMAT:**\\n"
+                "   - Do NOT include generic chart generation rules or JSON formats in your output (these will be appended automatically).\\n"
+                "   - Focus on domain-specific examples and logic.\\n"
+                "5. Return ONLY the prompt text (Persona + SQL Rules), no markdown formatting."
+            )
 
         # Construct the prompt template
         prompt_template = ChatPromptTemplate.from_messages([
@@ -85,11 +102,11 @@ class ConfigService:
         ])
 
         # Invoke the LLM
-        # We want the LLM to explain WHY it prioritized certain tables
+        # We want the LLM to explain WHY it prioritized certain tables/documents
         instruction += (
             "\n\nAlso, at the end of your response, strictly separated by '---REASONING---', "
             "provide a JSON object with two keys: \n"
-            "1. 'selection_reasoning': mapping key schema elements (table names or table.column) to the reason they were selected.\n"
+            "1. 'selection_reasoning': mapping key schema/document elements to the reason they were selected.\n"
             "2. 'example_questions': a list of 3-5 representative questions this agent could answer.\n"
         )
 
@@ -144,7 +161,11 @@ class ConfigService:
                               data_dictionary: Optional[str] = None,
                               reasoning: Optional[str] = None,
                               example_questions: Optional[str] = None,
-                              agent_id: Optional[int] = None) -> Dict[str, Any]:
+                              agent_id: Optional[int] = None,
+                              data_source_type: str = 'database',
+                              ingestion_documents: Optional[str] = None,
+                              ingestion_file_name: Optional[str] = None,
+                              ingestion_file_type: Optional[str] = None) -> Dict[str, Any]:
         """
         Publishes a drafted system prompt as the new active version.
         Includes optional configuration metadata for reproducibility and explainability.
@@ -157,7 +178,11 @@ class ConfigService:
             data_dictionary,
             reasoning,
             example_questions,
-            agent_id=agent_id
+            agent_id=agent_id,
+            data_source_type=data_source_type,
+            ingestion_documents=ingestion_documents,
+            ingestion_file_name=ingestion_file_name,
+            ingestion_file_type=ingestion_file_type
         )
 
     def get_prompt_history(self, agent_id: Optional[int] = None):

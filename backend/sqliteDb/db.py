@@ -119,6 +119,10 @@ class DatabaseService:
                     data_dictionary TEXT,
                     reasoning TEXT, -- JSON string
                     example_questions TEXT, -- JSON string list
+                    data_source_type TEXT DEFAULT 'database',
+                    ingestion_documents TEXT, -- JSON string list of ExtractedDocument
+                    ingestion_file_name TEXT,
+                    ingestion_file_type TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
                     FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
@@ -143,6 +147,16 @@ class DatabaseService:
             if 'example_questions' not in pc_columns:
                 cursor.execute("ALTER TABLE prompt_configs ADD COLUMN example_questions TEXT")
                 logger.info("Added example_questions column to prompt_configs table")
+            
+            if 'data_source_type' not in pc_columns:
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN data_source_type TEXT DEFAULT 'database'")
+                logger.info("Added data_source_type column to prompt_configs table")
+                
+            if 'ingestion_documents' not in pc_columns:
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_documents TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_name TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_type TEXT")
+                logger.info("Added ingestion columns to prompt_configs table")
             
             # Create agents table
             cursor.execute("""
@@ -510,7 +524,11 @@ class DatabaseService:
                               example_questions: Optional[str] = None,
                               embedding_config: Optional[str] = None,
                               retriever_config: Optional[str] = None,
-                              agent_id: Optional[int] = None) -> Dict[str, Any]:
+                              agent_id: Optional[int] = None,
+                              data_source_type: str = 'database',
+                              ingestion_documents: Optional[str] = None,
+                              ingestion_file_name: Optional[str] = None,
+                              ingestion_file_type: Optional[str] = None) -> Dict[str, Any]:
         """Publish a new version of the system prompt with optional config metadata.
         
         Args:
@@ -524,6 +542,10 @@ class DatabaseService:
             embedding_config: JSON string of embedding parameters (ignored - for compatibility)
             retriever_config: JSON string of retrieval parameters (ignored - for compatibility)
             agent_id: ID of the agent this prompt belongs to
+            data_source_type: Type of data source ('database' or 'file')
+            ingestion_documents: JSON string list of ExtractedDocument (for file sources)
+            ingestion_file_name: Uploaded file name
+            ingestion_file_type: Uploaded file extension
             
         Returns:
             Dictionary with the new prompt details
@@ -568,12 +590,16 @@ class DatabaseService:
             cursor.execute("""
                 INSERT INTO prompt_configs (
                     prompt_id, connection_id, schema_selection, 
-                    data_dictionary, reasoning, example_questions
+                    data_dictionary, reasoning, example_questions,
+                    data_source_type, ingestion_documents,
+                    ingestion_file_name, ingestion_file_type
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 prompt_id, connection_id, schema_selection,
-                data_dictionary, reasoning, example_questions
+                data_dictionary, reasoning, example_questions,
+                data_source_type, ingestion_documents,
+                ingestion_file_name, ingestion_file_type
             ))
             
             conn.commit()
@@ -614,7 +640,11 @@ class DatabaseService:
                     pc.schema_selection,
                     pc.data_dictionary,
                     pc.reasoning,
-                    pc.example_questions
+                    pc.example_questions,
+                    pc.data_source_type,
+                    pc.ingestion_documents,
+                    pc.ingestion_file_name,
+                    pc.ingestion_file_type
                 FROM system_prompts sp
                 LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
                 LEFT JOIN users u ON sp.created_by = u.username
@@ -635,7 +665,11 @@ class DatabaseService:
                     pc.schema_selection,
                     pc.data_dictionary,
                     pc.reasoning,
-                    pc.example_questions
+                    pc.example_questions,
+                    pc.data_source_type,
+                    pc.ingestion_documents,
+                    pc.ingestion_file_name,
+                    pc.ingestion_file_type
                 FROM system_prompts sp
                 LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
                 LEFT JOIN users u ON sp.created_by = u.username

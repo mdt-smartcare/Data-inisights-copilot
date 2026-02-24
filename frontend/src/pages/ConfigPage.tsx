@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob } from '../services/api';
+import type { IngestionResponse } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
+import FileUploadSource from '../components/FileUploadSource';
+import { DocumentPreview } from '../components/config/DocumentPreview';
 import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
 import ConfigSummary from '../components/ConfigSummary';
@@ -21,7 +24,7 @@ import { ArrowLeftIcon } from '@heroicons/react/24/outline'; // Add back button 
 
 const steps = [
     { id: 0, name: 'Dashboard' },
-    { id: 1, name: 'Connect Database' },
+    { id: 1, name: 'Data Source' },
     { id: 2, name: 'Select Schema' },
     { id: 3, name: 'Data Dictionary' },
     { id: 4, name: 'Advanced Settings' },
@@ -34,7 +37,6 @@ const ConfigPage: React.FC = () => {
     const { success: showSuccess, error: showError } = useToast();
     const canEdit = canEditPrompt(user);
     const canPublish = canPublishPrompt(user);
-    const isViewer = !canEdit;
 
     // Agent Selection State
     const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
@@ -44,6 +46,10 @@ const ConfigPage: React.FC = () => {
     const [connectionId, setConnectionId] = useState<number | null>(null);
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
     const [dataDictionary, setDataDictionary] = useState('');
+
+    // Data source type: 'database' or 'file'
+    const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
+    const [fileUploadResult, setFileUploadResult] = useState<IngestionResponse | null>(null);
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
@@ -137,11 +143,17 @@ const ConfigPage: React.FC = () => {
     };
 
     const handleNext = () => {
-        if (currentStep === 1 && !connectionId) {
-            setError("Please select a database connection.");
-            return;
+        if (currentStep === 1) {
+            if (dataSourceType === 'database' && !connectionId) {
+                setError("Please select a database connection.");
+                return;
+            }
+            if (dataSourceType === 'file' && !fileUploadResult) {
+                setError("Please upload a file first.");
+                return;
+            }
         }
-        if (currentStep === 2 && Object.keys(selectedSchema).length === 0) {
+        if (currentStep === 2 && dataSourceType === 'database' && Object.keys(selectedSchema).length === 0) {
             setError("Please select at least one table/column.");
             return;
         }
@@ -153,12 +165,18 @@ const ConfigPage: React.FC = () => {
         if (currentStep > 0) setCurrentStep(currentStep - 1);
     };
 
+    const handleFileExtractionComplete = (result: IngestionResponse) => {
+        setFileUploadResult(result);
+    };
+
     const handleStartNew = () => {
         // Reset state for fresh config
         setConnectionId(null);
         setSelectedSchema({});
         setDataDictionary('');
         setDraftPrompt('');
+        setDataSourceType('database');
+        setFileUploadResult(null);
         setCurrentStep(1);
     };
 
@@ -171,15 +189,24 @@ const ConfigPage: React.FC = () => {
         setGenerating(true);
         setError(null);
         try {
-            let schemaContext = "Selected Tables and Columns:\n";
-            Object.entries(selectedSchema).forEach(([table, cols]) => {
-                schemaContext += `- ${table}: [${cols.join(', ')}]\n`;
-            });
-            schemaContext += "\n";
+            let fullContext = dataDictionary;
 
-            const fullContext = schemaContext + dataDictionary;
+            if (dataSourceType === 'database') {
+                let schemaContext = "Selected Tables and Columns:\n";
+                Object.entries(selectedSchema).forEach(([table, cols]) => {
+                    schemaContext += `- ${table}: [${cols.join(', ')}]\n`;
+                });
+                schemaContext += "\n";
+                fullContext = schemaContext + dataDictionary;
+            } else if (dataSourceType === 'file' && fileUploadResult) {
+                let documentContext = "Extracted Document Content:\n";
+                documentContext += fileUploadResult.documents.map((doc, i) =>
+                    `--- Document ${i + 1} ---\n${doc.page_content}`
+                ).join('\n\n');
+                fullContext = documentContext + "\n\nUser Notes / Context:\n" + dataDictionary;
+            }
 
-            const result = await generateSystemPrompt(fullContext);
+            const result = await generateSystemPrompt(fullContext, dataSourceType);
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
             if (result.example_questions) setExampleQuestions(result.example_questions);
@@ -202,7 +229,11 @@ const ConfigPage: React.FC = () => {
                 exampleQuestions,
                 advancedSettings.embedding,
                 advancedSettings.retriever,
-                selectedAgent.id
+                selectedAgent.id,
+                dataSourceType,
+                fileUploadResult ? JSON.stringify(fileUploadResult.documents) : undefined,
+                fileUploadResult?.file_name,
+                fileUploadResult?.file_type
             );
             setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
             loadHistory(); // Refresh history
@@ -444,19 +475,73 @@ const ConfigPage: React.FC = () => {
                                 )}
                                 {currentStep === 1 && (
                                     <div className="max-w-2xl mx-auto">
-                                        <h2 className="text-xl font-semibold mb-4">Select Database Connection</h2>
-                                        <p className="text-gray-500 text-sm mb-6">
-                                            Choose the database you want to generate insights from. You can add multiple connections (e.g., Staging, Production).
+                                        <h2 className="text-xl font-semibold mb-4">Connect Data Source</h2>
+                                        <p className="text-gray-500 text-sm mb-4">
+                                            Choose how you want to provide data to this agent.
                                         </p>
-                                        <ConnectionManager
-                                            onSelect={setConnectionId}
-                                            selectedId={connectionId}
-                                            readOnly={!canManageConnections(user)}
-                                        />
+
+                                        {/* Data Source Toggle */}
+                                        <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-6">
+                                            <button
+                                                type="button"
+                                                onClick={() => { setDataSourceType('database'); setFileUploadResult(null); }}
+                                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                                                    ${dataSourceType === 'database'
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                                                </svg>
+                                                Database
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => { setDataSourceType('file'); setConnectionId(null); }}
+                                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                                                    ${dataSourceType === 'file'
+                                                        ? 'bg-blue-600 text-white'
+                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                    }`}
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                                </svg>
+                                                File Upload
+                                            </button>
+                                        </div>
+
+                                        {/* Database Source */}
+                                        {dataSourceType === 'database' && (
+                                            <>
+                                                <p className="text-gray-500 text-sm mb-4">
+                                                    Choose the database you want to generate insights from.
+                                                </p>
+                                                <ConnectionManager
+                                                    onSelect={setConnectionId}
+                                                    selectedId={connectionId}
+                                                    readOnly={!canManageConnections(user)}
+                                                />
+                                            </>
+                                        )}
+
+                                        {/* File Upload Source */}
+                                        {dataSourceType === 'file' && (
+                                            <>
+                                                <p className="text-gray-500 text-sm mb-4">
+                                                    Upload a PDF, CSV, Excel, or JSON file to extract data from.
+                                                </p>
+                                                <FileUploadSource
+                                                    onExtractionComplete={handleFileExtractionComplete}
+                                                    disabled={!canEdit}
+                                                />
+                                            </>
+                                        )}
                                     </div>
                                 )}
 
-                                {currentStep === 2 && connectionId && (
+                                {currentStep === 2 && dataSourceType === 'database' && connectionId && (
                                     <div className="max-w-4xl mx-auto">
                                         <h2 className="text-xl font-semibold mb-4">Select Tables</h2>
                                         <p className="text-gray-500 text-sm mb-6">
@@ -471,12 +556,39 @@ const ConfigPage: React.FC = () => {
                                     </div>
                                 )}
 
+                                {currentStep === 2 && dataSourceType === 'file' && fileUploadResult && (
+                                    <DocumentPreview
+                                        documents={fileUploadResult.documents}
+                                        fileName={fileUploadResult.file_name}
+                                        fileType={fileUploadResult.file_type}
+                                        totalDocuments={fileUploadResult.total_documents}
+                                    />
+                                )}
+
                                 {currentStep === 3 && (
                                     <div className="h-full flex flex-col">
-                                        <h2 className="text-xl font-semibold mb-2">Add Data Dictionary</h2>
+                                        <h2 className="text-xl font-semibold mb-2">Add Data Dictionary / Context</h2>
                                         <p className="text-gray-500 text-sm mb-4">
-                                            Provide context to help the AI understand your data. Upload a file or paste definitions below.
+                                            {dataSourceType === 'database'
+                                                ? "Provide context to help the AI understand your data. Upload a file or paste definitions below."
+                                                : "Provide any additional context or instructions the AI should know about these documents."}
                                         </p>
+
+                                        {dataSourceType === 'file' && fileUploadResult && (
+                                            <div className="mb-4">
+                                                <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
+                                                    <h3 className="text-sm font-semibold text-gray-700 mb-2">Reference Documents</h3>
+                                                    <div className="max-h-40 overflow-y-auto pr-2">
+                                                        <DocumentPreview
+                                                            documents={fileUploadResult.documents}
+                                                            fileName={fileUploadResult.file_name}
+                                                            fileType={fileUploadResult.file_type}
+                                                            totalDocuments={fileUploadResult.total_documents}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
 
                                         <div className="flex-1 flex flex-col min-h-0 border border-gray-300 rounded-md overflow-hidden bg-white shadow-sm">
                                             {/* Toolbar */}
@@ -702,9 +814,9 @@ const ConfigPage: React.FC = () => {
                                 ) : (
                                     <button
                                         onClick={handleNext}
-                                        disabled={generating || publishing || (currentStep === 1 && !connectionId)}
+                                        disabled={generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult)}
                                         className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
-                                ${generating || publishing || (currentStep === 1 && !connectionId) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                ${generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                     >
                                         {publishing ? 'Publishing...' : currentStep === 6 ? 'Done' : 'Next'}
                                     </button>

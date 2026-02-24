@@ -23,7 +23,10 @@ async def generate_prompt(
     Requires Editor role or above.
     """
     try:
-        result = config_service.generate_draft_prompt(request.data_dictionary)
+        result = config_service.generate_draft_prompt(
+            request.data_dictionary, 
+            data_source_type=request.data_source_type
+        )
         return result  # Already returns {"draft_prompt": ..., "reasoning": ..., "example_questions": ...}
     except Exception as e:
         logger.error(f"Error generating prompt: {e}")
@@ -50,13 +53,17 @@ async def publish_prompt(
             data_dictionary=request.data_dictionary,
             reasoning=request.reasoning,
             example_questions=request.example_questions,
-            agent_id=request.agent_id
+            agent_id=request.agent_id,
+            data_source_type=request.data_source_type,
+            ingestion_documents=request.ingestion_documents,
+            ingestion_file_name=request.ingestion_file_name,
+            ingestion_file_type=request.ingestion_file_type
         )
         
         # Reinitialize SQL service to use the new connection if changed
         # TODO: Handle multi-agent SQL service reinitialization properly
         # For now, this might only affect the default/global service
-        if request.connection_id:
+        if request.data_source_type == 'database' and request.connection_id:
             logger.info(f"Config published with connection_id={request.connection_id}, reinitializing SQL service")
             try:
                 sql_service = get_sql_service()
