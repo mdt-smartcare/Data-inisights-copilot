@@ -177,7 +177,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                     display_name: newModelForm.display_name,
                     context_length: newModelForm.context_length,
                     max_output_tokens: newModelForm.max_output_tokens,
-                    parameters: JSON.stringify({ temperature: 0.0 })
+                    parameters: { temperature: 0.0 }
                 });
                 setShowRegisterLLM(false);
             }
@@ -208,8 +208,8 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
             {/* Feedback toast */}
             {activationMsg && (
                 <div className={`mb-4 px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${activationMsg.startsWith('✓')
-                        ? 'bg-green-50 text-green-800 border border-green-200'
-                        : 'bg-red-50 text-red-800 border border-red-200'
+                    ? 'bg-green-50 text-green-800 border border-green-200'
+                    : 'bg-red-50 text-red-800 border border-red-200'
                     }`}>
                     {activationMsg}
                 </div>
@@ -257,8 +257,8 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                                         onClick={() => handleEmbeddingSelect(m.id)}
                                         disabled={readOnly || isActive || !!activatingId}
                                         className={`text-left p-4 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
-                                                : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
-                                                    : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50 cursor-pointer hover:shadow-sm'
+                                            : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50 cursor-pointer hover:shadow-sm'
                                             }`}
                                     >
                                         <div className="flex items-start justify-between">
@@ -371,8 +371,8 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                                                 onClick={() => handleLLMSelect(m.id)}
                                                 disabled={readOnly || isActive || !!activatingId}
                                                 className={`w-full text-left p-3 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-200 shadow-sm'
-                                                        : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
-                                                            : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/50 cursor-pointer hover:shadow-sm'
+                                                    : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                        : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/50 cursor-pointer hover:shadow-sm'
                                                     }`}
                                             >
                                                 <div className="flex items-center justify-between">

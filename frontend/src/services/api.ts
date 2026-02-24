@@ -491,7 +491,7 @@ export interface ModelInfo {
   max_tokens?: number;
   context_length?: number;
   max_output_tokens?: number;
-  parameters?: string;
+  parameters?: Record<string, any>;
   created_at?: string;
   updated_at?: string;
 }
