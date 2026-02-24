@@ -9,6 +9,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from backend.config import get_settings
+from backend.core.error_codes import ErrorCode
 from backend.core.security import (
     decode_keycloak_token,
     extract_user_claims,
@@ -81,7 +82,7 @@ async def get_current_user(
         if not user_data.get('is_active'):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User account is inactive"
+                detail={"message": "User account is inactive", "error_code": ErrorCode.USER_INACTIVE}
             )
         
         # Use local role (hybrid approach - local takes precedence)
