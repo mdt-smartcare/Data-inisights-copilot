@@ -549,3 +549,74 @@ export const registerLLMModel = async (data: Partial<ModelInfo>): Promise<ModelI
   return response.data;
 };
 
+// ============================================================================
+// VECTOR DB SCHEDULE API
+// ============================================================================
+
+export interface VectorDbSchedule {
+  vector_db_name: string;
+  enabled: boolean;
+  schedule_type: 'hourly' | 'daily' | 'weekly' | 'custom';
+  schedule_hour: number;
+  schedule_minute: number;
+  schedule_day_of_week?: number;
+  schedule_cron?: string;
+  next_run_at?: string;
+  countdown_seconds?: number;
+  last_run_at?: string;
+  last_run_status?: 'success' | 'failed' | 'running';
+  last_run_job_id?: string;
+}
+
+export interface ScheduleCreateRequest {
+  schedule_type: 'hourly' | 'daily' | 'weekly' | 'custom';
+  hour?: number;
+  minute?: number;
+  day_of_week?: number;
+  cron_expression?: string;
+  enabled?: boolean;
+}
+
+/**
+ * Create or update a sync schedule for a Vector Database.
+ */
+export const createVectorDbSchedule = async (
+  vectorDbName: string,
+  schedule: ScheduleCreateRequest
+): Promise<{ status: string; message: string; schedule: VectorDbSchedule }> => {
+  const response = await apiClient.post(`/api/v1/vector-db/schedule/${vectorDbName}`, schedule);
+  return response.data;
+};
+
+/**
+ * Get schedule configuration for a Vector Database.
+ */
+export const getVectorDbSchedule = async (vectorDbName: string): Promise<VectorDbSchedule> => {
+  const response = await apiClient.get(`/api/v1/vector-db/schedule/${vectorDbName}`);
+  return response.data;
+};
+
+/**
+ * Delete a schedule for a Vector Database.
+ */
+export const deleteVectorDbSchedule = async (vectorDbName: string): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.delete(`/api/v1/vector-db/schedule/${vectorDbName}`);
+  return response.data;
+};
+
+/**
+ * List all Vector DB schedules.
+ */
+export const listVectorDbSchedules = async (): Promise<VectorDbSchedule[]> => {
+  const response = await apiClient.get('/api/v1/vector-db/schedules');
+  return response.data;
+};
+
+/**
+ * Manually trigger an immediate sync for a Vector Database.
+ */
+export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.post(`/api/v1/vector-db/schedule/${vectorDbName}/trigger`);
+  return response.data;
+};
+
