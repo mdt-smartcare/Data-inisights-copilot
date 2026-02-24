@@ -1,0 +1,44 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant UI as ConfigPage File Upload
+    participant AX as Axios
+    participant GW as FastAPI /ingestion
+    participant FAC as DocumentLoaderFactory
+    participant EXT as Extractor
+    participant FS as Filesystem
+
+    User ->> UI: Select file to upload
+    UI ->> UI: Validate extension client-side
+
+    UI ->> AX: POST /api/v1/ingestion/upload multipart
+    AX ->> AX: Inject Bearer token
+    AX ->> GW: Forward with auth header
+
+    GW ->> GW: RBAC get_current_user
+
+    GW ->> GW: Validate file extension
+    alt Unsupported extension
+        GW -->> AX: 400 Unsupported file type
+        AX -->> UI: Error
+        UI -->> User: Error toast
+    else Supported pdf csv xlsx json
+        GW ->> FS: Save to temp directory
+        FS -->> GW: tmp_path
+
+        GW ->> FAC: get_extractor(tmp_path)
+        FAC -->> GW: Appropriate extractor instance
+
+        GW ->> EXT: extract(tmp_path)
+
+        loop For each extracted document
+            EXT -->> GW: Document with page_content and metadata
+            GW ->> GW: Truncate preview to 500 chars
+        end
+
+        GW ->> FS: Cleanup temp file
+
+        GW -->> AX: 200 IngestionResponse
+        AX -->> UI: Response
+        UI -->> User: Display extracted document previews
+    end

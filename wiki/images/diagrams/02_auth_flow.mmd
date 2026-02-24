@@ -1,0 +1,93 @@
+sequenceDiagram
+    autonumber
+    actor User
+    participant LP as LoginPage
+    participant AX as Axios Interceptor
+    participant GW as FastAPI /auth
+    participant SEC as Security JWT
+    participant DB as SQLite DB
+    participant AC as AuthContext
+
+    rect rgb(240, 248, 255)
+    Note over User, AC: Login Flow
+
+    User ->> LP: Submit username & password
+    LP ->> LP: setIsLoading(true)
+    LP ->> AX: POST /api/v1/auth/login
+    AX ->> GW: Forward request
+
+    GW ->> DB: get_user_by_username(username)
+    DB -->> GW: user record or null
+
+    alt User NOT found
+        GW -->> AX: 401 Invalid username or password
+        AX -->> LP: Error
+        LP -->> User: Display error alert
+    else User found
+        GW ->> GW: Check is_active
+
+        alt Account deactivated
+            GW -->> AX: 403 Account is deactivated
+            AX -->> LP: Error
+            LP -->> User: Deactivation alert
+        else Account active
+            GW ->> DB: verify_password(plain, hash)
+            DB -->> GW: bcrypt match
+
+            alt Password INVALID
+                GW -->> AX: 401 Invalid username or password
+                AX -->> LP: Error
+                LP -->> User: Error alert
+            else Password VALID
+                GW ->> SEC: create_access_token(sub=username, exp=720min)
+                SEC -->> GW: JWT access_token
+                GW -->> AX: 200 OK with token and user
+                AX -->> LP: LoginResponse
+
+                LP ->> LP: Store token in localStorage
+                LP ->> AC: setUser(user)
+
+                alt Role is super_admin
+                    LP ->> LP: navigate to /insights
+                else Other roles
+                    LP ->> LP: navigate to /chat
+                end
+                LP -->> User: Redirect to dashboard
+            end
+        end
+    end
+    end
+
+    rect rgb(245, 255, 245)
+    Note over User, AC: Session Restoration on App Mount
+    AC ->> AC: Check localStorage for auth_token
+    alt Token exists
+        AC ->> AX: GET /api/v1/auth/me
+        AX ->> AX: Inject Bearer token
+        AX ->> GW: GET /auth/me with Bearer token
+        GW ->> SEC: jwt.decode(token)
+        SEC -->> GW: payload with username
+        GW ->> DB: get_user_by_username(username)
+        DB -->> GW: user record
+
+        alt Valid token and user
+            GW -->> AC: 200 User profile
+            AC ->> AC: setUser(profile)
+        else Invalid or expired token
+            GW -->> AX: 401 Unauthorized
+            AX ->> AX: Clear localStorage
+            AX ->> AX: Redirect to /login
+        end
+    else No token
+        AC ->> AC: setIsLoading(false)
+    end
+    end
+
+    rect rgb(255, 240, 240)
+    Note over User, AC: Logout Flow
+    User ->> LP: Click Logout
+    LP ->> AC: logout()
+    AC ->> AC: setUser(null)
+    AC ->> AC: Clear localStorage
+    LP -->> User: Redirect to /login
+    end

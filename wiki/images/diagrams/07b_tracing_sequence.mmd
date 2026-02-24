@@ -1,0 +1,30 @@
+sequenceDiagram
+    autonumber
+    participant AS as AgentService
+    participant TM as TracingManager
+    participant CB as Langfuse Callback
+    participant LLM as LLM Provider
+    participant LF as Langfuse Server
+
+    AS ->> TM: get_langchain_callback(trace_id, session_id, user_id)
+    TM -->> AS: CallbackHandler instance
+
+    AS ->> LLM: AgentExecutor.ainvoke with callbacks
+
+    Note over CB, LF: Auto-instrumented by callback
+
+    CB ->> LF: Create Trace name=rag_query
+
+    loop Each agent step
+        CB ->> LF: Create Span for tool invocation
+        CB ->> LF: Create Generation for LLM call
+        Note right of LF: Captures model tokens latency cost
+    end
+
+    LLM -->> AS: Agent output
+
+    AS ->> AS: Background track_usage
+    AS ->> TM: flush
+    TM ->> LF: Flush pending events
+
+    Note over LF: Data available in Langfuse dashboard

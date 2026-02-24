@@ -1,0 +1,14 @@
+stateDiagram-v2
+    [*] --> Draft: Generate prompt
+    Draft --> Published: SuperAdmin publishes
+    Published --> Active: Set is_active = true
+
+    Active --> RolledBack: New version published
+    RolledBack --> Active: Rollback to this version
+
+    Active --> Active: Edit and re-publish creates new version
+
+    state Active {
+        [*] --> Serving
+        Serving --> Serving: Every chat query fetches active prompt
+    }

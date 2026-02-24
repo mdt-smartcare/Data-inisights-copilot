@@ -1,0 +1,45 @@
+graph TB
+    subgraph Application["Application Layer"]
+        AS["AgentService"]
+        SQL["SQLService"]
+        FS["FollowUpService"]
+    end
+
+    subgraph Tracing["Tracing Layer"]
+        TM["TracingManager"]
+        CB["LangChain Callback Handler"]
+    end
+
+    subgraph Langfuse["Langfuse Server"]
+        TR[/"Traces"/]
+        SP[/"Spans"/]
+        GEN[/"Generations"/]
+        DM[/"Daily Metrics API"/]
+        OB[/"Observations API"/]
+    end
+
+    subgraph AdminUI["Admin UI"]
+        OP["Observability Page"]
+        MC["Model Cost Cards"]
+        TL["Trace List"]
+        UG["Usage Graphs"]
+    end
+
+    subgraph Backend["Backend API"]
+        OBSSVC["ObservabilityService"]
+        LFC["LangfuseClient httpx"]
+        OR["/observability routes"]
+    end
+
+    AS --> TM
+    TM --> CB
+    CB --> TR & SP & GEN
+    SQL --> SP
+
+    LFC --> DM & OB & TR
+
+    OBSSVC --> LFC
+    OR --> OBSSVC
+
+    OP --> OR
+    OR --> MC & TL & UG
