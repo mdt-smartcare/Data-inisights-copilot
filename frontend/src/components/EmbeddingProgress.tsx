@@ -394,14 +394,26 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
             {/* Completion message */}
             {isComplete && (
-                <div className="embedding-progress__complete">
-                    Embedding generation completed successfully!
+                <div className="embedding-progress__complete mt-4 pb-2">
+                    <div className="mb-4">Embedding generation completed successfully!</div>
+                    <button
+                        onClick={() => onCompleteRef.current?.(true)}
+                        className="px-6 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors shadow-sm w-full md:w-auto"
+                    >
+                        Finish & Close
+                    </button>
                 </div>
             )}
 
             {isFailed && (
-                <div className="embedding-progress__failed">
-                    Embedding generation failed. Check the errors above.
+                <div className="embedding-progress__failed mt-4 pb-2">
+                    <div className="mb-4">Embedding generation failed. Check the errors above.</div>
+                    <button
+                        onClick={() => onCancelRef.current?.()}
+                        className="px-6 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm w-full md:w-auto"
+                    >
+                        Dismiss
+                    </button>
                 </div>
             )}
         </div>
