@@ -241,7 +241,7 @@ export const getActivePrompt = async (agentId?: number): Promise<{ prompt_text: 
   return response.data;
 };
 
-export const createAgent = async (data: { name: string; description?: string; type: string; system_prompt?: string }): Promise<Agent> => {
+export const createAgent = async (data: { name: string; description?: string; type?: string; system_prompt?: string }): Promise<Agent> => {
   const response = await apiClient.post('/api/v1/agents', data);
   return response.data;
 };

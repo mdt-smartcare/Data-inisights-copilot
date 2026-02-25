@@ -30,7 +30,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
 
     // Create Modal State
     const [showCreateModal, setShowCreateModal] = useState(false);
-    const [newAgentData, setNewAgentData] = useState({ name: '', description: '', type: 'sql' });
+    const [newAgentData, setNewAgentData] = useState({ name: '', description: '' });
     const [creating, setCreating] = useState(false);
 
     // User Assignment Modal State
@@ -65,7 +65,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
             setAgents([...agents, newAgent]);
             success('Agent Created', `${newAgent.name} has been created.`);
             setShowCreateModal(false);
-            setNewAgentData({ name: '', description: '', type: 'sql' });
+            setNewAgentData({ name: '', description: '' });
         } catch (err) {
             showError('Failed to create agent', handleApiError(err));
         } finally {
@@ -239,17 +239,6 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                                         placeholder="What does this agent do?"
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
-                                    <select
-                                        value={newAgentData.type}
-                                        onChange={(e) => setNewAgentData({ ...newAgentData, type: e.target.value })}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    >
-                                        <option value="sql">SQL (Structured Data)</option>
-                                        {/* <option value="rag">RAG (Documents) - Coming Soon</option> */}
-                                    </select>
-                                </div>
                             </div>
                             <div className="mt-6 flex justify-end gap-3">
                                 <button
@@ -287,6 +276,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                                     <div className="text-center py-2 text-gray-500">Loading users...</div>
                                 ) : (
                                     <select
+                                        title="Select User to Assign"
                                         className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                                         onChange={(e) => setSelectedUserId(Number(e.target.value))}
                                         value={selectedUserId || ''}
