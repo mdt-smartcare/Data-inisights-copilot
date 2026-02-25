@@ -131,7 +131,11 @@ class SQLService:
 
             # Check if patient_tracker exists to determine if we should ignore demo 'patient' table
             # First, create a temporary connection to check tables
-            temp_db = SQLDatabase.from_uri(self._database_url, view_support=True)
+            temp_db = SQLDatabase.from_uri(
+                self._database_url, 
+                view_support=True,
+                engine_args={'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
+            )
             all_tables = temp_db.get_usable_table_names()
             
             # Determine tables to ignore (demo tables that shouldn't be used)
@@ -145,7 +149,8 @@ class SQLService:
             self.db = SQLDatabase.from_uri(
                 self._database_url,
                 view_support=True,
-                ignore_tables=ignore_tables if ignore_tables else None
+                ignore_tables=ignore_tables if ignore_tables else None,
+                engine_args={'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
             )
             logger.info("Database connection established with view support")
             
@@ -719,7 +724,10 @@ Response:"""
         """
         try:
             # Create a temporary connection
-            temp_db = SQLDatabase.from_uri(uri)
+            temp_db = SQLDatabase.from_uri(
+                uri,
+                engine_args={'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
+            )
             
             # If explicit tables requested, use those. Otherwise discover all.
             if table_names:

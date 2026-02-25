@@ -31,7 +31,7 @@ class DatabaseConnector:
                 raise ValueError("DATABASE_URL environment variable not set.")
             
             logger.info("Connecting to database...")
-            self.engine = create_engine(database_url)
+            self.engine = create_engine(database_url, pool_size=20, max_overflow=50, pool_timeout=60)
             self.connection = self.engine.connect()
             self.connection.execute(text("SELECT 1"))
             logger.info("Database connection successful.")
