@@ -1,6 +1,8 @@
 import axios, { AxiosError } from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 import { API_BASE_URL } from '../config';
 import { oidcService } from './oidcService';
+import { ErrorCode } from '../constants/errorCodes';
 
 /**
  * Configured Axios instance for all API requests
@@ -72,29 +74,45 @@ apiClient.interceptors.request.use(
 /**
  * Response Interceptor
  * Runs after every API response to:
- * 1. Handle 401 Unauthorized errors globally
- * 2. Trigger re-authentication via OIDC
+ * 1. Handle 401 Unauthorized errors for inactive users
+ * 2. Renew expired tokens and retry the request
  */
 apiClient.interceptors.response.use(
   (response) => response,  // Pass successful responses through unchanged
   async (error: AxiosError) => {
     // Handle authentication errors globally
     if (error.response?.status === 401) {
-      // Try to renew the token
-      try {
-        const user = await oidcService.renewToken();
-        if (user && error.config) {
-          // Retry the failed request with new token
-          error.config.headers.Authorization = `Bearer ${user.access_token}`;
-          return apiClient.request(error.config);
-        }
-      } catch (renewError) {
-        console.error('Token renewal failed:', renewError);
+      const responseData = error.response?.data as { detail?: string | { message?: string; error_code?: string }; error_code?: string };
+      const errorCode = typeof responseData?.detail === 'object' 
+        ? responseData.detail?.error_code 
+        : responseData?.error_code;
+      
+      // Inactive user - logout from Keycloak and redirect to login with error
+      if (errorCode === ErrorCode.USER_INACTIVE) {
+        await oidcService.logoutWithMessage(ErrorCode.USER_INACTIVE);
+        return Promise.reject(error);
       }
-
-      // If renewal failed, redirect to login
-      await oidcService.removeUser();
-      window.location.href = '/login';
+      
+      // Check if token is actually expired before trying renewal
+      const oidcUser = await oidcService.getUser();
+      const config = error.config as AxiosRequestConfig & { _retry?: boolean };
+      
+      if (oidcUser?.expired && config && !config._retry) {
+        config._retry = true; // Prevent infinite retry
+        try {
+          const user = await oidcService.renewToken();
+          if (user) {
+            config.headers = config.headers || {};
+            config.headers.Authorization = `Bearer ${user.access_token}`;
+            return apiClient.request(config);
+          }
+        } catch (renewError) {
+          console.error('Token renewal failed:', renewError);
+        }
+      }
+      
+      // Token valid but still 401 - let the page handle the error
+      // Don't auto-redirect; could be a permission issue
     }
     return Promise.reject(error);
   }
@@ -233,8 +251,23 @@ export const assignUserToAgent = async (agentId: number, userId: number, role: s
   return response.data;
 };
 
+export const bulkAssignAgents = async (userId: number, agentIds: number[], role: string = 'user'): Promise<{ status: string; assigned: number[]; failed: number[]; message: string }> => {
+  const response = await apiClient.post('/api/v1/agents/bulk-assign', { user_id: userId, agent_ids: agentIds, role });
+  return response.data;
+};
+
 export const revokeUserAccess = async (agentId: number, userId: number): Promise<{ status: string }> => {
   const response = await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
+  return response.data;
+};
+
+export const getUserAgents = async (userId: number): Promise<{ agents: Agent[]; is_admin: boolean; message?: string }> => {
+  const response = await apiClient.get(`/api/v1/users/${userId}/agents`);
+  return response.data;
+};
+
+export const getAllAgents = async (): Promise<Agent[]> => {
+  const response = await apiClient.get('/api/v1/agents/all');
   return response.data;
 };
 

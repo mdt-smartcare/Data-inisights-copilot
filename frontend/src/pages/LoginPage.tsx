@@ -1,9 +1,17 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import Alert from '../components/Alert';
 import logo from '../assets/logo.svg';
+import { ErrorCode } from '../constants/errorCodes';
+
+// Error messages for different error codes (using ErrorCode constants as keys)
+const ERROR_MESSAGES: Record<string, string> = {
+  [ErrorCode.USER_INACTIVE]: 'Your account has been deactivated. Please contact your administrator.',
+  [ErrorCode.TOKEN_EXPIRED]: 'Your session has expired. Please sign in again.',
+  [ErrorCode.TOKEN_INVALID]: 'Invalid session. Please sign in again.',
+};
 
 /**
  * Login Page Component
@@ -14,10 +22,24 @@ import logo from '../assets/logo.svg';
  * - Error display for failed login attempts
  */
 export default function LoginPage() {
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { login, isAuthenticated, isLoading: authLoading, user } = useAuth();
+  
+  // Initialize error from URL params (lazy initializer to avoid effect)
+  const [error, setError] = useState(() => {
+    const errorCode = searchParams.get('error');
+    return errorCode && ERROR_MESSAGES[errorCode] ? ERROR_MESSAGES[errorCode] : '';
+  });
+  const [isLoading, setIsLoading] = useState(false);
+
+  // Clear error from URL after reading (one-time effect)
+  useEffect(() => {
+    if (searchParams.get('error')) {
+      searchParams.delete('error');
+      setSearchParams(searchParams, { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Redirect if already authenticated
   useEffect(() => {
