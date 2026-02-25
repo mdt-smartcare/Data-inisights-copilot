@@ -392,7 +392,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         # Determine optimal batch size (legacy script used 128, provider config has it)
         from backend.services.settings_service import get_settings_service, SettingCategory
         settings_service = get_settings_service()
-        emb_settings = settings_service.get_settings(SettingCategory.EMBEDDING)
+        emb_settings = settings_service.get_category_settings_raw(SettingCategory.EMBEDDING)
         
         batch_size = job_config.get("batch_size", emb_settings.get("batch_size", 128))
         
