@@ -1,14 +1,19 @@
 """
 Embedding Settings API - Endpoints for managing embedding provider configuration.
-Provides REST API for switching providers, testing connections, and health checks.
+Provides REST API for switching providers, testing connections, health checks,
+and DB-backed model registry operations (list, register, activate).
 """
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 
-from backend.core.permissions import require_super_admin, get_current_user
+from backend.core.permissions import require_super_admin, require_editor, get_current_user
 from backend.models.schemas import User
 from backend.services.embedding_registry import get_embedding_registry, EmbeddingRegistry
+from backend.services.model_registry_service import (
+    get_model_registry_service, ModelRegistryService,
+    EmbeddingModelCreate,
+)
 from backend.core.logging import get_logger
 
 logger = get_logger(__name__)
@@ -242,3 +247,82 @@ async def trigger_reindex(
         "message": "Reindex requested. Use the existing RAG reindex API to trigger the full reindex process.",
         "guidance": "POST /api/v1/config/reindex to trigger embedding job"
     }
+
+
+# =============================================================================
+# Model Registry Endpoints (DB-backed)
+# =============================================================================
+
+@router.get(
+    "/models",
+    response_model=List[Dict[str, Any]],
+    summary="List registered embedding models",
+    description="List all embedding models from the model registry (built-in + custom)."
+)
+async def list_embedding_models(
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    current_user: User = Depends(require_editor)
+):
+    """List all registered embedding models from the DB."""
+    try:
+        return model_registry.list_embedding_models()
+    except Exception as e:
+        logger.error(f"Error listing embedding models: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list embedding models: {str(e)}"
+        )
+
+
+@router.post(
+    "/models",
+    response_model=Dict[str, Any],
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a custom embedding model",
+    description="Add a new custom embedding model to the registry. Requires Super Admin."
+)
+async def register_embedding_model(
+    data: EmbeddingModelCreate,
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    current_user: User = Depends(require_super_admin)
+):
+    """Register a new custom embedding model."""
+    try:
+        result = model_registry.add_embedding_model(data, created_by=current_user.username)
+        logger.info(f"Embedding model '{data.model_name}' registered by {current_user.username}")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error registering embedding model: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register embedding model: {str(e)}"
+        )
+
+
+@router.put(
+    "/models/{model_id}/activate",
+    response_model=Dict[str, Any],
+    summary="Activate an embedding model",
+    description="Set a registered embedding model as active. Requires Super Admin."
+)
+async def activate_embedding_model(
+    model_id: int,
+    model_registry: ModelRegistryService = Depends(get_model_registry_service),
+    current_user: User = Depends(require_super_admin)
+):
+    """Activate a registered embedding model by ID."""
+    try:
+        result = model_registry.activate_embedding_model(model_id, updated_by=current_user.username)
+        logger.info(f"Embedding model {model_id} activated by {current_user.username}")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error activating embedding model: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to activate embedding model: {str(e)}"
+        )
+

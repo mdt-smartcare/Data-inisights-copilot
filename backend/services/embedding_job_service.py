@@ -3,7 +3,7 @@ Embedding job service for managing embedding generation lifecycle.
 Provides real-time progress tracking and job state management.
 """
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import json
 import math
@@ -96,7 +96,7 @@ class EmbeddingJobService:
             job_id,
             status=EmbeddingJobStatus.PREPARING,
             phase="Generating documents from schema",
-            started_at=datetime.utcnow().isoformat()
+            started_at=datetime.now(timezone.utc).isoformat()
         )
         self._log_event(job_id, "job_started", {"status": "PREPARING"})
     
@@ -145,13 +145,13 @@ class EmbeddingJobService:
             if started_at:
                 try:
                     start_time = datetime.fromisoformat(started_at.replace('Z', '+00:00'))
-                    elapsed = (datetime.utcnow() - start_time.replace(tzinfo=None)).total_seconds()
+                    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
                     if elapsed > 0 and processed_documents > 0:
                         docs_per_second = processed_documents / elapsed
                         remaining_docs = total_documents - processed_documents
                         if docs_per_second > 0:
                             remaining_seconds = remaining_docs / docs_per_second
-                            estimated_completion = (datetime.utcnow() + timedelta(seconds=remaining_seconds)).isoformat()
+                            estimated_completion = (datetime.now(timezone.utc) + timedelta(seconds=remaining_seconds)).isoformat()
                 except Exception as e:
                     logger.debug(f"Error calculating ETA: {e}")
             
@@ -231,7 +231,7 @@ class EmbeddingJobService:
             embedding_version_id: Optional resulting embedding version ID
             validation_passed: Whether validation checks passed
         """
-        completed_at = datetime.utcnow().isoformat()
+        completed_at = datetime.now(timezone.utc).isoformat()
         
         updates = {
             "status": EmbeddingJobStatus.COMPLETED,
@@ -259,7 +259,7 @@ class EmbeddingJobService:
             error_message: Human-readable error message
             error_details: Optional detailed error information
         """
-        completed_at = datetime.utcnow().isoformat()
+        completed_at = datetime.now(timezone.utc).isoformat()
         error_details_json = json.dumps(error_details) if error_details else None
         
         self._update_job(
@@ -321,7 +321,7 @@ class EmbeddingJobService:
             """, (
                 EmbeddingJobStatus.CANCELLED.value,
                 "Cancelled by user",
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 user.id,
                 job_id
             ))
@@ -368,7 +368,7 @@ class EmbeddingJobService:
             if job.get('started_at'):
                 try:
                     start_time = datetime.fromisoformat(job['started_at'].replace('Z', '+00:00'))
-                    elapsed_seconds = int((datetime.utcnow() - start_time.replace(tzinfo=None)).total_seconds())
+                    elapsed_seconds = int((datetime.now(timezone.utc) - start_time).total_seconds())
                 except:
                     pass
             
@@ -377,7 +377,7 @@ class EmbeddingJobService:
             if job.get('estimated_completion_at'):
                 try:
                     eta_time = datetime.fromisoformat(job['estimated_completion_at'].replace('Z', '+00:00'))
-                    eta_seconds = max(0, int((eta_time.replace(tzinfo=None) - datetime.utcnow()).total_seconds()))
+                    eta_seconds = max(0, int((eta_time - datetime.now(timezone.utc)).total_seconds()))
                 except:
                     pass
             

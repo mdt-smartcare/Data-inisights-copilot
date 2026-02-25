@@ -3,7 +3,7 @@ Core notification service for multi-channel delivery routing.
 Routes notifications to appropriate channels based on user preferences.
 """
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from backend.models.rag_models import (
@@ -115,8 +115,8 @@ class NotificationService:
             cursor.execute("""
                 INSERT INTO notifications 
                 (user_id, type, priority, title, message, action_url, action_label,
-                 related_entity_type, related_entity_id, channels, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 related_entity_type, related_entity_id, channels, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 user_id,
                 notification_type.value if isinstance(notification_type, NotificationType) else notification_type,
@@ -128,7 +128,8 @@ class NotificationService:
                 related_entity_type,
                 related_entity_id,
                 channels_json,
-                NotificationStatus.UNREAD.value
+                NotificationStatus.UNREAD.value,
+                datetime.now(timezone.utc).isoformat()
             ))
             
             conn.commit()
@@ -264,7 +265,7 @@ class NotificationService:
             return False
         
         try:
-            now = datetime.utcnow().strftime("%H:%M")
+            now = datetime.now(timezone.utc).strftime("%H:%M")
             start = preferences.quiet_hours_start
             end = preferences.quiet_hours_end
             
@@ -369,7 +370,7 @@ class NotificationService:
                 WHERE id = ? AND user_id = ?
             """, (
                 NotificationStatus.READ.value,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 notification_id,
                 user_id
             ))
@@ -394,7 +395,7 @@ class NotificationService:
                 WHERE user_id = ? AND status = ?
             """, (
                 NotificationStatus.READ.value,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 user_id,
                 NotificationStatus.UNREAD.value
             ))
@@ -416,7 +417,7 @@ class NotificationService:
                 WHERE id = ? AND user_id = ?
             """, (
                 NotificationStatus.DISMISSED.value,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 notification_id,
                 user_id
             ))
@@ -491,7 +492,7 @@ class NotificationService:
             if exists:
                 # Update
                 fields = [f"{k} = ?" for k in preferences.keys()]
-                values = list(preferences.values()) + [datetime.utcnow().isoformat(), user_id]
+                values = list(preferences.values()) + [datetime.now(timezone.utc).isoformat(), user_id]
                 
                 cursor.execute(
                     f"UPDATE notification_preferences SET {', '.join(fields)}, updated_at = ? WHERE user_id = ?",

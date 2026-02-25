@@ -130,7 +130,7 @@ class EmbeddingBatchProcessor:
         # Process all batches
         tasks = [process_with_semaphore(batch) for batch in batches]
         
-        for batch_idx, coro in enumerate(asyncio.as_completed(tasks)):
+        for coro in asyncio.as_completed(tasks):
             if self._cancelled:
                 break
             
@@ -138,7 +138,7 @@ class EmbeddingBatchProcessor:
             if result is None:
                 continue
             
-            batch_num, start_idx, batch_docs = batches[batch_idx]
+            batch_num, start_idx, batch_docs = batches[result.batch_number - 1]
             
             if result.success and result.embeddings:
                 # Store embeddings

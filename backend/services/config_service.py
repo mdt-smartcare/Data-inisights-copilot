@@ -161,6 +161,10 @@ class ConfigService:
                               data_dictionary: Optional[str] = None,
                               reasoning: Optional[str] = None,
                               example_questions: Optional[str] = None,
+                              embedding_config: Optional[str] = None,
+                              retriever_config: Optional[str] = None,
+                              chunking_config: Optional[str] = None,
+                              llm_config: Optional[str] = None,
                               agent_id: Optional[int] = None,
                               data_source_type: str = 'database',
                               ingestion_documents: Optional[str] = None,
@@ -170,6 +174,22 @@ class ConfigService:
         Publishes a drafted system prompt as the new active version.
         Includes optional configuration metadata for reproducibility and explainability.
         """
+        # Register Vector DB if provided in embedding_config
+        if embedding_config:
+            import json
+            try:
+                emb_conf = json.loads(embedding_config)
+                vector_db_name = emb_conf.get("vectorDbName")
+                if vector_db_name:
+                    data_source_id = str(connection_id) if data_source_type == 'database' else (ingestion_file_name or "unknown")
+                    try:
+                        self.db_service.register_vector_db(vector_db_name, data_source_id, user_id)
+                    except ValueError:
+                        # Already exists, which is fine if they are republishing with the same name
+                        pass
+            except Exception as e:
+                logger.warning(f"Failed to register vector DB from config: {e}")
+
         return self.db_service.publish_system_prompt(
             prompt_text, 
             user_id, 
@@ -178,6 +198,10 @@ class ConfigService:
             data_dictionary,
             reasoning,
             example_questions,
+            embedding_config=embedding_config,
+            retriever_config=retriever_config,
+            chunking_config=chunking_config,
+            llm_config=llm_config,
             agent_id=agent_id,
             data_source_type=data_source_type,
             ingestion_documents=ingestion_documents,

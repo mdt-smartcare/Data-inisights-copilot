@@ -32,9 +32,14 @@ import json
 class VectorStoreService:
     """Service for managing vector store operations."""
     
-    def __init__(self):
-        """Initialize the vector store with advanced retrieval."""
-        logger.info("Initializing vector store service")
+    def __init__(self, agent_id: Optional[int] = None):
+        """Initialize the vector store with advanced retrieval.
+        
+        Args:
+            agent_id: Optional agent ID to load specific configuration.
+        """
+        self.agent_id = agent_id
+        logger.info(f"Initializing vector store service (Agent: {agent_id if agent_id else 'Global'})")
         
         # Load RAG configuration - resolve path relative to backend directory
         config_path = Path(settings.rag_config_path)
@@ -60,10 +65,10 @@ class VectorStoreService:
         # ------------------------------------------------------------------
         try:
             db_service = get_db_service()
-            active_config = db_service.get_active_config()
+            active_config = db_service.get_active_config(agent_id=self.agent_id)
             
             if active_config:
-                logger.info("Found active RAG config in database. Applying overrides...")
+                logger.info(f"Found active RAG config for agent {self.agent_id}. Applying overrides...")
                 
                 # Override Embedding Config
                 if active_config.get('embedding_config'):
@@ -77,21 +82,42 @@ class VectorStoreService:
                         
                         if 'model' in emb_conf and emb_conf['model']:
                             self.rag_config['embedding']['model_name'] = emb_conf['model']
+                        
+                        # Apply Vector DB Name override if present
+                        if 'vectorDbName' in emb_conf and emb_conf['vectorDbName']:
+                            vdb_name = emb_conf['vectorDbName']
+                            # Update chroma path and collection name
+                            # Path is relative to data/indexes/
+                            backend_root = Path(__file__).parent.parent
+                            new_chroma_path = (backend_root / "data" / "indexes" / vdb_name).resolve()
+                            self.rag_config['vector_store']['chroma_path'] = str(new_chroma_path)
+                            self.rag_config['vector_store']['collection_name'] = vdb_name
+                            logger.info(f"Overrode vector store path to: {new_chroma_path}")
                             
-                        # Update chunking config if provided (assuming it applies to parent/child broadly or specific)
-                        # For simplicity, we apply size/overlap to parent splitter as it's the main driver
-                        if 'chunkSize' in emb_conf:
-                            if 'chunking' not in self.rag_config: self.rag_config['chunking'] = {}
-                            if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
-                            self.rag_config['chunking']['parent_splitter']['chunk_size'] = int(emb_conf['chunkSize'])
-                            
-                        if 'chunkOverlap' in emb_conf:
-                             if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
-                             self.rag_config['chunking']['parent_splitter']['chunk_overlap'] = int(emb_conf['chunkOverlap'])
-                             
                         logger.info(f"Applied embedding config overrides from DB: {emb_conf}")
                     except Exception as e:
                         logger.error(f"Failed to parse embedding_config from DB: {e}")
+
+                # Override Chunking Config
+                if active_config.get('chunking_config'):
+                    try:
+                        chunk_conf = json.loads(active_config['chunking_config'])
+                        if 'chunking' not in self.rag_config: self.rag_config['chunking'] = {}
+                        if 'parent_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['parent_splitter'] = {}
+                        if 'child_splitter' not in self.rag_config['chunking']: self.rag_config['chunking']['child_splitter'] = {}
+                        
+                        if 'parentChunkSize' in chunk_conf:
+                            self.rag_config['chunking']['parent_splitter']['chunk_size'] = int(chunk_conf['parentChunkSize'])
+                        if 'parentChunkOverlap' in chunk_conf:
+                            self.rag_config['chunking']['parent_splitter']['chunk_overlap'] = int(chunk_conf['parentChunkOverlap'])
+                        if 'childChunkSize' in chunk_conf:
+                            self.rag_config['chunking']['child_splitter']['chunk_size'] = int(chunk_conf['childChunkSize'])
+                        if 'childChunkOverlap' in chunk_conf:
+                            self.rag_config['chunking']['child_splitter']['chunk_overlap'] = int(chunk_conf['childChunkOverlap'])
+                            
+                        logger.info(f"Applied chunking config overrides from DB: {chunk_conf}")
+                    except Exception as e:
+                        logger.error(f"Failed to parse chunking_config from DB: {e}")
 
                 # Override Retriever Config
                 if active_config.get('retriever_config'):
@@ -110,6 +136,12 @@ class VectorStoreService:
                             
                         if 'hybridWeights' in ret_conf:
                             self.rag_config['retriever']['hybrid_search_weights'] = ret_conf['hybridWeights']
+                            
+                        if 'rerankEnabled' in ret_conf:
+                            self.rag_config['retriever']['rerank_enabled'] = bool(ret_conf['rerankEnabled'])
+                            
+                        if 'rerankerModel' in ret_conf:
+                            self.rag_config['retriever']['reranker_model_name'] = str(ret_conf['rerankerModel'])
                             
                         logger.info(f"Applied retriever config overrides from DB: {ret_conf}")
                     except Exception as e:
@@ -220,12 +252,12 @@ class VectorStoreService:
 
 
 @lru_cache()
-def get_vector_store() -> VectorStoreService:
+def get_vector_store(agent_id: Optional[int] = None) -> VectorStoreService:
     """
     Get cached vector store service instance.
-    Singleton pattern to avoid reloading the vector database.
+    Cached by agent_id to support multi-tenant configurations while avoiding redundant loading.
     
     Returns:
-        Cached vector store service
+        Context-aware vector store service
     """
-    return VectorStoreService()
+    return VectorStoreService(agent_id=agent_id)

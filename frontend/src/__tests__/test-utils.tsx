@@ -109,14 +109,21 @@ export const mockUsers = {
     username: 'editor_user',
     email: 'editor@test.com',
     full_name: 'Editor User',
-    role: 'editor' as const,
+    role: 'user' as const,  // Changed from 'editor' to 'user'
   },
   superAdmin: {
     id: 3,
     username: 'super_admin_user',
     email: 'admin@test.com',
     full_name: 'Super Admin',
-    role: 'super_admin' as const,
+    role: 'admin' as const,  // Changed from 'super_admin' to 'admin'
+  },
+  admin: {
+    id: 3,
+    username: 'admin_user',
+    email: 'admin@test.com',
+    full_name: 'Admin User',
+    role: 'admin' as const,
   },
 } satisfies Record<string, User>;
 

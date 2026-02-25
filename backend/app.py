@@ -17,6 +17,7 @@ from backend.api.routes import auth, chat, feedback, health, config, data, audit
 from backend.api.routes import embedding_progress, notifications, settings as settings_routes, observability
 from backend.api.websocket import embedding_progress as embedding_ws
 from backend.services.embeddings import preload_embedding_model
+from backend.services.scheduler_service import get_scheduler_service
 
 # Initialize settings and logging
 settings = get_settings()
@@ -32,6 +33,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info(f"Starting {settings.project_name} v{settings.version}")
     preload_embedding_model()
+    
+    # Start the scheduler service for vector DB sync jobs
+    scheduler_service = get_scheduler_service()
+    scheduler_service.start()
+    logger.info("Scheduler service started")
+    
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"API prefix: {settings.api_v1_prefix}")
     
@@ -39,6 +46,8 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down application")
+    scheduler_service.shutdown()
+    logger.info("Scheduler service stopped")
 
 
 # Create FastAPI application
@@ -86,6 +95,10 @@ app.include_router(embedding_settings.router, prefix=settings.api_v1_prefix)
 from backend.api.routes import llm_settings
 app.include_router(llm_settings.router, prefix=settings.api_v1_prefix)
 
+# Model configuration routes (compatibility + versioning)
+from backend.api.routes import model_config
+app.include_router(model_config.router, prefix=settings.api_v1_prefix)
+
 # Settings management routes (has /{category} catch-all, must come after specific routes)
 app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
 
@@ -93,8 +106,9 @@ app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
 app.include_router(observability.router, prefix=settings.api_v1_prefix)
 
 # Ingestion routes (file upload / extraction testing)
-from backend.api.routes import ingestion
+from backend.api.routes import ingestion, vector_db
 app.include_router(ingestion.router, prefix=settings.api_v1_prefix)
+app.include_router(vector_db.router, prefix=settings.api_v1_prefix)
 
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)
