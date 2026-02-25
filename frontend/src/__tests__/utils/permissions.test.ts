@@ -20,36 +20,30 @@ import {
 import type { User } from '../../types';
 
 describe('Permissions', () => {
-  const createUser = (role: string): User => ({
+  const createUser = (role: 'admin' | 'user'): User => ({
     id: 1,
     username: 'testuser',
     email: 'test@example.com',
-    role: role as User['role'],
+    role: role,
   });
 
-  const superAdmin = createUser('super_admin');
-  const editor = createUser('editor');
+  const admin = createUser('admin');
   const user = createUser('user');
 
   describe('ROLE_HIERARCHY', () => {
     it('should define roles in correct order', () => {
-      expect(ROLE_HIERARCHY).toEqual(['super_admin', 'editor', 'user']);
+      expect(ROLE_HIERARCHY).toEqual(['admin', 'user']);
     });
   });
 
   describe('roleAtLeast', () => {
     it.each([
-      ['super_admin', 'editor', true],
-      ['super_admin', 'user', true],
-      ['editor', 'user', true],
-      ['super_admin', 'super_admin', true],
-      ['editor', 'editor', true],
+      ['admin', 'user', true],
+      ['admin', 'admin', true],
       ['user', 'user', true],
-      ['user', 'editor', false],
-      ['user', 'super_admin', false],
-      ['editor', 'super_admin', false],
+      ['user', 'admin', false],
     ])('roleAtLeast(%s, %s) should return %s', (userRole, requiredRole, expected) => {
-      expect(roleAtLeast(userRole, requiredRole)).toBe(expected);
+      expect(roleAtLeast(userRole, requiredRole as 'admin' | 'user')).toBe(expected);
     });
 
     it('should return false for undefined or invalid roles', () => {
@@ -58,31 +52,20 @@ describe('Permissions', () => {
     });
   });
 
-  describe('Super Admin Only Permissions', () => {
+  describe('Admin Only Permissions', () => {
     it.each([
       [canManageUsers, 'canManageUsers'],
       [canViewAllAuditLogs, 'canViewAllAuditLogs'],
       [canManageConnections, 'canManageConnections'],
       [canPublishPrompt, 'canPublishPrompt'],
       [canRollback, 'canRollback'],
-    ])('%s should only allow super_admin', (fn) => {
-      expect(fn(superAdmin)).toBe(true);
-      expect(fn(editor)).toBe(false);
-      expect(fn(user)).toBe(false);
-      expect(fn(null)).toBe(false);
-    });
-  });
-
-  describe('Editor and Above Permissions', () => {
-    it.each([
       [canEditConfig, 'canEditConfig'],
       [canEditPrompt, 'canEditPrompt'],
       [canViewHistory, 'canViewHistory'],
       [canViewConfig, 'canViewConfig'],
       [canViewInsights, 'canViewInsights'],
-    ])('%s should allow editor and super_admin', (fn) => {
-      expect(fn(superAdmin)).toBe(true);
-      expect(fn(editor)).toBe(true);
+    ])('%s should only allow admin', (fn) => {
+      expect(fn(admin)).toBe(true);
       expect(fn(user)).toBe(false);
       expect(fn(null)).toBe(false);
     });
@@ -90,8 +73,7 @@ describe('Permissions', () => {
 
   describe('All Users Permissions', () => {
     it('canExecuteQuery should allow all authenticated users', () => {
-      expect(canExecuteQuery(superAdmin)).toBe(true);
-      expect(canExecuteQuery(editor)).toBe(true);
+      expect(canExecuteQuery(admin)).toBe(true);
       expect(canExecuteQuery(user)).toBe(true);
       expect(canExecuteQuery(null)).toBe(false);
     });
@@ -99,8 +81,7 @@ describe('Permissions', () => {
 
   describe('isReadOnly', () => {
     it('should return true only for regular users and null', () => {
-      expect(isReadOnly(superAdmin)).toBe(false);
-      expect(isReadOnly(editor)).toBe(false);
+      expect(isReadOnly(admin)).toBe(false);
       expect(isReadOnly(user)).toBe(true);
       expect(isReadOnly(null)).toBe(true);
     });
@@ -109,15 +90,13 @@ describe('Permissions', () => {
   describe('Role Display Names', () => {
     it('should have correct display names', () => {
       expect(ROLE_DISPLAY_NAMES).toEqual({
-        super_admin: 'Super Admin',
-        editor: 'Editor',
+        admin: 'Admin',
         user: 'User',
       });
     });
 
     it('getRoleDisplayName should return correct names', () => {
-      expect(getRoleDisplayName('super_admin')).toBe('Super Admin');
-      expect(getRoleDisplayName('editor')).toBe('Editor');
+      expect(getRoleDisplayName('admin')).toBe('Admin');
       expect(getRoleDisplayName('user')).toBe('User');
       expect(getRoleDisplayName('unknown_role')).toBe('unknown_role');
       expect(getRoleDisplayName(undefined)).toBe('Unknown');

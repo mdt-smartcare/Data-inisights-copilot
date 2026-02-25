@@ -53,6 +53,7 @@ export interface EmbeddingJobCreate {
     config_id: number;
     batch_size?: number;
     max_concurrent?: number;
+    incremental?: boolean;
 }
 
 // ============================================

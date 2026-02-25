@@ -4,6 +4,7 @@ Requires SuperAdmin role for all operations.
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+import json
 
 from backend.models.schemas import User
 from backend.models.rag_models import (
@@ -40,8 +41,36 @@ async def start_embedding_job(
     Requires SuperAdmin role.
     """
     try:
-        # Get document count (simplified - in reality would query schema)
-        # TODO: Get actual document count from config
+        from backend.sqliteDb.db import get_db_service
+        db_service = get_db_service()
+        config = db_service.get_config_by_id(request.config_id)
+        if not config:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Configuration {request.config_id} not found")
+            
+        import json
+        emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
+        vector_db_name = emb_conf.get('vectorDbName')
+        
+        # Robust naming fallback for multi-tenant isolation
+        if not vector_db_name:
+            agent_id = config.get('agent_id')
+            conn_id = config.get('connection_id')
+            if agent_id:
+                vector_db_name = f"agent_{agent_id}_data"
+            elif conn_id:
+                vector_db_name = f"db_connection_{conn_id}_data"
+            else:
+                vector_db_name = "default_vector_db"
+            logger.info(f"Derived missing vectorDbName as: {vector_db_name}")
+            
+        model_name = emb_conf.get('model')
+        if not model_name:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Embedding model is missing in configuration")
+            
+        # Optional: Check if model exists, but don't strictly require it to be in the local LLM Registry 
+        # since embeddings might use a different service or external provider.
+        # We assume if the model string exists, it's valid enough to queue the job.
+            
         total_documents = 100  # Placeholder
         
         # Create job
@@ -70,10 +99,11 @@ async def start_embedding_job(
             _run_embedding_job,
             job_id=job_id,
             config_id=request.config_id,
-            user_id=current_user.id
+            user_id=current_user.id,
+            incremental=request.incremental
         )
         
-        logger.info(f"Started embedding job {job_id} for config {request.config_id}")
+        logger.info(f"Started embedding job {job_id} for config {request.config_id} (incremental={request.incremental})")
         
         return {
             "status": "started",
@@ -93,7 +123,7 @@ from backend.services.sql_service import get_sql_service
 from backend.sqliteDb.db import get_db_service
 import json
 
-async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
+async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremental: bool = True):
     """Background task to run embedding generation."""
     job_service = get_embedding_job_service()
     notification_service = get_notification_service()
@@ -101,70 +131,239 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
     sql_service = get_sql_service()
     
     try:
-        # Start the job
-        job_service.start_job(job_id)
-        
         # 1. Fetch Configuration
         config = db_service.get_config_by_id(config_id)
         if not config:
             raise ValueError(f"Configuration {config_id} not found")
-            
-        connection_id = config.get('connection_id')
-        if not connection_id:
-            raise ValueError("Configuration missing connection_id")
-            
-        # 2. Fetch Connection Details
-        connection_info = db_service.get_db_connection_by_id(connection_id)
-        if not connection_info:
-            raise ValueError(f"Connection {connection_id} not found")
-            
-        # 3. Determine Selected Tables
-        # schema_snapshot is stored as JSON string in rag_configurations
-        schema_snapshot_raw = config.get('schema_snapshot', '{}')
-        try:
-            schema_selection = json.loads(schema_snapshot_raw)
-            # If selection format is {'table': ['col']}, keys are tables
-            # If selection format is just list ['table'], handle that too
-            if isinstance(schema_selection, dict):
-                target_tables = list(schema_selection.keys())
-            elif isinstance(schema_selection, list):
-                target_tables = schema_selection
-            else:
-                target_tables = []
-        except:
-            target_tables = []
-            
-        if not target_tables:
-            raise ValueError("No tables selected in configuration")
 
-        # 4. Fetch Live Schema Metadata
-        # We need rich metadata (types, nullable, etc) which might not be in the snapshot
-        schema_info = sql_service.get_schema_info_for_connection(
-            connection_info['uri'], 
-            table_names=target_tables
-        )
+        agent_id = config.get('agent_id')
+
+        # Start the job
+        job_service.start_job(job_id)
         
-        # 5. Transform for Document Generator
-        # Generator expects {'tables': {'t1': {'columns': {'c1': {...}}}}}
-        generator_schema = {'tables': {}}
-        for table, cols in schema_info.get('details', {}).items():
-            # Transform list of col dicts to dict of col dicts keyed by name
-            col_dict = {}
-            for col in cols:
-                col_name = col['name']
-                col_dict[col_name] = col
+        # Send start notification
+        await notification_service.create_notification(
+            user_id=user_id,
+            notification_type="embedding_started",
+            title="Embedding Generation Started",
+            message=f"Sync process started for job {job_id}.",
+            priority="low",
+            action_url=f"/config?step=0&agent_id={agent_id}" if agent_id else "/config?step=0",
+            action_label="Track Progress",
+            related_entity_type="embedding_job",
+            related_entity_id=config_id
+        )
+            
+        data_source_type = config.get('data_source_type', 'database')
+        documents = []
+        
+        if data_source_type == 'file':
+            documents_raw = config.get('ingestion_documents')
+            if not documents_raw:
+                raise ValueError("No documents found for file data source")
+            try:
+                parsed_docs = json.loads(documents_raw)
+                for i, doc in enumerate(parsed_docs):
+                    # We can use a simple class or just let it be strings later
+                    from backend.services.embedding_document_generator import EmbeddingDocument
+                    # Construct simple wrapper since processor just needs content
+                    documents.append(EmbeddingDocument(
+                        document_id=f"file-doc-{i}",
+                        document_type="file",
+                        content=doc.get("page_content", ""),
+                        metadata=doc.get("metadata", {})
+                    ))
+            except Exception as e:
+                raise ValueError(f"Failed to parse ingestion documents: {e}")
                 
-            generator_schema['tables'][table] = {'columns': col_dict}
+        else:
+            # Database flow
+            connection_id = config.get('connection_id')
+            if not connection_id:
+                raise ValueError("Configuration missing connection_id")
+                
+            # 2. Fetch Connection Details
+            connection_info = db_service.get_db_connection_by_id(connection_id)
+            if not connection_info:
+                raise ValueError(f"Connection {connection_id} not found")
+                
+            # 3. Determine Selected Tables
+            # schema is stored as schema_selection in prompt_configs
+            schema_snapshot_raw = config.get('schema_selection', '{}')
+            try:
+                if schema_snapshot_raw is None:
+                    schema_snapshot_raw = '{}'
+                
+                # In case of double JSON encoding
+                if isinstance(schema_snapshot_raw, str) and schema_snapshot_raw.startswith('"') and schema_snapshot_raw.endswith('"'):
+                    try:
+                        schema_snapshot_raw = json.loads(schema_snapshot_raw)
+                    except json.JSONDecodeError:
+                        pass
 
-        # 6. Generate Documents
-        document_generator = get_document_generator()
-        data_dictionary = config.get('data_dictionary', '')
+                schema_selection = json.loads(schema_snapshot_raw)
+                
+                # If still a string after first parse, parse again (double encoded)
+                if isinstance(schema_selection, str):
+                    schema_selection = json.loads(schema_selection)
+                    
+                if isinstance(schema_selection, dict):
+                    target_tables = list(schema_selection.keys())
+                elif isinstance(schema_selection, list):
+                    target_tables = schema_selection
+                else:
+                    target_tables = []
+            except Exception as e:
+                logger.error(f"Failed to parse schema_selection: {e}. Raw was: {schema_snapshot_raw}")
+                target_tables = []
+                parse_error = str(e)
+                
+            if not target_tables:
+                err_msg = parse_error if 'parse_error' in locals() else 'None'
+                raise ValueError(f"Schema parsing failed. Error: {err_msg}, Raw repr: {repr(schema_snapshot_raw)}, Target tables: {target_tables}")
+
+            # 4. Fetch Live Schema Metadata
+            schema_info = sql_service.get_schema_info_for_connection(
+                connection_info['uri'], 
+                table_names=target_tables
+            )
+            
+            # 5. Transform for Document Generator
+            generator_schema = {'tables': {}}
+            for table, cols in schema_info.get('details', {}).items():
+                col_dict = {}
+                for col in cols:
+                    col_name = col['name']
+                    col_dict[col_name] = col
+                    
+                generator_schema['tables'][table] = {'columns': col_dict}
+
+            # 6. Generate Documents
+            document_generator = get_document_generator()
+            data_dictionary = config.get('data_dictionary', '')
+            
+            documents = document_generator.generate_all(
+                generator_schema, 
+                dictionary_content=data_dictionary
+            )
+            
+        # Get Vector DB Name with multi-tenant awareness
+        vector_db_name = "default_vector_db"
+        try:
+            emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
+            if emb_conf and emb_conf.get('vectorDbName'):
+                vector_db_name = emb_conf['vectorDbName']
+            else:
+                # Fallback matching the start endpoint logic
+                agent_id = config.get('agent_id')
+                conn_id = config.get('connection_id')
+                if agent_id:
+                    vector_db_name = f"agent_{agent_id}_data"
+                elif conn_id:
+                    vector_db_name = f"db_connection_{conn_id}_data"
+        except Exception as e:
+            logger.warning(f"Failed to parse embedding config: {e}")
+
+        # Incremental Filtering
+        import hashlib
+        import os
+        from backend.services.chroma_service import get_chroma_client
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
         
-        documents = document_generator.generate_all(
-            generator_schema, 
-            dictionary_content=data_dictionary
+        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../data/indexes/{vector_db_name}"))
+        
+        if not incremental:
+            # Rebuild: wipe index and chroma
+            cursor.execute("DELETE FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
+            conn.commit()
+            
+            import shutil
+            if os.path.exists(chroma_path):
+                shutil.rmtree(chroma_path)
+                
+            docs_to_process = documents
+            stale_source_ids = []
+            logger.info(f"Rebuild mode: Wiped existing database and Chroma indexing for {vector_db_name}")
+        else:
+            cursor.execute("SELECT source_id, checksum FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
+            existing_docs = {row['source_id']: row['checksum'] for row in cursor.fetchall()}
+            
+            docs_to_process = []
+            stale_source_ids = []
+            
+            for doc in documents:
+                doc_hash = hashlib.md5(doc.content.encode('utf-8')).hexdigest()
+                doc.metadata['checksum'] = doc_hash
+                
+                if doc.document_id in existing_docs:
+                    if existing_docs[doc.document_id] != doc_hash:
+                        stale_source_ids.append(doc.document_id)
+                        docs_to_process.append(doc)
+                else:
+                    docs_to_process.append(doc)
+            
+            if len(docs_to_process) == 0:
+                logger.info(f"Incremental run: 0 new/modified documents out of {len(documents)}. Skipping embedding.")
+                job_service.complete_job(job_id, validation_passed=True)
+                return
+
+            if stale_source_ids and os.path.exists(chroma_path):
+                # Delete old chunks for updated documents
+                try:
+                    client = get_chroma_client(chroma_path)
+                    # Check if collection exists first to avoid errors
+                    try:
+                        collection = client.get_collection(name=vector_db_name)
+                        # Delete in batches due to potential URL length limits
+                        for i in range(0, len(stale_source_ids), 100):
+                            batch_stale = stale_source_ids[i:i+100]
+                            collection.delete(where={"source_id": {"$in": batch_stale}})
+                        logger.info(f"Deleted outdated chunks for {len(stale_source_ids)} documents.")
+                    except ValueError:
+                        pass # Collection doesn't exist yet
+                except Exception as e:
+                    logger.warning(f"Failed to cleanly delete stale chunks from Chroma: {e}")
+
+        # Override documents with only the delta to process
+        documents = docs_to_process
+
+            
+        # Apply chunking
+        chunk_size = 800
+        chunk_overlap = 150
+        try:
+            chunking_conf = json.loads(config.get('chunking_config', '{}') or '{}')
+            if chunking_conf:
+                chunk_size = chunking_conf.get('parentChunkSize', 800)
+                chunk_overlap = chunking_conf.get('parentChunkOverlap', 150)
+        except Exception as e:
+            logger.warning(f"Failed to parse chunking config: {e}")
+
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
         )
         
+        chunked_documents = []
+        for doc in documents:
+            chunks = text_splitter.split_text(doc.content)
+            for i, chunk_text in enumerate(chunks):
+                from backend.services.embedding_document_generator import EmbeddingDocument
+                meta = dict(doc.metadata) if doc.metadata else {}
+                meta["chunk_index"] = i
+                meta["source_id"] = doc.document_id
+                
+                chunked_documents.append(EmbeddingDocument(
+                    document_id=f"{doc.document_id}-chunk-{i}",
+                    document_type=getattr(doc, 'document_type', 'file'),
+                    content=chunk_text,
+                    metadata=meta
+                ))
+
+        documents = chunked_documents
+            
         # Update job with accurate document count
         total_docs = len(documents)
         job_service._update_job(job_id, total_documents=total_docs)
@@ -202,9 +401,58 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
         # Transition to storing
         job_service.transition_to_storing(job_id)
         
-        # TODO: Store actual vectors to vector database
-        # For now we simulate storage success
+        # Store actual vectors to vector database
+        os.makedirs(chroma_path, exist_ok=True)
         
+        ids = []
+        texts = []
+        embeddings = []
+        metadatas = []
+        
+        for i, (doc, emb) in enumerate(zip(documents, result["embeddings"])):
+            if emb is not None:
+                ids.append(doc.document_id)
+                texts.append(doc.content)
+                embeddings.append(emb)
+                
+                # Sanitize metadata
+                safe_meta = {}
+                for k, v in doc.metadata.items():
+                    if isinstance(v, (str, int, float, bool)):
+                        safe_meta[k] = v
+                    elif v is None:
+                        continue
+                    else:
+                        safe_meta[k] = str(v)
+                metadatas.append(safe_meta)
+                
+        if ids:
+            client = get_chroma_client(chroma_path)
+            collection = client.get_or_create_collection(name=vector_db_name)
+            
+            # Batch upsert to Chroma (max batch size ~5000, using 1000 to be safe)
+            batch_size = 1000
+            for i in range(0, len(ids), batch_size):
+                collection.upsert(
+                    ids=ids[i:i+batch_size],
+                    embeddings=embeddings[i:i+batch_size],
+                    documents=texts[i:i+batch_size],
+                    metadatas=metadatas[i:i+batch_size]
+                )
+        
+        # Update SQLite document_index
+        for doc in documents: # documents is now docks_to_process
+            if 'checksum' in doc.metadata:
+                cursor.execute('''
+                    INSERT INTO document_index (vector_db_name, source_id, checksum)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(vector_db_name, source_id) DO UPDATE SET
+                        checksum=excluded.checksum,
+                        updated_at=CURRENT_TIMESTAMP
+                ''', (vector_db_name, doc.document_id, doc.metadata['checksum']))
+        conn.commit()
+        conn.close()
+
         # Complete the job
         job_service.complete_job(job_id, validation_passed=validation_passed)
         
@@ -212,13 +460,13 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int):
         await notification_service.create_notification(
             user_id=user_id,
             notification_type="embedding_complete",
-            title="Embedding Generation Complete",
-            message=f"Successfully generated {result['processed_documents']} embeddings for v{config.get('version', 'unknown')}.",
+            title="Sync Complete",
+            message=f"Successfully updated {result['processed_documents']} embeddings for {vector_db_name}.",
             priority="medium",
-            action_url=f"/config",
-            action_label="View Configuration",
+            action_url=f"/config?step=0&agent_id={agent_id}" if agent_id else "/config?step=0",
+            action_label="View Sync Info",
             related_entity_type="embedding_job",
-            related_entity_id=0
+            related_entity_id=config_id
         )
         
     except Exception as e:

@@ -28,6 +28,8 @@ class PromptPublishRequest(BaseModel):
     example_questions: Optional[str] = None  # JSON string list
     embedding_config: Optional[str] = None # JSON string
     retriever_config: Optional[str] = None # JSON string
+    chunking_config: Optional[str] = None # JSON string
+    llm_config: Optional[str] = None # JSON string
     agent_id: Optional[int] = None
     data_source_type: str = 'database'
     ingestion_documents: Optional[str] = None # JSON string list
@@ -40,8 +42,21 @@ class PromptResponse(BaseModel):
     version: str
 
     is_active: int
-    reasoning: Optional[Dict[str, str]] = None  # New field for explainability
+    agent_id: Optional[int] = None
     created_at: Optional[str] = None
     created_by_username: Optional[str] = None
+    
+    # Metadata fields
+    connection_id: Optional[int] = None
+    schema_selection: Optional[str] = None
+    data_dictionary: Optional[str] = None
+    reasoning: Optional[str] = None
+    example_questions: Optional[str] = None
+    data_source_type: Optional[str] = None
+    ingestion_documents: Optional[str] = None
+    ingestion_file_name: Optional[str] = None
+    ingestion_file_type: Optional[str] = None
     embedding_config: Optional[str] = None
     retriever_config: Optional[str] = None
+    chunking_config: Optional[str] = None
+    llm_config: Optional[str] = None

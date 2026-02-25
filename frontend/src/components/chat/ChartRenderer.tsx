@@ -312,7 +312,7 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
 
 // Helper to colorize treemap cells
 const CustomTreemapContent = (props: any) => {
-  const { root, depth, x, y, width, height, index, colors, name, value } = props;
+  const { depth, x, y, width, height, index, colors, name, value } = props;
   return (
     <g>
       <rect

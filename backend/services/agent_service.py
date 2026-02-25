@@ -8,7 +8,7 @@ import uuid
 import asyncio
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools import Tool
@@ -68,7 +68,29 @@ class AgentService:
         
         # Initialize LLM via registry (enables hot-swapping)
         self._llm_registry = get_llm_registry()
-        self.llm = self._llm_registry.get_langchain_llm()
+        base_provider = self._llm_registry.get_active_provider()
+        self.llm = base_provider.get_langchain_llm()
+        
+        # Check active config for LLM overrides (temperature, max_tokens)
+        active_config = self.db_service.get_active_config(agent_id=self.agent_config.get('id') if self.agent_config else None)
+        if active_config and active_config.get('llm_config'):
+            try:
+                llm_conf = json.loads(active_config['llm_config'])
+                overrides = {}
+                if 'temperature' in llm_conf:
+                    overrides['temperature'] = float(llm_conf['temperature'])
+                if 'maxTokens' in llm_conf:
+                    overrides['max_tokens'] = int(llm_conf['maxTokens'])
+                    
+                if overrides:
+                    from backend.services.llm_providers import create_llm_provider
+                    provider_config = base_provider.get_config()
+                    provider_config.update(overrides)
+                    custom_provider = create_llm_provider(base_provider.provider_name, provider_config)
+                    self.llm = custom_provider.get_langchain_llm()
+                    logger.info(f"Applied LLM config overrides for agent: {overrides}")
+            except Exception as e:
+                logger.error(f"Failed to apply LLM config overrides: {e}")
         
         # Create tools
         # SQL Agent tool accepts natural language questions and handles SQL generation internally.
@@ -140,9 +162,10 @@ Use this to search unstructured text, notes, and semantic descriptions.
     def vector_store(self):
         """Lazy load vector store only when needed."""
         if self._vector_store is None:
-            logger.info("⚡ Lazy loading vector store on first use...")
-            self._vector_store = get_vector_store()
-            logger.info("✅ Vector store loaded")
+            agent_id = self.agent_config.get('id') if self.agent_config else None
+            logger.info(f"⚡ Lazy loading vector store on first use (Agent ID: {agent_id})...")
+            self._vector_store = get_vector_store(agent_id=agent_id)
+            logger.info(f"✅ Vector store loaded for agent: {agent_id}")
         return self._vector_store
     
     def _rag_search(self, query: str) -> str:
@@ -237,7 +260,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
             Dictionary containing answer, charts, suggestions, and metadata
         """
         trace_id = str(uuid.uuid4())
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         # Get tracing manager
         from backend.core.tracing import get_tracing_manager
@@ -372,7 +395,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 timestamp=start_time
             )
             
-            duration = (datetime.utcnow() - start_time).total_seconds()
+            duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.info(f"✅ Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
             
             # Background tracking

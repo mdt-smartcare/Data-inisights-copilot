@@ -47,7 +47,7 @@ apiClient.interceptors.request.use(
     try {
       // Get current access token from OIDC service
       const accessToken = await oidcService.getAccessToken();
-      
+
       if (accessToken) {
         // Add Bearer token to all authenticated requests
         config.headers.Authorization = `Bearer ${accessToken}`;
@@ -91,7 +91,7 @@ apiClient.interceptors.response.use(
       } catch (renewError) {
         console.error('Token renewal failed:', renewError);
       }
-      
+
       // If renewal failed, redirect to login
       await oidcService.removeUser();
       window.location.href = '/login';
@@ -142,6 +142,8 @@ export const publishSystemPrompt = async (
   exampleQuestions?: string[],
   embeddingConfig?: any,
   retrieverConfig?: any,
+  chunkingConfig?: any,
+  llmConfig?: any,
   agentId?: number,
   dataSourceType: string = 'database',
   ingestionDocuments?: string,
@@ -174,6 +176,8 @@ export const publishSystemPrompt = async (
     example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
     embedding_config: embeddingConfig ? JSON.stringify(embeddingConfig) : null,
     retriever_config: retrieverConfig ? JSON.stringify(retrieverConfig) : null,
+    chunking_config: chunkingConfig ? JSON.stringify(chunkingConfig) : null,
+    llm_config: llmConfig ? JSON.stringify(llmConfig) : null,
     agent_id: agentId,
     data_source_type: dataSourceType,
     ingestion_documents: ingestionDocuments,
@@ -185,6 +189,11 @@ export const publishSystemPrompt = async (
 
 export const getPromptHistory = async (agentId?: number): Promise<any> => {
   const response = await apiClient.get('/api/v1/config/history', { params: { agent_id: agentId } });
+  return response.data;
+};
+
+export const rollbackToVersion = async (versionId: number): Promise<{ status: string; message: string; version: number }> => {
+  const response = await apiClient.post(`/api/v1/config/rollback/${versionId}`);
   return response.data;
 };
 
@@ -233,6 +242,17 @@ export const revokeUserAccess = async (agentId: number, userId: number): Promise
 // ============================================================================
 // DATA SETUP & CONNECTION API (Phase 6 & 7)
 // ============================================================================
+
+export const getVectorDbStatus = async (vectorDbName: string): Promise<{
+  name: string;
+  exists: boolean;
+  total_documents_indexed: number;
+  total_vectors: number;
+  last_updated_at: string | null;
+}> => {
+  const response = await apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`);
+  return response.data;
+};
 
 export const getUserProfile = async (): Promise<User> => {
   const response = await apiClient.get('/api/v1/auth/me');
@@ -471,3 +491,137 @@ export const uploadForIngestion = async (file: File): Promise<IngestionResponse>
   });
   return response.data;
 };
+
+// ============================================================================
+// MODEL REGISTRY API
+// ============================================================================
+
+export interface ModelInfo {
+  id: number;
+  provider: string;
+  model_name: string;
+  display_name: string;
+  is_active: number;
+  is_custom: number;
+  dimensions?: number;
+  max_tokens?: number;
+  context_length?: number;
+  max_output_tokens?: number;
+  parameters?: Record<string, any>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+/** List all registered embedding models from the DB */
+export const getEmbeddingModels = async (): Promise<ModelInfo[]> => {
+  const response = await apiClient.get('/api/v1/settings/embedding/models');
+  return response.data;
+};
+
+/** List all registered LLM models from the DB */
+export const getLLMModels = async (): Promise<ModelInfo[]> => {
+  const response = await apiClient.get('/api/v1/settings/llm/models');
+  return response.data;
+};
+
+/** Get LLM models compatible with the active embedding model */
+export const getCompatibleLLMs = async (): Promise<ModelInfo[]> => {
+  const response = await apiClient.get('/api/v1/settings/llm/models/compatible');
+  return response.data;
+};
+
+/** Activate an embedding model by ID */
+export const activateEmbeddingModel = async (modelId: number): Promise<ModelInfo> => {
+  const response = await apiClient.put(`/api/v1/settings/embedding/models/${modelId}/activate`);
+  return response.data;
+};
+
+/** Activate an LLM model by ID */
+export const activateLLMModel = async (modelId: number): Promise<ModelInfo> => {
+  const response = await apiClient.put(`/api/v1/settings/llm/models/${modelId}/activate`);
+  return response.data;
+};
+
+/** Register a new custom embedding model */
+export const registerEmbeddingModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
+  const response = await apiClient.post('/api/v1/settings/embedding/models', data);
+  return response.data;
+};
+
+/** Register a new custom LLM model */
+export const registerLLMModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
+  const response = await apiClient.post('/api/v1/settings/llm/models', data);
+  return response.data;
+};
+
+// ============================================================================
+// VECTOR DB SCHEDULE API
+// ============================================================================
+
+export interface VectorDbSchedule {
+  vector_db_name: string;
+  enabled: boolean;
+  schedule_type: 'hourly' | 'daily' | 'weekly' | 'interval' | 'custom';
+  schedule_hour: number;
+  schedule_minute: number;
+  schedule_day_of_week?: number;
+  schedule_cron?: string;
+  next_run_at?: string;
+  countdown_seconds?: number;
+  last_run_at?: string;
+  last_run_status?: 'success' | 'failed' | 'running';
+  last_run_job_id?: string;
+}
+
+export interface ScheduleCreateRequest {
+  schedule_type: 'hourly' | 'daily' | 'weekly' | 'interval' | 'custom';
+  hour?: number;
+  minute?: number;
+  day_of_week?: number;
+  cron_expression?: string;
+  enabled?: boolean;
+}
+
+/**
+ * Create or update a sync schedule for a Vector Database.
+ */
+export const createVectorDbSchedule = async (
+  vectorDbName: string,
+  schedule: ScheduleCreateRequest
+): Promise<{ status: string; message: string; schedule: VectorDbSchedule }> => {
+  const response = await apiClient.post(`/api/v1/vector-db/schedule/${vectorDbName}`, schedule);
+  return response.data;
+};
+
+/**
+ * Get schedule configuration for a Vector Database.
+ */
+export const getVectorDbSchedule = async (vectorDbName: string): Promise<VectorDbSchedule> => {
+  const response = await apiClient.get(`/api/v1/vector-db/schedule/${vectorDbName}`);
+  return response.data;
+};
+
+/**
+ * Delete a schedule for a Vector Database.
+ */
+export const deleteVectorDbSchedule = async (vectorDbName: string): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.delete(`/api/v1/vector-db/schedule/${vectorDbName}`);
+  return response.data;
+};
+
+/**
+ * List all Vector DB schedules.
+ */
+export const listVectorDbSchedules = async (): Promise<VectorDbSchedule[]> => {
+  const response = await apiClient.get('/api/v1/vector-db/schedules');
+  return response.data;
+};
+
+/**
+ * Manually trigger an immediate sync for a Vector Database.
+ */
+export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.post(`/api/v1/vector-db/schedule/${vectorDbName}/trigger`);
+  return response.data;
+};
+

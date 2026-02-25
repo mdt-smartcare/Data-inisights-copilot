@@ -2,6 +2,7 @@
  * NotificationCenter component - Bell icon dropdown with notification list.
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import type { Notification } from '../types/rag';
 import {
     getNotifications,
@@ -42,6 +43,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     const [unreadCount, setUnreadCount] = useState(0);
     const [loading, setLoading] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
+    const navigate = useNavigate();
 
     // Fetch notifications and unread count
     const fetchNotifications = useCallback(async () => {
@@ -99,7 +101,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         }
 
         if (notification.action_url) {
-            window.location.href = notification.action_url;
+            navigate(notification.action_url);
         }
 
         onNotificationClick?.(notification);
@@ -242,9 +244,9 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                     {/* Footer */}
                     {notifications.length > 0 && (
                         <div className="notification-center__footer">
-                            <a href="/notifications" className="notification-center__view-all">
+                            <Link to="/notifications" className="notification-center__view-all" onClick={() => setIsOpen(false)}>
                                 View all notifications
-                            </a>
+                            </Link>
                         </div>
                     )}
                 </div>

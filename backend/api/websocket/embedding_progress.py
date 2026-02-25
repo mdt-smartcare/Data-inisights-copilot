@@ -4,7 +4,7 @@ WebSocket endpoint for real-time embedding progress updates.
 import asyncio
 import json
 from typing import Dict, Set
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 from jose import JWTError, jwt
@@ -49,7 +49,7 @@ class ProgressConnectionManager:
         
         message = json.dumps({
             "event": "embedding_progress",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             **progress_data
         })
         
@@ -214,7 +214,7 @@ async def send_progress_update(websocket: WebSocket, job_id: str, job_service):
             "count": progress.errors_count,
             "recent": progress.recent_errors
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
     
     await websocket.send_json(message)

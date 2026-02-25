@@ -110,6 +110,17 @@ class DatabaseService:
                 )
             """)
 
+            # Create vector_db_registry table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS vector_db_registry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    data_source_id TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_by TEXT
+                )
+            """)
+
             # Create prompt_configs table to link prompts to their configuration source
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS prompt_configs (
@@ -123,11 +134,27 @@ class DatabaseService:
                     ingestion_documents TEXT, -- JSON string list of ExtractedDocument
                     ingestion_file_name TEXT,
                     ingestion_file_type TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
+                    embedding_config TEXT, -- JSON string
+                    retriever_config TEXT, -- JSON string
+                    chunking_config TEXT, -- JSON string
+                    llm_config TEXT, -- JSON string
                     FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
                 )
             """)
+
+            # Create document_index table for incremental embeddings
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS document_index (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    vector_db_name TEXT NOT NULL,
+                    source_id TEXT NOT NULL,
+                    checksum TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(vector_db_name, source_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_index_vdbname ON document_index(vector_db_name)")
 
             
             # Add role column if it doesn't exist (migration for existing databases)
@@ -157,6 +184,13 @@ class DatabaseService:
                 cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_name TEXT")
                 cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_type TEXT")
                 logger.info("Added ingestion columns to prompt_configs table")
+
+            if 'embedding_config' not in pc_columns:
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN embedding_config TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN retriever_config TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN chunking_config TEXT")
+                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN llm_config TEXT")
+                logger.info("Added advanced RAG config columns to prompt_configs table")
             
             # Create agents table
             cursor.execute("""
@@ -467,16 +501,24 @@ class DatabaseService:
         
         query = """
             SELECT 
-                rc.id,
-                rc.version,
-                rc.prompt_template,
-                rc.connection_id,
-                rc.schema_snapshot,
-                rc.data_dictionary,
-                rc.embedding_config,
-                rc.retriever_config
-            FROM rag_configurations rc
-            WHERE rc.id = ?
+                sp.id as prompt_id,
+                sp.version,
+                sp.prompt_text,
+                sp.agent_id,
+                pc.connection_id,
+                pc.schema_selection,
+                pc.data_dictionary,
+                pc.embedding_config,
+                pc.retriever_config,
+                pc.chunking_config,
+                pc.llm_config,
+                pc.data_source_type,
+                pc.ingestion_documents,
+                pc.ingestion_file_name,
+                pc.ingestion_file_type
+            FROM system_prompts sp
+            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            WHERE sp.id = ?
         """
         cursor.execute(query, (config_id,))
         row = cursor.fetchone()
@@ -524,6 +566,8 @@ class DatabaseService:
                               example_questions: Optional[str] = None,
                               embedding_config: Optional[str] = None,
                               retriever_config: Optional[str] = None,
+                              chunking_config: Optional[str] = None,
+                              llm_config: Optional[str] = None,
                               agent_id: Optional[int] = None,
                               data_source_type: str = 'database',
                               ingestion_documents: Optional[str] = None,
@@ -592,14 +636,18 @@ class DatabaseService:
                     prompt_id, connection_id, schema_selection, 
                     data_dictionary, reasoning, example_questions,
                     data_source_type, ingestion_documents,
-                    ingestion_file_name, ingestion_file_type
+                    ingestion_file_name, ingestion_file_type,
+                    embedding_config, retriever_config,
+                    chunking_config, llm_config
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 prompt_id, connection_id, schema_selection,
                 data_dictionary, reasoning, example_questions,
                 data_source_type, ingestion_documents,
-                ingestion_file_name, ingestion_file_type
+                ingestion_file_name, ingestion_file_type,
+                embedding_config, retriever_config,
+                chunking_config, llm_config
             ))
             
             conn.commit()
@@ -644,7 +692,11 @@ class DatabaseService:
                     pc.data_source_type,
                     pc.ingestion_documents,
                     pc.ingestion_file_name,
-                    pc.ingestion_file_type
+                    pc.ingestion_file_type,
+                    pc.embedding_config,
+                    pc.retriever_config,
+                    pc.chunking_config,
+                    pc.llm_config
                 FROM system_prompts sp
                 LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
                 LEFT JOIN users u ON sp.created_by = u.username
@@ -669,7 +721,11 @@ class DatabaseService:
                     pc.data_source_type,
                     pc.ingestion_documents,
                     pc.ingestion_file_name,
-                    pc.ingestion_file_type
+                    pc.ingestion_file_type,
+                    pc.embedding_config,
+                    pc.retriever_config,
+                    pc.chunking_config,
+                    pc.llm_config
                 FROM system_prompts sp
                 LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
                 LEFT JOIN users u ON sp.created_by = u.username
@@ -687,7 +743,7 @@ class DatabaseService:
         return None
 
     def get_all_prompts(self, agent_id: Optional[int] = None) -> list[Dict[str, Any]]:
-        """Get all system prompt versions history."""
+        """Get all system prompt versions history with configuration metadata."""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -699,9 +755,24 @@ class DatabaseService:
                 sp.is_active, 
                 sp.created_at, 
                 sp.created_by,
-                u.username as created_by_username
+                sp.agent_id,
+                u.username as created_by_username,
+                pc.connection_id,
+                pc.schema_selection,
+                pc.data_dictionary,
+                pc.reasoning,
+                pc.example_questions,
+                pc.data_source_type,
+                pc.ingestion_documents,
+                pc.ingestion_file_name,
+                pc.ingestion_file_type,
+                pc.embedding_config,
+                pc.retriever_config,
+                pc.chunking_config,
+                pc.llm_config
             FROM system_prompts sp
             LEFT JOIN users u ON sp.created_by = u.username
+            LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
         """
         
         if agent_id:
@@ -774,6 +845,33 @@ class DatabaseService:
         row = cursor.fetchone()
         conn.close()
         return dict(row) if row else None
+        
+    def get_vector_db_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get vector db by name to check existence/collisions."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name, data_source_id, created_at, created_by FROM vector_db_registry WHERE name = ?", (name,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return dict(row)
+        return None
+
+    def register_vector_db(self, name: str, data_source_id: str, created_by: Optional[str] = None) -> int:
+        """Register a new vector DB namespace."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO vector_db_registry (name, data_source_id, created_by) VALUES (?, ?, ?)",
+                (name, data_source_id, created_by)
+            )
+            conn.commit()
+            return cursor.lastrowid
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Vector DB with name '{name}' already exists.")
+        finally:
+            conn.close()
 
     def get_active_metrics(self) -> list[Dict[str, Any]]:
         """Get all active metric definitions ordered by priority.

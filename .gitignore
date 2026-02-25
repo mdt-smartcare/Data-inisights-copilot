@@ -11,3 +11,4 @@ __pycache__/
 /models/bge-m3
 /backend/models
 *.db
+/data/indexes
