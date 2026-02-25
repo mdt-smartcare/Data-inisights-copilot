@@ -6,7 +6,8 @@ import RefreshButton from '../components/RefreshButton';
 import Alert from '../components/Alert';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { APP_CONFIG, CONFIRMATION_MESSAGES } from '../config';
-import { apiClient } from '../services/api';
+import { apiClient, getAllAgents, getUserAgents, bulkAssignAgents, revokeUserAccess, handleApiError } from '../services/api';
+import type { Agent } from '../types';
 
 interface UserData {
     id: number;
@@ -30,6 +31,14 @@ const UsersPage: React.FC = () => {
     const [deactivateConfirm, setDeactivateConfirm] = useState<{ show: boolean; user: UserData | null }>({ show: false, user: null });
     // Activate Modal State
     const [activateConfirm, setActivateConfirm] = useState<{ show: boolean; user: UserData | null }>({ show: false, user: null });
+
+    // Agent Assignment State
+    const [agentModalUser, setAgentModalUser] = useState<UserData | null>(null);
+    const [allAgents, setAllAgents] = useState<Agent[]>([]);
+    const [userAgents, setUserAgents] = useState<Agent[]>([]);
+    const [loadingAgents, setLoadingAgents] = useState(false);
+    const [selectedAgentIds, setSelectedAgentIds] = useState<number[]>([]);
+    const [assigning, setAssigning] = useState(false);
 
     const hasAccess = canManageUsers(user);
 
@@ -97,6 +106,64 @@ const UsersPage: React.FC = () => {
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to activate user');
         }
+    };
+
+    // Agent assignment handlers
+    const handleOpenAgentModal = async (u: UserData) => {
+        setAgentModalUser(u);
+        setLoadingAgents(true);
+        setSelectedAgentIds([]);
+        try {
+            const [agents, userAgentsResponse] = await Promise.all([
+                getAllAgents(),
+                getUserAgents(u.id)
+            ]);
+            setAllAgents(agents);
+            setUserAgents(userAgentsResponse.agents || []);
+        } catch (err) {
+            setError(handleApiError(err));
+        } finally {
+            setLoadingAgents(false);
+        }
+    };
+
+    const handleAssignAgents = async () => {
+        if (!agentModalUser || selectedAgentIds.length === 0) return;
+        setAssigning(true);
+        try {
+            await bulkAssignAgents(agentModalUser.id, selectedAgentIds, 'user');
+            const userAgentsResponse = await getUserAgents(agentModalUser.id);
+            setUserAgents(userAgentsResponse.agents || []);
+            setSelectedAgentIds([]);
+        } catch (err) {
+            setError(handleApiError(err));
+        } finally {
+            setAssigning(false);
+        }
+    };
+
+    const toggleAgentSelection = (agentId: number) => {
+        setSelectedAgentIds(prev => 
+            prev.includes(agentId) 
+                ? prev.filter(id => id !== agentId)
+                : [...prev, agentId]
+        );
+    };
+
+    const handleRevokeAgent = async (agentId: number) => {
+        if (!agentModalUser) return;
+        try {
+            await revokeUserAccess(agentId, agentModalUser.id);
+            const userAgentsResponse = await getUserAgents(agentModalUser.id);
+            setUserAgents(userAgentsResponse.agents || []);
+        } catch (err) {
+            setError(handleApiError(err));
+        }
+    };
+
+    const getAvailableAgents = () => {
+        const assignedIds = new Set(userAgents.map(a => a.id));
+        return allAgents.filter(a => !assignedIds.has(a.id));
     };
 
     // Access check AFTER all hooks
@@ -195,6 +262,14 @@ const UsersPage: React.FC = () => {
                                                     <div className="flex items-center justify-end gap-2">
                                                         {u.is_active ? (
                                                             <>
+                                                                {u.role === 'user' && (
+                                                                    <button 
+                                                                        onClick={() => handleOpenAgentModal(u)} 
+                                                                        className="px-3 py-1.5 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-colors"
+                                                                    >
+                                                                        Agents
+                                                                    </button>
+                                                                )}
                                                                 <button 
                                                                     onClick={() => handleEdit(u)} 
                                                                     className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
@@ -288,6 +363,108 @@ const UsersPage: React.FC = () => {
                         onCancel={() => setActivateConfirm({ show: false, user: null })}
                         type="info"
                     />
+
+                    {/* Agent Assignment Modal */}
+                    {agentModalUser && (
+                        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-lg shadow-xl w-full max-w-lg p-6">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-lg font-semibold">Manage Agent Access: {agentModalUser.username}</h3>
+                                    <button
+                                        onClick={() => setAgentModalUser(null)}
+                                        className="text-gray-400 hover:text-gray-600"
+                                    >
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                        </svg>
+                                    </button>
+                                </div>
+
+                                {loadingAgents ? (
+                                    <div className="flex justify-center py-8">
+                                        <div className="animate-spin rounded-full h-8 w-8 border-4 border-blue-200 border-t-blue-600"></div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {/* Assigned Agents List */}
+                                        <div className="mb-4">
+                                            <h4 className="text-sm font-medium text-gray-700 mb-2">Assigned Agents</h4>
+                                            {userAgents.length === 0 ? (
+                                                <p className="text-sm text-gray-500 italic">No agents assigned yet.</p>
+                                            ) : (
+                                                <div className="space-y-2 max-h-40 overflow-y-auto">
+                                                    {userAgents.map(agent => (
+                                                        <div key={agent.id} className="flex items-center justify-between bg-gray-50 px-3 py-2 rounded-md border border-gray-200">
+                                                            <div>
+                                                                <span className="font-medium text-gray-800">{agent.name}</span>
+                                                                {agent.description && (
+                                                                    <span className="text-sm text-gray-500 ml-2">- {agent.description}</span>
+                                                                )}
+                                                            </div>
+                                                            <button
+                                                                onClick={() => handleRevokeAgent(agent.id)}
+                                                                className="text-red-600 hover:text-red-800 text-sm font-medium"
+                                                            >
+                                                                Remove
+                                                            </button>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Add Agent Section */}
+                                        <div className="border-t pt-4">
+                                            <h4 className="text-sm font-medium text-gray-700 mb-2">Assign Agents</h4>
+                                            {getAvailableAgents().length === 0 ? (
+                                                <p className="text-sm text-gray-500 italic">All available agents have been assigned.</p>
+                                            ) : (
+                                                <>
+                                                    <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-md p-2">
+                                                        {getAvailableAgents().map(agent => (
+                                                            <label 
+                                                                key={agent.id} 
+                                                                className="flex items-center gap-3 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer"
+                                                            >
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedAgentIds.includes(agent.id)}
+                                                                    onChange={() => toggleAgentSelection(agent.id)}
+                                                                    className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                                                />
+                                                                <div>
+                                                                    <span className="text-sm font-medium text-gray-800">{agent.name}</span>
+                                                                    {agent.description && (
+                                                                        <span className="text-xs text-gray-500 ml-2">- {agent.description}</span>
+                                                                    )}
+                                                                </div>
+                                                            </label>
+                                                        ))}
+                                                    </div>
+                                                    <button
+                                                        onClick={handleAssignAgents}
+                                                        disabled={selectedAgentIds.length === 0 || assigning}
+                                                        className="mt-3 w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        {assigning ? 'Assigning...' : `Assign Selected (${selectedAgentIds.length})`}
+                                                    </button>
+                                                </>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+
+                                <div className="mt-6 flex justify-end">
+                                    <button
+                                        onClick={() => setAgentModalUser(null)}
+                                        className="px-4 py-2 bg-gray-100 text-gray-700 rounded-md hover:bg-gray-200"
+                                    >
+                                        Close
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
