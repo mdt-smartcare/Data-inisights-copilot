@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion } from '../services/api';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion, getSystemSettings } from '../services/api';
 import type { IngestionResponse } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
@@ -480,10 +480,22 @@ const ConfigPage: React.FC = () => {
         if (!configId) return;
 
         try {
+            // Fetch dynamic embedding settings for batch sizing
+            let batchSize = 50;
+            let maxConcurrent = 5;
+
+            try {
+                const settings = await getSystemSettings('embedding');
+                if (settings?.batch_size) batchSize = settings.batch_size;
+                if (settings?.max_concurrent) maxConcurrent = settings.max_concurrent;
+            } catch (err) {
+                console.warn('Failed to fetch embedding settings, using defaults', err);
+            }
+
             const result = await startEmbeddingJob({
                 config_id: configId,
-                batch_size: 50,
-                max_concurrent: 5,
+                batch_size: batchSize,
+                max_concurrent: maxConcurrent,
                 incremental: incremental
             });
             setEmbeddingJobId(result.job_id);
