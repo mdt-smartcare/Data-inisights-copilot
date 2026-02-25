@@ -468,6 +468,7 @@ class EmbeddingJobService:
     def list_jobs(
         self,
         user_id: Optional[int] = None,
+        config_id: Optional[int] = None,
         status: Optional[EmbeddingJobStatus] = None,
         limit: int = 10,
         offset: int = 0
@@ -477,6 +478,7 @@ class EmbeddingJobService:
         
         Args:
             user_id: Filter by user who started the job
+            config_id: Filter by configuration ID
             status: Filter by job status
             limit: Maximum results
             offset: Pagination offset
@@ -494,6 +496,10 @@ class EmbeddingJobService:
             if user_id is not None:
                 query += " AND started_by = ?"
                 params.append(user_id)
+            
+            if config_id is not None:
+                query += " AND config_id = ?"
+                params.append(config_id)
             
             if status:
                 query += " AND status = ?"

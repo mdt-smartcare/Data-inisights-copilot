@@ -2,9 +2,17 @@
 API routes for embedding job management and progress tracking.
 Requires SuperAdmin role for all operations.
 """
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
+from langchain_core.documents import Document
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 import json
+import hashlib
+import uuid
+import os
+import multiprocessing
+import time
+from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from backend.models.schemas import User
 from backend.models.rag_models import (
@@ -19,9 +27,9 @@ from backend.services.embedding_document_generator import get_document_generator
 from backend.pipeline.extract import create_data_extractor
 from backend.pipeline.transform import AdvancedDataTransformer
 from backend.core.permissions import require_super_admin, get_current_user
-from backend.core.logging import get_logger
+from backend.core.logging import get_embedding_logger
 
-logger = get_logger(__name__)
+logger = get_embedding_logger()
 
 router = APIRouter(prefix="/embedding-jobs", tags=["Embedding Jobs"])
 
@@ -49,20 +57,19 @@ async def start_embedding_job(
         if not config:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Configuration {request.config_id} not found")
             
+        from backend.core.vector_db_utils import derive_vector_db_name
         import json
         emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
         vector_db_name = emb_conf.get('vectorDbName')
         
         # Robust naming fallback for multi-tenant isolation
         if not vector_db_name:
-            agent_id = config.get('agent_id')
-            conn_id = config.get('connection_id')
-            if agent_id:
-                vector_db_name = f"agent_{agent_id}_data"
-            elif conn_id:
-                vector_db_name = f"db_connection_{conn_id}_data"
-            else:
-                vector_db_name = "default_vector_db"
+            source_btn = config.get('ingestion_file_name', '').split('.')[0] if config.get('data_source_type') == 'file' else None
+            vector_db_name = derive_vector_db_name(
+                agent_id=config.get('agent_id'),
+                connection_id=config.get('connection_id'),
+                source_name=source_btn
+            )
             logger.info(f"Derived missing vectorDbName as: {vector_db_name}")
             
         model_name = emb_conf.get('model')
@@ -133,10 +140,37 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
     sql_service = get_sql_service()
     
     try:
+        start_time = time.time()
         # 1. Fetch Configuration
         config = db_service.get_config_by_id(config_id)
         if not config:
             raise ValueError(f"Configuration {config_id} not found")
+
+        # --- T04: Robust Validation ---
+        from backend.core.vector_db_utils import validate_vector_db_name
+        import json
+        emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
+        
+        # Validate Vector DB Namespace
+        v_db_name = emb_conf.get('vectorDbName')
+        if not v_db_name:
+             # Fallback logic should have already happened in start_embedding_job, but we re-verify
+             from backend.core.vector_db_utils import derive_vector_db_name
+             source_btn = config.get('ingestion_file_name', '').split('.')[0] if config.get('data_source_type') == 'file' else None
+             v_db_name = derive_vector_db_name(
+                agent_id=config.get('agent_id'),
+                connection_id=config.get('connection_id'),
+                source_name=source_btn
+             )
+        
+        is_valid, err_msg = validate_vector_db_name(v_db_name)
+        if not is_valid:
+            raise ValueError(f"Invalid Vector DB Namespace '{v_db_name}': {err_msg}")
+
+        # Validate Embedding Model
+        model_name = emb_conf.get('model')
+        if not model_name:
+            raise ValueError("No embedding model specified in configuration")
 
         agent_id = config.get('agent_id')
 
@@ -178,7 +212,36 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             except Exception as e:
                 raise ValueError(f"Failed to parse ingestion documents: {e}")
                 
-        else:
+        # --- T04 & T08: Common Transformer Setup ---
+        # Default configuration for chunking and extraction
+        extractor_config = {
+            "tables": {
+                "exclude_tables": [],
+                "global_exclude_columns": []
+            },
+            "chunking": {
+                "parent_splitter": {
+                    "chunk_size": 800,
+                    "chunk_overlap": 150
+                },
+                "child_splitter": {
+                    "chunk_size": 200,
+                    "chunk_overlap": 50
+                }
+            }
+        }
+        
+        # Override with specific chunking configs if available
+        chunking_conf = json.loads(config.get('chunking_config', '{}') or '{}')
+        if chunking_conf:
+            extractor_config['chunking']['parent_splitter']['chunk_size'] = chunking_conf.get('parentChunkSize', 800)
+            extractor_config['chunking']['parent_splitter']['chunk_overlap'] = chunking_conf.get('parentChunkOverlap', 150)
+            extractor_config['chunking']['child_splitter']['chunk_size'] = chunking_conf.get('childChunkSize', 200)
+            extractor_config['chunking']['child_splitter']['chunk_overlap'] = chunking_conf.get('childChunkOverlap', 50)
+            
+        transformer = AdvancedDataTransformer(extractor_config)
+
+        if data_source_type != 'file':
             # Database flow
             connection_id = config.get('connection_id')
             if not connection_id:
@@ -230,53 +293,43 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                 table_names=target_tables
             )
             
-            # 5. Transform logic: use Advanced Data Transformer
-            extractor_config = {
-                "tables": {
-                    "exclude_tables": [],
-                    "global_exclude_columns": []
-                },
-                "chunking": {
-                    "parent_splitter": {
-                        "chunk_size": 800,
-                        "chunk_overlap": 150
-                    },
-                    "child_splitter": {
-                        "chunk_size": 200,
-                        "chunk_overlap": 50
-                    }
-                }
-            }
-            
-            # Let the config override if present
-            chunking_conf = json.loads(config.get('chunking_config', '{}') or '{}')
-            if chunking_conf:
-                extractor_config['chunking']['parent_splitter']['chunk_size'] = chunking_conf.get('parentChunkSize', 800)
-                extractor_config['chunking']['parent_splitter']['chunk_overlap'] = chunking_conf.get('parentChunkOverlap', 150)
-                extractor_config['chunking']['child_splitter']['chunk_size'] = chunking_conf.get('childChunkSize', 200)
-                extractor_config['chunking']['child_splitter']['chunk_overlap'] = chunking_conf.get('childChunkOverlap', 50)
-                
+            # 5. Extract logic: use DataExtractor
             from backend.pipeline.extract import DataExtractor
             from backend.config import get_settings
             from pathlib import Path
             
             settings = get_settings()
             backend_root = Path(__file__).parent.parent.parent
+            # Fix: use absolute path for config
             config_rel_path = str(settings.rag_config_path).lstrip('./')
             config_path = str((backend_root / config_rel_path).resolve())
             
             extractor = DataExtractor(config_path) # Load base excluded tables
             # Override allowed to just requested schema
             extractor.get_allowed_tables = lambda: target_tables
-            
+
             import asyncio
-            job_service._update_job(job_id, status=EmbeddingJobStatus.PREPARING)
-            table_data = await asyncio.to_thread(extractor.extract_all_tables)
+            job_service._update_job(job_id, status=EmbeddingJobStatus.PREPARING, phase="Extracting tables...")
             
-            transformer = AdvancedDataTransformer(extractor_config)
-            documents = await asyncio.to_thread(transformer.create_documents_from_tables, table_data)
+            async def extractor_progress(current, total, table_name):
+                # We normalize "Preparing" to 20% of the total job or just show sub-progress
+                # For now, let's keep it simple and update Phase string
+                job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Extracting {table_name} ({current}/{total})")
+
+            table_data = await extractor.extract_all_tables(on_progress=extractor_progress)
+            
+            job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Generating documents from data...")
+            
+            def transformer_doc_progress(current, total, table_name):
+                job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Transforming {table_name} ({current}/{total})")
+
+            documents = await asyncio.to_thread(transformer.create_documents_from_tables, table_data, on_progress=transformer_doc_progress)
+            
+            # Initial count update for progress tracking during delta/chunking
+            job_service._update_job(job_id, total_documents=len(documents))
             
         # Get Vector DB Name with multi-tenant awareness
+        from backend.core.vector_db_utils import derive_vector_db_name
         vector_db_name = "default_vector_db"
         try:
             emb_conf = json.loads(config.get('embedding_config', '{}') or '{}')
@@ -284,23 +337,44 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                 vector_db_name = emb_conf['vectorDbName']
             else:
                 # Fallback matching the start endpoint logic
-                agent_id = config.get('agent_id')
-                conn_id = config.get('connection_id')
-                if agent_id:
-                    vector_db_name = f"agent_{agent_id}_data"
-                elif conn_id:
-                    vector_db_name = f"db_connection_{conn_id}_data"
+                source_btn = config.get('ingestion_file_name', '').split('.')[0] if config.get('data_source_type') == 'file' else None
+                vector_db_name = derive_vector_db_name(
+                    agent_id=config.get('agent_id'),
+                    connection_id=config.get('connection_id'),
+                    source_name=source_btn
+                )
         except Exception as e:
             logger.warning(f"Failed to parse embedding config: {e}")
 
+        # Ensure Vector DB is registered in the registry with metadata
+        try:
+            llm_conf = json.loads(config.get('llm_config', '{}') or '{}')
+            llm_name = llm_conf.get('model', 'default_llm')
+            
+            conn_reg = db_service.get_connection()
+            cursor_reg = conn_reg.cursor()
+            cursor_reg.execute('''
+                INSERT INTO vector_db_registry (name, data_source_id, created_by, embedding_model, llm)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(name) DO UPDATE SET
+                    data_source_id=excluded.data_source_id,
+                    embedding_model=excluded.embedding_model,
+                    llm=excluded.llm
+            ''', (vector_db_name, str(config.get('connection_id') or config.get('agent_id') or 'system'), str(user_id), model_name, llm_name))
+            conn_reg.commit()
+            conn_reg.close()
+        except Exception as e:
+            logger.warning(f"Failed to update vector_db_registry: {e}")
+
         # Incremental Filtering
+        source_documents = documents # keep reference for index update later
         import hashlib
         import os
         from backend.services.chroma_service import get_chroma_client
         conn = db_service.get_connection()
         cursor = conn.cursor()
         
-        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../data/indexes/{vector_db_name}"))
+        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../data/indexes/{vector_db_name}"))
         
         if not incremental:
             # Rebuild: wipe index and chroma
@@ -324,31 +398,27 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             cursor.execute("SELECT source_id, checksum FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
             existing_docs = {row['source_id']: row['checksum'] for row in cursor.fetchall()}
             
+            logger.info(f"Checking for deltas among {len(documents)} documents using parallel hashing...")
+            
+            # Parallelize hashing and delta check
+            job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Checking for modified documents...")
+            
+            num_workers = max(1, multiprocessing.cpu_count() - 1)
+            batch_size = 50000
+            doc_batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
+            
             docs_to_process = []
             stale_source_ids = []
             
-            for doc in documents:
-                doc_content = getattr(doc, "page_content", getattr(doc, "content", ""))
-                doc_hash = hashlib.md5(doc_content.encode('utf-8')).hexdigest()
-                
-                if hasattr(doc, "metadata"):
-                    doc.metadata['checksum'] = doc_hash
-                
-                # Derive a robust source ID for tracking deletions
-                if hasattr(doc, "metadata") and "source_id" in doc.metadata:
-                    doc_id = f"{doc.metadata.get('source_table', 'unknown')}_{doc.metadata['source_id']}"
-                else:
-                    doc_id = getattr(doc, "document_id", str(uuid.uuid4()))
-                
-                if hasattr(doc, "metadata"):
-                    doc.metadata['source_id'] = doc_id # Overwrite to ensure deletion matches later
-                
-                if doc_id in existing_docs:
-                    if existing_docs[doc_id] != doc_hash:
-                        stale_source_ids.append(doc_id)
-                        docs_to_process.append(doc)
-                else:
-                    docs_to_process.append(doc)
+            # Note: We need to serialize documents slightly for cleaner multiprocessing
+            # although Document is picklable, it can be slow.
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(_parallel_delta_worker, batch, existing_docs) for batch in doc_batches]
+                for future in tqdm(as_completed(futures), total=len(futures), desc="Delta Check"):
+                    batch_processed, batch_stale = future.result()
+                    docs_to_process.extend(batch_processed)
+                    stale_source_ids.extend(batch_stale)
+                    job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Delta Check: {len(docs_to_process)} changes found")
             
             if len(docs_to_process) == 0:
                 logger.info(f"Incremental run: 0 new/modified documents out of {len(documents)}. Skipping embedding.")
@@ -357,6 +427,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
 
             if stale_source_ids and os.path.exists(chroma_path):
                 # Delete old chunks for updated documents
+                job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Purging {len(stale_source_ids)} outdated documents...")
                 try:
                     client = get_chroma_client(chroma_path)
                     # Check if collection exists first to avoid errors
@@ -380,26 +451,35 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         import asyncio
         logger.info(f"Created {len(documents)} initial documents from all tables.")
         logger.info("Applying parent-child chunking to all documents...")
-        child_chunks, docstore = await asyncio.to_thread(transformer.perform_parent_child_chunking, documents)
+        
+        def chunking_progress(phase, current, total):
+            pct_str = f" ({current}/{total})" if total > 0 else f" ({current})"
+            job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"{phase}{pct_str}")
+
+        child_chunks, docstore = await asyncio.to_thread(transformer.perform_parent_child_chunking, documents, on_progress=chunking_progress)
         
         # Override documents with the generated child chunks
         documents = child_chunks
         logger.info(f"Chunking complete. Created {len(documents)} child documents.")
             
-        # Fetch dynamic job configuration for batch processor
-        job_config = job_service.get_job_config(job_id) or {}
-        
-        # Determine optimal batch size (legacy script used 128, provider config has it)
+        # Determine optimal batch size and concurrency based on provider
         from backend.services.settings_service import get_settings_service, SettingCategory
         settings_service = get_settings_service()
         emb_settings = settings_service.get_category_settings_raw(SettingCategory.EMBEDDING)
         
-        batch_size = job_config.get("batch_size", emb_settings.get("batch_size", 128))
+        provider_type = emb_settings.get("provider", "sentence-transformers")
         
-        # CRITICAL PERFORMANCE FIX: PyTorch/MPS degrades severely with concurrent threaded inference.
-        # Enforce max_concurrent=1 to match the legacy script's highly optimized sequential processing.
-        max_concurrent = 1
-
+        # Performance tuning based on provider type
+        if provider_type == "openai":
+            # API can handle high concurrency
+            batch_size = emb_conf.get("batch_size", 500)
+            max_concurrent = 20
+        else:
+            # Local models benefit from larger batches but moderate concurrency
+            # to avoid NPU/GPU queue contention while maximizing saturation.
+            batch_size = emb_conf.get("batch_size", 256)
+            max_concurrent = 4 # Sweet spot for M-series MPS/CPU
+            
         # Update job with accurate document count and total batches
         total_docs = len(documents)
         import math
@@ -440,10 +520,14 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             
             for doc, emb in zip(batch_docs, batch_result.embeddings):
                 if emb is not None:
-                    # Assign a unique UUID for every chunk inserted into ChromaDB
-                    from uuid import uuid4
-                    ids.append(str(uuid4()))
-                    texts.append(getattr(doc, "page_content", getattr(doc, "content", "")))
+                    # Assign a stable ID for every chunk to remain idempotent
+                    # Hash of content + parent ID
+                    chunk_content = getattr(doc, "page_content", getattr(doc, "content", ""))
+                    parent_id = doc.metadata.get("parent_doc_id", "unknown")
+                    chunk_id = hashlib.sha256(f"{chunk_content}{parent_id}".encode()).hexdigest()
+                    
+                    ids.append(chunk_id)
+                    texts.append(chunk_content)
                     embeddings.append(emb)
                     
                     # Sanitize metadata
@@ -506,8 +590,9 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         # Transition to storing phase (which was primarily done implicitly via streaming)
         job_service.transition_to_storing(job_id)
         
-        # Ensure documents have 'metadata' attribute for index tracking
-        for doc in documents:
+        # --- Optimized Index Tracking: Update per Source Document ---
+        # source_documents contains the original parent docs
+        for doc in source_documents:
             metadata = doc.metadata if doc.metadata else {}
             if 'checksum' in metadata and 'source_id' in metadata:
                 cursor.execute('''
@@ -518,6 +603,25 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                         updated_at=CURRENT_TIMESTAMP
                 ''', (vector_db_name, metadata['source_id'], metadata['checksum']))
         conn.commit()
+        
+        # Update run timestamps in registry
+        try:
+            cursor.execute(f'''
+                UPDATE vector_db_registry 
+                SET {"last_incremental_run" if incremental else "last_full_run"} = CURRENT_TIMESTAMP
+                WHERE name = ?
+            ''', (vector_db_name,))
+            conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to update run timestamps: {e}")
+            
+        # Final Summary Logging
+        duration = time.time() - start_time
+        logger.info(f"EMBEDDING JOB SUMMARY | Job: {job_id} | Namespace: {vector_db_name} | "
+                    f"Model: {model_name} | Total Chunks: {len(child_chunks)} | "
+                    f"Processed: {result['processed_documents']} | Failed: {result['failed_documents']} | "
+                    f"Duration: {duration:.2f}s | Speed: {result['average_speed']:.2f} docs/sec")
+        
         conn.close()
 
         # Complete the job
@@ -538,16 +642,54 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         
     except Exception as e:
         logger.error(f"Embedding job {job_id} failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         job_service.fail_job(job_id, str(e))
         
         # Send failure notification
-        await notification_service.create_notification(
-            user_id=user_id,
-            notification_type="embedding_failed",
-            title="Embedding Generation Failed",
-            message=str(e),
-            priority="high"
-        )
+        try:
+            await notification_service.create_notification(
+                user_id=user_id,
+                notification_type="embedding_failed",
+                title="Embedding Generation Failed",
+                message=str(e),
+                priority="high"
+            )
+        except:
+            pass
+
+def _parallel_delta_worker(doc_batch: List[Document], existing_docs: Dict[str, str]) -> tuple[List[Document], List[str]]:
+    """Helper to parallelize checksum calculation and delta selection."""
+    processed = []
+    stale = []
+    
+    for doc in doc_batch:
+        content = getattr(doc, "page_content", getattr(doc, "content", ""))
+        doc_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+        
+        if hasattr(doc, "metadata"):
+            doc.metadata['checksum'] = doc_hash
+        
+        # Consistent ID derivation
+        if hasattr(doc, "metadata") and "source_id" in doc.metadata:
+            # Table-qualified ID for uniqueness
+            doc_id = f"{doc.metadata.get('source_table', 'unknown')}_{doc.metadata['source_id']}"
+        else:
+            # Fallback (rarely used if formatted via create_documents_from_tables)
+            doc_id = str(uuid.uuid4())
+            
+        if hasattr(doc, "metadata"):
+            doc.metadata['source_id'] = doc_id
+            
+        if doc_id in existing_docs:
+            if existing_docs[doc_id] != doc_hash:
+                stale.append(doc_id)
+                processed.append(doc)
+        else:
+            processed.append(doc)
+            
+    return processed, stale
+        
 
 
 @router.get("/{job_id}/progress", response_model=EmbeddingJobProgress)
@@ -636,6 +778,7 @@ async def cancel_embedding_job(
 @router.get("", response_model=List[EmbeddingJobProgress])
 async def list_embedding_jobs(
     status_filter: Optional[EmbeddingJobStatus] = None,
+    config_id: Optional[int] = None,
     limit: int = 10,
     offset: int = 0,
     current_user: User = Depends(require_super_admin),
@@ -648,6 +791,7 @@ async def list_embedding_jobs(
     """
     jobs = job_service.list_jobs(
         status=status_filter,
+        config_id=config_id,
         limit=limit,
         offset=offset
     )

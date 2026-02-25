@@ -282,6 +282,13 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
   total_documents_indexed: number;
   total_vectors: number;
   last_updated_at: string | null;
+  embedding_model: string | null;
+  llm: string | null;
+  last_full_run: string | null;
+  last_incremental_run: string | null;
+  version: string;
+  diagnostics: Array<{ level: string; message: string }>;
+  schedule: any;
 }> => {
   const response = await apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`);
   return response.data;
@@ -390,6 +397,7 @@ export const cancelEmbeddingJob = async (jobId: string): Promise<{ status: strin
  */
 export const listEmbeddingJobs = async (params?: {
   status_filter?: string;
+  config_id?: number;
   limit?: number;
   offset?: number;
 }): Promise<EmbeddingJobProgress[]> => {
