@@ -59,16 +59,7 @@ export const canExecuteQuery = (user: User | null): boolean => {
     return roleAtLeast(user?.role, 'user');
 };
 
-// Editor+ can view history/config/insights
-export const canViewHistory = (user: User | null): boolean => {
-    return user?.role === 'admin';
-};
-
 export const canViewConfig = (user: User | null): boolean => {
-    return user?.role === 'admin';
-};
-
-export const canViewInsights = (user: User | null): boolean => {
     return user?.role === 'admin';
 };
 

@@ -40,7 +40,7 @@ export default function CallbackPage() {
 
           // Redirect based on role
           if (userProfile.role === 'admin') {
-            navigate('/insights', { replace: true });
+            navigate('/config', { replace: true });
           } else {
             navigate('/chat', { replace: true });
           }

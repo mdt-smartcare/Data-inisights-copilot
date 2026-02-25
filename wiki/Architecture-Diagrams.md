@@ -40,7 +40,7 @@ Complete login sequence with alt fragments for invalid credentials, deactivated 
 ![Authentication Flow](images/diagrams/02_auth_flow.png)
 
 **Flows covered:**
-1. **Login**: User submits credentials → bcrypt verification → JWT creation → role-based redirect (`super_admin` → `/insights`, others → `/chat`)
+1. **Login**: User submits credentials → bcrypt verification → JWT creation → role-based redirect (`admin` → `/config`, others → `/chat`)
 2. **Session Restore**: On app mount, `AuthContext` checks `localStorage` for token → calls `GET /auth/me` → restores user state
 3. **Logout**: Clears `localStorage` and `AuthContext`, redirects to `/login`
 
@@ -132,8 +132,7 @@ How the system tracks LLM usage, costs, and latency through Langfuse integration
 1. `AgentService` creates a LangChain callback handler via `TracingManager`
 2. Callback auto-instruments all agent steps as Langfuse Traces → Spans → Generations
 3. Each LLM call captures: model name, token counts, latency, cost, input/output
-4. `ObservabilityService` fetches aggregated metrics from Langfuse API via `httpx`
-5. Admin UI (InsightsPage) displays cost cards, trace lists, and usage graphs
+4. `ObservabilityService` fetches aggregated metrics from Langfuse API via `httpx`. Admin UI displays cost cards, trace lists, and usage graphs in the Config page
 
 ---
 
