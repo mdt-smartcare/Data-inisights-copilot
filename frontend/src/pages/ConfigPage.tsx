@@ -537,13 +537,8 @@ const ConfigPage: React.FC = () => {
                                 <div className="flex-1 flex justify-between items-center">
                                     <div>
                                         <h1 className="text-2xl font-bold text-gray-900">
-                                            Configure {selectedAgent.name}
+                                            Configure {selectedAgent.name} Agent
                                         </h1>
-                                        <div className="flex gap-2 text-sm mt-1">
-                                            <span className="text-gray-500">Role: {getRoleDisplayName(user?.role)}</span>
-                                            <span className="text-gray-300">|</span>
-                                            <span className="text-gray-500">Agent Type: {selectedAgent.type}</span>
-                                        </div>
                                     </div>
                                     <span className="text-sm text-gray-500">Step {currentStep} of 5</span>
                                 </div>
