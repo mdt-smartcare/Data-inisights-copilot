@@ -73,8 +73,7 @@ describe('LoginPage', () => {
   });
 
   it.each([
-    ['super_admin', '/insights'],
-    ['editor', '/chat'],
+    ['admin', '/config'],
     ['user', '/chat'],
   ])('navigates to %s destination for %s role', async (role, destination) => {
     const user = userEvent.setup();

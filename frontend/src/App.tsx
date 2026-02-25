@@ -8,8 +8,6 @@ import RegisterPage from './pages/RegisterPage';
 import ConfigPage from './pages/ConfigPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
-import PromptHistoryPage from './pages/PromptHistoryPage';
-import InsightsPage from './pages/InsightsPage';
 import CallbackPage from './pages/CallbackPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -116,22 +114,6 @@ function App() {
                 element={
                   <ProtectedRoute allowedRoles={['admin']}>
                     <AuditLogsPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/history"
-                element={
-                  <ProtectedRoute allowedRoles={['admin']}>
-                    <PromptHistoryPage />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/insights"
-                element={
-                  <ProtectedRoute allowedRoles={['admin']}>
-                    <InsightsPage />
                   </ProtectedRoute>
                 }
               />

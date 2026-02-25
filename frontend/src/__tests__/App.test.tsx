@@ -110,16 +110,6 @@ const renderWithRouter = (initialRoute = '/', authState: ReturnType<typeof creat
               <div data-testid="audit-page">Audit Logs Page</div>
             </ProtectedRoute>
           } />
-          <Route path="/history" element={
-            <ProtectedRoute allowedRoles={['user', 'admin']}>
-              <div data-testid="history-page">History Page</div>
-            </ProtectedRoute>
-          } />
-          <Route path="/insights" element={
-            <ProtectedRoute allowedRoles={['user', 'admin']}>
-              <div data-testid="insights-page">Insights Page</div>
-            </ProtectedRoute>
-          } />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </MemoryRouter>
@@ -240,18 +230,6 @@ describe('App Routing and ProtectedRoute', () => {
       renderWithRouter('/audit', createAuthState(mockUsers.viewer));
       expect(screen.getByTestId('chat-page')).toBeInTheDocument();
     });
-
-    it('should redirect viewer from history page to chat', () => {
-      setupAuth();
-      renderWithRouter('/history', createAuthState(mockUsers.viewer));
-      expect(screen.getByTestId('chat-page')).toBeInTheDocument();
-    });
-
-    it('should redirect viewer from insights page to chat', () => {
-      setupAuth();
-      renderWithRouter('/insights', createAuthState(mockUsers.viewer));
-      expect(screen.getByTestId('chat-page')).toBeInTheDocument();
-    });
   });
 
   describe('Role-Based Access Control - Editor', () => {
@@ -271,18 +249,6 @@ describe('App Routing and ProtectedRoute', () => {
       setupAuth();
       renderWithRouter('/config', createAuthState(mockUsers.editor));
       expect(screen.getByTestId('config-page')).toBeInTheDocument();
-    });
-
-    it('should allow editor to access history page', () => {
-      setupAuth();
-      renderWithRouter('/history', createAuthState(mockUsers.editor));
-      expect(screen.getByTestId('history-page')).toBeInTheDocument();
-    });
-
-    it('should allow editor to access insights page', () => {
-      setupAuth();
-      renderWithRouter('/insights', createAuthState(mockUsers.editor));
-      expect(screen.getByTestId('insights-page')).toBeInTheDocument();
     });
 
     it('should redirect editor from users page to chat', () => {
@@ -327,18 +293,6 @@ describe('App Routing and ProtectedRoute', () => {
       setupAuth();
       renderWithRouter('/audit', createAuthState(mockUsers.superAdmin));
       expect(screen.getByTestId('audit-page')).toBeInTheDocument();
-    });
-
-    it('should allow super_admin to access history page', () => {
-      setupAuth();
-      renderWithRouter('/history', createAuthState(mockUsers.superAdmin));
-      expect(screen.getByTestId('history-page')).toBeInTheDocument();
-    });
-
-    it('should allow super_admin to access insights page', () => {
-      setupAuth();
-      renderWithRouter('/insights', createAuthState(mockUsers.superAdmin));
-      expect(screen.getByTestId('insights-page')).toBeInTheDocument();
     });
   });
 

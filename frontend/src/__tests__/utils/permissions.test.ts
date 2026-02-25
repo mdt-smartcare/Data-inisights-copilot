@@ -10,9 +10,7 @@ import {
   canPublishPrompt,
   canRollback,
   canExecuteQuery,
-  canViewHistory,
   canViewConfig,
-  canViewInsights,
   isReadOnly,
   ROLE_DISPLAY_NAMES,
   getRoleDisplayName,
@@ -61,9 +59,7 @@ describe('Permissions', () => {
       [canRollback, 'canRollback'],
       [canEditConfig, 'canEditConfig'],
       [canEditPrompt, 'canEditPrompt'],
-      [canViewHistory, 'canViewHistory'],
       [canViewConfig, 'canViewConfig'],
-      [canViewInsights, 'canViewInsights'],
     ])('%s should only allow admin', (fn) => {
       expect(fn(admin)).toBe(true);
       expect(fn(user)).toBe(false);

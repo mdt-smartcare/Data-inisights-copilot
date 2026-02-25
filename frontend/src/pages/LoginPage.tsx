@@ -46,7 +46,7 @@ export default function LoginPage() {
     if (!authLoading && isAuthenticated) {
       // Redirect based on role
       if (user?.role === 'admin') {
-        navigate('/insights', { replace: true });
+        navigate('/config', { replace: true });
       } else {
         navigate('/chat', { replace: true });
       }

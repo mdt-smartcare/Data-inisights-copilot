@@ -48,7 +48,7 @@ sequenceDiagram
                 LP ->> AC: setUser(user)
 
                 alt Role is super_admin
-                    LP ->> LP: navigate to /insights
+                    LP ->> LP: navigate to /config
                 else Other roles
                     LP ->> LP: navigate to /chat
                 end
