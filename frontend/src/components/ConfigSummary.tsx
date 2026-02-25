@@ -2,6 +2,7 @@ import React from 'react';
 
 interface ConfigSummaryProps {
     connectionId: number | null;
+    connectionName?: string;
     dataSourceType: 'database' | 'file';
     fileInfo?: { name: string; type: string };
     schema: Record<string, string[]>;
@@ -24,6 +25,7 @@ interface ConfigSummaryProps {
 
 const ConfigSummary: React.FC<ConfigSummaryProps> = ({
     connectionId,
+    connectionName,
     dataSourceType,
     fileInfo,
     schema,
@@ -63,7 +65,7 @@ const ConfigSummary: React.FC<ConfigSummaryProps> = ({
                     <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
                         <p className="text-[10px] font-bold text-gray-400 uppercase mb-1">{dataSourceType === 'database' ? 'Connection' : 'File Name'}</p>
                         <p className="text-sm font-mono font-bold text-gray-700 truncate">
-                            {dataSourceType === 'database' ? (connectionId ? `ID: ${connectionId}` : 'Default') : (fileInfo?.name || 'Unknown')}
+                            {dataSourceType === 'database' ? (connectionName || (connectionId ? `ID: ${connectionId}` : 'Default')) : (fileInfo?.name || 'Unknown')}
                         </p>
                     </div>
                 </div>
