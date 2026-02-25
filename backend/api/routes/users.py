@@ -248,3 +248,32 @@ async def activate_user(
     
     logger.info(f"User {user_id} ({username}) activated by {current_user.username}")
     return {"status": "success", "message": f"User '{username}' has been activated"}
+
+
+@router.get("/{user_id}/agents", dependencies=[Depends(require_admin)])
+async def get_user_agents(
+    user_id: int,
+    db_service: DatabaseService = Depends(get_db_service)
+):
+    """
+    Get all agents assigned to a specific user.
+    
+    **Requires Admin role.**
+    """
+    # Get user to validate they exist
+    conn = db_service.get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, username, role FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Admin users have access to all agents by default
+    if row[2] == 'admin':
+        return {"agents": [], "is_admin": True, "message": "Admin users have access to all agents by default"}
+    
+    # Get assigned agents for non-admin users
+    agents = db_service.get_agents_for_user(user_id)
+    return {"agents": agents, "is_admin": False}

@@ -99,7 +99,7 @@ async def create_agent(agent: AgentCreate, current_user: User = Depends(require_
     except Exception as e:
         logger.error(f"Error creating agent: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-@router.get("/admin", response_model=List[AgentResponse])
+@router.get("/all", response_model=List[AgentResponse])
 async def list_all_agents(current_user: User = Depends(require_admin)):
     """
     List ALL agents (Admin only).
@@ -144,3 +144,47 @@ async def revoke_access(agent_id: int, user_id: int, current_user: User = Depend
     if not success:
         raise HTTPException(status_code=404, detail="Assignment not found or failed to delete")
     return {"status": "success", "message": f"User {user_id} removed from agent {agent_id}"}
+
+class BulkAgentAssignment(BaseModel):
+    user_id: int
+    agent_ids: List[int]
+    role: str = "user"
+
+@router.post("/bulk-assign")
+async def bulk_assign_agents(assignment: BulkAgentAssignment, current_user: User = Depends(require_admin)):
+    """
+    Assign multiple agents to a user at once (Admin only).
+    """
+    db = get_db_service()
+    
+    # Resolve granter ID
+    granter_id = current_user.id
+    if not granter_id:
+        u = db.get_user_by_username(current_user.username)
+        granter_id = u['id'] if u else None
+
+    assigned = []
+    failed = []
+    
+    for agent_id in assignment.agent_ids:
+        try:
+            success = db.assign_user_to_agent(
+                agent_id=agent_id,
+                user_id=assignment.user_id,
+                role=assignment.role,
+                granted_by=granter_id
+            )
+            if success:
+                assigned.append(agent_id)
+            else:
+                failed.append(agent_id)
+        except Exception as e:
+            logger.error(f"Failed to assign agent {agent_id} to user {assignment.user_id}: {e}")
+            failed.append(agent_id)
+    
+    return {
+        "status": "success",
+        "assigned": assigned,
+        "failed": failed,
+        "message": f"Assigned {len(assigned)} agents to user {assignment.user_id}"
+    }

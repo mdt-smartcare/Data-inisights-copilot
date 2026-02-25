@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     # ============================================
     cors_origins: str = Field(default="http://localhost:3000,http://localhost:5173")
     cors_allow_credentials: bool = Field(default=True)
-    cors_allow_methods: str = Field(default="GET,POST,PUT,DELETE,OPTIONS")
+    cors_allow_methods: str = Field(default="GET,POST,PUT,PATCH,DELETE,OPTIONS")
     cors_allow_headers: str = Field(default="*")
     
     @property

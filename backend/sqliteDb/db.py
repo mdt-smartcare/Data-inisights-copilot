@@ -925,14 +925,6 @@ class DatabaseService:
             """, (name, description, agent_type, db_connection_uri, rag_config_id, system_prompt, created_by))
             conn.commit()
             agent_id = cursor.lastrowid
-            
-            # Auto-assign creator as admin
-            if created_by:
-                cursor.execute("""
-                    INSERT INTO user_agents (user_id, agent_id, role, granted_by)
-                    VALUES (?, ?, 'admin', ?)
-                """, (created_by, agent_id, created_by))
-                conn.commit()
                 
             return self.get_agent_by_id(agent_id)
         except sqlite3.IntegrityError:

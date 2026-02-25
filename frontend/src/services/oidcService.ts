@@ -53,6 +53,15 @@ export const oidcService = {
   },
 
   /**
+   * Logout user and redirect to login with an error message
+   * Clears Keycloak SSO session so user must re-authenticate
+   */
+  logoutWithMessage: async (errorCode: string): Promise<void> => {
+    const redirectUrl = `${window.location.origin}/login?error=${errorCode}`;
+    await userManager.signoutRedirect({ post_logout_redirect_uri: redirectUrl });
+  },
+
+  /**
    * Remove user from local storage (silent logout without redirect)
    */
   removeUser: async (): Promise<void> => {
