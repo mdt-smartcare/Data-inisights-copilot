@@ -23,6 +23,7 @@ from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
 from backend.services.followup_service import FollowUpService
 from backend.services.llm_registry import get_llm_registry
+from backend.services.intent_router import IntentClassifier
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import (
     ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
@@ -154,6 +155,9 @@ Use this to search unstructured text, notes, and semantic descriptions.
         
         # Initialize follow-up question service (shares LLM instance)
         self.followup_service = FollowUpService(llm=self.llm)
+        
+        # Initialize Intent Router
+        self.intent_router = IntentClassifier(llm=self.llm)
         
         self._initialized = True
         logger.info("AgentService initialized successfully")
@@ -303,41 +307,77 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 formatted_examples = "\n\nRELEVANT SQL EXAMPLES:\n" + "\n".join(few_shot_examples)
                 logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
 
-            # Execute agent with conversation memory
             final_prompt = f"{active_prompt}\n{formatted_examples}"
-            
-            logger.info(f"Invoking agent for trace_id={trace_id}")
-            result = await self.agent_with_history.ainvoke(
-                {"input": query, "system_prompt": final_prompt},
-                config={
-                    "configurable": {"session_id": session_id or "default"},
-                    "callbacks": callbacks,
-                    # Set run_name to override the default "RunnableWithMessageHistory" name
-                    "run_name": "rag_query",
-                    "metadata": {
-                        # Langfuse v3.x reads these special keys from metadata
-                        "langfuse_user_id": user_id,
-                        "langfuse_session_id": session_id,
-                        "langfuse_tags": ["rag_query"],
-                        # Store the clean user query for better visibility
-                        "langfuse_input": query,
-                        # Additional metadata for debugging
-                        "trace_id": trace_id,
-                        "user_query": query,
-                    }
-                }
-            )
-            
-            logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
 
-            # Extract response
-            full_response = result.get("output", "An error occurred.")
-            intermediate_steps = result.get("intermediate_steps", [])
+            # Step 1: Classify Intent
+            schema_context = self.sql_service.cached_schema if self.sql_service.cached_schema else ""
+            classification = self.intent_router.classify(query=query, schema_context=schema_context)
             
-            # Determine which tool was used (SQL vs RAG)
-            tools_used = [action.tool for action, _ in intermediate_steps]
-            rag_used = "rag_document_search_tool" in tools_used
-            sql_used = "sql_query_tool" in tools_used
+            rag_used = False
+            sql_used = False
+            full_response = ""
+            intermediate_steps = []
+            
+            # Step 2: Route Based on Intent
+            if classification.intent == "A":
+                # Strict SQL Route
+                logger.info(f"Routing intent A (SQL Only) for trace_id={trace_id}")
+                sql_used = True
+                full_response = self.sql_service.query(query)
+                intermediate_steps.append((type('obj', (object,), {'tool': 'sql_query_tool', 'tool_input': query}), full_response))
+
+            elif classification.intent == "B":
+                # Strict Vector Route
+                logger.info(f"Routing intent B (Vector Only) for trace_id={trace_id}")
+                rag_used = True
+                context = self._rag_search(query)
+                intermediate_steps.append((type('obj', (object,), {'tool': 'rag_document_search_tool', 'tool_input': query}), context))
+                
+                # Synthesize Response using LLM
+                synthesis_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "{system_prompt}\n\nUse the provided unstructured document context to answer the user's question. If the context does not contain the answer, state that you do not know based on the available information."),
+                    ("user", "Context: {context}\n\nQuestion: {query}")
+                ])
+                chain = synthesis_prompt | self.llm
+                response = await chain.ainvoke({"system_prompt": active_prompt, "context": context, "query": query})
+                full_response = response.content
+
+            else:
+                # Hybrid Route (C) expected in future implementation. Fallback for now.
+                logger.warning(f"Routing Intent {classification.intent} - Executing via Agent Fallback for trace_id={trace_id}")
+                
+                logger.info(f"Invoking agent for trace_id={trace_id}")
+                result = await self.agent_with_history.ainvoke(
+                    {"input": query, "system_prompt": final_prompt},
+                    config={
+                        "configurable": {"session_id": session_id or "default"},
+                        "callbacks": callbacks,
+                        # Set run_name to override the default "RunnableWithMessageHistory" name
+                        "run_name": "rag_query",
+                        "metadata": {
+                            # Langfuse v3.x reads these special keys from metadata
+                            "langfuse_user_id": user_id,
+                            "langfuse_session_id": session_id,
+                            "langfuse_tags": ["rag_query"],
+                            # Store the clean user query for better visibility
+                            "langfuse_input": query,
+                            # Additional metadata for debugging
+                            "trace_id": trace_id,
+                            "user_query": query,
+                        }
+                    }
+                )
+                
+                logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
+
+                # Extract response
+                full_response = result.get("output", "An error occurred.")
+                intermediate_steps = result.get("intermediate_steps", [])
+                
+                # Determine which tool was used (SQL vs RAG)
+                tools_used = [action.tool for action, _ in intermediate_steps]
+                rag_used = "rag_document_search_tool" in tools_used
+                sql_used = "sql_query_tool" in tools_used
             
             # Only get embedding info if RAG was actually used
             embedding_info = self._get_embedding_info(query) if rag_used else {}
