@@ -132,7 +132,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         
         return " ".join(expanded_terms)
 
-    def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[Document]:
+    def _get_relevant_documents(self, query: str, *, run_manager: Any = None, filter: dict = None) -> List[Document]:
         """
         Full retrieval pipeline:
         1. Get PARENT docs from sparse (BM25) retriever (already filtered to relevant tables).
@@ -145,9 +145,22 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # Expand the query with medical synonyms
         expanded_query = self._expand_query(query)
         
-        # --- 1. DENSE (small-to-big) RETRIEVAL ---
-        # Find child chunks
-        child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=run_manager)
+        # Save original search kwargs to restore later
+        original_kwargs = self.child_chunk_retriever.search_kwargs.copy()
+        
+        if filter:
+            # We must pass the Chromadb filter into the dense retriever search_kwargs
+            self.child_chunk_retriever.search_kwargs["filter"] = filter
+            logger.info(f"Applied metadata filter to dense retrieval: {filter}")
+
+        try:
+            # --- 1. DENSE (small-to-big) RETRIEVAL ---
+            # Find child chunks
+            child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=run_manager)
+        finally:
+            # Restore original kwargs
+            self.child_chunk_retriever.search_kwargs = original_kwargs
+
         # Get unique parent IDs from child chunks
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
         # Retrieve the full parent documents

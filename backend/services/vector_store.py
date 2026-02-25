@@ -168,7 +168,7 @@ class VectorStoreService:
 
         logger.info("Vector store initialized successfully")
     
-    def search(self, query: str, top_k: Optional[int] = None) -> List[Document]:
+    def search(self, query: str, top_k: Optional[int] = None, filter: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
         Perform semantic search on the vector store.
         
@@ -178,12 +178,13 @@ class VectorStoreService:
         Args:
             query: Search query text
             top_k: Number of results to return (defaults to settings)
+            filter: Optional metadata filter dict for ChromaDB
         
         Returns:
             List of relevant documents
         """
         k = top_k or settings.rag_top_k
-        logger.info(f"Searching vector store for query: '{query[:100]}...' (top_k={k})")
+        logger.info(f"Searching vector store for query: '{query[:100]}...' (top_k={k}, filter={filter})")
         
         try:
             start_time = time.time()
@@ -193,7 +194,8 @@ class VectorStoreService:
             original_k = self.retriever.config['retriever']['top_k_final']
             self.retriever.config['retriever']['top_k_final'] = k
             
-            docs = self.retriever._get_relevant_documents(query)
+            # The AdvancedRAGRetriever kwargs allow passing search parameters down
+            docs = self.retriever._get_relevant_documents(query, run_manager=None, filter=filter)
             
             self.retriever.config['retriever']['top_k_final'] = original_k
             
