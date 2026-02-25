@@ -339,6 +339,23 @@ class EmbeddingJobService:
         finally:
             conn.close()
     
+    def get_job_config(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Get the configuration metadata for a job."""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("SELECT config_metadata FROM embedding_jobs WHERE job_id = ?", (job_id,))
+            row = cursor.fetchone()
+            if not row or not row['config_metadata']:
+                return None
+            return json.loads(row['config_metadata'])
+        except Exception as e:
+            logger.error(f"Failed to get job config: {e}")
+            return None
+        finally:
+            conn.close()
+
     def get_job_progress(self, job_id: str) -> Optional[EmbeddingJobProgress]:
         """
         Get current progress for a job.
