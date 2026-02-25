@@ -388,8 +388,17 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             
         # Fetch dynamic job configuration for batch processor
         job_config = job_service.get_job_config(job_id) or {}
-        batch_size = job_config.get("batch_size", 50)
-        max_concurrent = job_config.get("max_concurrent", 5)
+        
+        # Determine optimal batch size (legacy script used 128, provider config has it)
+        from backend.services.settings_service import get_settings_service
+        settings_service = get_settings_service()
+        emb_settings = settings_service.get_embedding_settings()
+        
+        batch_size = job_config.get("batch_size", emb_settings.get("batch_size", 128))
+        
+        # CRITICAL PERFORMANCE FIX: PyTorch/MPS degrades severely with concurrent threaded inference.
+        # Enforce max_concurrent=1 to match the legacy script's highly optimized sequential processing.
+        max_concurrent = 1
 
         # Update job with accurate document count and total batches
         total_docs = len(documents)
