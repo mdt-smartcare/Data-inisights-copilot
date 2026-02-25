@@ -131,6 +131,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="json")
     log_file: str = Field(default="./logs/backend.log")
+    embedding_log_file: str = Field(default="./logs/embedding.log")
     
     @field_validator("log_level")
     @classmethod

@@ -9,9 +9,10 @@ import math
 import time
 
 from backend.services.embeddings import get_embedding_model
-from backend.core.logging import get_logger
+from backend.core.logging import get_embedding_logger
 
-logger = get_logger(__name__)
+logger = get_embedding_logger()
+logger.info("Embedding batch processor logger initialized")
 
 
 @dataclass
@@ -251,7 +252,7 @@ class EmbeddingBatchProcessor:
                 
                 processing_time = int((time.time() - start_time) * 1000)
                 
-                logger.debug(f"Batch {batch_number} completed: {len(documents)} documents in {processing_time}ms")
+                logger.info(f"Batch {batch_number} embedded: {len(documents)} documents in {processing_time}ms")
                 
                 return BatchResult(
                     batch_number=batch_number,
