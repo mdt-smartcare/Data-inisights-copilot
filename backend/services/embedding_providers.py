@@ -422,8 +422,8 @@ class SentenceTransformerProvider(EmbeddingProvider):
         embeddings = self._model.encode(
             texts,
             normalize_embeddings=self._normalize,
-            show_progress_bar=len(texts) > 100,
-            batch_size=self._batch_size
+            show_progress_bar=False,
+            batch_size=32
         )
         return embeddings.tolist()
     
