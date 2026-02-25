@@ -141,14 +141,23 @@ class AdvancedDataTransformer:
         docstore = SimpleInMemoryStore()
         child_documents = []
         
-        logger.info("Applying parent-child chunking to all documents...")
+        logger.info(f"Applying parent-child chunking to {len(documents)} documents. This may take a while...")
         
-        parent_docs = parent_splitter.split_documents(documents)
+        # Batch split to avoid memory spikes
+        parent_docs = []
+        batch_size = 50000
+        for i in tqdm(range(0, len(documents), batch_size), desc="Splitting into parent docs"):
+            batch = documents[i:i+batch_size]
+            parent_docs.extend(parent_splitter.split_documents(batch))
+            
         parent_doc_ids = [str(uuid.uuid4()) for _ in parent_docs]
         docstore.mset(list(zip(parent_doc_ids, parent_docs)))
 
         for i, doc in enumerate(tqdm(parent_docs, desc="Splitting into child documents")):
             _id = parent_doc_ids[i]
+            # Ensure document has page_content
+            if not getattr(doc, "page_content", getattr(doc, "content", "")):
+                continue
             sub_docs = child_splitter.split_documents([doc])
             for _doc in sub_docs:
                 _doc.metadata["doc_id"] = _id
