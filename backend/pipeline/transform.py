@@ -11,6 +11,7 @@ from langchain_core.documents import Document
 from langchain_core.stores import BaseStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import uuid
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -89,50 +90,71 @@ class AdvancedDataTransformer:
         # Create a stable hash of the row content to use as an ID
         return hashlib.md5(str(row.to_dict()).encode()).hexdigest()[:12]
 
-    def create_documents_from_tables(self, table_data: Dict[str, pd.DataFrame], on_progress=None) -> List[Document]:
+    # Renamed _get_row_id to _generate_row_id to match the provided code snippet
+    def _generate_row_id(self, row: Dict[str, Any]) -> str:
+        """
+        Generates a stable ID for a row, prioritizing existing ID columns.
+        """
+        if 'id' in row and pd.notna(row['id']):
+            return str(row['id'])
+        if 'patient_track_id' in row and pd.notna(row['patient_track_id']):
+            return str(row['patient_track_id'])
+        if 'user_id' in row and pd.notna(row['user_id']):
+            return str(row['user_id'])
+        
+        # Fallback for tables without a clear ID (like mapping tables)
+        # Create a stable hash of the row content to use as an ID
+        return hashlib.md5(str(row.to_dict()).encode()).hexdigest()[:12]
+
+    def create_documents_from_tables(self, table_data: Dict[str, pd.DataFrame], on_progress=None, check_cancellation=None) -> List[Document]:
         """Converts raw table data into a flat list of LangChain Document objects."""
         all_docs = []
         total_tables = len(table_data)
         for i, (table_name, df) in enumerate(table_data.items()):
             if on_progress:
                 on_progress(i, total_tables, table_name)
+            
+            if check_cancellation and check_cancellation():
+                raise Exception(f"Cancellation requested during transformation of {table_name}")
+
             logger.info(f"Formatting documents for table: {table_name} ({len(df)} rows)")
             
-            # Vectorized row ID generation where possible
-            # If 'id' exists, use it. Otherwise, fallback to content hash.
-            # But the content hash depends on the row content... 
-            # Let's optimize the loop.
-            
             df_cols = df.columns.tolist()
-            # Pre-calculate column names to skip
             cols_to_process = [c for c in df_cols if c != 'is_latest']
             
-            # Use a list of dicts for faster iteration than itertuples/iterrows
             rows = df.to_dict('records')
             
+            count = 0
             for row in tqdm(rows, desc=f"Processing {table_name}", leave=False):
+                count += 1
+                if count % 10000 == 0:
+                    if check_cancellation and check_cancellation():
+                        raise Exception(f"Cancellation requested during transformation of {table_name}")
+
                 content_parts = []
                 for col in cols_to_process:
-                    val = row[col]
+                    val = row.get(col)
                     formatted_val = self._safe_format_value(val)
                     if formatted_val is not None:
                         content_parts.append(self._enrich_medical_content(col, formatted_val))
                 
-                if content_parts:
-                    content = "\n".join(content_parts)
-                    
-                    # Optimized ID retrieval
-                    source_id = str(row.get('id') or row.get('patient_track_id') or row.get('user_id') or 
-                                   hashlib.md5(str(row).encode()).hexdigest()[:12])
-                    
-                    metadata = {
-                        "source_table": table_name, 
-                        "source_id": source_id,
-                        "is_latest": row.get('is_latest', True)
-                    }
-                    all_docs.append(Document(page_content=content, metadata=metadata))
+                if not content_parts:
+                    continue
 
-        logger.info(f"Created {len(all_docs)} initial documents from all tables.")
+                content = "\n".join(content_parts)
+                doc_id = self._generate_row_id(row)
+                
+                # Metadata for indexing and traceability
+                metadata = {
+                    "source_table": table_name,
+                    "source_id": doc_id,
+                    "extraction_time": datetime.now().isoformat()
+                }
+                
+                all_docs.append(Document(page_content=content, metadata=metadata))
+            
+            logger.info(f"Generated {len(all_docs) - (len(all_docs) - len(rows))} docs for {table_name}")
+            
         return all_docs
 
     def perform_parent_child_chunking(self, documents: List[Document], on_progress=None):

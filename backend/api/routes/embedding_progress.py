@@ -340,7 +340,13 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                     raise JobCancelledError(f"Job {job_id} cancelled during transformation of {table_name}")
                 job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Transforming {table_name} ({current}/{total})")
 
-            documents = await asyncio.to_thread(transformer.create_documents_from_tables, table_data, on_progress=transformer_doc_progress)
+            # Pass both progress and cancellation checks
+            documents = await asyncio.to_thread(
+                transformer.create_documents_from_tables, 
+                table_data, 
+                on_progress=transformer_doc_progress,
+                check_cancellation=lambda: job_service.is_job_cancelled(job_id)
+            )
             
             # --- Cancellation Check ---
             if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
