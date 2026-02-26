@@ -13,6 +13,7 @@ import multiprocessing
 import time
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import uuid
 
 from backend.models.schemas import User
 from backend.models.rag_models import (
@@ -28,6 +29,7 @@ from backend.pipeline.extract import create_data_extractor
 from backend.pipeline.transform import AdvancedDataTransformer
 from backend.core.permissions import require_super_admin, get_current_user
 from backend.core.logging import get_embedding_logger
+from backend.services.embedding_registry import get_embedding_processor_registry
 
 logger = get_embedding_logger()
 
@@ -177,6 +179,11 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         # Start the job
         job_service.start_job(job_id)
         
+        # --- Cancellation Check ---
+        if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+            logger.info(f"Job {job_id} cancelled before starting extraction.")
+            return
+        
         # Send start notification
         await notification_service.create_notification(
             user_id=user_id,
@@ -318,12 +325,22 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
 
             table_data = await extractor.extract_all_tables(on_progress=extractor_progress)
             
+            # --- Cancellation Check ---
+            if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+                logger.info(f"Job {job_id} cancelled after extraction.")
+                return
+            
             job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Generating documents from data...")
             
             def transformer_doc_progress(current, total, table_name):
                 job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Transforming {table_name} ({current}/{total})")
 
             documents = await asyncio.to_thread(transformer.create_documents_from_tables, table_data, on_progress=transformer_doc_progress)
+            
+            # --- Cancellation Check ---
+            if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+                logger.info(f"Job {job_id} cancelled after transformation.")
+                return
             
             # Initial count update for progress tracking during delta/chunking
             job_service._update_job(job_id, total_documents=len(documents))
@@ -458,6 +475,11 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
 
         child_chunks, docstore = await asyncio.to_thread(transformer.perform_parent_child_chunking, documents, on_progress=chunking_progress)
         
+        # --- Cancellation Check ---
+        if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+            logger.info(f"Job {job_id} cancelled after chunking.")
+            return
+            
         # Override documents with the generated child chunks
         documents = child_chunks
         logger.info(f"Chunking complete. Created {len(documents)} child documents.")
@@ -493,6 +515,10 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             batch_size=batch_size,
             max_concurrent=max_concurrent
         ))
+        
+        # Register processor for cancellation
+        registry = get_embedding_processor_registry()
+        registry.register(job_id, processor)
         
         async def on_progress(processed: int, failed: int, total: int):
             current_batch = (processed // batch_size) + 1
@@ -571,7 +597,11 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             on_batch_complete=on_batch_complete
         )
         
+        # Unregister processor
+        registry.unregister(job_id)
+        
         if result["cancelled"]:
+            logger.info(f"Embedding loop for job {job_id} recognized cancellation.")
             return
             
         # Write parent docstore to Chroma directory for retrieval
@@ -760,6 +790,13 @@ async def cancel_embedding_job(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Job cannot be cancelled (may be already completed or not found)"
         )
+    
+    # Also cancel active processor if it exists
+    registry = get_embedding_processor_registry()
+    processor = registry.get_processor(job_id)
+    if processor:
+        logger.info(f"Signalling cancellation to processor for job {job_id}")
+        processor.cancel()
     
     # Log the cancellation
     auth_service.log_rag_action(
