@@ -31,11 +31,19 @@ class DataExtractor:
         safe_columns = [col for col in all_columns if col not in global_exclude]
         return safe_columns
     
-    def extract_all_tables(self, table_limit=None):
+    async def extract_all_tables(self, table_limit=None, on_progress=None):
         allowed_tables = self.get_allowed_tables()
         table_data = {}
+        total_tables = len(allowed_tables)
         
-        for table_name in tqdm(allowed_tables, desc="Extracting tables"):
+        for i, table_name in enumerate(tqdm(allowed_tables, desc="Extracting tables")):
+            if on_progress:
+                import asyncio
+                if asyncio.iscoroutinefunction(on_progress):
+                    await on_progress(i, total_tables, table_name)
+                else:
+                    on_progress(i, total_tables, table_name)
+
             safe_columns = self.get_safe_columns(table_name)
             if not safe_columns:
                 logger.warning(f"No safe columns for table {table_name}, skipping.")

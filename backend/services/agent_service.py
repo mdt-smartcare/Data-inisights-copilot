@@ -23,6 +23,7 @@ from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
 from backend.services.followup_service import FollowUpService
 from backend.services.llm_registry import get_llm_registry
+from backend.services.intent_router import IntentClassifier
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import (
     ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
@@ -155,6 +156,9 @@ Use this to search unstructured text, notes, and semantic descriptions.
         # Initialize follow-up question service (shares LLM instance)
         self.followup_service = FollowUpService(llm=self.llm)
         
+        # Initialize Intent Router
+        self.intent_router = IntentClassifier(llm=self.llm)
+        
         self._initialized = True
         logger.info("AgentService initialized successfully")
     
@@ -168,14 +172,15 @@ Use this to search unstructured text, notes, and semantic descriptions.
             logger.info(f"✅ Vector store loaded for agent: {agent_id}")
         return self._vector_store
     
-    def _rag_search(self, query: str) -> str:
+    def _rag_search(self, query: str, filter: Optional[Dict[str, Any]] = None) -> str:
         """
         RAG tool wrapper that returns string for agent.
         
         Note: Tracing is handled by the parent LangChain callback handler
         to ensure all operations are grouped under a single trace.
         """
-        docs = self.vector_store.search(query)  # Uses lazy-loaded property
+        # Pass the filter down to the vector store search
+        docs = self.vector_store.search(query, filter=filter)  # Uses lazy-loaded property
         if not docs:
             return "No relevant documents found."
         
@@ -303,51 +308,144 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 formatted_examples = "\n\nRELEVANT SQL EXAMPLES:\n" + "\n".join(few_shot_examples)
                 logger.info(f"✨ Injected {len(few_shot_examples)} relevant SQL examples into prompt")
 
-            # Execute agent with conversation memory
             final_prompt = f"{active_prompt}\n{formatted_examples}"
-            
-            logger.info(f"Invoking agent for trace_id={trace_id}")
-            result = await self.agent_with_history.ainvoke(
-                {"input": query, "system_prompt": final_prompt},
-                config={
-                    "configurable": {"session_id": session_id or "default"},
-                    "callbacks": callbacks,
-                    # Set run_name to override the default "RunnableWithMessageHistory" name
-                    "run_name": "rag_query",
-                    "metadata": {
-                        # Langfuse v3.x reads these special keys from metadata
-                        "langfuse_user_id": user_id,
-                        "langfuse_session_id": session_id,
-                        "langfuse_tags": ["rag_query"],
-                        # Store the clean user query for better visibility
-                        "langfuse_input": query,
-                        # Additional metadata for debugging
-                        "trace_id": trace_id,
-                        "user_query": query,
-                    }
-                }
-            )
-            
-            logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
 
-            # Extract response
-            full_response = result.get("output", "An error occurred.")
-            intermediate_steps = result.get("intermediate_steps", [])
+            # Step 1: Classify Intent
+            schema_context = self.sql_service.cached_schema if self.sql_service.cached_schema else ""
+            classification = self.intent_router.classify(query=query, schema_context=schema_context)
             
-            # Determine which tool was used (SQL vs RAG)
-            tools_used = [action.tool for action, _ in intermediate_steps]
-            rag_used = "rag_document_search_tool" in tools_used
-            sql_used = "sql_query_tool" in tools_used
+            rag_used = False
+            sql_used = False
+            full_response = ""
+            intermediate_steps = []
+            
+            # Step 2: Route Based on Intent
+            if classification.intent == "A":
+                # Strict SQL Route
+                logger.info(f"Routing intent A (SQL Only) for trace_id={trace_id}")
+                sql_used = True
+                full_response = self.sql_service.query(query)
+                intermediate_steps.append((type('obj', (object,), {'tool': 'sql_query_tool', 'tool_input': query}), full_response))
+
+            elif classification.intent == "B":
+                # Strict Vector Route
+                logger.info(f"Routing intent B (Vector Only) for trace_id={trace_id}")
+                rag_used = True
+                context = self._rag_search(query)
+                intermediate_steps.append((type('obj', (object,), {'tool': 'rag_document_search_tool', 'tool_input': query}), context))
+                
+                # Synthesize Response using LLM
+                synthesis_prompt = ChatPromptTemplate.from_messages([
+                    ("system", "{system_prompt}\n\nUse the provided unstructured document context to answer the user's question. If the context does not contain the answer, state that you do not know based on the available information."),
+                    ("user", "Context: {context}\n\nQuestion: {query}")
+                ])
+                chain = synthesis_prompt | self.llm
+                response = await chain.ainvoke({"system_prompt": active_prompt, "context": context, "query": query})
+                full_response = response.content
+
+            elif classification.intent == "C" and classification.sql_filter:
+                # Hybrid Route (C)
+                logger.info(f"Routing intent C (Hybrid) for trace_id={trace_id}. Executing SQL filter: {classification.sql_filter}")
+                sql_used = True
+                rag_used = True
+                
+                # Execute SQL filter
+                try:
+                    # We expect the structured LLM to generate a query that returns a single column of IDs (e.g., patient_id)
+                    filter_result_raw = self.sql_service.db.run(classification.sql_filter)
+                    
+                    # Convert raw string representation of tuples to a list of strings
+                    # Ex: "[('P123',), ('P456',)]" -> ["P123", "P456"]
+                    import ast
+                    valid_ids = []
+                    try:
+                        parsed_list = ast.literal_eval(filter_result_raw)
+                        if isinstance(parsed_list, list):
+                            for item in parsed_list:
+                                if isinstance(item, tuple) and len(item) > 0:
+                                    valid_ids.append(str(item[0]))
+                                else:
+                                    valid_ids.append(str(item))
+                    except Exception as e:
+                        logger.warning(f"Could not parse SQL filter output: {e}. Raw output: {filter_result_raw}")
+                    
+                    if not valid_ids:
+                        full_response = f"No patients matched the criteria in the structured database. Therefore, no unstructured context was searched."
+                        intermediate_steps.append((type('obj', (object,), {'tool': 'sql_query_tool_filter', 'tool_input': classification.sql_filter}), filter_result_raw))
+                    else:
+                        logger.info(f"Extracted list of {len(valid_ids)} IDs for metadata filtering.")
+                        
+                        # Build ChromaDB metadata filter. Using '$in' operator on 'patient_id'
+                        # Note: You might need to adjust 'patient_id' to match your exact metadata schema
+                        vector_filter = {"patient_id": {"$in": valid_ids}}
+                        
+                        context = self._rag_search(query, filter=vector_filter)
+                        
+                        intermediate_steps.append((type('obj', (object,), {'tool': 'sql_query_tool_filter', 'tool_input': classification.sql_filter}), str(valid_ids)))
+                        intermediate_steps.append((type('obj', (object,), {'tool': 'rag_document_search_tool_filtered', 'tool_input': query}), context))
+                        
+                        synthesis_prompt = ChatPromptTemplate.from_messages([
+                            ("system", "{system_prompt}\n\nUse the provided unstructured document context (filtered by your numerical criteria) to answer the user's question. If the context does not contain the answer, state that you do not know based on the available information."),
+                            ("user", "Context: {context}\n\nQuestion: {query}")
+                        ])
+                        chain = synthesis_prompt | self.llm
+                        response = await chain.ainvoke({"system_prompt": active_prompt, "context": context, "query": query})
+                        full_response = response.content
+                        
+                except Exception as e:
+                        logger.error(f"Hybrid SQL filtering failed: {e}")
+                        full_response = "An error occurred while evaluating the numerical filter against the structured database."
+            else:
+                # Fallback Route
+                logger.warning(f"Routing Intent {classification.intent} fallback triggered for trace_id={trace_id}")
+                result = await self.agent_with_history.ainvoke(
+                    {"input": query, "system_prompt": final_prompt},
+                    config={
+                        "configurable": {"session_id": session_id or "default"},
+                        "callbacks": callbacks,
+                        # Set run_name to override the default "RunnableWithMessageHistory" name
+                        "run_name": "rag_query",
+                        "metadata": {
+                            # Langfuse v3.x reads these special keys from metadata
+                            "langfuse_user_id": user_id,
+                            "langfuse_session_id": session_id,
+                            "langfuse_tags": ["rag_query"],
+                            # Store the clean user query for better visibility
+                            "langfuse_input": query,
+                            # Additional metadata for debugging
+                            "trace_id": trace_id,
+                            "user_query": query,
+                        }
+                    }
+                )
+                
+                logger.info(f"Agent result received for trace_id={trace_id}: keys={result.keys()}")
+
+                # Extract response
+                full_response = result.get("output", "An error occurred.")
+                intermediate_steps = result.get("intermediate_steps", [])
+                
+                # Determine which tool was used (SQL vs RAG)
+                tools_used = [action.tool for action, _ in intermediate_steps]
+                rag_used = "rag_document_search_tool" in tools_used
+                sql_used = "sql_query_tool" in tools_used
             
             # Only get embedding info if RAG was actually used
             embedding_info = self._get_embedding_info(query) if rag_used else {}
             
             # Parse JSON output from response (chart data only now)
-            chart_data, _ = self._parse_agent_output(full_response)
-            if chart_data:
-                logger.info(f"Chart data parsed: {chart_data.title}")
+            # chart_data parser works heavily on JSON blocks.
+            # Usually only Agent or SQL responses will have them, but let's parse safely.
+            chart_data = None
+            suggestions = []
+            
+            # Since full_response is directly synthesized now, we'll try to extract any JSON block for charts
+            if sql_used and not rag_used:
+                 chart_data, suggestions = self._parse_agent_output(full_response)
             else:
-                logger.warning(f"NO CHART DATA PARSED from response (trace_id={trace_id})")
+                 # If we did RAG, we probably don't have a chart, but we can generate suggestions separately if needed
+                 # For now, just rely on process_query's followup_service background task below
+                 pass
             
             # ============================================================
             # OPTIMIZATION: Start follow-up generation as background task

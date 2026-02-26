@@ -105,9 +105,8 @@ app.include_router(settings_routes.router, prefix=settings.api_v1_prefix)
 # Observability routes
 app.include_router(observability.router, prefix=settings.api_v1_prefix)
 
-# Ingestion routes (file upload / extraction testing)
-from backend.api.routes import ingestion, vector_db
-app.include_router(ingestion.router, prefix=settings.api_v1_prefix)
+# Ingestion routes
+from backend.api.routes import vector_db
 app.include_router(vector_db.router, prefix=settings.api_v1_prefix)
 
 # WebSocket routes (no prefix for WebSocket endpoints)

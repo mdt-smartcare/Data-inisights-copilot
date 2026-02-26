@@ -83,20 +83,20 @@ apiClient.interceptors.response.use(
     // Handle authentication errors globally
     if (error.response?.status === 401) {
       const responseData = error.response?.data as { detail?: string | { message?: string; error_code?: string }; error_code?: string };
-      const errorCode = typeof responseData?.detail === 'object' 
-        ? responseData.detail?.error_code 
+      const errorCode = typeof responseData?.detail === 'object'
+        ? responseData.detail?.error_code
         : responseData?.error_code;
-      
+
       // Inactive user - logout from Keycloak and redirect to login with error
       if (errorCode === ErrorCode.USER_INACTIVE) {
         await oidcService.logoutWithMessage(ErrorCode.USER_INACTIVE);
         return Promise.reject(error);
       }
-      
+
       // Check if token is actually expired before trying renewal
       const oidcUser = await oidcService.getUser();
       const config = error.config as AxiosRequestConfig & { _retry?: boolean };
-      
+
       if (oidcUser?.expired && config && !config._retry) {
         config._retry = true; // Prevent infinite retry
         try {
@@ -110,7 +110,7 @@ apiClient.interceptors.response.use(
           console.error('Token renewal failed:', renewError);
         }
       }
-      
+
       // Token valid but still 401 - let the page handle the error
       // Don't auto-redirect; could be a permission issue
     }
@@ -318,6 +318,13 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
   total_documents_indexed: number;
   total_vectors: number;
   last_updated_at: string | null;
+  embedding_model: string | null;
+  llm: string | null;
+  last_full_run: string | null;
+  last_incremental_run: string | null;
+  version: string;
+  diagnostics: Array<{ level: string; message: string }>;
+  schedule: any;
 }> => {
   const response = await apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`);
   return response.data;
@@ -426,6 +433,7 @@ export const cancelEmbeddingJob = async (jobId: string): Promise<{ status: strin
  */
 export const listEmbeddingJobs = async (params?: {
   status_filter?: string;
+  config_id?: number;
   limit?: number;
   offset?: number;
 }): Promise<EmbeddingJobProgress[]> => {
@@ -691,6 +699,15 @@ export const listVectorDbSchedules = async (): Promise<VectorDbSchedule[]> => {
  */
 export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ status: string; message: string }> => {
   const response = await apiClient.post(`/api/v1/vector-db/schedule/${vectorDbName}/trigger`);
+  return response.data;
+};
+
+// ============================================================================
+// SYSTEM SETTINGS API
+// ============================================================================
+
+export const getSystemSettings = async (category: string): Promise<Record<string, any>> => {
+  const response = await apiClient.get(`/api/v1/settings/${category}`);
   return response.data;
 };
 
