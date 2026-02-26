@@ -18,12 +18,13 @@ import EmbeddingProgress from '../components/EmbeddingProgress';
 import { ChatHeader } from '../components/chat';
 import ScheduleSelector from '../components/ScheduleSelector';
 import AgentsTab from '../components/config/AgentsTab'; // Import the new AgentsTab
+import AgentUsersTab from '../components/config/AgentUsersTab';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import type { Agent } from '../types/agent';
-import { canEditPrompt, canManageConnections, canPublishPrompt, getRoleDisplayName } from '../utils/permissions';
-import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon, ArrowPathRoundedSquareIcon } from '@heroicons/react/24/outline'; // Add back button and new dashboard icons
+import { canEditPrompt, canManageConnections, canPublishPrompt } from '../utils/permissions';
+import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon, ArrowPathRoundedSquareIcon, UserGroupIcon } from '@heroicons/react/24/outline';
 import { MessageList, ChatInput } from '../components/chat';
 import { chatService } from '../services/chatService';
 import type { Message } from '../types';
@@ -617,6 +618,7 @@ const ConfigPage: React.FC = () => {
                                             { id: 'knowledge', name: 'Vector DB', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg> },
                                             { id: 'sandbox', name: 'Sandbox', icon: (props: any) => <CommandLineIcon {...props} /> },
                                             { id: 'specs', name: 'Settings & Specs', icon: (props: any) => <AdjustmentsVerticalIcon {...props} /> },
+                                            { id: 'users', name: 'Users', icon: (props: any) => <UserGroupIcon {...props} /> },
                                             { id: 'monitoring', name: 'Monitoring', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> },
                                             { id: 'history', name: 'System Prompt History', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> }
                                         ].map(tab => (
@@ -1062,6 +1064,32 @@ const ConfigPage: React.FC = () => {
                                                     )}
                                                 </div>
                                             )}
+
+                                            {dashboardTab === 'users' && selectedAgent && (
+                                                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                                    <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
+                                                        <UserGroupIcon className="w-5 h-5 text-indigo-600" />
+                                                        User Management
+                                                    </h2>
+                                                    <AgentUsersTab
+                                                        agentId={selectedAgent.id}
+                                                        agentName={selectedAgent.name}
+                                                    />
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : dashboardTab === 'users' && selectedAgent ? (
+                                        <div className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                                <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
+                                                    <UserGroupIcon className="w-5 h-5 text-indigo-600" />
+                                                    User Management
+                                                </h2>
+                                                <AgentUsersTab
+                                                    agentId={selectedAgent.id}
+                                                    agentName={selectedAgent.name}
+                                                />
+                                            </div>
                                         </div>
                                     ) : (
                                         <div className="min-h-[400px] flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border-2 border-dashed border-gray-200 shadow-sm">

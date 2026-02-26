@@ -1,21 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import type { Agent } from '../../types/agent';
-import { getAgents, createAgent, assignUserToAgent, handleApiError } from '../../services/api'; // Ensure getUsers exists or add it
+import { getAgents, createAgent, handleApiError } from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../Toast';
 import Alert from '../Alert';
-import { PlusIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'; // Adjust icons as needed
-
-// Helper to fetch users if not already available in api.ts
-// If getUsers is not in api.ts, we might need to add it or use a local fetch.
-// For now, I'll assume I need to fetch users for the assignment modal.
-// I'll check api.ts again or just implement a simple fetch here if needed, but reusing api is better.
-// Actually, in the previous `api.ts` view, I didn't see `getUsers`. `UsersPage` likely uses it.
-// Let's assume for now I should use `apiClient` directly if `getUsers` is missing, or add it.
-// Wait, `UsersPage` was in the file list. Let's assume `getUsers` is in `api.ts` or `usersService.ts`?
-// The `api.ts` file had `getUserProfile` but not `getUsers` (list).
-// I will implement a local fetchUsers in the component for now to avoid switching context again, using apiClient.
-import { apiClient } from '../../services/api';
+import { PlusIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 
 interface AgentsTabProps {
     onSelectAgent: (agent: Agent) => void;
@@ -32,14 +21,6 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [newAgentData, setNewAgentData] = useState({ name: '', description: '' });
     const [creating, setCreating] = useState(false);
-
-    // User Assignment Modal State
-    const [showUserModal, setShowUserModal] = useState(false);
-    const [selectedAgentForUsers, setSelectedAgentForUsers] = useState<Agent | null>(null);
-    const [users, setUsers] = useState<any[]>([]); // User type
-    const [loadingUsers, setLoadingUsers] = useState(false);
-    const [selectedUserId, setSelectedUserId] = useState<number | null>(null);
-    const [assigning, setAssigning] = useState(false);
 
     useEffect(() => {
         loadAgents();
@@ -70,41 +51,6 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
             showError('Failed to create agent', handleApiError(err));
         } finally {
             setCreating(false);
-        }
-    };
-
-    const openUserModal = async (agent: Agent, e: React.MouseEvent) => {
-        e.stopPropagation(); // Prevent selecting the agent
-        setSelectedAgentForUsers(agent);
-        setShowUserModal(true);
-        loadUsers();
-    };
-
-    const loadUsers = async () => {
-        setLoadingUsers(true);
-        try {
-            // Fetch users - assuming an endpoint exists or using generic one
-            const response = await apiClient.get('/api/v1/users'); // Use direct call if method missing
-            setUsers(response.data);
-        } catch (err) {
-            console.error("Failed to load users", err);
-            // Don't block UI, just empty list
-        } finally {
-            setLoadingUsers(false);
-        }
-    };
-
-    const handleAssignUser = async () => {
-        if (!selectedAgentForUsers || !selectedUserId) return;
-        setAssigning(true);
-        try {
-            await assignUserToAgent(selectedAgentForUsers.id, selectedUserId, 'viewer'); // Default to viewer
-            success('User Assigned', 'User has been granted access.');
-            // Reload agents to update user_role if needed, logic might vary
-        } catch (err) {
-            showError('Failed to assign user', handleApiError(err));
-        } finally {
-            setAssigning(false);
         }
     };
 
@@ -174,20 +120,8 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                                         {agent.description || "No description provided."}
                                     </p>
                                 </div>
-                                <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-xl flex justify-between items-center">
-                                    <span className="text-xs text-gray-500">
-                                        Role: {agent.user_role || 'Viewer'}
-                                    </span>
+                                <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-xl flex justify-end items-center">
                                     <div className="flex gap-2">
-                                        {user?.role === 'admin' && (
-                                            <button
-                                                onClick={(e) => openUserModal(agent, e)}
-                                                className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                                                title="Manage Users"
-                                            >
-                                                <UserGroupIcon className="w-5 h-5" />
-                                            </button>
-                                        )}
                                         <button className="flex items-center text-blue-600 text-sm font-medium hover:underline">
                                             Configure <Cog6ToothIcon className="w-4 h-4 ml-1" />
                                         </button>
@@ -247,55 +181,6 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                                 </button>
                             </div>
                         </form>
-                    </div>
-                </div>
-            )}
-
-            {/* User Assignment Modal */}
-            {showUserModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
-                        <div className="p-6 border-b border-gray-200">
-                            <h2 className="text-xl font-semibold text-gray-900">Manage Users</h2>
-                            <p className="text-sm text-gray-500">Assign users to {selectedAgentForUsers?.name}</p>
-                        </div>
-                        <div className="p-6">
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Select User to Assign</label>
-                                {loadingUsers ? (
-                                    <div className="text-center py-2 text-gray-500">Loading users...</div>
-                                ) : (
-                                    <select
-                                        title="Select User to Assign"
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                        onChange={(e) => setSelectedUserId(Number(e.target.value))}
-                                        value={selectedUserId || ''}
-                                    >
-                                        <option value="">Select a user...</option>
-                                        {users.map(u => (
-                                            <option key={u.id} value={u.id}>{u.username} ({u.role})</option>
-                                        ))}
-                                    </select>
-                                )}
-                            </div>
-                            <div className="flex justify-end gap-3">
-                                <button
-                                    type="button"
-                                    onClick={() => setShowUserModal(false)}
-                                    className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-                                >
-                                    Done
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={handleAssignUser}
-                                    disabled={assigning || !selectedUserId}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                                >
-                                    {assigning ? 'Assigning...' : 'Assign User'}
-                                </button>
-                            </div>
-                        </div>
                     </div>
                 </div>
             )}

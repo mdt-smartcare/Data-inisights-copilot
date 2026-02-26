@@ -59,6 +59,45 @@ async def list_users(
     return users
 
 
+@router.get("/search", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
+async def search_users(
+    q: str = "",
+    limit: int = 20,
+    db_service: DatabaseService = Depends(get_db_service)
+):
+    """
+    Search users by username or email.
+    
+    - **q**: Search query (matches username or email)
+    - **limit**: Maximum number of results (default 20)
+    
+    **Requires Admin role.**
+    """
+    users = db_service.search_users(query=q, limit=limit)
+    return users
+
+
+class EmailLookupRequest(BaseModel):
+    """Request to lookup users by email addresses."""
+    emails: List[str] = Field(..., description="List of email addresses to look up")
+
+
+@router.post("/lookup-by-emails", response_model=List[UserResponse], dependencies=[Depends(require_admin)])
+async def lookup_users_by_emails(
+    request: EmailLookupRequest,
+    db_service: DatabaseService = Depends(get_db_service)
+):
+    """
+    Look up users by a list of email addresses.
+    
+    Returns users that match the provided emails. Invalid/non-existent emails are ignored.
+    
+    **Requires Admin role.**
+    """
+    users = db_service.get_users_by_emails(request.emails)
+    return users
+
+
 @router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
 async def get_user(
     user_id: int,

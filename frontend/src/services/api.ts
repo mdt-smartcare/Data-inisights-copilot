@@ -236,6 +236,25 @@ export const getUsers = async (): Promise<User[]> => {
   return response.data;
 };
 
+export interface SearchUser {
+  id: number;
+  username: string;
+  email?: string;
+  full_name?: string;
+  role: string;
+  is_active: boolean;
+}
+
+export const searchUsers = async (query: string, limit: number = 20): Promise<SearchUser[]> => {
+  const response = await apiClient.get('/api/v1/users/search', { params: { q: query, limit } });
+  return response.data;
+};
+
+export const lookupUsersByEmails = async (emails: string[]): Promise<SearchUser[]> => {
+  const response = await apiClient.post('/api/v1/users/lookup-by-emails', { emails });
+  return response.data;
+};
+
 export const getActivePrompt = async (agentId?: number): Promise<{ prompt_text: string }> => {
   const response = await apiClient.get('/api/v1/config/active', { params: { agent_id: agentId } });
   return response.data;
@@ -258,6 +277,23 @@ export const bulkAssignAgents = async (userId: number, agentIds: number[], role:
 
 export const revokeUserAccess = async (agentId: number, userId: number): Promise<{ status: string }> => {
   const response = await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
+  return response.data;
+};
+
+export interface AgentUser {
+  id: number;
+  username: string;
+  email?: string;
+  full_name?: string;
+  user_role: string;
+  is_active: boolean;
+  created_at?: string;
+  agent_role: string;
+  granted_by?: number;
+}
+
+export const getAgentUsers = async (agentId: number): Promise<{ users: AgentUser[]; agent_id: number }> => {
+  const response = await apiClient.get(`/api/v1/agents/${agentId}/users`);
   return response.data;
 };
 
