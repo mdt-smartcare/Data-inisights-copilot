@@ -677,7 +677,7 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         # Final Summary Logging
         duration = time.time() - start_time
         logger.info(f"EMBEDDING JOB SUMMARY | Job: {job_id} | Namespace: {vector_db_name} | "
-                    f"Model: {model_name} | Total Chunks: {len(child_chunks)} | "
+                    f"Model: {model_name} | Total Chunks: {len(documents)} | "
                     f"Processed: {result['processed_documents']} | Failed: {result['failed_documents']} | "
                     f"Duration: {duration:.2f}s | Speed: {result['average_speed']:.2f} docs/sec")
         
