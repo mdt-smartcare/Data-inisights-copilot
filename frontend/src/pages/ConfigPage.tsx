@@ -594,14 +594,6 @@ const ConfigPage: React.FC = () => {
                                             </div>
                                         </div>
                                         <div className="flex gap-2">
-                                            {canEdit && (
-                                                <button
-                                                    onClick={handleStartNew}
-                                                    className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-100"
-                                                >
-                                                    New Configuration
-                                                </button>
-                                            )}
                                             <button
                                                 onClick={handleEditCurrent}
                                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200"
