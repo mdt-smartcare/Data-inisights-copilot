@@ -435,6 +435,79 @@ class DatabaseService:
         conn.close()
         
         return [dict(row) for row in rows]
+
+    def search_users(self, query: str = "", limit: int = 20) -> List[Dict[str, Any]]:
+        """Search users by username or email.
+        
+        Args:
+            query: Search query string (matches username or email)
+            limit: Maximum number of results
+            
+        Returns:
+            List of matching user dictionaries
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        if query:
+            search_pattern = f"%{query}%"
+            cursor.execute(
+                """SELECT id, username, email, full_name, role, is_active, external_id, created_at 
+                   FROM users 
+                   WHERE is_active = 1 AND (username LIKE ? OR email LIKE ? OR full_name LIKE ?)
+                   ORDER BY username
+                   LIMIT ?""",
+                (search_pattern, search_pattern, search_pattern, limit)
+            )
+        else:
+            cursor.execute(
+                """SELECT id, username, email, full_name, role, is_active, external_id, created_at 
+                   FROM users 
+                   WHERE is_active = 1
+                   ORDER BY username
+                   LIMIT ?""",
+                (limit,)
+            )
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
+
+    def get_users_by_emails(self, emails: List[str]) -> List[Dict[str, Any]]:
+        """Get users by a list of email addresses.
+        
+        Args:
+            emails: List of email addresses to look up
+            
+        Returns:
+            List of user dictionaries for matching emails
+        """
+        if not emails:
+            return []
+            
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Normalize emails to lowercase
+        normalized_emails = [e.lower().strip() for e in emails if e and e.strip()]
+        if not normalized_emails:
+            conn.close()
+            return []
+        
+        placeholders = ','.join(['?' for _ in normalized_emails])
+        cursor.execute(
+            f"""SELECT id, username, email, full_name, role, is_active, external_id, created_at 
+               FROM users 
+               WHERE is_active = 1 AND LOWER(email) IN ({placeholders})
+               ORDER BY email""",
+            normalized_emails
+        )
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
     
     def deactivate_user(self, user_id: int) -> bool:
         """Deactivate a user account.
@@ -1027,6 +1100,27 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Failed to revoke access for user {user_id} from agent {agent_id}: {e}")
             return False
+        finally:
+            conn.close()
+
+    def get_agent_users(self, agent_id: int) -> list:
+        """Get all users assigned to an agent with their details."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT u.id, u.username, u.email, u.full_name, u.role as user_role, 
+                       u.is_active, u.created_at, ua.role as agent_role, ua.granted_by
+                FROM user_agents ua
+                JOIN users u ON ua.user_id = u.id
+                WHERE ua.agent_id = ?
+                ORDER BY u.username
+            """, (agent_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+        except Exception as e:
+            logger.error(f"Failed to get users for agent {agent_id}: {e}")
+            return []
         finally:
             conn.close()
 
