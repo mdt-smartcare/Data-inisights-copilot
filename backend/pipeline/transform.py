@@ -225,6 +225,6 @@ def _parallel_child_split_worker(parent_batch: List[Tuple[str, Document]], confi
     for parent_id, doc in parent_batch:
         children = splitter.split_documents([doc])
         for child in children:
-            child.metadata["parent_doc_id"] = parent_id
+            child.metadata["doc_id"] = parent_id
             all_children.append(child)
     return all_children
