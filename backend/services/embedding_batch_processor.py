@@ -3,16 +3,39 @@ Batch processing engine for embedding generation.
 Handles document batching, concurrent processing, and retry logic.
 """
 from typing import List, Dict, Any, Optional, Callable, Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import asyncio
 import math
 import time
+import os
 
 from backend.services.embeddings import get_embedding_model
 from backend.core.logging import get_embedding_logger
 
 logger = get_embedding_logger()
 logger.info("Embedding batch processor logger initialized")
+
+
+# =============================================================================
+# Memory-Based Configuration Constants
+# =============================================================================
+
+# Estimated memory per document during embedding (in MB)
+# This accounts for: tokenization, model inference, embedding storage
+ESTIMATED_MB_PER_DOC = 0.5  # ~500KB per document (conservative estimate)
+
+# Minimum memory headroom to maintain (in MB)
+MIN_MEMORY_HEADROOM_MB = 512  # Keep at least 512MB free
+
+# Batch size constraints
+MIN_BATCH_SIZE = 10
+MAX_BATCH_SIZE = 500
+DEFAULT_BATCH_SIZE = 50
+
+# Concurrency constraints
+MIN_CONCURRENT = 1
+MAX_CONCURRENT = 8
+DEFAULT_CONCURRENT = 3
 
 
 @dataclass
@@ -29,12 +52,182 @@ class BatchResult:
 
 @dataclass
 class BatchConfig:
-    """Configuration for batch processing."""
-    batch_size: int = 50
-    max_concurrent: int = 3
+    """
+    Configuration for batch processing.
+    
+    Supports both static configuration and dynamic auto-configuration
+    based on available system resources.
+    
+    Usage:
+        # Static configuration
+        config = BatchConfig(batch_size=100, max_concurrent=4)
+        
+        # Auto-configure based on available RAM
+        config = BatchConfig.auto_configure()
+        
+        # Auto-configure with model-specific memory estimate
+        config = BatchConfig.auto_configure(mb_per_doc=0.8)
+    """
+    batch_size: int = DEFAULT_BATCH_SIZE
+    max_concurrent: int = DEFAULT_CONCURRENT
     retry_attempts: int = 3
     retry_delay_seconds: float = 5.0
     timeout_per_batch_seconds: int = 60
+    # Track if this config was auto-generated
+    auto_configured: bool = field(default=False, repr=False)
+    
+    @classmethod
+    def auto_configure(
+        cls,
+        mb_per_doc: float = ESTIMATED_MB_PER_DOC,
+        memory_headroom_mb: float = MIN_MEMORY_HEADROOM_MB,
+        target_memory_percent: float = 0.6,
+        min_batch_size: int = MIN_BATCH_SIZE,
+        max_batch_size: int = MAX_BATCH_SIZE,
+        min_concurrent: int = MIN_CONCURRENT,
+        max_concurrent: int = MAX_CONCURRENT
+    ) -> 'BatchConfig':
+        """
+        Automatically configure batch processing based on available system resources.
+        
+        Task 2.2: Uses psutil to dynamically adjust batch size based on:
+        - Available RAM
+        - CPU core count
+        - Configurable safety margins
+        
+        Args:
+            mb_per_doc: Estimated memory usage per document in MB (default: 0.5)
+            memory_headroom_mb: Minimum free memory to maintain in MB (default: 512)
+            target_memory_percent: Target percentage of available memory to use (default: 0.6)
+            min_batch_size: Minimum batch size (default: 10)
+            max_batch_size: Maximum batch size (default: 500)
+            min_concurrent: Minimum concurrent batches (default: 1)
+            max_concurrent: Maximum concurrent batches (default: 8)
+            
+        Returns:
+            BatchConfig with optimized settings for the current system
+            
+        Example:
+            >>> config = BatchConfig.auto_configure()
+            >>> print(f"Batch size: {config.batch_size}, Concurrent: {config.max_concurrent}")
+        """
+        try:
+            import psutil
+            
+            # Get system memory info
+            mem = psutil.virtual_memory()
+            available_mb = mem.available / (1024 * 1024)
+            total_mb = mem.total / (1024 * 1024)
+            memory_percent_used = mem.percent
+            
+            # Get CPU info
+            cpu_count = os.cpu_count() or 4
+            
+            # Calculate usable memory (available minus headroom)
+            usable_mb = max(0, available_mb - memory_headroom_mb)
+            target_mb = usable_mb * target_memory_percent
+            
+            # Calculate optimal batch size
+            # Formula: target_memory / (mb_per_doc * concurrent_factor)
+            # We assume each concurrent batch needs its own memory allocation
+            concurrent_factor = min(max_concurrent, max(min_concurrent, cpu_count // 2))
+            
+            # Memory per concurrent batch
+            memory_per_batch = target_mb / concurrent_factor
+            
+            # Documents per batch based on memory
+            optimal_batch_size = int(memory_per_batch / mb_per_doc)
+            
+            # Clamp to valid range
+            batch_size = max(min_batch_size, min(max_batch_size, optimal_batch_size))
+            
+            # Adjust concurrency based on CPU and memory
+            # More memory = can handle more concurrent batches
+            if available_mb > 8000:  # > 8GB available
+                num_concurrent = min(max_concurrent, max(4, cpu_count // 2))
+            elif available_mb > 4000:  # > 4GB available
+                num_concurrent = min(max_concurrent, max(3, cpu_count // 3))
+            elif available_mb > 2000:  # > 2GB available
+                num_concurrent = min(max_concurrent, max(2, cpu_count // 4))
+            else:  # Low memory
+                num_concurrent = min_concurrent
+            
+            # Adjust timeout based on batch size (larger batches need more time)
+            base_timeout = 60
+            timeout = base_timeout + (batch_size // 50) * 10  # +10s per 50 docs
+            timeout = min(timeout, 300)  # Cap at 5 minutes
+            
+            logger.info(
+                f"Task 2.2: Auto-configured batch processing | "
+                f"System: {total_mb:.0f}MB total, {available_mb:.0f}MB available ({memory_percent_used:.1f}% used), {cpu_count} CPUs | "
+                f"Config: batch_size={batch_size}, max_concurrent={num_concurrent}, timeout={timeout}s"
+            )
+            
+            return cls(
+                batch_size=batch_size,
+                max_concurrent=num_concurrent,
+                retry_attempts=3,
+                retry_delay_seconds=5.0,
+                timeout_per_batch_seconds=timeout,
+                auto_configured=True
+            )
+            
+        except ImportError:
+            logger.warning("psutil not available, using default BatchConfig")
+            return cls(auto_configured=False)
+        except Exception as e:
+            logger.warning(f"Auto-configuration failed: {e}, using defaults")
+            return cls(auto_configured=False)
+    
+    @classmethod
+    def for_low_memory(cls) -> 'BatchConfig':
+        """
+        Preset configuration for low-memory environments (< 4GB available).
+        
+        Returns:
+            BatchConfig optimized for memory-constrained systems
+        """
+        return cls(
+            batch_size=25,
+            max_concurrent=2,
+            retry_attempts=3,
+            retry_delay_seconds=5.0,
+            timeout_per_batch_seconds=90,
+            auto_configured=True
+        )
+    
+    @classmethod
+    def for_high_throughput(cls) -> 'BatchConfig':
+        """
+        Preset configuration for high-memory, high-CPU environments.
+        Optimized for maximum throughput.
+        
+        Returns:
+            BatchConfig optimized for speed on powerful systems
+        """
+        return cls(
+            batch_size=200,
+            max_concurrent=6,
+            retry_attempts=2,
+            retry_delay_seconds=2.0,
+            timeout_per_batch_seconds=120,
+            auto_configured=True
+        )
+    
+    def get_memory_estimate_mb(self, total_documents: int) -> float:
+        """
+        Estimate total memory usage for processing a document set.
+        
+        Args:
+            total_documents: Number of documents to process
+            
+        Returns:
+            Estimated memory usage in MB
+        """
+        # Concurrent batches * batch size * memory per doc
+        docs_in_flight = self.max_concurrent * self.batch_size
+        active_docs = min(docs_in_flight, total_documents)
+        return active_docs * ESTIMATED_MB_PER_DOC
 
 
 class EmbeddingBatchProcessor:
@@ -216,6 +409,9 @@ class EmbeddingBatchProcessor:
         """
         Process a single batch with retry logic.
         
+        Task 2.3: Uses native async embedding when provider supports it,
+        otherwise falls back to run_in_executor for sync providers.
+        
         Args:
             batch_number: Batch number for tracking
             start_index: Starting index in original document list
@@ -239,16 +435,26 @@ class EmbeddingBatchProcessor:
             start_time = time.time()
             
             try:
-                # Generate embeddings (synchronous call wrapped in executor)
-                loop = asyncio.get_event_loop()
-                embeddings = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        self.embedding_model.embed_documents,
-                        documents
-                    ),
-                    timeout=self.config.timeout_per_batch_seconds
-                )
+                # Task 2.3: Check if provider supports native async
+                if hasattr(self.embedding_model, 'supports_async') and self.embedding_model.supports_async:
+                    # Use native async embedding (e.g., OpenAI)
+                    logger.debug(f"Batch {batch_number}: Using native async embedding")
+                    embeddings = await asyncio.wait_for(
+                        self.embedding_model.aembed_documents(documents),
+                        timeout=self.config.timeout_per_batch_seconds
+                    )
+                else:
+                    # Fallback: wrap sync call in executor (e.g., BGE, SentenceTransformers)
+                    logger.debug(f"Batch {batch_number}: Using executor-wrapped sync embedding")
+                    loop = asyncio.get_event_loop()
+                    embeddings = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None,
+                            self.embedding_model.embed_documents,
+                            documents
+                        ),
+                        timeout=self.config.timeout_per_batch_seconds
+                    )
                 
                 processing_time = int((time.time() - start_time) * 1000)
                 

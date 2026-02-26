@@ -5,6 +5,7 @@ Provides a unified interface for different embedding services (BGE, OpenAI, Sent
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+import asyncio
 import time
 
 from backend.core.logging import get_logger
@@ -21,10 +22,15 @@ class EmbeddingProvider(ABC):
     Abstract base class for embedding providers.
     
     All embedding providers must implement:
-    - embed_documents: Embed multiple texts
-    - embed_query: Embed a single query
+    - embed_documents: Embed multiple texts (sync)
+    - embed_query: Embed a single query (sync)
     - dimension: Return embedding dimension
     - provider_name: Return provider identifier
+    
+    Optional async methods:
+    - aembed_documents: Async embed multiple texts
+    - aembed_query: Async embed a single query
+    - supports_async: Whether provider has native async support
     """
     
     @abstractmethod
@@ -65,6 +71,48 @@ class EmbeddingProvider(ABC):
         """Get the provider identifier (e.g., 'bge-m3', 'openai', 'sentence-transformers')."""
         pass
     
+    @property
+    def supports_async(self) -> bool:
+        """
+        Check if provider supports native async operations.
+        
+        Override in subclasses that have native async support.
+        Default is False (will use run_in_executor fallback).
+        """
+        return False
+    
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        """
+        Async embed a list of documents.
+        
+        Default implementation wraps sync method in executor.
+        Override in subclasses with native async support (e.g., OpenAI).
+        
+        Args:
+            texts: List of text documents to embed
+            
+        Returns:
+            List of embedding vectors
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.embed_documents, texts)
+    
+    async def aembed_query(self, text: str) -> List[float]:
+        """
+        Async embed a single query text.
+        
+        Default implementation wraps sync method in executor.
+        Override in subclasses with native async support.
+        
+        Args:
+            text: Query text to embed
+            
+        Returns:
+            Embedding vector
+        """
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.embed_query, text)
+    
     def health_check(self) -> Dict[str, Any]:
         """
         Perform a health check on the provider.
@@ -83,7 +131,8 @@ class EmbeddingProvider(ABC):
                 "provider": self.provider_name,
                 "dimension": self.dimension,
                 "latency_ms": round(latency_ms, 2),
-                "test_embedding_length": len(test_embedding)
+                "test_embedding_length": len(test_embedding),
+                "supports_async": self.supports_async
             }
         except Exception as e:
             logger.error(f"Health check failed for {self.provider_name}: {e}")
@@ -100,7 +149,8 @@ class EmbeddingProvider(ABC):
         """
         return {
             "provider": self.provider_name,
-            "dimension": self.dimension
+            "dimension": self.dimension,
+            "supports_async": self.supports_async
         }
 
 
@@ -114,6 +164,8 @@ class BGEProvider(EmbeddingProvider):
     
     Provides high-quality multilingual embeddings locally without API calls.
     Default model: BAAI/bge-m3 (1024 dimensions)
+    
+    Note: Does not support native async (uses executor fallback).
     """
     
     def __init__(
@@ -204,6 +256,11 @@ class BGEProvider(EmbeddingProvider):
         """Get provider name."""
         return "bge-m3"
     
+    @property
+    def supports_async(self) -> bool:
+        """BGE/SentenceTransformers doesn't have native async support."""
+        return False
+    
     def get_config(self) -> Dict[str, Any]:
         """Get current configuration."""
         return {
@@ -225,6 +282,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     OpenAI embedding provider using text-embedding-3-small/large or ada-002.
     
     Requires OPENAI_API_KEY environment variable or explicit api_key.
+    
+    Supports native async via AsyncOpenAI client.
     """
     
     # Model dimensions
@@ -254,32 +313,43 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         self._api_key = api_key
         self._batch_size = batch_size
         self._client = None
+        self._async_client = None
         
-        # Initialize client
+        # Initialize clients
         self._init_client()
     
     def _init_client(self):
-        """Initialize OpenAI client."""
+        """Initialize OpenAI sync and async clients."""
         try:
-            from openai import OpenAI
+            from openai import OpenAI, AsyncOpenAI
             import os
             
             key = self._api_key or os.environ.get("OPENAI_API_KEY")
             if not key:
                 raise ValueError("OpenAI API key not provided")
-                
+            
+            # Sync client
             self._client = OpenAI(api_key=key)
-            logger.info(f"OpenAI embedding client initialized with model: {self._model_name}")
+            
+            # Async client for native async support
+            self._async_client = AsyncOpenAI(api_key=key)
+            
+            logger.info(f"OpenAI embedding client initialized with model: {self._model_name} (async enabled)")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAI client: {e}")
             raise
     
+    @property
+    def supports_async(self) -> bool:
+        """OpenAI supports native async."""
+        return True
+    
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed multiple documents."""
+        """Embed multiple documents (sync)."""
         if not texts:
             return []
             
-        logger.debug(f"OpenAI embedding {len(texts)} documents")
+        logger.debug(f"OpenAI embedding {len(texts)} documents (sync)")
         
         all_embeddings = []
         for i in range(0, len(texts), self._batch_size):
@@ -294,9 +364,43 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return all_embeddings
     
     def embed_query(self, text: str) -> List[float]:
-        """Embed a single query."""
-        logger.debug(f"OpenAI embedding query: {text[:100]}...")
+        """Embed a single query (sync)."""
+        logger.debug(f"OpenAI embedding query (sync): {text[:100]}...")
         response = self._client.embeddings.create(
+            model=self._model_name,
+            input=text
+        )
+        return response.data[0].embedding
+    
+    async def aembed_documents(self, texts: List[str]) -> List[List[float]]:
+        """
+        Native async document embedding.
+        
+        Uses AsyncOpenAI client for true async I/O without blocking.
+        """
+        if not texts:
+            return []
+            
+        logger.debug(f"OpenAI embedding {len(texts)} documents (async-native)")
+        
+        all_embeddings = []
+        for i in range(0, len(texts), self._batch_size):
+            batch = texts[i:i + self._batch_size]
+            response = await self._async_client.embeddings.create(
+                model=self._model_name,
+                input=batch
+            )
+            batch_embeddings = [item.embedding for item in response.data]
+            all_embeddings.extend(batch_embeddings)
+            
+        return all_embeddings
+    
+    async def aembed_query(self, text: str) -> List[float]:
+        """
+        Native async query embedding.
+        """
+        logger.debug(f"OpenAI embedding query (async-native): {text[:100]}...")
+        response = await self._async_client.embeddings.create(
             model=self._model_name,
             input=text
         )
@@ -319,7 +423,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             "model_name": self._model_name,
             "batch_size": self._batch_size,
             "dimension": self.dimension,
-            "api_key_configured": bool(self._api_key or True)  # Don't expose key
+            "api_key_configured": bool(self._api_key or True),
+            "supports_async": self.supports_async
         }
 
 
@@ -335,6 +440,8 @@ class SentenceTransformerProvider(EmbeddingProvider):
     - all-MiniLM-L6-v2 (384 dims, fast)
     - all-mpnet-base-v2 (768 dims, balanced)
     - instructor-xl (768 dims, instruction-tuned)
+    
+    Note: Does not support native async (uses executor fallback).
     """
     
     def __init__(
@@ -442,6 +549,11 @@ class SentenceTransformerProvider(EmbeddingProvider):
     def provider_name(self) -> str:
         """Get provider name."""
         return "sentence-transformers"
+    
+    @property
+    def supports_async(self) -> bool:
+        """SentenceTransformers doesn't have native async support."""
+        return False
     
     def get_config(self) -> Dict[str, Any]:
         """Get current configuration."""
