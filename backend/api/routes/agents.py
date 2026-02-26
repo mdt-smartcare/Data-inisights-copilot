@@ -111,6 +111,15 @@ class AgentAssignment(BaseModel):
     user_id: int
     role: str = "user"
 
+@router.get("/{agent_id}/users")
+async def get_agent_users(agent_id: int, current_user: User = Depends(require_admin)):
+    """
+    Get all users assigned to an agent (Admin only).
+    """
+    db = get_db_service()
+    users = db.get_agent_users(agent_id)
+    return {"users": users, "agent_id": agent_id}
+
 @router.post("/{agent_id}/users")
 async def assign_user(agent_id: int, assignment: AgentAssignment, current_user: User = Depends(require_admin)):
     """
