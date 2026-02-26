@@ -190,14 +190,8 @@ class VectorStoreService:
             start_time = time.time()
             
             # Use AdvancedRAGRetriever
-            # Pass top_k down via config override briefly if needed
-            original_k = self.retriever.config['retriever']['top_k_final']
-            self.retriever.config['retriever']['top_k_final'] = k
-            
             # The AdvancedRAGRetriever kwargs allow passing search parameters down
-            docs = self.retriever._get_relevant_documents(query, run_manager=None, filter=filter)
-            
-            self.retriever.config['retriever']['top_k_final'] = original_k
+            docs = self.retriever._get_relevant_documents(query, run_manager=None, filter=filter, top_k=k)
             
             duration = time.time() - start_time
             logger.info(f"Retrieved {len(docs)} documents from AdvancedRAGRetriever in {duration:.2f} seconds")
@@ -228,13 +222,8 @@ class VectorStoreService:
         try:
             start_time = time.time()
 
-            original_k = self.retriever.config['retriever']['top_k_final']
-            self.retriever.config['retriever']['top_k_final'] = k
-            
             # Delegate entirely to the advanced retriever
-            results = self.retriever.retrieve_and_rerank_with_scores(query)
-            
-            self.retriever.config['retriever']['top_k_final'] = original_k
+            results = self.retriever.retrieve_and_rerank_with_scores(query, top_k=k)
 
             duration = time.time() - start_time
             logger.info(f"Retrieved {len(results)} documents with scores in {duration:.2f} seconds")
