@@ -73,27 +73,10 @@ class AdvancedDataTransformer:
         
         return f"{col}: {val}"
 
-    def _get_row_id(self, row: pd.Series) -> str:
-        """
-        Smartly finds the best available ID for metadata.
-        This resolves the "missing 'id' column" warnings.
-        """
-        # Check for common primary key names first
-        if 'id' in row and pd.notna(row['id']):
-            return str(row['id'])
-        if 'patient_track_id' in row and pd.notna(row['patient_track_id']):
-            return str(row['patient_track_id'])
-        if 'user_id' in row and pd.notna(row['user_id']):
-            return str(row['user_id'])
-        
-        # Fallback for tables without a clear ID (like mapping tables)
-        # Create a stable hash of the row content to use as an ID
-        return hashlib.md5(str(row.to_dict()).encode()).hexdigest()[:12]
-
-    # Renamed _get_row_id to _generate_row_id to match the provided code snippet
     def _generate_row_id(self, row: Dict[str, Any]) -> str:
         """
         Generates a stable ID for a row, prioritizing existing ID columns.
+        Uses hashing as a fallback.
         """
         if 'id' in row and pd.notna(row['id']):
             return str(row['id'])
@@ -102,9 +85,8 @@ class AdvancedDataTransformer:
         if 'user_id' in row and pd.notna(row['user_id']):
             return str(row['user_id'])
         
-        # Fallback for tables without a clear ID (like mapping tables)
-        # Create a stable hash of the row content to use as an ID
-        return hashlib.md5(str(row.to_dict()).encode()).hexdigest()[:12]
+        # Fallback: Hash the row dictionary content
+        return hashlib.md5(str(row).encode()).hexdigest()[:12]
 
     def create_documents_from_tables(self, table_data: Dict[str, pd.DataFrame], on_progress=None, check_cancellation=None) -> List[Document]:
         """Converts raw table data into a flat list of LangChain Document objects."""
