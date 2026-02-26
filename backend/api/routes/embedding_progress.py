@@ -418,24 +418,31 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             logger.info(f"Checking for deltas among {len(documents)} documents using parallel hashing...")
             
             # Parallelize hashing and delta check
+            # Parallelize hashing and delta check
             job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Checking for modified documents...")
             
-            num_workers = max(1, multiprocessing.cpu_count() - 1)
+            # Use fewer workers to preserve CPU for the main process
+            num_workers = max(1, multiprocessing.cpu_count() // 2)
             batch_size = 50000
             doc_batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
             
             docs_to_process = []
             stale_source_ids = []
             
-            # Note: We need to serialize documents slightly for cleaner multiprocessing
-            # although Document is picklable, it can be slow.
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                futures = [executor.submit(_parallel_delta_worker, batch, existing_docs) for batch in doc_batches]
-                for future in tqdm(as_completed(futures), total=len(futures), desc="Delta Check"):
-                    batch_processed, batch_stale = future.result()
-                    docs_to_process.extend(batch_processed)
-                    stale_source_ids.extend(batch_stale)
-                    job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Delta Check: {len(docs_to_process)} changes found")
+            # Wrap synchronous ProcessPoolExecutor in to_thread to keep event loop alive
+            async def run_delta_check():
+                local_docs = []
+                local_stale = []
+                with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                    futures = [executor.submit(_parallel_delta_worker, batch, existing_docs) for batch in doc_batches]
+                    for future in tqdm(as_completed(futures), total=len(futures), desc="Delta Check"):
+                        batch_processed, batch_stale = future.result()
+                        local_docs.extend(batch_processed)
+                        local_stale.extend(batch_stale)
+                return local_docs, local_stale
+
+            docs_to_process, stale_source_ids = await asyncio.to_thread(run_delta_check)
+            await asyncio.sleep(0.01) # Yield to event loop
             
             if len(docs_to_process) == 0:
                 logger.info(f"Incremental run: 0 new/modified documents out of {len(documents)}. Skipping embedding.")
@@ -451,14 +458,20 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                     try:
                         collection = client.get_collection(name=vector_db_name)
                         # Delete in batches due to potential URL length limits
-                        for i in range(0, len(stale_source_ids), 100):
-                            batch_stale = stale_source_ids[i:i+100]
-                            collection.delete(where={"source_id": {"$in": batch_stale}})
+                        # Use to_thread for the synchronous deletion loop
+                        async def purge_stale():
+                            for i in range(0, len(stale_source_ids), 100):
+                                batch_stale = stale_source_ids[i:i+100]
+                                collection.delete(where={"source_id": {"$in": batch_stale}})
+                        
+                        await asyncio.to_thread(purge_stale)
                         logger.info(f"Deleted outdated chunks for {len(stale_source_ids)} documents.")
                     except ValueError:
                         pass # Collection doesn't exist yet
                 except Exception as e:
                     logger.warning(f"Failed to cleanly delete stale chunks from Chroma: {e}")
+            
+            await asyncio.sleep(0.01) # Yield to event loop
 
         # Override documents with only the delta to process
         documents = docs_to_process
@@ -497,10 +510,10 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             batch_size = emb_conf.get("batch_size", 500)
             max_concurrent = 20
         else:
-            # Local models benefit from larger batches but moderate concurrency
-            # to avoid NPU/GPU queue contention while maximizing saturation.
-            batch_size = emb_conf.get("batch_size", 256)
-            max_concurrent = 4 # Sweet spot for M-series MPS/CPU
+            # Local models benefit from moderate concurrency
+            # to avoid CPU/Memory pinning.
+            batch_size = emb_conf.get("batch_size", 128) # Smaller batches for smoother progress
+            max_concurrent = min(4, max(1, multiprocessing.cpu_count() // 4)) # Adaptive
             
         # Update job with accurate document count and total batches
         total_docs = len(documents)

@@ -31,10 +31,10 @@ class BatchResult:
 class BatchConfig:
     """Configuration for batch processing."""
     batch_size: int = 50
-    max_concurrent: int = 5
+    max_concurrent: int = 3
     retry_attempts: int = 3
     retry_delay_seconds: float = 5.0
-    timeout_per_batch_seconds: int = 30
+    timeout_per_batch_seconds: int = 60
 
 
 class EmbeddingBatchProcessor:

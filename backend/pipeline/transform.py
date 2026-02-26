@@ -145,7 +145,7 @@ class AdvancedDataTransformer:
         parent_config = self.config['chunking']['parent_splitter']
         child_config = self.config['chunking']['child_splitter']
         
-        num_workers = max(1, multiprocessing.cpu_count() - 1)
+        num_workers = max(1, multiprocessing.cpu_count() // 2)
         logger.info(f"Starting parallel chunking using {num_workers} processes...")
 
         # 1. Split into Parent Documents
