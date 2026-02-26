@@ -569,12 +569,38 @@ async def _run_embedding_job(
             retry_attempts=ui_retry_attempts  # UI-provided retry config
         ))
         
+        # =================================================================
+        # STATEFUL JOB RESUMING: Fetch existing chunk IDs from Chroma
+        # This prevents re-embedding documents that were already processed
+        # if a job fails partway through (e.g., at row 950,000 of 1M)
+        # =================================================================
+        from backend.services.chroma_service import get_existing_chunk_ids
+        
+        job_service.update_progress(job_id, processed_documents=0, current_batch=0, 
+                                    phase="Checking for already-embedded chunks (stateful resume)...")
+        
+        existing_chunk_ids = await asyncio.to_thread(
+            get_existing_chunk_ids, 
+            chroma_path, 
+            vector_db_name
+        )
+        
+        if existing_chunk_ids:
+            logger.info(f"Stateful resume: Found {len(existing_chunk_ids)} existing embeddings in Chroma")
+            processor.set_existing_ids(existing_chunk_ids)
+        else:
+            logger.info("Stateful resume: No existing embeddings found, processing all documents")
+        
         registry = get_embedding_processor_registry()
         registry.register(job_id, processor)
         
+        # Track skipped documents for progress reporting
+        skipped_count = 0
+        
         async def on_progress(processed: int, failed: int, total: int):
             current_batch = (processed // batch_size) + 1
-            job_service.update_progress(job_id, processed, current_batch, failed)
+            job_service.update_progress(job_id, processed, current_batch, failed, 
+                                        skipped_documents=skipped_count)
             
         client = get_chroma_client(chroma_path)
         collection = client.get_or_create_collection(name=vector_db_name)
@@ -651,17 +677,28 @@ async def _run_embedding_job(
                         await asyncio.sleep(delay)
 
         doc_contents = [d.page_content for d in documents]
-        result = await processor.process_documents(
+        
+        # Use stateful resume processing if we have existing IDs
+        result = await processor.process_documents_with_resume(
             doc_contents,
+            doc_objects=documents,  # Pass document objects for metadata access
             on_progress=on_progress,
             on_batch_complete=on_batch_complete
         )
+        
+        # Update skipped count from result
+        skipped_count = result.get("skipped_documents", 0)
         
         registry.unregister(job_id)
         
         if result["cancelled"]:
             logger.info(f"Embedding loop for job {job_id} recognized cancellation.")
             return
+        
+        # Log resume statistics
+        if result.get("resumed"):
+            logger.info(f"Stateful resume complete: Skipped {skipped_count} already-embedded documents, "
+                        f"processed {result['processed_documents']} new documents")
             
         # Export SQLite docstore to pickle for backward compatibility with retriever
         docstore_pickle_path = f"{chroma_path}/parent_docstore.pkl"

@@ -2,12 +2,13 @@
 Batch processing engine for embedding generation.
 Handles document batching, concurrent processing, and retry logic.
 """
-from typing import List, Dict, Any, Optional, Callable, Awaitable
+from typing import List, Dict, Any, Optional, Callable, Awaitable, Set, Tuple
 from dataclasses import dataclass, field
 import asyncio
 import math
 import time
 import os
+import hashlib
 
 from backend.services.embeddings import get_embedding_model
 from backend.core.logging import get_embedding_logger
@@ -239,6 +240,7 @@ class EmbeddingBatchProcessor:
     - Concurrent batch processing
     - Automatic retry with exponential backoff
     - Progress callbacks
+    - Stateful job resuming (filters out already-embedded documents)
     """
     
     def __init__(self, config: Optional[BatchConfig] = None):
@@ -252,12 +254,314 @@ class EmbeddingBatchProcessor:
         self.embedding_model = None
         self._cancelled = False
         self._paused = False
+        self._existing_ids: Optional[Set[str]] = None
+        self._skipped_count: int = 0
     
     def _ensure_model(self):
         """Lazily load the embedding model."""
         if self.embedding_model is None:
             self.embedding_model = get_embedding_model()
     
+    def set_existing_ids(self, existing_ids: Set[str]) -> None:
+        """
+        Set the IDs of documents that already exist in the vector store.
+        
+        Used for stateful job resuming - documents with these IDs will be
+        skipped during batch processing to avoid re-embedding.
+        
+        Args:
+            existing_ids: Set of document IDs already in the vector store
+        """
+        self._existing_ids = existing_ids
+        logger.info(f"Stateful resuming enabled: {len(existing_ids)} existing documents will be skipped")
+    
+    def generate_chunk_id(self, content: str, parent_id: str = "unknown") -> str:
+        """
+        Generate a chunk ID matching the embedding job logic.
+        
+        Args:
+            content: The document content
+            parent_id: The parent document ID
+            
+        Returns:
+            SHA256 hash of content + parent_id
+        """
+        return hashlib.sha256(f"{content}{parent_id}".encode()).hexdigest()
+    
+    def filter_batch_for_delta(
+        self, 
+        documents: List[str],
+        doc_objects: Optional[List[Any]] = None,
+        start_idx: int = 0
+    ) -> Tuple[List[str], List[int], int]:
+        """
+        Filter a batch to only include documents not already embedded.
+        
+        Args:
+            documents: List of document content strings
+            doc_objects: Optional list of document objects with metadata
+            start_idx: Starting index in the original document list
+            
+        Returns:
+            Tuple of (filtered_documents, original_indices, skipped_count)
+        """
+        if self._existing_ids is None or len(self._existing_ids) == 0:
+            # No existing IDs set, process all documents
+            return documents, list(range(start_idx, start_idx + len(documents))), 0
+        
+        filtered_docs = []
+        original_indices = []
+        skipped = 0
+        
+        for i, content in enumerate(documents):
+            # Get parent_id from document object if available
+            parent_id = "unknown"
+            if doc_objects and i < len(doc_objects):
+                doc = doc_objects[i]
+                if hasattr(doc, 'metadata') and isinstance(doc.metadata, dict):
+                    parent_id = doc.metadata.get("doc_id", "unknown")
+            
+            chunk_id = self.generate_chunk_id(content, parent_id)
+            
+            if chunk_id not in self._existing_ids:
+                filtered_docs.append(content)
+                original_indices.append(start_idx + i)
+            else:
+                skipped += 1
+        
+        return filtered_docs, original_indices, skipped
+
+    async def process_documents_with_resume(
+        self,
+        documents: List[str],
+        doc_objects: Optional[List[Any]] = None,
+        on_progress: Optional[Callable[[int, int, int], Awaitable[None]]] = None,
+        on_batch_complete: Optional[Callable[['BatchResult'], Awaitable[None]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Process documents with stateful job resuming support.
+        
+        Filters out already-embedded documents before processing batches,
+        preventing redundant embedding generation on job restart.
+        
+        Args:
+            documents: List of document texts to embed
+            doc_objects: Optional list of document objects (for metadata access)
+            on_progress: Async callback(processed, failed, total) for progress updates
+            on_batch_complete: Async callback(BatchResult) after each batch
+            
+        Returns:
+            Dict with results including skipped document count
+        """
+        self._cancelled = False
+        self._paused = False
+        self._skipped_count = 0
+        self._ensure_model()
+        
+        total_documents = len(documents)
+        
+        # If we have existing IDs, filter documents first
+        if self._existing_ids and len(self._existing_ids) > 0:
+            logger.info(f"Checking {total_documents} documents against {len(self._existing_ids)} existing embeddings...")
+            
+            filtered_docs = []
+            filtered_objects = []
+            index_mapping = []  # Maps filtered index -> original index
+            
+            for i, content in enumerate(documents):
+                parent_id = "unknown"
+                if doc_objects and i < len(doc_objects):
+                    doc = doc_objects[i]
+                    if hasattr(doc, 'metadata') and isinstance(doc.metadata, dict):
+                        parent_id = doc.metadata.get("doc_id", "unknown")
+                
+                chunk_id = self.generate_chunk_id(content, parent_id)
+                
+                if chunk_id not in self._existing_ids:
+                    filtered_docs.append(content)
+                    if doc_objects:
+                        filtered_objects.append(doc_objects[i])
+                    index_mapping.append(i)
+                else:
+                    self._skipped_count += 1
+            
+            logger.info(
+                f"Stateful resume: Skipped {self._skipped_count} already-embedded documents, "
+                f"processing {len(filtered_docs)} new/missing documents"
+            )
+            
+            if len(filtered_docs) == 0:
+                logger.info("All documents already embedded - nothing to process")
+                return {
+                    "success": True,
+                    "total_documents": total_documents,
+                    "processed_documents": 0,
+                    "failed_documents": 0,
+                    "skipped_documents": self._skipped_count,
+                    "embeddings": [None] * total_documents,
+                    "successful_embeddings": [],
+                    "failed_indices": [],
+                    "total_time_seconds": 0,
+                    "average_speed": 0,
+                    "cancelled": False,
+                    "resumed": True
+                }
+            
+            # Process only the filtered documents
+            result = await self._process_filtered_documents(
+                filtered_docs=filtered_docs,
+                index_mapping=index_mapping,
+                total_original=total_documents,
+                on_progress=on_progress,
+                on_batch_complete=on_batch_complete
+            )
+            result["skipped_documents"] = self._skipped_count
+            result["resumed"] = True
+            return result
+        
+        # No existing IDs - process all documents normally
+        result = await self.process_documents(
+            documents=documents,
+            on_progress=on_progress,
+            on_batch_complete=on_batch_complete
+        )
+        result["skipped_documents"] = 0
+        result["resumed"] = False
+        return result
+    
+    async def _process_filtered_documents(
+        self,
+        filtered_docs: List[str],
+        index_mapping: List[int],
+        total_original: int,
+        on_progress: Optional[Callable[[int, int, int], Awaitable[None]]] = None,
+        on_batch_complete: Optional[Callable[['BatchResult'], Awaitable[None]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Process pre-filtered documents while maintaining original indices.
+        
+        Args:
+            filtered_docs: Documents to process (already filtered)
+            index_mapping: Maps filtered index -> original index
+            total_original: Total count of original documents
+            on_progress: Progress callback
+            on_batch_complete: Batch completion callback
+        """
+        total_filtered = len(filtered_docs)
+        total_batches = math.ceil(total_filtered / self.config.batch_size)
+        
+        logger.info(f"Processing {total_filtered} documents in {total_batches} batches (resuming job)")
+        
+        # Create batches with mapping info
+        batches = []
+        for i in range(0, total_filtered, self.config.batch_size):
+            batch_docs = filtered_docs[i:i + self.config.batch_size]
+            batch_indices = index_mapping[i:i + self.config.batch_size]
+            batch_num = len(batches) + 1
+            batches.append((batch_num, i, batch_docs, batch_indices))
+        
+        # Results storage - sized for original document count
+        all_embeddings = [None] * total_original
+        failed_indices = []
+        processed_count = 0
+        failed_count = 0
+        start_time = time.time()
+        
+        # Process batches with concurrency limit
+        semaphore = asyncio.Semaphore(self.config.max_concurrent)
+        
+        async def process_with_semaphore(batch_info):
+            async with semaphore:
+                if self._cancelled:
+                    return None
+                
+                while self._paused:
+                    await asyncio.sleep(0.5)
+                    if self._cancelled:
+                        return None
+                
+                batch_num, filtered_start, batch_docs, batch_indices = batch_info
+                return await self._process_batch(batch_num, filtered_start, batch_docs), batch_indices
+        
+        tasks = [process_with_semaphore(batch) for batch in batches]
+        batches_completed = 0
+        
+        for coro in asyncio.as_completed(tasks):
+            if self._cancelled:
+                break
+            
+            task_result = await coro
+            if task_result is None:
+                continue
+            
+            result, batch_indices = task_result
+            batches_completed += 1
+            
+            if result.success and result.embeddings:
+                # Store embeddings at ORIGINAL indices
+                for j, emb in enumerate(result.embeddings):
+                    if j < len(batch_indices):
+                        original_idx = batch_indices[j]
+                        all_embeddings[original_idx] = emb
+                processed_count += result.documents_processed
+            else:
+                # Track failures using original indices
+                for j in range(len(batch_indices)):
+                    if j < len(batch_indices):
+                        failed_indices.append(batch_indices[j])
+                failed_count += len(batch_indices)
+            
+            # Adjust batch result to use original index for callback
+            if batch_indices:
+                result.start_idx = batch_indices[0]
+            
+            if on_batch_complete:
+                try:
+                    await on_batch_complete(result)
+                except Exception as e:
+                    logger.warning(f"Batch complete callback failed: {e}")
+            
+            # Progress includes skipped documents
+            total_handled = processed_count + self._skipped_count
+            if on_progress:
+                try:
+                    await on_progress(total_handled, failed_count, total_original)
+                except Exception as e:
+                    logger.warning(f"Progress callback failed: {e}")
+            
+            # Progress logging
+            if batches_completed > 0 and (batches_completed % 10 == 0 or batches_completed == total_batches):
+                elapsed = time.time() - start_time
+                if elapsed > 0 and processed_count > 0:
+                    docs_per_sec = processed_count / elapsed
+                    remaining_docs = total_filtered - processed_count
+                    if docs_per_sec > 0:
+                        eta_seconds = remaining_docs / docs_per_sec
+                        import datetime
+                        eta_td = datetime.timedelta(seconds=int(eta_seconds))
+                        percent = (total_handled / total_original) * 100
+                        logger.info(
+                            f"Batch {batches_completed}/{total_batches} | "
+                            f"{processed_count:,} new + {self._skipped_count:,} skipped = {total_handled:,}/{total_original:,} | "
+                            f"{percent:.1f}% | ETA: {eta_td}"
+                        )
+        
+        total_time = time.time() - start_time
+        successful_embeddings = [e for e in all_embeddings if e is not None]
+        
+        return {
+            "success": failed_count == 0,
+            "total_documents": total_original,
+            "processed_documents": processed_count,
+            "failed_documents": failed_count,
+            "embeddings": all_embeddings,
+            "successful_embeddings": successful_embeddings,
+            "failed_indices": failed_indices,
+            "total_time_seconds": total_time,
+            "average_speed": processed_count / total_time if total_time > 0 else 0,
+            "cancelled": self._cancelled
+        }
+
     async def process_documents(
         self,
         documents: List[str],
@@ -515,3 +819,8 @@ class EmbeddingBatchProcessor:
     @property
     def is_paused(self) -> bool:
         return self._paused
+    
+    @property
+    def skipped_count(self) -> int:
+        """Number of documents skipped due to already being embedded."""
+        return self._skipped_count

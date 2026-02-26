@@ -110,7 +110,8 @@ class EmbeddingJobService:
         processed_documents: int,
         current_batch: int,
         failed_documents: int = 0,
-        phase: Optional[str] = None
+        phase: Optional[str] = None,
+        skipped_documents: int = 0
     ) -> None:
         """
         Update job progress metrics.
@@ -121,6 +122,7 @@ class EmbeddingJobService:
             current_batch: Current batch being processed
             failed_documents: Number of failed documents
             phase: Optional phase description update
+            skipped_documents: Number of documents skipped (already embedded)
         """
         conn = self.db.get_connection()
         cursor = conn.cursor()
@@ -139,8 +141,9 @@ class EmbeddingJobService:
             total_documents = row['total_documents']
             started_at = row['started_at']
             
-            # Calculate progress percentage
-            progress_percentage = (processed_documents / total_documents * 100) if total_documents > 0 else 0
+            # Calculate progress percentage (include skipped in progress)
+            total_handled = processed_documents + skipped_documents
+            progress_percentage = (total_handled / total_documents * 100) if total_documents > 0 else 0
             
             # Calculate speed and ETA
             docs_per_second = None
@@ -152,7 +155,7 @@ class EmbeddingJobService:
                     elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
                     if elapsed > 0 and processed_documents > 0:
                         docs_per_second = processed_documents / elapsed
-                        remaining_docs = total_documents - processed_documents
+                        remaining_docs = total_documents - total_handled
                         if docs_per_second > 0:
                             remaining_seconds = remaining_docs / docs_per_second
                             estimated_completion = (datetime.now(timezone.utc) + timedelta(seconds=remaining_seconds)).isoformat()
