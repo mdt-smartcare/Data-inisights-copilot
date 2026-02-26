@@ -20,7 +20,8 @@ from backend.models.rag_models import (
     EmbeddingJobCreate, EmbeddingJobProgress, EmbeddingJobSummary,
     EmbeddingJobStatus, RAGAuditAction
 )
-from backend.services.embedding_job_service import get_embedding_job_service, EmbeddingJobService
+from backend.sqliteDb.db import get_db_service
+from backend.services.embedding_job_service import get_embedding_job_service, EmbeddingJobService, JobCancelledError
 from backend.services.authorization_service import get_authorization_service, AuthorizationService
 from backend.services.notification_service import get_notification_service, NotificationService
 from backend.services.embedding_batch_processor import EmbeddingBatchProcessor, BatchConfig
@@ -319,6 +320,8 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             job_service._update_job(job_id, status=EmbeddingJobStatus.PREPARING, phase="Extracting tables...")
             
             async def extractor_progress(current, total, table_name):
+                if job_service.is_job_cancelled(job_id):
+                    raise JobCancelledError(f"Job {job_id} cancelled during extraction of {table_name}")
                 # We normalize "Preparing" to 20% of the total job or just show sub-progress
                 # For now, let's keep it simple and update Phase string
                 job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Extracting {table_name} ({current}/{total})")
@@ -333,6 +336,8 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Generating documents from data...")
             
             def transformer_doc_progress(current, total, table_name):
+                if job_service.is_job_cancelled(job_id):
+                    raise JobCancelledError(f"Job {job_id} cancelled during transformation of {table_name}")
                 job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Transforming {table_name} ({current}/{total})")
 
             documents = await asyncio.to_thread(transformer.create_documents_from_tables, table_data, on_progress=transformer_doc_progress)
@@ -436,6 +441,9 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
                 with ProcessPoolExecutor(max_workers=num_workers) as executor:
                     futures = [executor.submit(_parallel_delta_worker, batch, existing_docs) for batch in doc_batches]
                     for future in tqdm(as_completed(futures), total=len(futures), desc="Delta Check"):
+                        if job_service.is_job_cancelled(job_id):
+                            # executor automatically shuts down on exit of with block
+                            raise JobCancelledError(f"Job {job_id} cancelled during Delta Check")
                         batch_processed, batch_stale = future.result()
                         local_docs.extend(batch_processed)
                         local_stale.extend(batch_stale)
@@ -483,6 +491,8 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
         logger.info("Applying parent-child chunking to all documents...")
         
         def chunking_progress(phase, current, total):
+            if job_service.is_job_cancelled(job_id):
+                raise JobCancelledError(f"Job {job_id} cancelled during chunking phase: {phase}")
             pct_str = f" ({current}/{total})" if total > 0 else f" ({current})"
             job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"{phase}{pct_str}")
 
@@ -683,6 +693,11 @@ async def _run_embedding_job(job_id: str, config_id: int, user_id: int, incremen
             related_entity_id=config_id
         )
         
+    except JobCancelledError as e:
+        logger.info(f"Embedding job {job_id} stopped: {e}")
+        # Job status is already CANCELLED in DB
+        return
+
     except Exception as e:
         logger.error(f"Embedding job {job_id} failed: {e}")
         import traceback

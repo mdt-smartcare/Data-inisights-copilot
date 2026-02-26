@@ -16,6 +16,10 @@ from backend.models.schemas import User
 from backend.core.logging import get_logger
 from backend.sqliteDb.db import get_db_service
 
+class JobCancelledError(Exception):
+    """Exception raised when an embedding job is explicitly cancelled."""
+    pass
+
 logger = get_logger(__name__)
 
 
@@ -335,6 +339,30 @@ class EmbeddingJobService:
             
         except Exception as e:
             logger.error(f"Failed to cancel job: {e}")
+            return False
+        finally:
+            conn.close()
+    
+    def is_job_cancelled(self, job_id: str) -> bool:
+        """
+        Check if a job has been cancelled.
+        Lightweight check against the database status.
+        """
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                "SELECT status FROM embedding_jobs WHERE job_id = ?",
+                (job_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+            
+            return row['status'] == EmbeddingJobStatus.CANCELLED.value
+        except Exception as e:
+            logger.error(f"Failed to check job cancellation: {e}")
             return False
         finally:
             conn.close()

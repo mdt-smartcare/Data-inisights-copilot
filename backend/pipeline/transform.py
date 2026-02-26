@@ -153,12 +153,18 @@ class AdvancedDataTransformer:
         batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
         
         parent_docs = []
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        executor = ProcessPoolExecutor(max_workers=num_workers)
+        try:
             futures = [executor.submit(_parallel_split_worker, batch, parent_config) for batch in batches]
             for future in tqdm(as_completed(futures), total=len(futures), desc="Split (Parent)"):
                 parent_docs.extend(future.result())
                 if on_progress:
-                    on_progress("Split (Parent)", len(parent_docs), -1) # -1 means unknown total or we just update count
+                    on_progress("Split (Parent)", len(parent_docs), -1)
+        except Exception:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            executor.shutdown(wait=True)
 
         # 2. Generate Stable IDs and populate Docstore
         if on_progress:
@@ -178,12 +184,18 @@ class AdvancedDataTransformer:
         child_documents = []
         parent_batches = [parent_data[i:i + batch_size] for i in range(0, len(parent_data), batch_size)]
         
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        executor = ProcessPoolExecutor(max_workers=num_workers)
+        try:
             futures = [executor.submit(_parallel_child_split_worker, batch, child_config) for batch in parent_batches]
             for future in tqdm(as_completed(futures), total=len(futures), desc="Split (Children)"):
                 child_documents.extend(future.result())
                 if on_progress:
                     on_progress("Split (Children)", len(child_documents), -1)
+        except Exception:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            executor.shutdown(wait=True)
 
         logger.info(f"Parallel chunking complete. Parents: {len(parent_docs)}, Children: {len(child_documents)}")
         return child_documents, docstore
