@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # ============================================
     embedding_model_path: str = Field(default="./models/bge-m3")
     embedding_model_name: str = Field(default="BAAI/bge-m3")
+    embedding_provider: str = Field(default="sentence-transformers")
+    embedding_batch_size: int = Field(default=128)
     vector_db_path: str = Field(default="./data/indexes/chroma_db_advanced")
     
     # ============================================
