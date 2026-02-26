@@ -49,8 +49,14 @@ def setup_logging() -> logging.Logger:
     from backend.config import get_settings
     settings = get_settings()
     
-    # Create logs directory if it doesn't exist
+    # Resolve logs directory relative to project root (parent of backend/)
+    backend_root = Path(__file__).parent.parent
+    project_root = backend_root.parent if backend_root.name == "backend" else backend_root
+    
     log_file_path = Path(settings.log_file)
+    if not log_file_path.is_absolute():
+        log_file_path = (backend_root.parent / settings.log_file).resolve()
+    
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
     
     # Get root logger
@@ -75,7 +81,7 @@ def setup_logging() -> logging.Logger:
     logger.addHandler(console_handler)
     
     # File handler
-    file_handler = logging.FileHandler(settings.log_file)
+    file_handler = logging.FileHandler(str(log_file_path))
     file_handler.setLevel(getattr(logging, settings.log_level))
     file_handler.setFormatter(JSONFormatter())
     logger.addHandler(file_handler)
@@ -94,3 +100,45 @@ def get_logger(name: str) -> logging.Logger:
         Logger instance
     """
     return logging.getLogger(name)
+
+
+def get_embedding_logger() -> logging.Logger:
+    """
+    Get a specialized logger for embedding operations that writes to a dedicated log file.
+    
+    Returns:
+        Configured embedding logger
+    """
+    # Import here to avoid circular dependency
+    from backend.config import get_settings
+    settings = get_settings()
+    
+    logger = logging.getLogger("embedding_processor")
+    
+    # If already has handlers (configured previously), just return it
+    if logger.handlers:
+        return logger
+        
+    logger.setLevel(getattr(logging, settings.log_level))
+    
+    # Console handler (inherited from root, but we can be explicit or just let it propagate)
+    # Actually, we want it to go to the main log too, so we let it propagate to root by default.
+    # But we also want a dedicated file.
+    
+    # Dedicated Embedding File handler
+    backend_root = Path(__file__).parent.parent
+    log_file_path = Path(settings.embedding_log_file)
+    if not log_file_path.is_absolute():
+        log_file_path = (backend_root.parent / settings.embedding_log_file).resolve()
+        
+    log_file_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    file_handler = logging.FileHandler(str(log_file_path))
+    file_handler.setLevel(getattr(logging, settings.log_level))
+    file_handler.setFormatter(JSONFormatter())
+    logger.addHandler(file_handler)
+    
+    # Ensure it also goes to console by allowing propagation (default is True)
+    logger.propagate = True
+    
+    return logger

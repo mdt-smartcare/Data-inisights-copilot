@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion } from '../services/api';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion, getSystemSettings, listEmbeddingJobs } from '../services/api';
 import type { IngestionResponse } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
@@ -65,6 +65,12 @@ const ConfigPage: React.FC = () => {
         total_documents_indexed: number;
         total_vectors: number;
         last_updated_at: string | null;
+        embedding_model: string | null;
+        llm: string | null;
+        last_full_run: string | null;
+        last_incremental_run: string | null;
+        version: string;
+        diagnostics: Array<{ level: string; message: string }>;
     } | null>(null);
 
     // Data source type: 'database' or 'file'
@@ -146,6 +152,41 @@ const ConfigPage: React.FC = () => {
     useEffect(() => {
         if (isLoading) return;
 
+        // Fetch dynamic system settings for defaults to prevent mismatched configs
+        const fetchDefaults = async () => {
+            try {
+                const { getSystemSettings } = await import('../services/api');
+                const [embSettings, ragSettings, llmSettings] = await Promise.all([
+                    getSystemSettings('embedding').catch(() => null),
+                    getSystemSettings('rag').catch(() => null),
+                    getSystemSettings('llm').catch(() => null)
+                ]);
+
+                setAdvancedSettings(prev => {
+                    const next = { ...prev };
+                    if (embSettings && embSettings.model_name) {
+                        next.embedding.model = embSettings.model_name;
+                    }
+                    if (ragSettings) {
+                        if (ragSettings.chunk_size) next.chunking.parentChunkSize = ragSettings.chunk_size;
+                        if (ragSettings.chunk_overlap) next.chunking.parentChunkOverlap = ragSettings.chunk_overlap;
+                        if (ragSettings.top_k_initial) next.retriever.topKInitial = ragSettings.top_k_initial;
+                        if (ragSettings.top_k_final) next.retriever.topKFinal = ragSettings.top_k_final;
+                        if (ragSettings.hybrid_weights) next.retriever.hybridWeights = ragSettings.hybrid_weights;
+                        if (ragSettings.rerank_enabled !== undefined) next.retriever.rerankEnabled = ragSettings.rerank_enabled;
+                        if (ragSettings.reranker_model) next.retriever.rerankerModel = ragSettings.reranker_model;
+                    }
+                    if (llmSettings) {
+                        if (llmSettings.temperature !== undefined) next.llm.temperature = llmSettings.temperature;
+                        if (llmSettings.max_tokens) next.llm.maxTokens = llmSettings.max_tokens;
+                    }
+                    return next;
+                });
+            } catch (err) {
+                console.warn("Failed to load backend defaults", err);
+            }
+        };
+
         const syncFromUrl = async () => {
             // Sync / Auto-select Agent
             const agentIdParam = searchParams.get('agent_id');
@@ -165,6 +206,7 @@ const ConfigPage: React.FC = () => {
             }
         };
 
+        fetchDefaults();
         syncFromUrl();
     }, [isLoading, searchParams, selectedAgent]);
 
@@ -256,6 +298,24 @@ const ConfigPage: React.FC = () => {
 
                 // If we have config, default to Dashboard (Step 0)
                 setCurrentStep(0);
+
+                // Fetch any active embedding jobs for this config to restore progress UI if needed
+                try {
+                    const jobs = await listEmbeddingJobs({
+                        config_id: config.id || config.prompt_id,
+                        limit: 1
+                    });
+                    if (jobs.length > 0) {
+                        const latestJob = jobs[0];
+                        const activeStatuses = ['QUEUED', 'PREPARING', 'EMBEDDING', 'VALIDATING', 'STORING'];
+                        if (activeStatuses.includes(latestJob.status)) {
+                            console.log("Restoring active embedding job:", latestJob.job_id);
+                            setEmbeddingJobId(latestJob.job_id);
+                        }
+                    }
+                } catch (jobErr) {
+                    console.error("Failed to fetch active jobs", jobErr);
+                }
             } else {
                 setCurrentStep(1);
             }
@@ -340,7 +400,7 @@ const ConfigPage: React.FC = () => {
         setFileUploadResult(result);
     };
 
-    const handleStartNew = () => {
+    const handleStartNew = async () => {
         // Reset state for fresh config
         setConnectionId(null);
         setSelectedSchema({});
@@ -349,6 +409,28 @@ const ConfigPage: React.FC = () => {
         setDataSourceType('database');
         setFileUploadResult(null);
         setCurrentStep(1);
+
+        // Re-fetch backend defaults
+        try {
+            const { getSystemSettings } = await import('../services/api');
+            const [embSettings, ragSettings, llmSettings] = await Promise.all([
+                getSystemSettings('embedding').catch(() => null),
+                getSystemSettings('rag').catch(() => null),
+                getSystemSettings('llm').catch(() => null)
+            ]);
+
+            setAdvancedSettings(prev => {
+                const next = { ...prev };
+                if (embSettings && embSettings.model_name) next.embedding.model = embSettings.model_name;
+                if (ragSettings) {
+                    if (ragSettings.chunk_size) next.chunking.parentChunkSize = ragSettings.chunk_size;
+                    if (ragSettings.chunk_overlap) next.chunking.parentChunkOverlap = ragSettings.chunk_overlap;
+                }
+                return next;
+            });
+        } catch (err) {
+            console.warn("Failed to reload backend defaults", err);
+        }
     };
 
     const handleEditCurrent = () => {
@@ -481,10 +563,22 @@ const ConfigPage: React.FC = () => {
         if (!configId) return;
 
         try {
+            // Fetch dynamic embedding settings for batch sizing
+            let batchSize = 50;
+            let maxConcurrent = 5;
+
+            try {
+                const settings = await getSystemSettings('embedding');
+                if (settings?.batch_size) batchSize = settings.batch_size;
+                if (settings?.max_concurrent) maxConcurrent = settings.max_concurrent;
+            } catch (err) {
+                console.warn('Failed to fetch embedding settings, using defaults', err);
+            }
+
             const result = await startEmbeddingJob({
                 config_id: configId,
-                batch_size: 50,
-                max_concurrent: 5,
+                batch_size: batchSize,
+                max_concurrent: maxConcurrent,
                 incremental: incremental
             });
             setEmbeddingJobId(result.job_id);
@@ -773,6 +867,54 @@ const ConfigPage: React.FC = () => {
                                                                                 </p>
                                                                             </div>
                                                                         </div>
+
+                                                                        {/* Enhanced Metadata Fields (T07) */}
+                                                                        <div className="col-span-1 md:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Embedding Model</p>
+                                                                                <p className="text-sm font-medium text-gray-800 truncate" title={vectorDbStatus.embedding_model || 'N/A'}>
+                                                                                    {vectorDbStatus.embedding_model || 'N/A'}
+                                                                                </p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">LLM Model</p>
+                                                                                <p className="text-sm font-medium text-gray-800">
+                                                                                    {vectorDbStatus.llm || 'N/A'}
+                                                                                </p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Last Full Sync</p>
+                                                                                <p className="text-sm font-medium text-gray-800">
+                                                                                    {vectorDbStatus.last_full_run ? new Date(vectorDbStatus.last_full_run + 'Z').toLocaleDateString() : 'N/A'}
+                                                                                </p>
+                                                                            </div>
+                                                                            <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                                                                <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Version</p>
+                                                                                <p className="text-sm font-medium text-gray-800">
+                                                                                    {vectorDbStatus.version}
+                                                                                </p>
+                                                                            </div>
+                                                                        </div>
+
+                                                                        {/* Diagnostics Alert (T06) */}
+                                                                        {vectorDbStatus.diagnostics && vectorDbStatus.diagnostics.length > 0 && (
+                                                                            <div className="col-span-1 md:col-span-3 mt-4">
+                                                                                <div className="p-4 bg-amber-50 rounded-xl border border-amber-100">
+                                                                                    <div className="flex items-center gap-2 mb-2 text-amber-800">
+                                                                                        <ExclamationTriangleIcon className="w-5 h-5" />
+                                                                                        <span className="font-bold text-sm">System Diagnostics</span>
+                                                                                    </div>
+                                                                                    <ul className="space-y-1">
+                                                                                        {vectorDbStatus.diagnostics.map((diag, i) => (
+                                                                                            <li key={i} className={`text-sm ${diag.level === 'error' ? 'text-red-700' : 'text-amber-700'} flex items-start gap-2`}>
+                                                                                                <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                                                                                                {diag.message}
+                                                                                            </li>
+                                                                                        ))}
+                                                                                    </ul>
+                                                                                </div>
+                                                                            </div>
+                                                                        )}
 
                                                                         {(() => {
                                                                             const embConf = activeConfig?.embedding_config ? (typeof activeConfig.embedding_config === 'string' ? JSON.parse(activeConfig.embedding_config) : activeConfig.embedding_config) : {};

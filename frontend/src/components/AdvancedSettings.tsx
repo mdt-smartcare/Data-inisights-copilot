@@ -81,9 +81,9 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
     // Handle Vector DB Default formatting
     useEffect(() => {
         if (!localSettings.embedding.vectorDbName && dataSourceName) {
-            // format: alphanumeric + underscores, no spaces
-            const formatted = dataSourceName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-            const defaultName = `${formatted}_data`;
+            // format: alphanumeric + underscores, no spaces, strip extras
+            const formatted = dataSourceName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase().replace(/_+/g, '_').replace(/^_+|_+$/g, '');
+            const defaultName = formatted ? `${formatted}_data` : 'default_vector_db';
             handleChange('embedding', 'vectorDbName', defaultName);
         }
     }, [dataSourceName, localSettings.embedding.vectorDbName]);

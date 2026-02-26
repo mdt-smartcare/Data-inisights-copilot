@@ -9,9 +9,10 @@ import math
 import time
 
 from backend.services.embeddings import get_embedding_model
-from backend.core.logging import get_logger
+from backend.core.logging import get_embedding_logger
 
-logger = get_logger(__name__)
+logger = get_embedding_logger()
+logger.info("Embedding batch processor logger initialized")
 
 
 @dataclass
@@ -20,6 +21,7 @@ class BatchResult:
     batch_number: int
     success: bool
     documents_processed: int
+    start_idx: int = 0
     embeddings: Optional[List[List[float]]] = None
     error_message: Optional[str] = None
     processing_time_ms: int = 0
@@ -29,10 +31,10 @@ class BatchResult:
 class BatchConfig:
     """Configuration for batch processing."""
     batch_size: int = 50
-    max_concurrent: int = 5
+    max_concurrent: int = 3
     retry_attempts: int = 3
     retry_delay_seconds: float = 5.0
-    timeout_per_batch_seconds: int = 30
+    timeout_per_batch_seconds: int = 60
 
 
 class EmbeddingBatchProcessor:
@@ -130,6 +132,8 @@ class EmbeddingBatchProcessor:
         # Process all batches
         tasks = [process_with_semaphore(batch) for batch in batches]
         
+        batches_completed = 0
+        
         for coro in asyncio.as_completed(tasks):
             if self._cancelled:
                 break
@@ -138,6 +142,7 @@ class EmbeddingBatchProcessor:
             if result is None:
                 continue
             
+            batches_completed += 1
             batch_num, start_idx, batch_docs = batches[result.batch_number - 1]
             
             if result.success and result.embeddings:
@@ -163,6 +168,19 @@ class EmbeddingBatchProcessor:
                     await on_progress(processed_count, failed_count, total_documents)
                 except Exception as e:
                     logger.warning(f"Progress callback failed: {e}")
+                    
+            # Detailed console progress logging
+            if batches_completed > 0 and (batches_completed % 10 == 0 or batches_completed == total_batches):
+                elapsed = time.time() - start_time
+                if elapsed > 0 and processed_count > 0:
+                    docs_per_sec = processed_count / elapsed
+                    remaining_docs = total_documents - processed_count
+                    if docs_per_sec > 0:
+                        eta_seconds = remaining_docs / docs_per_sec
+                        import datetime
+                        eta_td = datetime.timedelta(seconds=int(eta_seconds))
+                        percent = (processed_count / total_documents) * 100
+                        logger.info(f"Batch {batches_completed}/{total_batches} | {processed_count:,}/{total_documents:,} docs | {percent:.1f}% | ETA: {eta_td}")
         
         total_time = time.time() - start_time
         
@@ -214,6 +232,7 @@ class EmbeddingBatchProcessor:
                     batch_number=batch_number,
                     success=False,
                     documents_processed=0,
+                    start_idx=start_index,
                     error_message="Cancelled"
                 )
             
@@ -233,12 +252,13 @@ class EmbeddingBatchProcessor:
                 
                 processing_time = int((time.time() - start_time) * 1000)
                 
-                logger.debug(f"Batch {batch_number} completed: {len(documents)} documents in {processing_time}ms")
+                logger.info(f"Batch {batch_number} embedded: {len(documents)} documents in {processing_time}ms")
                 
                 return BatchResult(
                     batch_number=batch_number,
                     success=True,
                     documents_processed=len(documents),
+                    start_idx=start_index,
                     embeddings=embeddings,
                     processing_time_ms=processing_time
                 )
@@ -263,6 +283,7 @@ class EmbeddingBatchProcessor:
             batch_number=batch_number,
             success=False,
             documents_processed=0,
+            start_idx=start_index,
             error_message=last_error
         )
     

@@ -75,6 +75,22 @@ async def get_vector_db_status(
         document_count = row['count'] if row else 0
         last_updated = row['last_updated'] if row else None
         
+        # 1.1 Get metadata from vector_db_registry
+        cursor.execute('''
+            SELECT embedding_model, llm, last_full_run, last_incremental_run, version
+            FROM vector_db_registry
+            WHERE name = ?
+        ''', (vector_db_name,))
+        reg_row = cursor.fetchone()
+        
+        registry_metadata = {
+            "embedding_model": reg_row['embedding_model'] if reg_row else None,
+            "llm": reg_row['llm'] if reg_row else None,
+            "last_full_run": reg_row['last_full_run'] if reg_row else None,
+            "last_incremental_run": reg_row['last_incremental_run'] if reg_row else None,
+            "version": reg_row['version'] if reg_row else "1.0.0"
+        }
+        
         conn.close()
 
         # 2. Get vector count directly from ChromaDB
@@ -108,12 +124,28 @@ async def get_vector_db_status(
                 "last_run_status": schedule.get('last_run_status')
             }
 
+        # 4. Diagnostics & Monitoring (T06)
+        diagnostics = []
+        if chroma_exists and document_count > 0 and vector_count == 0:
+            diagnostics.append({"level": "error", "message": "ChromaDB collection exists but is empty despite indexed documents."})
+        elif chroma_exists and vector_count > 0 and document_count == 0:
+            diagnostics.append({"level": "warning", "message": "Vectors exist in ChromaDB but no documents found in SQLite index."})
+        
+        if not chroma_exists and document_count > 0:
+            diagnostics.append({"level": "error", "message": "SQLite index exists but ChromaDB directory is missing."})
+
         return {
             "name": vector_db_name,
             "exists": document_count > 0 or chroma_exists,
             "total_documents_indexed": document_count,
             "total_vectors": vector_count,
             "last_updated_at": last_updated,
+            "embedding_model": registry_metadata["embedding_model"],
+            "llm": registry_metadata["llm"],
+            "last_full_run": registry_metadata["last_full_run"],
+            "last_incremental_run": registry_metadata["last_incremental_run"],
+            "version": registry_metadata["version"],
+            "diagnostics": diagnostics,
             "schedule": schedule_info
         }
         
@@ -276,19 +308,11 @@ async def check_vector_db_name(
     Check if a Vector DB name is valid and available.
     Requires Super Admin role.
     """
-    if not name:
-        return {"valid": False, "message": "Name is required"}
+    from backend.core.vector_db_utils import validate_vector_db_name
     
-    # Check format
-    import re
-    if not re.match(r'^[a-zA-Z0-9_]+$', name):
-        return {"valid": False, "message": "Only alphanumeric characters and underscores allowed"}
-    
-    if len(name) < 3:
-        return {"valid": False, "message": "Name must be at least 3 characters"}
-    
-    if len(name) > 64:
-        return {"valid": False, "message": "Name must be at most 64 characters"}
+    valid, message = validate_vector_db_name(name)
+    if not valid:
+        return {"valid": False, "message": message}
     
     # Check if already exists in registry
     conn = db_service.get_connection()

@@ -7,12 +7,18 @@ import os
 import time
 from pathlib import Path
 from functools import lru_cache
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import yaml
 
 # Add parent directory to path to import from src
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+import chromadb
+from langchain_chroma import Chroma
+from sentence_transformers import CrossEncoder
+
+from backend.services.embeddings import get_embedding_model
+from backend.services.chroma_service import get_chroma_client
 from backend.rag.retrieve import AdvancedRAGRetriever
 from langchain_core.documents import Document
 
@@ -152,11 +158,17 @@ class VectorStoreService:
         
         logger.info("Final RAG Config loaded successfully")
         
-        # Initialize advanced retriever
+        # Initialize Embedding Function
+        self.embedding_function = get_embedding_model()
+
+        # Initialize Advanced RAG Retriever (handles Dense/Sparse/BM25)
         self.retriever = AdvancedRAGRetriever(config=self.rag_config)
+        self.vector_store = self.retriever.vector_store # Expose underlying store if needed
+        self.reranker = self.retriever.reranker
+
         logger.info("Vector store initialized successfully")
     
-    def search(self, query: str, top_k: Optional[int] = None) -> List[Document]:
+    def search(self, query: str, top_k: Optional[int] = None, filter: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
         Perform semantic search on the vector store.
         
@@ -166,30 +178,23 @@ class VectorStoreService:
         Args:
             query: Search query text
             top_k: Number of results to return (defaults to settings)
+            filter: Optional metadata filter dict for ChromaDB
         
         Returns:
             List of relevant documents
         """
         k = top_k or settings.rag_top_k
-        logger.info(f"Searching vector store for query: '{query[:100]}...' (top_k={k})")
+        logger.info(f"Searching vector store for query: '{query[:100]}...' (top_k={k}, filter={filter})")
         
         try:
             start_time = time.time()
-
-            # Use the advanced retriever's invoke method
-            result = self.retriever.invoke(query)
             
-            # Handle different return types
-            if isinstance(result, str):
-                # If retriever returns string, wrap in document
-                docs = [Document(page_content=result, metadata={"source": "rag"})]
-            elif isinstance(result, list):
-                docs = result
-            else:
-                docs = [Document(page_content=str(result), metadata={"source": "rag"})]
+            # Use AdvancedRAGRetriever
+            # The AdvancedRAGRetriever kwargs allow passing search parameters down
+            docs = self.retriever._get_relevant_documents(query, run_manager=None, filter=filter, top_k=k)
             
             duration = time.time() - start_time
-            logger.info(f"Retrieved {len(docs)} documents from vector store in {duration:.2f} seconds")
+            logger.info(f"Retrieved {len(docs)} documents from AdvancedRAGRetriever in {duration:.2f} seconds")
                 
             return docs
             
@@ -217,19 +222,13 @@ class VectorStoreService:
         try:
             start_time = time.time()
 
-            # Check if retriever has reranking with scores method
-            if hasattr(self.retriever, 'retrieve_and_rerank_with_scores'):
-                results = self.retriever.retrieve_and_rerank_with_scores(query)
-                duration = time.time() - start_time
-                logger.info(f"Retrieved {len(results)} documents with reranking scores in {duration:.2f} seconds")
-                    
-                return results
-            else:
-                # Fallback to regular search
-                docs = self.search(query, top_k=k)
-                # Return with dummy scores
-                results = [(doc, 1.0) for doc in docs]
-                return results
+            # Delegate entirely to the advanced retriever
+            results = self.retriever.retrieve_and_rerank_with_scores(query, top_k=k)
+
+            duration = time.time() - start_time
+            logger.info(f"Retrieved {len(results)} documents with scores in {duration:.2f} seconds")
+                
+            return results
                 
         except Exception as e:
             logger.error(f"Vector store search with scores failed: {e}", exc_info=True)

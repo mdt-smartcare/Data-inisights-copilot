@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     # ============================================
     embedding_model_path: str = Field(default="./models/bge-m3")
     embedding_model_name: str = Field(default="BAAI/bge-m3")
+    embedding_provider: str = Field(default="sentence-transformers")
+    embedding_batch_size: int = Field(default=128)
     vector_db_path: str = Field(default="./data/indexes/chroma_db_advanced")
     
     # ============================================
@@ -131,6 +133,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     log_format: str = Field(default="json")
     log_file: str = Field(default="./logs/backend.log")
+    embedding_log_file: str = Field(default="./logs/embedding.log")
     
     @field_validator("log_level")
     @classmethod

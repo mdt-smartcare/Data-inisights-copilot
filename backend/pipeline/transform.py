@@ -3,12 +3,15 @@ import hashlib
 import json
 from tqdm import tqdm
 import logging
-from typing import Dict, List, Any
+import multiprocessing
+from typing import Dict, List, Any, Tuple
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 from langchain_core.documents import Document
 from langchain_core.stores import BaseStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import uuid
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +73,11 @@ class AdvancedDataTransformer:
         
         return f"{col}: {val}"
 
-    def _get_row_id(self, row: pd.Series) -> str:
+    def _generate_row_id(self, row: Dict[str, Any]) -> str:
         """
-        Smartly finds the best available ID for metadata.
-        This resolves the "missing 'id' column" warnings.
+        Generates a stable ID for a row, prioritizing existing ID columns.
+        Uses hashing as a fallback.
         """
-        # Check for common primary key names first
         if 'id' in row and pd.notna(row['id']):
             return str(row['id'])
         if 'patient_track_id' in row and pd.notna(row['patient_track_id']):
@@ -83,76 +85,146 @@ class AdvancedDataTransformer:
         if 'user_id' in row and pd.notna(row['user_id']):
             return str(row['user_id'])
         
-        # Fallback for tables without a clear ID (like mapping tables)
-        # Create a stable hash of the row content to use as an ID
-        return hashlib.md5(str(row.to_dict()).encode()).hexdigest()[:12]
+        # Fallback: Hash the row dictionary content
+        return hashlib.md5(str(row).encode()).hexdigest()[:12]
 
-    def create_documents_from_tables(self, table_data: Dict[str, pd.DataFrame]) -> List[Document]:
+    def create_documents_from_tables(self, table_data: Dict[str, pd.DataFrame], on_progress=None, check_cancellation=None) -> List[Document]:
         """Converts raw table data into a flat list of LangChain Document objects."""
         all_docs = []
-        for table_name, df in tqdm(table_data.items(), desc="Formatting documents from tables"):
+        total_tables = len(table_data)
+        for i, (table_name, df) in enumerate(table_data.items()):
+            if on_progress:
+                on_progress(i, total_tables, table_name)
             
-            # --- NEW LOGIC START: Metadata Enrichment for Deduplication ---
-            # Default to True for tables that don't need deduplication
-            df = df.copy()  # Avoid modifying the original dataframe
-            df['is_latest'] = True 
-            
-            # Generic deduplication logic could be implemented here based on config
-            
-            # --- NEW LOGIC END ---
+            if check_cancellation and check_cancellation():
+                raise Exception(f"Cancellation requested during transformation of {table_name}")
 
-            for _, row in df.iterrows():
+            logger.info(f"Formatting documents for table: {table_name} ({len(df)} rows)")
+            
+            df_cols = df.columns.tolist()
+            cols_to_process = [c for c in df_cols if c != 'is_latest']
+            
+            rows = df.to_dict('records')
+            
+            count = 0
+            for row in tqdm(rows, desc=f"Processing {table_name}", leave=False):
+                count += 1
+                if count % 10000 == 0:
+                    if check_cancellation and check_cancellation():
+                        raise Exception(f"Cancellation requested during transformation of {table_name}")
+
                 content_parts = []
-                for col, val in row.items():
-                    # Skip the temp 'is_latest' column in the text content
-                    if col == 'is_latest':
-                        continue
-                        
+                for col in cols_to_process:
+                    val = row.get(col)
                     formatted_val = self._safe_format_value(val)
                     if formatted_val is not None:
-                        enriched_content = self._enrich_medical_content(col, formatted_val)
-                        content_parts.append(enriched_content)
+                        content_parts.append(self._enrich_medical_content(col, formatted_val))
                 
-                if content_parts:
-                    content = "\n".join(content_parts)
-                    source_id = self._get_row_id(row)
-                    
-                    # Add the new flag to metadata
-                    metadata = {
-                        "source_table": table_name, 
-                        "source_id": source_id,
-                        "is_latest": row['is_latest']  # <--- Vital for RAG filtering
-                    }
-                    all_docs.append(Document(page_content=content, metadata=metadata))
+                if not content_parts:
+                    continue
 
-        logger.info(f"Created {len(all_docs)} initial documents from all tables.")
+                content = "\n".join(content_parts)
+                doc_id = self._generate_row_id(row)
+                
+                # Metadata for indexing and traceability
+                metadata = {
+                    "source_table": table_name,
+                    "source_id": doc_id,
+                    "extraction_time": datetime.now().isoformat()
+                }
+                
+                all_docs.append(Document(page_content=content, metadata=metadata))
+            
+            logger.info(f"Generated {len(all_docs) - (len(all_docs) - len(rows))} docs for {table_name}")
+            
         return all_docs
 
-    def perform_parent_child_chunking(self, documents: List[Document]):
+    def perform_parent_child_chunking(self, documents: List[Document], on_progress=None):
         """
-        Applies the 'Small-to-Big' chunking strategy manually.
+        Applies 'Small-to-Big' chunking with massive parallelization.
         """
-        parent_splitter_config = self.config['chunking']['parent_splitter']
-        child_splitter_config = self.config['chunking']['child_splitter']
-
-        parent_splitter = RecursiveCharacterTextSplitter(**parent_splitter_config)
-        child_splitter = RecursiveCharacterTextSplitter(**child_splitter_config)
+        if on_progress:
+            on_progress("Split (Parent)", 0, 100)
         
+        parent_config = self.config['chunking']['parent_splitter']
+        child_config = self.config['chunking']['child_splitter']
+        
+        num_workers = max(1, multiprocessing.cpu_count() // 2)
+        logger.info(f"Starting parallel chunking using {num_workers} processes...")
+
+        # 1. Split into Parent Documents
+        batch_size = 10000 # Smaller batches for better worker utilization
+        batches = [documents[i:i + batch_size] for i in range(0, len(documents), batch_size)]
+        
+        parent_docs = []
+        executor = ProcessPoolExecutor(max_workers=num_workers)
+        try:
+            futures = [executor.submit(_parallel_split_worker, batch, parent_config) for batch in batches]
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Split (Parent)"):
+                parent_docs.extend(future.result())
+                if on_progress:
+                    on_progress("Split (Parent)", len(parent_docs), -1)
+        except Exception:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            executor.shutdown(wait=True)
+
+        # 2. Generate Stable IDs and populate Docstore
+        if on_progress:
+            on_progress("Indexing Parents", 0, 100)
+            
         docstore = SimpleInMemoryStore()
+        # Pre-creating IDs for parents (can also be parallelized if needed, but overhead usually too high)
+        parent_data = []
+        for doc in tqdm(parent_docs, desc="Indexing Parents"):
+            meta_str = json.dumps(doc.metadata, sort_keys=True)
+            stable_id = hashlib.sha256(f"{doc.page_content}{meta_str}".encode()).hexdigest()
+            parent_data.append((stable_id, doc))
+        
+        docstore.mset(parent_data)
+
+        # 3. Split Parent Documents into Child Chunks (Parallel)
         child_documents = []
+        parent_batches = [parent_data[i:i + batch_size] for i in range(0, len(parent_data), batch_size)]
         
-        logger.info("Applying parent-child chunking to all documents...")
-        
-        parent_docs = parent_splitter.split_documents(documents)
-        parent_doc_ids = [str(uuid.uuid4()) for _ in parent_docs]
-        docstore.mset(list(zip(parent_doc_ids, parent_docs)))
+        executor = ProcessPoolExecutor(max_workers=num_workers)
+        try:
+            futures = [executor.submit(_parallel_child_split_worker, batch, child_config) for batch in parent_batches]
+            for future in tqdm(as_completed(futures), total=len(futures), desc="Split (Children)"):
+                child_documents.extend(future.result())
+                if on_progress:
+                    on_progress("Split (Children)", len(child_documents), -1)
+        except Exception:
+            executor.shutdown(wait=False, cancel_futures=True)
+            raise
+        finally:
+            executor.shutdown(wait=True)
 
-        for i, doc in enumerate(tqdm(parent_docs, desc="Splitting into child documents")):
-            _id = parent_doc_ids[i]
-            sub_docs = child_splitter.split_documents([doc])
-            for _doc in sub_docs:
-                _doc.metadata["doc_id"] = _id
-                child_documents.append(_doc)
-
-        logger.info(f"Chunking complete. Created {len(child_documents)} child documents.")
+        logger.info(f"Parallel chunking complete. Parents: {len(parent_docs)}, Children: {len(child_documents)}")
         return child_documents, docstore
+
+def _parallel_split_worker(docs: List[Document], config: Dict) -> List[Document]:
+    """Helper for parallel parent document splitting."""
+    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        encoding_name="cl100k_base",
+        chunk_size=config.get('chunk_size', 800),
+        chunk_overlap=config.get('chunk_overlap', 150)
+    )
+    return splitter.split_documents(docs)
+
+def _parallel_child_split_worker(parent_batch: List[Tuple[str, Document]], config: Dict) -> List[Document]:
+    """Helper for parallel child document splitting with parent linkage."""
+    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        encoding_name="cl100k_base",
+        chunk_size=config.get('chunk_size', 200),
+        chunk_overlap=config.get('chunk_overlap', 50)
+    )
+    
+    all_children = []
+    for parent_id, doc in parent_batch:
+        children = splitter.split_documents([doc])
+        for child in children:
+            child.metadata["doc_id"] = parent_id
+            all_children.append(child)
+    return all_children
