@@ -1,4 +1,5 @@
-from typing import List, Dict, Any, Tuple
+from __future__ import annotations
+from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
 from langchain_core.documents import Document
 from langchain_community.retrievers.bm25 import BM25Retriever
@@ -132,7 +133,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         
         return " ".join(expanded_terms)
 
-    def _get_relevant_documents(self, query: str, *, run_manager: Any = None) -> List[Document]:
+    def _get_relevant_documents(self, query: str, *, run_manager: Any = None, filter: dict = None, top_k: Optional[int] = None) -> List[Document]:
         """
         Full retrieval pipeline:
         1. Get PARENT docs from sparse (BM25) retriever (already filtered to relevant tables).
@@ -142,12 +143,28 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         """
         logger.info(f"Executing query: {query}")
         
+        # Use provided top_k or fall back to config
+        k_final = top_k or self.config.get('retriever', {}).get('top_k_final', 5)
+        
         # Expand the query with medical synonyms
         expanded_query = self._expand_query(query)
         
-        # --- 1. DENSE (small-to-big) RETRIEVAL ---
-        # Find child chunks
-        child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=run_manager)
+        # Save original search kwargs to restore later
+        original_kwargs = self.child_chunk_retriever.search_kwargs.copy()
+        
+        if filter:
+            # We must pass the Chromadb filter into the dense retriever search_kwargs
+            self.child_chunk_retriever.search_kwargs["filter"] = filter
+            logger.info(f"Applied metadata filter to dense retrieval: {filter}")
+
+        try:
+            # --- 1. DENSE (small-to-big) RETRIEVAL ---
+            # Find child chunks
+            child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=run_manager)
+        finally:
+            # Restore original kwargs
+            self.child_chunk_retriever.search_kwargs = original_kwargs
+
         # Get unique parent IDs from child chunks
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
         # Retrieve the full parent documents
@@ -171,8 +188,8 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # --- 4. RERANK ---
         if not self.reranker or not merged_docs:
             logger.info(f"Skipping reranking. Returning {len(merged_docs)} merged docs.")
-            # Return top_k_final from the *merged* list if no reranker
-            return merged_docs[:self.config['retriever']['top_k_final']]
+            # Return k_final from the *merged* list if no reranker
+            return merged_docs[:k_final]
         
         logger.info(f"Reranking {len(merged_docs)} documents for query: '{query}'")
         
@@ -182,7 +199,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         doc_score_pairs = list(zip(merged_docs, scores))
         sorted_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
         
-        final_docs = [doc for doc, score in sorted_pairs[:self.config['retriever']['top_k_final']]]
+        final_docs = [doc for doc, score in sorted_pairs[:k_final]]
         
         logger.info(f"Returning {len(final_docs)} reranked documents.")
         return final_docs
@@ -212,12 +229,15 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
             logger.error(f"Failed to load docstore: {e}", exc_info=True)
             raise
             
-    def retrieve_and_rerank_with_scores(self, query: str) -> List[Tuple[Document, float]]:
+    def retrieve_and_rerank_with_scores(self, query: str, top_k: Optional[int] = None) -> List[Tuple[Document, float]]:
         """
         Special retrieval method for the Embedding Explorer.
         Returns documents AND their final reranker scores.
         """
         logger.info(f"Executing retrieve_and_rerank_with_scores for: {query}")
+        
+        # Use provided top_k or fall back to config
+        k_final = top_k or self.config.get('retriever', {}).get('top_k_final', 5)
         
         # Expand the query with medical synonyms
         expanded_query = self._expand_query(query)
@@ -248,7 +268,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # --- 4. RERANK ---
         if not self.reranker:
             logger.warning("No reranker found. Returning merged docs with placeholder scores.")
-            return [(doc, 0.0) for doc in merged_docs[:self.config['retriever']['top_k_final']]]
+            return [(doc, 0.0) for doc in merged_docs[:k_final]]
 
         pairs = [[query, doc.page_content] for doc in merged_docs]
         scores = self.reranker.predict(pairs)
@@ -256,4 +276,4 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         doc_score_pairs = list(zip(merged_docs, scores))
         sorted_pairs = sorted(doc_score_pairs, key=lambda x: x[1], reverse=True)
         
-        return sorted_pairs[:self.config['retriever']['top_k_final']]
+        return sorted_pairs[:k_final]

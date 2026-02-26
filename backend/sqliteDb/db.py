@@ -164,6 +164,21 @@ class DatabaseService:
                 cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
                 logger.info("Added role column to users table")
 
+            # Update vector_db_registry with metadata columns
+            cursor.execute("PRAGMA table_info(vector_db_registry)")
+            vdb_columns = [col[1] for col in cursor.fetchall()]
+            if 'embedding_model' not in vdb_columns:
+                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN embedding_model TEXT")
+            if 'llm' not in vdb_columns:
+                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN llm TEXT")
+            if 'last_full_run' not in vdb_columns:
+                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN last_full_run TIMESTAMP")
+            if 'last_incremental_run' not in vdb_columns:
+                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN last_incremental_run TIMESTAMP")
+            if 'version' not in vdb_columns:
+                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN version TEXT DEFAULT '1.0.0'")
+            logger.info("Updated vector_db_registry schema with metadata columns")
+
             # Add reasoning column to prompt_configs if it doesn't exist
             cursor.execute("PRAGMA table_info(prompt_configs)")
             pc_columns = [col[1] for col in cursor.fetchall()]

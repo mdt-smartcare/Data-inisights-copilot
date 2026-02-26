@@ -16,6 +16,10 @@ from backend.models.schemas import User
 from backend.core.logging import get_logger
 from backend.sqliteDb.db import get_db_service
 
+class JobCancelledError(Exception):
+    """Exception raised when an embedding job is explicitly cancelled."""
+    pass
+
 logger = get_logger(__name__)
 
 
@@ -339,6 +343,30 @@ class EmbeddingJobService:
         finally:
             conn.close()
     
+    def is_job_cancelled(self, job_id: str) -> bool:
+        """
+        Check if a job has been cancelled.
+        Lightweight check against the database status.
+        """
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute(
+                "SELECT status FROM embedding_jobs WHERE job_id = ?",
+                (job_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+            
+            return row['status'] == EmbeddingJobStatus.CANCELLED.value
+        except Exception as e:
+            logger.error(f"Failed to check job cancellation: {e}")
+            return False
+        finally:
+            conn.close()
+    
     def get_job_config(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get the configuration metadata for a job."""
         conn = self.db.get_connection()
@@ -468,6 +496,7 @@ class EmbeddingJobService:
     def list_jobs(
         self,
         user_id: Optional[int] = None,
+        config_id: Optional[int] = None,
         status: Optional[EmbeddingJobStatus] = None,
         limit: int = 10,
         offset: int = 0
@@ -477,6 +506,7 @@ class EmbeddingJobService:
         
         Args:
             user_id: Filter by user who started the job
+            config_id: Filter by configuration ID
             status: Filter by job status
             limit: Maximum results
             offset: Pagination offset
@@ -494,6 +524,10 @@ class EmbeddingJobService:
             if user_id is not None:
                 query += " AND started_by = ?"
                 params.append(user_id)
+            
+            if config_id is not None:
+                query += " AND config_id = ?"
+                params.append(config_id)
             
             if status:
                 query += " AND status = ?"

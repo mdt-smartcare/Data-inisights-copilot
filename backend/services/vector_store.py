@@ -7,7 +7,7 @@ import os
 import time
 from pathlib import Path
 from functools import lru_cache
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import yaml
 
 # Add parent directory to path to import from src
@@ -168,7 +168,7 @@ class VectorStoreService:
 
         logger.info("Vector store initialized successfully")
     
-    def search(self, query: str, top_k: Optional[int] = None) -> List[Document]:
+    def search(self, query: str, top_k: Optional[int] = None, filter: Optional[Dict[str, Any]] = None) -> List[Document]:
         """
         Perform semantic search on the vector store.
         
@@ -178,24 +178,20 @@ class VectorStoreService:
         Args:
             query: Search query text
             top_k: Number of results to return (defaults to settings)
+            filter: Optional metadata filter dict for ChromaDB
         
         Returns:
             List of relevant documents
         """
         k = top_k or settings.rag_top_k
-        logger.info(f"Searching vector store for query: '{query[:100]}...' (top_k={k})")
+        logger.info(f"Searching vector store for query: '{query[:100]}...' (top_k={k}, filter={filter})")
         
         try:
             start_time = time.time()
             
             # Use AdvancedRAGRetriever
-            # Pass top_k down via config override briefly if needed
-            original_k = self.retriever.config['retriever']['top_k_final']
-            self.retriever.config['retriever']['top_k_final'] = k
-            
-            docs = self.retriever._get_relevant_documents(query)
-            
-            self.retriever.config['retriever']['top_k_final'] = original_k
+            # The AdvancedRAGRetriever kwargs allow passing search parameters down
+            docs = self.retriever._get_relevant_documents(query, run_manager=None, filter=filter, top_k=k)
             
             duration = time.time() - start_time
             logger.info(f"Retrieved {len(docs)} documents from AdvancedRAGRetriever in {duration:.2f} seconds")
@@ -226,13 +222,8 @@ class VectorStoreService:
         try:
             start_time = time.time()
 
-            original_k = self.retriever.config['retriever']['top_k_final']
-            self.retriever.config['retriever']['top_k_final'] = k
-            
             # Delegate entirely to the advanced retriever
-            results = self.retriever.retrieve_and_rerank_with_scores(query)
-            
-            self.retriever.config['retriever']['top_k_final'] = original_k
+            results = self.retriever.retrieve_and_rerank_with_scores(query, top_k=k)
 
             duration = time.time() - start_time
             logger.info(f"Retrieved {len(results)} documents with scores in {duration:.2f} seconds")
