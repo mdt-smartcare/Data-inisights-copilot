@@ -105,3 +105,116 @@ text_processing:
   chunk_overlap: 200
   min_chunk_length: 50
 
+# =============================================================================
+# Medical Context Mappings for Clinical Terminology Enrichment
+# =============================================================================
+# These mappings provide human-readable names for clinical database columns,
+# improving embedding quality by adding semantic context for the LLM.
+# Format: column_name: "Human Readable Name"
+medical_context:
+  # Vital Signs
+  bp: "Blood Pressure"
+  bp_systolic: "Systolic Blood Pressure"
+  bp_diastolic: "Diastolic Blood Pressure"
+  hr: "Heart Rate"
+  pulse: "Pulse Rate"
+  rr: "Respiratory Rate"
+  spo2: "Oxygen Saturation (SpO2)"
+  temp: "Body Temperature"
+  temperature: "Body Temperature"
+  
+  # Anthropometric Measurements
+  bmi: "Body Mass Index"
+  height: "Height"
+  weight: "Weight"
+  waist_circumference: "Waist Circumference"
+  hip_circumference: "Hip Circumference"
+  
+  # Diabetes & Glucose Metrics
+  hba1c: "Glycated Hemoglobin (HbA1c)"
+  fbs: "Fasting Blood Sugar"
+  rbs: "Random Blood Sugar"
+  ppbs: "Post-Prandial Blood Sugar"
+  glucose: "Blood Glucose"
+  fasting_glucose: "Fasting Glucose Level"
+  
+  # Lipid Profile
+  cholesterol: "Total Cholesterol"
+  hdl: "HDL Cholesterol (Good)"
+  ldl: "LDL Cholesterol (Bad)"
+  triglycerides: "Triglycerides"
+  vldl: "VLDL Cholesterol"
+  
+  # Renal Function
+  creatinine: "Serum Creatinine"
+  bun: "Blood Urea Nitrogen"
+  egfr: "Estimated Glomerular Filtration Rate (eGFR)"
+  uric_acid: "Uric Acid"
+  
+  # Liver Function
+  sgot: "SGOT (AST) Liver Enzyme"
+  sgpt: "SGPT (ALT) Liver Enzyme"
+  alp: "Alkaline Phosphatase"
+  bilirubin: "Bilirubin"
+  albumin: "Serum Albumin"
+  
+  # Hematology
+  hb: "Hemoglobin"
+  hemoglobin: "Hemoglobin Level"
+  wbc: "White Blood Cell Count"
+  rbc: "Red Blood Cell Count"
+  platelet: "Platelet Count"
+  platelets: "Platelet Count"
+  pcv: "Packed Cell Volume (Hematocrit)"
+  
+  # Thyroid
+  tsh: "Thyroid Stimulating Hormone"
+  t3: "Triiodothyronine (T3)"
+  t4: "Thyroxine (T4)"
+  ft3: "Free T3"
+  ft4: "Free T4"
+  
+  # Cardiovascular Risk
+  cvd_risk: "Cardiovascular Disease Risk Score"
+  cvd_risk_score: "CVD Risk Assessment Score"
+  risk_level: "Risk Classification Level"
+  
+  # Clinical Identifiers
+  patient_track_id: "Patient Tracking ID"
+  encounter_id: "Clinical Encounter ID"
+  visit_id: "Visit Identifier"
+  screening_id: "Screening Session ID"
+  
+  # Medication & Treatment
+  medication_name: "Medication Name"
+  dosage: "Medication Dosage"
+  frequency: "Dosing Frequency"
+  prescription_id: "Prescription ID"
+  
+  # Diagnosis & Conditions
+  diagnosis_code: "Diagnosis Code"
+  icd_code: "ICD Diagnosis Code"
+  condition: "Medical Condition"
+  comorbidity: "Comorbid Condition"
+  
+  # Screening Results
+  phq9_score: "PHQ-9 Depression Score"
+  phq4_score: "PHQ-4 Mental Health Score"
+  gad7_score: "GAD-7 Anxiety Score"
+  audit_score: "AUDIT Alcohol Use Score"
+
+# =============================================================================
+# Clinical Boolean Flag Prefixes
+# =============================================================================
+# Column prefixes that indicate clinical boolean flags.
+# Used by _enrich_medical_content() to provide semantic context.
+clinical_flag_prefixes:
+  - "is_"           # e.g., is_diabetic, is_hypertensive
+  - "has_"          # e.g., has_allergy, has_complication
+  - "was_"          # e.g., was_hospitalized, was_referred
+  - "history_of_"   # e.g., history_of_smoking, history_of_stroke
+  - "flag_"         # e.g., flag_high_risk, flag_follow_up
+  - "confirmed_"    # e.g., confirmed_diagnosis, confirmed_pregnancy
+  - "requires_"     # e.g., requires_insulin, requires_referral
+  - "on_"           # e.g., on_medication, on_insulin
+
