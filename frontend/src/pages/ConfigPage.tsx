@@ -24,10 +24,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import type { Agent } from '../types/agent';
 import { canEditPrompt, canManageConnections, canPublishPrompt } from '../utils/permissions';
-import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon, ArrowPathRoundedSquareIcon, UserGroupIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon, ArrowPathRoundedSquareIcon, UserGroupIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { MessageList, ChatInput } from '../components/chat';
 import { chatService } from '../services/chatService';
 import type { Message } from '../types';
+import EmbeddingSettingsModal from '../components/EmbeddingSettingsModal';
+import type { EmbeddingJobCreate } from '../types/rag';
 
 const steps = [
     { id: 0, name: 'Dashboard' },
@@ -125,6 +127,9 @@ const ConfigPage: React.FC = () => {
 
     // Dashboard Tab State
     const [dashboardTab, setDashboardTab] = useState('overview');
+
+    // Embedding Settings Modal State
+    const [showEmbeddingSettings, setShowEmbeddingSettings] = useState(false);
 
     // Initial Load - moved into effect
     // Wait for agent selection
@@ -463,7 +468,7 @@ const ConfigPage: React.FC = () => {
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
             if (result.example_questions) setExampleQuestions(result.example_questions);
-            setCurrentStep(4); // Move to Advanced Settings
+            setCurrentStep(5); // Move to Review & Publish
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -558,29 +563,67 @@ const ConfigPage: React.FC = () => {
         }
     };
 
+    // Handler for basic embedding (quick action buttons)
     const handleStartEmbedding = async (incremental: boolean = true) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
         if (!configId) return;
 
         try {
-            // Fetch dynamic embedding settings for batch sizing
-            let batchSize = 50;
-            let maxConcurrent = 5;
-
-            try {
-                const settings = await getSystemSettings('embedding');
-                if (settings?.batch_size) batchSize = settings.batch_size;
-                if (settings?.max_concurrent) maxConcurrent = settings.max_concurrent;
-            } catch (err) {
-                console.warn('Failed to fetch embedding settings, using defaults', err);
-            }
-
             const result = await startEmbeddingJob({
                 config_id: configId,
-                batch_size: batchSize,
-                max_concurrent: maxConcurrent,
-                incremental: incremental
+                incremental: incremental,
+                // Use chunking settings from advancedSettings
+                chunking: {
+                    parent_chunk_size: advancedSettings.chunking.parentChunkSize,
+                    parent_chunk_overlap: advancedSettings.chunking.parentChunkOverlap,
+                    child_chunk_size: advancedSettings.chunking.childChunkSize,
+                    child_chunk_overlap: advancedSettings.chunking.childChunkOverlap,
+                }
             });
+            setEmbeddingJobId(result.job_id);
+            showSuccess('Embedding Job Started', result.message);
+        } catch (err) {
+            showError('Failed to start embedding job', handleApiError(err));
+        }
+    };
+
+    // Handler for advanced embedding settings modal
+    const handleStartEmbeddingWithSettings = async (
+        settings: {
+            batch_size: number;
+            max_concurrent: number;
+            chunking: {
+                parent_chunk_size: number;
+                parent_chunk_overlap: number;
+                child_chunk_size: number;
+                child_chunk_overlap: number;
+            };
+            parallelization: {
+                num_workers?: number;
+                chunking_batch_size?: number;
+                delta_check_batch_size: number;
+            };
+            max_consecutive_failures: number;
+            retry_attempts: number;
+        },
+        incremental: boolean
+    ) => {
+        const configId = activeConfig?.id || activeConfig?.prompt_id;
+        if (!configId) return;
+
+        try {
+            const jobParams: EmbeddingJobCreate = {
+                config_id: configId,
+                batch_size: settings.batch_size,
+                max_concurrent: settings.max_concurrent,
+                incremental: incremental,
+                chunking: settings.chunking,
+                parallelization: settings.parallelization,
+                max_consecutive_failures: settings.max_consecutive_failures,
+                retry_attempts: settings.retry_attempts,
+            };
+
+            const result = await startEmbeddingJob(jobParams);
             setEmbeddingJobId(result.job_id);
             showSuccess('Embedding Job Started', result.message);
         } catch (err) {
@@ -823,6 +866,14 @@ const ConfigPage: React.FC = () => {
                                                                             className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all hover:scale-105 active:scale-95"
                                                                         >
                                                                             Update Knowledge
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => setShowEmbeddingSettings(true)}
+                                                                            className="px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold transition-all flex items-center gap-2"
+                                                                            title="Configure batch size, chunking, parallelization, and more"
+                                                                        >
+                                                                            <Cog6ToothIcon className="w-4 h-4" />
+                                                                            Advanced
                                                                         </button>
                                                                         <button
                                                                             onClick={() => {
@@ -1110,7 +1161,7 @@ const ConfigPage: React.FC = () => {
                                             {dashboardTab === 'history' && (
                                                 <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
                                                     <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
-                                                        <svg className="w-5 h-5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                                                        <svg className="w-5 h-5 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                                         {<span>System Prompt History</span>}
                                                     </h2>
                                                     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
@@ -1430,8 +1481,6 @@ const ConfigPage: React.FC = () => {
                                     </div>
                                 )}
 
-
-
                                 {currentStep === 4 && (
                                     <div className="h-full flex flex-col">
                                         <AdvancedSettings
@@ -1445,15 +1494,7 @@ const ConfigPage: React.FC = () => {
 
                                 {currentStep === 5 && (
                                     <div className="h-full flex flex-col">
-                                        <h2 className="text-xl font-semibold mb-4 flex justify-between items-center">
-                                            <span>Review & Configuration</span>
-                                            <button
-                                                onClick={() => setShowHistory(!showHistory)}
-                                                className={`text-sm px-3 py-1 rounded border ${showHistory ? 'bg-blue-50 border-blue-200 text-blue-700' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-                                            >
-                                                {showHistory ? 'Hide History' : 'Show History'}
-                                            </button>
-                                        </h2>
+                                        <h2 className="text-xl font-semibold mb-4">Review & Configuration</h2>
                                         <div className="flex-1 flex gap-4 min-h-0">
                                             <div className="flex-1 min-h-0">
                                                 <PromptEditor
@@ -1545,6 +1586,14 @@ const ConfigPage: React.FC = () => {
                                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                                                                 </svg>
                                                                 Create Vector DB Now
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setShowEmbeddingSettings(true)}
+                                                                className="px-4 py-3 bg-white border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 font-semibold transition-all flex items-center gap-2"
+                                                                title="Configure batch size, chunking, parallelization, and more"
+                                                            >
+                                                                <Cog6ToothIcon className="w-5 h-5" />
+                                                                Advanced Settings
                                                             </button>
                                                             <span className="text-sm text-amber-600 self-center">
                                                                 This may take a few minutes depending on your data size.
@@ -1638,7 +1687,7 @@ const ConfigPage: React.FC = () => {
                                     Back
                                 </button>
 
-                                {currentStep === 3 ? (
+                                {currentStep === 4 ? (
                                     <button
                                         onClick={handleGenerate}
                                         disabled={generating || !canEdit}
@@ -1779,6 +1828,30 @@ const ConfigPage: React.FC = () => {
                     </div>
                 )
             }
+
+            {/* Embedding Settings Modal */}
+            <EmbeddingSettingsModal
+                isOpen={showEmbeddingSettings}
+                onClose={() => setShowEmbeddingSettings(false)}
+                onConfirm={handleStartEmbeddingWithSettings}
+                defaultSettings={{
+                    batch_size: 50,
+                    max_concurrent: 5,
+                    chunking: {
+                        parent_chunk_size: advancedSettings.chunking.parentChunkSize,
+                        parent_chunk_overlap: advancedSettings.chunking.parentChunkOverlap,
+                        child_chunk_size: advancedSettings.chunking.childChunkSize,
+                        child_chunk_overlap: advancedSettings.chunking.childChunkOverlap,
+                    },
+                    parallelization: {
+                        num_workers: undefined,
+                        chunking_batch_size: undefined,
+                        delta_check_batch_size: 50000,
+                    },
+                    max_consecutive_failures: 5,
+                    retry_attempts: 3,
+                }}
+            />
         </div >
     );
 };
