@@ -22,3 +22,6 @@ jobs:
           script: |
             cd ${{ secrets.PROJECT_PATH }}
             git pull origin Chunking-Pipeline
+            cd frontend
+            npm install
+            npm run build
