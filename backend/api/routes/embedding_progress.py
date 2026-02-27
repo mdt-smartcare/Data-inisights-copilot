@@ -7,6 +7,7 @@ Refactored for Production:
 - UI batch config passthrough (previously ignored)
 - Circuit breaker pattern for ChromaDB writes
 - All configs now flow from UI inputs
+- CHECKPOINT SUPPORT: Resume from any phase after interruption
 """
 from typing import List, Optional, Dict, Tuple
 from langchain_core.documents import Document
@@ -23,17 +24,18 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from backend.models.schemas import User
 from backend.models.rag_models import (
     EmbeddingJobCreate, EmbeddingJobProgress, EmbeddingJobSummary,
-    EmbeddingJobStatus, RAGAuditAction, ChunkingConfig, ParallelizationConfig
+    EmbeddingJobStatus, RAGAuditAction, ChunkingConfig, ParallelizationConfig,
+    MedicalContextConfig
 )
 from backend.sqliteDb.db import get_db_service
+from backend.services.sql_service import get_sql_service
 from backend.services.embedding_job_service import get_embedding_job_service, EmbeddingJobService, JobCancelledError
 from backend.services.authorization_service import get_authorization_service, AuthorizationService
-from backend.services.notification_service import get_notification_service, NotificationService
+from backend.services.notification_service import get_notification_service
 from backend.services.embedding_batch_processor import EmbeddingBatchProcessor, BatchConfig
-from backend.services.embedding_document_generator import get_document_generator
-from backend.pipeline.extract import create_data_extractor
+from backend.services.embedding_checkpoint_service import CheckpointPhase, get_checkpoint_service
 from backend.pipeline.transform import AdvancedDataTransformer
-from backend.core.permissions import require_super_admin, get_current_user
+from backend.core.permissions import require_super_admin
 from backend.core.logging import get_embedding_logger
 from backend.services.embedding_registry import get_embedding_processor_registry
 
@@ -123,6 +125,7 @@ async def start_embedding_job(
             ui_max_concurrent=request.max_concurrent,
             ui_chunking=request.chunking,
             ui_parallelization=request.parallelization,
+            ui_medical_context=request.medical_context_config,
             ui_max_consecutive_failures=request.max_consecutive_failures,
             ui_retry_attempts=request.retry_attempts
         )
@@ -143,10 +146,6 @@ async def start_embedding_job(
         )
 
 
-from backend.services.sql_service import get_sql_service
-from backend.sqliteDb.db import get_db_service
-
-
 async def _run_embedding_job(
     job_id: str, 
     config_id: int, 
@@ -156,24 +155,28 @@ async def _run_embedding_job(
     ui_max_concurrent: Optional[int] = None,
     ui_chunking: Optional[ChunkingConfig] = None,
     ui_parallelization: Optional[ParallelizationConfig] = None,
+    ui_medical_context: Optional[MedicalContextConfig] = None,
     ui_max_consecutive_failures: int = 5,
     ui_retry_attempts: int = 3
 ):
     """
-    Background task to run embedding generation.
+    Background task to run embedding generation with checkpoint support.
     
-    All configs now flow from UI inputs:
-    - ui_batch_size: Documents per embedding batch
-    - ui_max_concurrent: Max concurrent embedding batches  
-    - ui_chunking: Parent/child chunk sizes and overlaps
-    - ui_parallelization: Worker count and batch sizes
-    - ui_max_consecutive_failures: Circuit breaker threshold
-    - ui_retry_attempts: Retries per failed batch
+    CHECKPOINT PHASES:
+    1. EXTRACTION - Table data extracted from database (saved to pickle)
+    2. DOCUMENTS - Documents created from table data (saved to SQLite)
+    3. CHUNKING - Child chunks created (saved to SQLite)
+    4. EMBEDDING - Embeddings generated (checkpointed by ChromaDB)
+    
+    On restart, the job will resume from the last completed checkpoint.
     """
     job_service = get_embedding_job_service()
     notification_service = get_notification_service()
     db_service = get_db_service()
     sql_service = get_sql_service()
+    
+    # Initialize checkpoint service early
+    checkpoint_service = None
     
     try:
         start_time = time.time()
@@ -204,15 +207,39 @@ async def _run_embedding_job(
         agent_id = config.get('agent_id')
         job_service.start_job(job_id)
         
+        # Setup paths
+        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../data/indexes/{v_db_name}"))
+        os.makedirs(chroma_path, exist_ok=True)
+        docstore_path = os.path.join(chroma_path, "parent_docstore.db")
+        
+        # =================================================================
+        # INITIALIZE CHECKPOINT SERVICE
+        # =================================================================
+        base_indexes_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/indexes"))
+        checkpoint_service = get_checkpoint_service(base_indexes_path, v_db_name)
+        
+        # Check if we can resume from a previous checkpoint
+        can_resume, resume_phase, resume_msg = checkpoint_service.can_resume(config_id)
+        
+        if not incremental:
+            # Full rebuild - clear all checkpoints
+            checkpoint_service.clear_checkpoints()
+            logger.info(f"Full rebuild requested - cleared all checkpoints for {v_db_name}")
+            resume_phase = None
+        elif can_resume:
+            logger.info(f"CHECKPOINT RESUME: {resume_msg}")
+            job_service.update_progress(job_id, processed_documents=0, current_batch=0, 
+                                        phase=f"Resuming from {resume_phase.value} phase...")
+        
         if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
-            logger.info(f"Job {job_id} cancelled before starting extraction.")
+            logger.info(f"Job {job_id} cancelled before starting.")
             return
         
         await notification_service.create_notification(
             user_id=user_id,
             notification_type="embedding_started",
             title="Embedding Generation Started",
-            message=f"Sync process started for job {job_id}.",
+            message=f"Sync process started for job {job_id}." + (f" Resuming from {resume_phase.value}." if resume_phase else ""),
             priority="low",
             action_url=f"/config?step=0&agent_id={agent_id}" if agent_id else "/config?step=0",
             action_label="Track Progress",
@@ -222,8 +249,61 @@ async def _run_embedding_job(
             
         data_source_type = config.get('data_source_type', 'database')
         documents = []
+        table_data = None
+        child_chunks = None
         
+        # =================================================================
+        # BUILD CONFIG FROM UI INPUTS
+        # =================================================================
+        chunking_conf = json.loads(config.get('chunking_config', '{}') or '{}')
+        
+        if ui_chunking:
+            parent_chunk_size = ui_chunking.parent_chunk_size
+            parent_chunk_overlap = ui_chunking.parent_chunk_overlap
+            child_chunk_size = ui_chunking.child_chunk_size
+            child_chunk_overlap = ui_chunking.child_chunk_overlap
+            logger.info(f"Using UI chunking config: parent={parent_chunk_size}/{parent_chunk_overlap}, child={child_chunk_size}/{child_chunk_overlap}")
+        elif chunking_conf:
+            parent_chunk_size = chunking_conf.get('parentChunkSize', 800)
+            parent_chunk_overlap = chunking_conf.get('parentChunkOverlap', 150)
+            child_chunk_size = chunking_conf.get('childChunkSize', 200)
+            child_chunk_overlap = chunking_conf.get('childChunkOverlap', 50)
+            logger.info(f"Using DB chunking config: parent={parent_chunk_size}/{parent_chunk_overlap}, child={child_chunk_size}/{child_chunk_overlap}")
+        else:
+            parent_chunk_size, parent_chunk_overlap = 800, 150
+            child_chunk_size, child_chunk_overlap = 200, 50
+            logger.info("Using default chunking config")
+        
+        extractor_config = {
+            "tables": {"exclude_tables": [], "global_exclude_columns": []},
+            "chunking": {
+                "parent_splitter": {"chunk_size": parent_chunk_size, "chunk_overlap": parent_chunk_overlap},
+                "child_splitter": {"chunk_size": child_chunk_size, "chunk_overlap": child_chunk_overlap}
+            }
+        }
+        
+        if ui_parallelization:
+            override_num_workers = ui_parallelization.num_workers
+            override_chunking_batch_size = ui_parallelization.chunking_batch_size
+            delta_check_batch_size = ui_parallelization.delta_check_batch_size
+            logger.info(f"Using UI parallelization: workers={override_num_workers}, chunk_batch={override_chunking_batch_size}, delta_batch={delta_check_batch_size}")
+        else:
+            override_num_workers = None
+            override_chunking_batch_size = None
+            delta_check_batch_size = 50000
+        
+        transformer = AdvancedDataTransformer(
+            extractor_config, 
+            docstore_path=docstore_path,
+            num_workers_override=override_num_workers,
+            batch_size_override=override_chunking_batch_size
+        )
+
+        # =================================================================
+        # PHASE 1: EXTRACTION (or restore from checkpoint)
+        # =================================================================
         if data_source_type == 'file':
+            # File-based source - no extraction needed
             documents_raw = config.get('ingestion_documents')
             if not documents_raw:
                 raise ValueError("No documents found for file data source")
@@ -239,147 +319,100 @@ async def _run_embedding_job(
                     ))
             except Exception as e:
                 raise ValueError(f"Failed to parse ingestion documents: {e}")
-        
-        # =================================================================
-        # BUILD CONFIG FROM UI INPUTS (no more hardcoded defaults in logic)
-        # =================================================================
-        
-        # Priority: UI input > DB config > defaults
-        chunking_conf = json.loads(config.get('chunking_config', '{}') or '{}')
-        
-        # Resolve chunking config
-        if ui_chunking:
-            # UI explicitly provided chunking config
-            parent_chunk_size = ui_chunking.parent_chunk_size
-            parent_chunk_overlap = ui_chunking.parent_chunk_overlap
-            child_chunk_size = ui_chunking.child_chunk_size
-            child_chunk_overlap = ui_chunking.child_chunk_overlap
-            logger.info(f"Using UI chunking config: parent={parent_chunk_size}/{parent_chunk_overlap}, child={child_chunk_size}/{child_chunk_overlap}")
-        elif chunking_conf:
-            # Fall back to DB-stored config
-            parent_chunk_size = chunking_conf.get('parentChunkSize', 800)
-            parent_chunk_overlap = chunking_conf.get('parentChunkOverlap', 150)
-            child_chunk_size = chunking_conf.get('childChunkSize', 200)
-            child_chunk_overlap = chunking_conf.get('childChunkOverlap', 50)
-            logger.info(f"Using DB chunking config: parent={parent_chunk_size}/{parent_chunk_overlap}, child={child_chunk_size}/{child_chunk_overlap}")
         else:
-            # Defaults
-            parent_chunk_size, parent_chunk_overlap = 800, 150
-            child_chunk_size, child_chunk_overlap = 200, 50
-            logger.info("Using default chunking config")
-        
-        extractor_config = {
-            "tables": {
-                "exclude_tables": [],
-                "global_exclude_columns": []
-            },
-            "chunking": {
-                "parent_splitter": {
-                    "chunk_size": parent_chunk_size,
-                    "chunk_overlap": parent_chunk_overlap
-                },
-                "child_splitter": {
-                    "chunk_size": child_chunk_size,
-                    "chunk_overlap": child_chunk_overlap
-                }
-            }
-        }
-        
-        # Setup paths for SQLite docstore
-        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../data/indexes/{v_db_name}"))
-        os.makedirs(chroma_path, exist_ok=True)
-        docstore_path = os.path.join(chroma_path, "parent_docstore.db")
-        
-        # Resolve parallelization config
-        if ui_parallelization:
-            override_num_workers = ui_parallelization.num_workers
-            override_chunking_batch_size = ui_parallelization.chunking_batch_size
-            delta_check_batch_size = ui_parallelization.delta_check_batch_size
-            logger.info(f"Using UI parallelization: workers={override_num_workers}, chunk_batch={override_chunking_batch_size}, delta_batch={delta_check_batch_size}")
-        else:
-            override_num_workers = None
-            override_chunking_batch_size = None
-            delta_check_batch_size = 50000
-        
-        # Initialize transformer with persistent docstore and parallelization overrides
-        transformer = AdvancedDataTransformer(
-            extractor_config, 
-            docstore_path=docstore_path,
-            num_workers_override=override_num_workers,
-            batch_size_override=override_chunking_batch_size
-        )
-
-        if data_source_type != 'file':
-            connection_id = config.get('connection_id')
-            if not connection_id:
-                raise ValueError("Configuration missing connection_id")
-                
-            connection_info = db_service.get_db_connection_by_id(connection_id)
-            if not connection_info:
-                raise ValueError(f"Connection {connection_id} not found")
-                
-            schema_snapshot_raw = config.get('schema_selection', '{}')
-            try:
-                if schema_snapshot_raw is None:
-                    schema_snapshot_raw = '{}'
-                
-                if isinstance(schema_snapshot_raw, str) and schema_snapshot_raw.startswith('"') and schema_snapshot_raw.endswith('"'):
-                    try:
-                        schema_snapshot_raw = json.loads(schema_snapshot_raw)
-                    except json.JSONDecodeError:
-                        pass
-
-                schema_selection = json.loads(schema_snapshot_raw)
-                
-                if isinstance(schema_selection, str):
-                    schema_selection = json.loads(schema_selection)
-                    
-                if isinstance(schema_selection, dict):
-                    target_tables = list(schema_selection.keys())
-                elif isinstance(schema_selection, list):
-                    target_tables = schema_selection
+            # Database source - check for extraction checkpoint
+            if resume_phase and resume_phase != CheckpointPhase.EXTRACTION:
+                # Try to load extraction checkpoint
+                table_data = checkpoint_service.load_extraction_checkpoint()
+                if table_data:
+                    logger.info(f"CHECKPOINT: Loaded extraction data from checkpoint ({sum(len(v) for v in table_data.values())} rows)")
                 else:
+                    logger.warning("CHECKPOINT: Extraction checkpoint not found, re-extracting...")
+                    resume_phase = None  # Force re-extraction
+            
+            if not table_data:
+                # Perform extraction
+                connection_id = config.get('connection_id')
+                if not connection_id:
+                    raise ValueError("Configuration missing connection_id")
+                    
+                connection_info = db_service.get_db_connection_by_id(connection_id)
+                if not connection_info:
+                    raise ValueError(f"Connection {connection_id} not found")
+                    
+                schema_snapshot_raw = config.get('schema_selection', '{}')
+                try:
+                    if schema_snapshot_raw is None:
+                        schema_snapshot_raw = '{}'
+                    if isinstance(schema_snapshot_raw, str) and schema_snapshot_raw.startswith('"') and schema_snapshot_raw.endswith('"'):
+                        try:
+                            schema_snapshot_raw = json.loads(schema_snapshot_raw)
+                        except json.JSONDecodeError:
+                            pass
+                    schema_selection = json.loads(schema_snapshot_raw)
+                    if isinstance(schema_selection, str):
+                        schema_selection = json.loads(schema_selection)
+                    if isinstance(schema_selection, dict):
+                        target_tables = list(schema_selection.keys())
+                    elif isinstance(schema_selection, list):
+                        target_tables = schema_selection
+                    else:
+                        target_tables = []
+                except Exception as e:
+                    logger.error(f"Failed to parse schema_selection: {e}. Raw was: {schema_snapshot_raw}")
                     target_tables = []
-            except Exception as e:
-                logger.error(f"Failed to parse schema_selection: {e}. Raw was: {schema_snapshot_raw}")
-                target_tables = []
-                parse_error = str(e)
+                    parse_error = str(e)
+                    
+                if not target_tables:
+                    err_msg = parse_error if 'parse_error' in locals() else 'None'
+                    raise ValueError(f"Schema parsing failed. Error: {err_msg}")
+
+                from backend.pipeline.extract import DataExtractor
+                from backend.config import get_settings
+                from pathlib import Path
                 
-            if not target_tables:
-                err_msg = parse_error if 'parse_error' in locals() else 'None'
-                raise ValueError(f"Schema parsing failed. Error: {err_msg}, Raw repr: {repr(schema_snapshot_raw)}, Target tables: {target_tables}")
+                settings = get_settings()
+                backend_root = Path(__file__).parent.parent.parent
+                config_rel_path = str(settings.rag_config_path).lstrip('./')
+                config_path = str((backend_root / config_rel_path).resolve())
+                
+                extractor = DataExtractor(config_path)
+                extractor.get_allowed_tables = lambda: target_tables
 
-            schema_info = sql_service.get_schema_info_for_connection(
-                connection_info['uri'], 
-                table_names=target_tables
-            )
-            
-            from backend.pipeline.extract import DataExtractor
-            from backend.config import get_settings
-            from pathlib import Path
-            
-            settings = get_settings()
-            backend_root = Path(__file__).parent.parent.parent
-            config_rel_path = str(settings.rag_config_path).lstrip('./')
-            config_path = str((backend_root / config_rel_path).resolve())
-            
-            extractor = DataExtractor(config_path)
-            extractor.get_allowed_tables = lambda: target_tables
+                import asyncio
+                job_service._update_job(job_id, status=EmbeddingJobStatus.PREPARING, phase="Extracting tables...")
+                
+                async def extractor_progress(current, total, table_name):
+                    if job_service.is_job_cancelled(job_id):
+                        raise JobCancelledError(f"Job {job_id} cancelled during extraction of {table_name}")
+                    job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Extracting {table_name} ({current}/{total})")
 
-            import asyncio
-            job_service._update_job(job_id, status=EmbeddingJobStatus.PREPARING, phase="Extracting tables...")
-            
-            async def extractor_progress(current, total, table_name):
-                if job_service.is_job_cancelled(job_id):
-                    raise JobCancelledError(f"Job {job_id} cancelled during extraction of {table_name}")
-                job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Extracting {table_name} ({current}/{total})")
-
-            table_data = await extractor.extract_all_tables(on_progress=extractor_progress)
-            
-            if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
-                logger.info(f"Job {job_id} cancelled after extraction.")
-                return
-            
+                table_data = await extractor.extract_all_tables(on_progress=extractor_progress)
+                
+                if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+                    logger.info(f"Job {job_id} cancelled after extraction.")
+                    return
+                
+                # =================================================================
+                # CHECKPOINT: Save extraction data
+                # =================================================================
+                job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Saving extraction checkpoint...")
+                checkpoint_service.save_extraction_checkpoint(job_id, config_id, table_data, incremental)
+                logger.info(f"CHECKPOINT: Extraction phase complete and saved")
+        
+        # =================================================================
+        # PHASE 2: DOCUMENT CREATION (or restore from checkpoint)
+        # =================================================================
+        if resume_phase and resume_phase not in [CheckpointPhase.EXTRACTION, CheckpointPhase.DOCUMENTS]:
+            # Try to load documents checkpoint
+            documents = checkpoint_service.load_documents_checkpoint()
+            if documents:
+                logger.info(f"CHECKPOINT: Loaded {len(documents)} documents from checkpoint")
+            else:
+                logger.warning("CHECKPOINT: Documents checkpoint not found, re-creating...")
+                resume_phase = CheckpointPhase.DOCUMENTS  # Force re-creation
+        
+        if not documents and table_data:
             job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Generating documents from data...")
             
             def transformer_doc_progress(current, total, table_name):
@@ -387,6 +420,7 @@ async def _run_embedding_job(
                     raise JobCancelledError(f"Job {job_id} cancelled during transformation of {table_name}")
                 job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"Transforming {table_name} ({current}/{total})")
 
+            import asyncio
             documents = await asyncio.to_thread(
                 transformer.create_documents_from_tables, 
                 table_data, 
@@ -398,16 +432,20 @@ async def _run_embedding_job(
                 logger.info(f"Job {job_id} cancelled after transformation.")
                 return
             
-            job_service._update_job(job_id, total_documents=len(documents))
-            
-        # Get Vector DB Name
+            # =================================================================
+            # CHECKPOINT: Save documents
+            # =================================================================
+            job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Saving documents checkpoint...")
+            checkpoint_service.save_documents_checkpoint(job_id, config_id, documents, incremental)
+            logger.info(f"CHECKPOINT: Documents phase complete ({len(documents)} docs saved)")
+        
+        job_service._update_job(job_id, total_documents=len(documents))
         vector_db_name = v_db_name
 
         # Register in vector_db_registry
         try:
             llm_conf = json.loads(config.get('llm_config', '{}') or '{}')
             llm_name = llm_conf.get('model', 'default_llm')
-            
             conn_reg = db_service.get_connection()
             cursor_reg = conn_reg.cursor()
             cursor_reg.execute('''
@@ -432,17 +470,15 @@ async def _run_embedding_job(
         if not incremental:
             cursor.execute("DELETE FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
             conn.commit()
-            
             try:
                 client = get_chroma_client(chroma_path)
                 try:
                     client.delete_collection(name=vector_db_name)
-                    logger.info(f"Deleted existing complete collection {vector_db_name} for rebuild.")
+                    logger.info(f"Deleted existing collection {vector_db_name} for rebuild.")
                 except ValueError:
                     pass
             except Exception as e:
                 logger.warning(f"Failed to cleanly delete collection during rebuild: {e}")
-                
             docs_to_process = documents
             stale_source_ids = []
             logger.info(f"Rebuild mode: Wiped existing database indexing for {vector_db_name}")
@@ -450,19 +486,14 @@ async def _run_embedding_job(
             cursor.execute("SELECT source_id, checksum FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
             existing_docs = {row['source_id']: row['checksum'] for row in cursor.fetchall()}
             
-            logger.info(f"Checking for deltas among {len(documents)} documents using parallel hashing...")
-            
+            logger.info(f"Checking for deltas among {len(documents)} documents...")
             job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Checking for modified documents...")
             
-            # Use UI-provided delta batch size
             num_workers = max(1, multiprocessing.cpu_count() // 2)
             doc_batches = [documents[i:i + delta_check_batch_size] for i in range(0, len(documents), delta_check_batch_size)]
             
-            docs_to_process = []
-            stale_source_ids = []
-            
-            import asyncio
-            async def run_delta_check():
+            # Sync function for delta checking (runs in thread pool)
+            def run_delta_check_sync():
                 local_docs = []
                 local_stale = []
                 with ProcessPoolExecutor(max_workers=num_workers) as executor:
@@ -475,11 +506,11 @@ async def _run_embedding_job(
                         local_stale.extend(batch_stale)
                 return local_docs, local_stale
 
-            docs_to_process, stale_source_ids = await asyncio.to_thread(run_delta_check)
-            await asyncio.sleep(0.01)
+            import asyncio
+            docs_to_process, stale_source_ids = await asyncio.to_thread(run_delta_check_sync)
             
             if len(docs_to_process) == 0:
-                logger.info(f"Incremental run: 0 new/modified documents out of {len(documents)}. Skipping embedding.")
+                logger.info(f"Incremental run: 0 new/modified documents. Skipping embedding.")
                 job_service.complete_job(job_id, validation_passed=True)
                 return
 
@@ -489,49 +520,73 @@ async def _run_embedding_job(
                     client = get_chroma_client(chroma_path)
                     try:
                         collection = client.get_collection(name=vector_db_name)
-                        async def purge_stale():
-                            for i in range(0, len(stale_source_ids), 100):
-                                batch_stale = stale_source_ids[i:i+100]
-                                collection.delete(where={"source_id": {"$in": batch_stale}})
-                        
-                        await asyncio.to_thread(purge_stale)
+                        for i in range(0, len(stale_source_ids), 100):
+                            batch_stale = stale_source_ids[i:i+100]
+                            collection.delete(where={"source_id": {"$in": batch_stale}})
                         logger.info(f"Deleted outdated chunks for {len(stale_source_ids)} documents.")
                     except ValueError:
                         pass
                 except Exception as e:
                     logger.warning(f"Failed to cleanly delete stale chunks from Chroma: {e}")
-            
-            await asyncio.sleep(0.01)
 
         documents = docs_to_process
-            
-        # Parent-Child Chunking with SQLite docstore
-        import asyncio
-        logger.info(f"Created {len(documents)} initial documents from all tables.")
-        logger.info("Applying parent-child chunking to all documents...")
         
-        def chunking_progress(phase, current, total):
-            if job_service.is_job_cancelled(job_id):
-                raise JobCancelledError(f"Job {job_id} cancelled during chunking phase: {phase}")
-            pct_str = f" ({current}/{total})" if total > 0 else f" ({current})"
-            job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"{phase}{pct_str}")
+        # =================================================================
+        # PHASE 3: CHUNKING (or restore from checkpoint)
+        # =================================================================
+        if resume_phase == CheckpointPhase.EMBEDDING:
+            # Try to load chunks checkpoint
+            child_chunks = checkpoint_service.load_chunks_checkpoint()
+            if child_chunks:
+                logger.info(f"CHECKPOINT: Loaded {len(child_chunks)} chunks from checkpoint")
+                documents = child_chunks
+            else:
+                logger.warning("CHECKPOINT: Chunks checkpoint not found, re-chunking...")
+        
+        if not child_chunks:
+            import asyncio
+            logger.info(f"Created {len(documents)} initial documents. Applying parent-child chunking...")
+            
+            def chunking_progress(phase, current, total):
+                if job_service.is_job_cancelled(job_id):
+                    raise JobCancelledError(f"Job {job_id} cancelled during chunking phase: {phase}")
+                pct_str = f" ({current}/{total})" if total > 0 else f" ({current})"
+                job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase=f"{phase}{pct_str}")
 
-        child_chunks, docstore = await asyncio.to_thread(
-            transformer.perform_parent_child_chunking, 
-            documents, 
-            on_progress=chunking_progress,
-            check_cancellation=lambda: job_service.is_job_cancelled(job_id)
-        )
-        
-        if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
-            logger.info(f"Job {job_id} cancelled after chunking.")
-            return
+            child_chunks, docstore = await asyncio.to_thread(
+                transformer.perform_parent_child_chunking, 
+                documents, 
+                on_progress=chunking_progress,
+                check_cancellation=lambda: job_service.is_job_cancelled(job_id)
+            )
             
-        documents = child_chunks
-        logger.info(f"Chunking complete. Created {len(documents)} child documents.")
+            if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+                logger.info(f"Job {job_id} cancelled after chunking.")
+                return
+            
+            # =================================================================
+            # CHECKPOINT: Save chunks
+            # =================================================================
+            job_service.update_progress(job_id, processed_documents=0, current_batch=0, phase="Saving chunks checkpoint...")
+            checkpoint_service.save_chunks_checkpoint(job_id, config_id, child_chunks, incremental)
+            logger.info(f"CHECKPOINT: Chunking phase complete ({len(child_chunks)} chunks saved)")
+            
+            documents = child_chunks
+        else:
+            # Load docstore separately if we resumed from chunks checkpoint
+            docstore = None
+            if os.path.exists(docstore_path):
+                try:
+                    from backend.pipeline.transform import SQLiteDocStore
+                    docstore = SQLiteDocStore(docstore_path)
+                    logger.info(f"Loaded existing docstore from {docstore_path}")
+                except Exception as e:
+                    logger.warning(f"Could not load docstore: {e}")
+        
+        logger.info(f"Chunking complete. {len(documents)} child documents ready for embedding.")
             
         # =================================================================
-        # USE UI BATCH CONFIG FOR EMBEDDING
+        # PHASE 4: EMBEDDING (ChromaDB handles checkpointing)
         # =================================================================
         from backend.services.settings_service import get_settings_service, SettingCategory
         settings_service = get_settings_service()
@@ -539,14 +594,24 @@ async def _run_embedding_job(
         
         provider_type = emb_settings.get("provider", "sentence-transformers")
         
-        # Use UI config if provided
+        # =================================================================
+        # MPS/CUDA BATCH SIZE OPTIMIZATION
+        # For local GPU providers, override small UI batch sizes for efficiency
+        # =================================================================
+        MIN_GPU_BATCH_SIZE = 128  # Optimal for MPS/CUDA with BGE-M3
+        
         if ui_batch_size is not None:
             batch_size = ui_batch_size
-            logger.info(f"Using UI-specified batch_size: {batch_size}")
+            # Override suboptimal batch sizes for GPU providers
+            if provider_type in ("sentence-transformers", "huggingface") and batch_size < MIN_GPU_BATCH_SIZE:
+                logger.info(f"MPS/CUDA OPTIMIZATION: UI batch_size={batch_size} is suboptimal for GPU. Overriding to {MIN_GPU_BATCH_SIZE} for ~2.5x speedup.")
+                batch_size = MIN_GPU_BATCH_SIZE
+            else:
+                logger.info(f"Using UI-specified batch_size: {batch_size}")
         elif provider_type == "openai":
             batch_size = emb_conf.get("batch_size", 500)
         else:
-            batch_size = emb_conf.get("batch_size", 128)
+            batch_size = emb_conf.get("batch_size", MIN_GPU_BATCH_SIZE)
         
         if ui_max_concurrent is not None:
             max_concurrent = ui_max_concurrent
@@ -555,6 +620,8 @@ async def _run_embedding_job(
             max_concurrent = 20
         else:
             max_concurrent = min(4, max(1, multiprocessing.cpu_count() // 4))
+        
+        logger.info(f"Embedding batch config: batch_size={batch_size}, max_concurrent={max_concurrent}, provider={provider_type}")
             
         total_docs = len(documents)
         import math
@@ -566,24 +633,17 @@ async def _run_embedding_job(
         processor = EmbeddingBatchProcessor(BatchConfig(
             batch_size=batch_size,
             max_concurrent=max_concurrent,
-            retry_attempts=ui_retry_attempts  # UI-provided retry config
+            retry_attempts=ui_retry_attempts
         ))
         
-        # =================================================================
-        # STATEFUL JOB RESUMING: Fetch existing chunk IDs from Chroma
-        # This prevents re-embedding documents that were already processed
-        # if a job fails partway through (e.g., at row 950,000 of 1M)
-        # =================================================================
+        # Stateful resume: Fetch existing chunk IDs from Chroma
         from backend.services.chroma_service import get_existing_chunk_ids
         
         job_service.update_progress(job_id, processed_documents=0, current_batch=0, 
                                     phase="Checking for already-embedded chunks (stateful resume)...")
         
-        existing_chunk_ids = await asyncio.to_thread(
-            get_existing_chunk_ids, 
-            chroma_path, 
-            vector_db_name
-        )
+        import asyncio
+        existing_chunk_ids = await asyncio.to_thread(get_existing_chunk_ids, chroma_path, vector_db_name)
         
         if existing_chunk_ids:
             logger.info(f"Stateful resume: Found {len(existing_chunk_ids)} existing embeddings in Chroma")
@@ -594,123 +654,109 @@ async def _run_embedding_job(
         registry = get_embedding_processor_registry()
         registry.register(job_id, processor)
         
-        # Track skipped documents for progress reporting
         skipped_count = 0
         
         async def on_progress(processed: int, failed: int, total: int):
             current_batch = (processed // batch_size) + 1
-            job_service.update_progress(job_id, processed, current_batch, failed, 
-                                        skipped_documents=skipped_count)
+            job_service.update_progress(job_id, processed, current_batch, failed, skipped_documents=skipped_count)
             
         client = get_chroma_client(chroma_path)
         collection = client.get_or_create_collection(name=vector_db_name)
         
-        # =================================================================
-        # CIRCUIT BREAKER WITH UI CONFIG
-        # =================================================================
         consecutive_failures = 0
-        max_consecutive_failures = ui_max_consecutive_failures  # UI-provided
+        max_consecutive_failures = ui_max_consecutive_failures
         
         from backend.services.embedding_batch_processor import BatchResult
         
         async def on_batch_complete(batch_result: BatchResult):
             nonlocal consecutive_failures
-            
             if not batch_result.embeddings:
                 return
-                
             start_idx = batch_result.start_idx
             batch_docs = documents[start_idx : start_idx + batch_result.documents_processed]
             
-            ids = []
-            texts = []
-            embeddings = []
-            metadatas = []
-            
+            ids, texts, embeddings, metadatas = [], [], [], []
             for doc, emb in zip(batch_docs, batch_result.embeddings):
                 if emb is not None:
                     chunk_content = getattr(doc, "page_content", getattr(doc, "content", ""))
                     parent_id = doc.metadata.get("doc_id", "unknown")
                     chunk_id = hashlib.sha256(f"{chunk_content}{parent_id}".encode()).hexdigest()
-                    
                     ids.append(chunk_id)
                     texts.append(chunk_content)
                     embeddings.append(emb)
-                    
                     safe_meta = {}
                     meta_dict = getattr(doc, "metadata", {})
-                    if not isinstance(meta_dict, dict):
-                        meta_dict = {}
-                        
-                    for k, v in meta_dict.items():
-                        if isinstance(v, (str, int, float, bool)):
-                            safe_meta[k] = v
-                        elif v is not None:
-                            safe_meta[k] = str(v)
+                    if isinstance(meta_dict, dict):
+                        for k, v in meta_dict.items():
+                            if isinstance(v, (str, int, float, bool)):
+                                safe_meta[k] = v
+                            elif v is not None:
+                                safe_meta[k] = str(v)
                     metadatas.append(safe_meta)
                     
             if ids:
-                for attempt in range(ui_retry_attempts):  # UI-provided retry count
+                for attempt in range(ui_retry_attempts):
                     try:
-                        await asyncio.to_thread(
-                            collection.upsert,
-                            ids=ids,
-                            embeddings=embeddings,
-                            documents=texts,
-                            metadatas=metadatas
-                        )
+                        await asyncio.to_thread(collection.upsert, ids=ids, embeddings=embeddings, documents=texts, metadatas=metadatas)
                         consecutive_failures = 0
                         break
                     except Exception as e:
                         consecutive_failures += 1
-                        
                         if consecutive_failures >= max_consecutive_failures:
-                            logger.error(f"Circuit breaker triggered: {consecutive_failures} consecutive ChromaDB failures")
                             raise RuntimeError(f"ChromaDB circuit breaker: {consecutive_failures} consecutive failures. Last error: {e}")
-                        
                         if attempt == ui_retry_attempts - 1:
-                            logger.error(f"Failed to upsert ChromaDB batch {start_idx} after {ui_retry_attempts} attempts: {e}")
                             raise
-                        
                         import random
-                        delay = (2 ** attempt) + random.uniform(0, 1)
-                        await asyncio.sleep(delay)
+                        await asyncio.sleep((2 ** attempt) + random.uniform(0, 1))
 
         doc_contents = [d.page_content for d in documents]
         
-        # Use stateful resume processing if we have existing IDs
         result = await processor.process_documents_with_resume(
             doc_contents,
-            doc_objects=documents,  # Pass document objects for metadata access
+            doc_objects=documents,
             on_progress=on_progress,
             on_batch_complete=on_batch_complete
         )
         
-        # Update skipped count from result
         skipped_count = result.get("skipped_documents", 0)
-        
         registry.unregister(job_id)
         
         if result["cancelled"]:
             logger.info(f"Embedding loop for job {job_id} recognized cancellation.")
             return
         
-        # Log resume statistics
         if result.get("resumed"):
-            logger.info(f"Stateful resume complete: Skipped {skipped_count} already-embedded documents, "
-                        f"processed {result['processed_documents']} new documents")
-            
-        # Export SQLite docstore to pickle for backward compatibility with retriever
-        docstore_pickle_path = f"{chroma_path}/parent_docstore.pkl"
-        if hasattr(docstore, 'export_to_pickle'):
-            await asyncio.to_thread(docstore.export_to_pickle, docstore_pickle_path)
+            logger.info(f"Stateful resume complete: Skipped {skipped_count} already-embedded, processed {result['processed_documents']} new")
+        
+        # Export SQLite docstore to pickle for backward compatibility
+        if docstore:
+            docstore_pickle_path = f"{chroma_path}/parent_docstore.pkl"
+            if hasattr(docstore, 'export_to_pickle'):
+                await asyncio.to_thread(docstore.export_to_pickle, docstore_pickle_path)
+            else:
+                import pickle
+                with open(docstore_pickle_path, "wb") as f:
+                    pickle.dump(docstore, f)
             logger.info(f"Parent docstore exported to {docstore_pickle_path}")
-        else:
-            # Fallback for SimpleInMemoryStore
-            import pickle
-            with open(docstore_pickle_path, "wb") as f:
-                pickle.dump(docstore, f)
-            logger.info(f"Parent docstore cached to {docstore_pickle_path}")
+        
+        # =================================================================
+        # CHECKPOINT: Mark as complete
+        # =================================================================
+        from backend.services.embedding_checkpoint_service import CheckpointMetadata
+        from datetime import datetime
+        
+        complete_metadata = CheckpointMetadata(
+            job_id=job_id,
+            config_id=config_id,
+            phase=CheckpointPhase.COMPLETE,
+            created_at=datetime.utcnow().isoformat(),
+            total_items=result['processed_documents'],
+            checksum="complete",
+            incremental=incremental,
+            extra={"skipped": skipped_count, "failed": result['failed_documents']}
+        )
+        checkpoint_service.save_metadata(complete_metadata)
+        logger.info(f"CHECKPOINT: Job marked as complete")
         
         job_service.transition_to_validating(job_id)
         validation_passed = result["failed_documents"] == 0
@@ -746,7 +792,6 @@ async def _run_embedding_job(
                     f"Duration: {duration:.2f}s | Speed: {result['average_speed']:.2f} docs/sec")
         
         conn.close()
-
         job_service.complete_job(job_id, validation_passed=validation_passed)
         
         await notification_service.create_notification(
@@ -925,3 +970,63 @@ async def list_embedding_jobs(
     )
     
     return jobs
+
+
+@router.get("/checkpoint/{vector_db_name}", response_model=dict)
+async def get_checkpoint_status(
+    vector_db_name: str,
+    current_user: User = Depends(require_super_admin)
+):
+    """
+    Get checkpoint status for a vector database.
+    
+    Returns information about existing checkpoints that can be used
+    to resume an interrupted embedding job.
+    
+    Requires SuperAdmin role.
+    """
+    try:
+        base_indexes_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/indexes"))
+        checkpoint_service = get_checkpoint_service(base_indexes_path, vector_db_name)
+        status = checkpoint_service.get_checkpoint_status()
+        return status
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get checkpoint status: {str(e)}"
+        )
+
+
+@router.delete("/checkpoint/{vector_db_name}", response_model=dict)
+async def clear_checkpoints(
+    vector_db_name: str,
+    current_user: User = Depends(require_super_admin),
+    auth_service: AuthorizationService = Depends(get_authorization_service)
+):
+    """
+    Clear all checkpoints for a vector database.
+    
+    Use this to force a full rebuild from scratch on the next job.
+    
+    Requires SuperAdmin role.
+    """
+    try:
+        base_indexes_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/indexes"))
+        checkpoint_service = get_checkpoint_service(base_indexes_path, vector_db_name)
+        checkpoint_service.clear_checkpoints()
+        
+        auth_service.log_rag_action(
+            user=current_user,
+            action=RAGAuditAction.EMBEDDING_CANCELLED,
+            changes={"action": "checkpoints_cleared", "vector_db_name": vector_db_name}
+        )
+        
+        return {
+            "status": "success",
+            "message": f"Cleared all checkpoints for {vector_db_name}"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear checkpoints: {str(e)}"
+        )
