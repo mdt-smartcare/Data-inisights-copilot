@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ConfigSummary from '../../ConfigSummary';
 import EmbeddingProgress from '../../EmbeddingProgress';
-import { CheckCircleIcon } from '@heroicons/react/24/outline';
+import EmbeddingSettingsModal from '../../EmbeddingSettingsModal';
+import { CheckCircleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import type { AdvancedSettings, PromptVersion } from '../../../contexts/AgentContext';
 import type { IngestionResponse } from '../../../services/api';
 
@@ -15,7 +16,7 @@ interface SummaryStepProps {
     history: PromptVersion[];
     advancedSettings: AdvancedSettings;
     embeddingJobId: string | null;
-    onStartEmbedding: (incremental: boolean) => void;
+    onStartEmbedding: (incremental: boolean, settings?: any) => void;
     onEmbeddingComplete: () => void;
     onEmbeddingError: (err: string) => void;
     onEmbeddingCancel: () => void;
@@ -38,10 +39,48 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
     onEmbeddingCancel,
     onGoToDashboard
 }) => {
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
     const activeVersion = history.find(p => p.is_active);
+
+    // Get default settings for the modal from advancedSettings
+    const getDefaultSettings = () => ({
+        batch_size: 128,
+        max_concurrent: 5,
+        chunking: {
+            parent_chunk_size: advancedSettings.chunking.parentChunkSize,
+            parent_chunk_overlap: advancedSettings.chunking.parentChunkOverlap,
+            child_chunk_size: advancedSettings.chunking.childChunkSize,
+            child_chunk_overlap: advancedSettings.chunking.childChunkOverlap,
+        },
+        parallelization: {
+            num_workers: undefined,
+            chunking_batch_size: undefined,
+            delta_check_batch_size: 50000,
+        },
+        medical_context_config: {
+            medical_context: {},
+            clinical_flag_prefixes: ['is_', 'has_', 'was_', 'history_of_', 'confirmed_', 'requires_', 'on_'],
+            use_yaml_defaults: true,
+        },
+        max_consecutive_failures: 5,
+        retry_attempts: 3,
+    });
+
+    const handleEmbeddingConfirm = (settings: any, incremental: boolean) => {
+        onStartEmbedding(incremental, settings);
+        setShowSettingsModal(false);
+    };
 
     return (
         <div className="h-full flex flex-col overflow-y-auto p-6">
+            {/* Embedding Settings Modal */}
+            <EmbeddingSettingsModal
+                isOpen={showSettingsModal}
+                onClose={() => setShowSettingsModal(false)}
+                onConfirm={handleEmbeddingConfirm}
+                defaultSettings={getDefaultSettings()}
+            />
+
             <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
 
             {/* Success Banner */}
@@ -87,6 +126,14 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
                                     </svg>
                                     Create Vector DB Now
+                                </button>
+                                <button
+                                    onClick={() => setShowSettingsModal(true)}
+                                    className="px-4 py-3 bg-white border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-50 font-semibold transition-all flex items-center gap-2"
+                                    title="Configure batch size, chunking, parallelization, and more"
+                                >
+                                    <Cog6ToothIcon className="w-5 h-5" />
+                                    Advanced Settings
                                 </button>
                                 <span className="text-sm text-amber-600 self-center">
                                     This may take a few minutes depending on your data size.

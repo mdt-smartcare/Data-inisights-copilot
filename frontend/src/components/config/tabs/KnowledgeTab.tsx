@@ -67,8 +67,28 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
         }
     };
 
+    // Get complete default settings for the modal
+    const getDefaultSettings = () => ({
+        batch_size: 128,  // Optimized for GPU
+        max_concurrent: 5,
+        chunking: getChunkingConfig(),
+        parallelization: {
+            num_workers: undefined,
+            chunking_batch_size: undefined,
+            delta_check_batch_size: 50000,
+        },
+        medical_context_config: {
+            medical_context: {},
+            clinical_flag_prefixes: ['is_', 'has_', 'was_', 'history_of_', 'confirmed_', 'requires_', 'on_'],
+            use_yaml_defaults: true,
+        },
+        max_consecutive_failures: 5,
+        retry_attempts: 3,
+    });
+
     const handleEmbeddingConfirm = (settings: any, incremental: boolean) => {
         onStartEmbedding(incremental, settings);
+        setShowSettingsModal(false);
     };
 
     return (
@@ -78,9 +98,7 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                 isOpen={showSettingsModal}
                 onClose={() => setShowSettingsModal(false)}
                 onConfirm={handleEmbeddingConfirm}
-                defaultSettings={{
-                    chunking: getChunkingConfig(),
-                }}
+                defaultSettings={getDefaultSettings()}
             />
 
             {/* Embedding Section */}
