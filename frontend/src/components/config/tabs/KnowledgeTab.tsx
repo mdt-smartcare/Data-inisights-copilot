@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import EmbeddingProgress from '../../EmbeddingProgress';
 import EmbeddingSettingsModal from '../../EmbeddingSettingsModal';
 import ScheduleSelector from '../../ScheduleSelector';
-import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { ActiveConfig, VectorDbStatus } from '../../../contexts/AgentContext';
 
 interface KnowledgeTabProps {
@@ -125,11 +125,20 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                             </div>
                             <div className="flex gap-3">
                                 <button
-                                    onClick={() => setShowSettingsModal(true)}
+                                    onClick={() => onStartEmbedding(true)}
                                     className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all hover:scale-105 active:scale-95 flex items-center gap-2"
+                                    title="Quick incremental sync - only processes new or changed data"
+                                >
+                                    <ArrowPathIcon className="w-4 h-4" />
+                                    Sync Now
+                                </button>
+                                <button
+                                    onClick={() => setShowSettingsModal(true)}
+                                    className="px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold transition-all flex items-center gap-2"
+                                    title="Configure batch size, chunking, parallelization, and more"
                                 >
                                     <Cog6ToothIcon className="w-4 h-4" />
-                                    Update Knowledge
+                                    Advanced
                                 </button>
                                 <button
                                     onClick={() => {
