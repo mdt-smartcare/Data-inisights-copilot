@@ -3,8 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1e40af" />
+    <meta name="description" content="Intelligent clinical data analysis through AI-powered insights" />
+    
+    <!-- PWA Meta Tags -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="AI Copilot" />
+    <meta name="application-name" content="AI Copilot" />
+    <meta name="msapplication-TileColor" content="#1e40af" />
+    
+    <link rel="manifest" href="/manifest.json" />
     <title>Data Insights AI-Copilot</title>
+    
+    <style>
+      /* Prevent pull-to-refresh and overscroll */
+      html, body {
+        overscroll-behavior: none;
+        -webkit-overflow-scrolling: touch;
+      }
+      /* Safe area insets for notched devices */
+      body {
+        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
