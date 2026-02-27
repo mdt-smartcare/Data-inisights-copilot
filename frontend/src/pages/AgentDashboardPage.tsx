@@ -288,51 +288,54 @@ const AgentDashboardPage: React.FC = () => {
             <ChatHeader title={APP_CONFIG.APP_NAME} />
             <div className="flex-1 overflow-auto">
                 <div className="h-full flex flex-col overflow-y-auto">
-                    <header className="bg-white px-8 pt-8 pb-4 border-b border-gray-200">
-                        <div className="flex justify-between items-center mb-6">
-                            <div className="flex items-center gap-4">
+                    <header className="bg-white px-4 sm:px-8 pt-4 sm:pt-8 pb-4 border-b border-gray-200">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
+                            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
                                 <button
                                     onClick={() => navigate('/agents')}
-                                    className="p-2 -ml-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                                    className="p-2 -ml-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
                                     title="Back to Agents"
                                 >
-                                    <ArrowLeftIcon className="w-6 h-6" />
+                                    <ArrowLeftIcon className="w-5 h-5 sm:w-6 sm:h-6" />
                                 </button>
-                                <div>
-                                    <h1 className="text-2xl font-bold text-gray-900">{agent.name}</h1>
-                                    <p className="text-sm text-gray-500">Agent Configuration & Insights Dashboard</p>
+                                <div className="min-w-0">
+                                    <h1 className="text-lg sm:text-2xl font-bold text-gray-900 truncate">{agent.name}</h1>
+                                    <p className="text-xs sm:text-sm text-gray-500 truncate">Agent Configuration & Insights Dashboard</p>
                                 </div>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 flex-shrink-0">
                                 <button
                                     onClick={() => navigate(`/agents/${agent.id}/config`)}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200"
+                                    className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200 text-sm sm:text-base whitespace-nowrap"
                                 >
                                     {canEdit ? 'Edit Active Config' : 'View Configuration'}
                                 </button>
                             </div>
                         </div>
 
-                        {/* Tabs */}
-                        <div className="flex gap-8 border-t border-gray-100 pt-2">
-                            {tabs.map(tab => (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setDashboardTab(tab.id)}
-                                    className={`flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-all
-                                        ${dashboardTab === tab.id
-                                            ? 'border-blue-600 text-blue-600'
-                                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                        }`}
-                                >
-                                    <tab.icon className={`w-5 h-5 ${dashboardTab === tab.id ? 'text-blue-600' : 'text-gray-400'}`} />
-                                    {tab.name}
-                                </button>
-                            ))}
+                        {/* Tabs - Scrollable on mobile */}
+                        <div className="overflow-x-auto -mx-4 sm:-mx-8 px-4 sm:px-8 scrollbar-hide">
+                            <div className="flex gap-4 sm:gap-8 border-t border-gray-100 pt-2 min-w-max">
+                                {tabs.map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setDashboardTab(tab.id)}
+                                        className={`flex items-center gap-1 sm:gap-2 py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-all whitespace-nowrap
+                                            ${dashboardTab === tab.id
+                                                ? 'border-blue-600 text-blue-600'
+                                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <tab.icon className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${dashboardTab === tab.id ? 'text-blue-600' : 'text-gray-400'}`} />
+                                        <span className="hidden sm:inline">{tab.name}</span>
+                                        <span className="sm:hidden">{tab.name.split(' ')[0]}</span>
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     </header>
 
-                    <div className="p-8 pb-16">
+                    <div className="p-4 sm:p-8 pb-16">
                         {activeConfig ? (
                             <div className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                 {dashboardTab === 'overview' && (

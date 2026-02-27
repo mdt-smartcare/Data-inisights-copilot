@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChatHeader } from '../components/chat';
 import Alert from '../components/Alert';
@@ -78,6 +78,10 @@ const AgentConfigPage: React.FC = () => {
     const [history, setHistory] = useState<PromptVersion[]>([]);
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
+
+    // Refs for auto-scrolling steps
+    const stepsContainerRef = useRef<HTMLDivElement>(null);
+    const stepRefs = useRef<(HTMLDivElement | null)[]>([]);
 
     // Status
     const [generating, setGenerating] = useState(false);
@@ -217,6 +221,18 @@ const AgentConfigPage: React.FC = () => {
         (window as any).__config_dictionary = dataDictionary;
     }, [connectionId, selectedSchema, dataDictionary]);
 
+    // Auto-scroll to current step when it changes
+    useEffect(() => {
+        const stepElement = stepRefs.current[currentStep - 1];
+        const container = stepsContainerRef.current;
+        if (stepElement && container) {
+            const containerRect = container.getBoundingClientRect();
+            const stepRect = stepElement.getBoundingClientRect();
+            const scrollLeft = stepRect.left - containerRect.left + container.scrollLeft - (containerRect.width / 2) + (stepRect.width / 2);
+            container.scrollTo({ left: scrollLeft, behavior: 'smooth' });
+        }
+    }, [currentStep]);
+
     // Sync step to URL
     useEffect(() => {
         const currentStepParam = searchParams.get('step');
@@ -273,7 +289,7 @@ const AgentConfigPage: React.FC = () => {
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
             if (result.example_questions) setExampleQuestions(result.example_questions);
-            setCurrentStep(4); // Move to Advanced Settings
+            setCurrentStep(5); // Move to Review & Publish (was incorrectly set to 4)
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -411,59 +427,66 @@ const AgentConfigPage: React.FC = () => {
     }
 
     return (
-        <div className="flex flex-col h-screen bg-gray-50">
+        <div className="flex flex-col h-screen bg-gray-50 overflow-x-hidden">
             <ChatHeader title={APP_CONFIG.APP_NAME} />
             <div className="flex-1 overflow-auto">
-                <div className="max-w-7xl mx-auto py-8 px-4 flex flex-col">
+                <div className="max-w-7xl mx-auto py-4 sm:py-8 px-3 sm:px-4 flex flex-col">
                     {/* Header & Steps */}
-                    <div className="mb-8">
-                        <div className="flex items-center gap-4 mb-6">
+                    <div className="mb-4 sm:mb-8">
+                        <div className="flex items-center gap-2 sm:gap-4 mb-4 sm:mb-6">
                             <button
                                 onClick={() => navigate(`/agents/${agent.id}`)}
-                                className="p-2 -ml-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors"
+                                className="p-2 -ml-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
                                 title="Back to Dashboard"
                             >
-                                <ArrowLeftIcon className="w-6 h-6" />
+                                <ArrowLeftIcon className="w-5 h-5 sm:w-6 sm:h-6" />
                             </button>
-                            <div className="flex-1 flex justify-between items-center">
-                                <div>
-                                    <h1 className="text-2xl font-bold text-gray-900">
-                                        Configure {agent.name} Agent
-                                    </h1>
-                                </div>
-                                <span className="text-sm text-gray-500">Step {currentStep} of 6</span>
+                            <div className="flex-1 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 min-w-0">
+                                <h1 className="text-lg sm:text-2xl font-bold text-gray-900 truncate">
+                                    Configure {agent.name}
+                                </h1>
+                                <span className="text-xs sm:text-sm text-gray-500 flex-shrink-0">Step {currentStep} of 6</span>
                             </div>
                         </div>
 
                         {/* Progress Bar */}
-                        <div className="w-full bg-gray-200 rounded-full h-2 mb-6">
+                        <div className="w-full bg-gray-200 rounded-full h-1.5 sm:h-2 mb-4 sm:mb-6">
                             <div
-                                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                                className="bg-blue-600 h-1.5 sm:h-2 rounded-full transition-all duration-300"
                                 style={{ width: `${(currentStep / 6) * 100}%` }}
                             ></div>
                         </div>
 
-                        {/* Step Indicators */}
-                        <div className="flex justify-between relative">
-                            {steps.map((step) => (
-                                <div key={step.id} className="flex flex-col items-center z-10">
-                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-colors duration-200 
-                                        ${currentStep >= step.id ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-300 text-gray-400'}`}>
-                                        {step.id}
+                        {/* Step Indicators - Scrollable on mobile with auto-scroll */}
+                        <div 
+                            ref={stepsContainerRef}
+                            className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 scrollbar-hide"
+                        >
+                            <div className="flex justify-between relative min-w-[500px] sm:min-w-0">
+                                {steps.map((step, index) => (
+                                    <div 
+                                        key={step.id} 
+                                        ref={(el) => { stepRefs.current[index] = el; }}
+                                        className="flex flex-col items-center z-10"
+                                    >
+                                        <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm font-medium transition-colors duration-200 
+                                            ${currentStep >= step.id ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-300 text-gray-400'}`}>
+                                            {step.id}
+                                        </div>
+                                        <span className={`text-[10px] sm:text-xs mt-1 sm:mt-2 font-medium text-center whitespace-nowrap ${currentStep >= step.id ? 'text-blue-600' : 'text-gray-400'}`}>
+                                            {step.name}
+                                        </span>
                                     </div>
-                                    <span className={`text-xs mt-2 font-medium ${currentStep >= step.id ? 'text-blue-600' : 'text-gray-400'}`}>
-                                        {step.name}
-                                    </span>
-                                </div>
-                            ))}
-                            {/* Connecting Line */}
-                            <div className="absolute top-4 left-0 w-full h-0.5 bg-gray-200 -z-0"></div>
+                                ))}
+                                {/* Connecting Line */}
+                                <div className="absolute top-3 sm:top-4 left-0 w-full h-0.5 bg-gray-200 -z-0"></div>
+                            </div>
                         </div>
                     </div>
 
                     {/* Content Area */}
                     <div className="flex-1 min-h-0 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
-                        <div className="p-6 h-full flex flex-col">
+                        <div className="p-3 sm:p-6 h-full flex flex-col overflow-x-hidden">
                             {successMessage && (
                                 <Alert
                                     type="success"
@@ -558,71 +581,74 @@ const AgentConfigPage: React.FC = () => {
                     </div>
 
                     {/* Footer Navigation */}
-                    <div className="mt-8 flex justify-between">
+                    <div className="mt-4 sm:mt-8 flex flex-col sm:flex-row justify-between gap-3 sm:gap-0">
                         <button
                             onClick={handleBack}
-                            className={`px-6 py-2 rounded-md font-medium ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
+                            className={`px-4 sm:px-6 py-2 rounded-md font-medium text-sm sm:text-base order-2 sm:order-1 ${currentStep === 1 ? 'text-gray-400 cursor-not-allowed' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}
                             disabled={currentStep === 1}
                         >
                             Back
                         </button>
 
-                        {currentStep === 4 ? (
-                            <button
-                                onClick={handleGenerate}
-                                disabled={generating || !canEdit}
-                                className={`px-6 py-2 rounded-md font-medium text-white transition-all duration-200 flex items-center gap-2
-                                    ${generating ? 'bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse' : !canEdit ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                                title={!canEdit ? "Read-only mode" : "Generate Prompt"}
-                            >
-                                {generating ? (
-                                    <>
-                                        <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                        </svg>
-                                        <span>Generating with AI...</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                        </svg>
-                                        <span>Generate Prompt</span>
-                                    </>
-                                )}
-                            </button>
-                        ) : currentStep === 5 ? (
-                            canPublish ? (
+                        <div className="order-1 sm:order-2">
+                            {currentStep === 4 ? (
                                 <button
-                                    onClick={handlePublish}
-                                    disabled={publishing}
-                                    className="px-6 py-2 bg-green-600 text-white rounded-md font-medium hover:bg-green-700 disabled:opacity-50 flex items-center"
+                                    onClick={handleGenerate}
+                                    disabled={generating || !canEdit}
+                                    className={`w-full sm:w-auto px-4 sm:px-6 py-2 rounded-md font-medium text-white text-sm sm:text-base transition-all duration-200 flex items-center justify-center gap-2
+                                        ${generating ? 'bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse' : !canEdit ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                    title={!canEdit ? "Read-only mode" : "Generate Prompt"}
                                 >
-                                    {publishing ? 'Publishing...' : 'Publish to Production'}
+                                    {generating ? (
+                                        <>
+                                            <svg className="animate-spin h-4 w-4 sm:h-5 sm:w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            <span className="hidden sm:inline">Generating with AI...</span>
+                                            <span className="sm:hidden">Generating...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg className="h-4 w-4 sm:h-5 sm:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                            </svg>
+                                            <span>Generate Prompt</span>
+                                        </>
+                                    )}
+                                </button>
+                            ) : currentStep === 5 ? (
+                                canPublish ? (
+                                    <button
+                                        onClick={handlePublish}
+                                        disabled={publishing}
+                                        className="w-full sm:w-auto px-4 sm:px-6 py-2 bg-green-600 text-white rounded-md font-medium text-sm sm:text-base hover:bg-green-700 disabled:opacity-50 flex items-center justify-center"
+                                    >
+                                        {publishing ? 'Publishing...' : 'Publish'}
+                                    </button>
+                                ) : (
+                                    <div className="text-gray-500 italic text-xs sm:text-sm border border-gray-200 rounded px-3 sm:px-4 py-2 bg-gray-50 text-center">
+                                        Publish restricted
+                                    </div>
+                                )
+                            ) : currentStep === 6 ? (
+                                <button
+                                    onClick={handleGoToDashboard}
+                                    className="w-full sm:w-auto px-4 sm:px-6 py-2 bg-blue-600 text-white rounded-md font-medium text-sm sm:text-base hover:bg-blue-700 shadow-md"
+                                >
+                                    Go to Dashboard
                                 </button>
                             ) : (
-                                <div className="text-gray-500 italic text-sm border border-gray-200 rounded px-4 py-2 bg-gray-50">
-                                    Publish restricted: Requires Super Admin
-                                </div>
-                            )
-                        ) : currentStep === 6 ? (
-                            <button
-                                onClick={handleGoToDashboard}
-                                className="px-6 py-2 bg-blue-600 text-white rounded-md font-medium hover:bg-blue-700 shadow-md"
-                            >
-                                Go to Dashboard
-                            </button>
-                        ) : (
-                            <button
-                                onClick={handleNext}
-                                disabled={generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult)}
-                                className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
-                                    ${generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                            >
-                                Next
-                            </button>
-                        )}
+                                <button
+                                    onClick={handleNext}
+                                    disabled={generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult)}
+                                    className={`w-full sm:w-auto px-4 sm:px-6 py-2 rounded-md font-medium text-white text-sm sm:text-base transition-colors duration-200 flex items-center justify-center
+                                        ${generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                >
+                                    Next
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
