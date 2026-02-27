@@ -86,11 +86,11 @@ const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange, readOnly =
             )}
 
             {/* Content Area */}
-            <div className="flex-1 flex overflow-hidden min-h-[700px] relative">
+            <div className="flex-1 flex overflow-hidden min-h-[450px] sm:min-h-[550px] relative">
                 {activeTab === 'write' ? (
                     <textarea
                         ref={textareaRef}
-                        className="flex-1 p-4 font-mono text-sm leading-relaxed resize-none focus:outline-none w-full h-full"
+                        className="flex-1 p-4 font-mono text-xs sm:text-sm leading-relaxed resize-none focus:outline-none w-full h-full min-h-[450px] sm:min-h-[550px]"
                         placeholder="Enter your prompt here..."
                         value={value}
                         onChange={(e) => onChange(e.target.value)}
@@ -98,7 +98,7 @@ const PromptEditor: React.FC<PromptEditorProps> = ({ value, onChange, readOnly =
                         spellCheck={false}
                     />
                 ) : (
-                    <div className="flex-1 p-6 prose prose-sm max-w-none overflow-y-auto bg-white w-full h-full">
+                    <div className="flex-1 p-6 prose prose-sm max-w-none overflow-y-auto bg-white w-full h-full min-h-[450px] sm:min-h-[550px]">
                         <ReactMarkdown remarkPlugins={[remarkGfm]}>
                             {value || '*No content to preview*'}
                         </ReactMarkdown>

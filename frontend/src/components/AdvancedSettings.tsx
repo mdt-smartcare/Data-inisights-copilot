@@ -246,15 +246,15 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
     };
 
     return (
-        <div className="h-full overflow-y-auto p-1">
-            <h2 className="text-xl font-semibold mb-4 text-gray-900">Advanced Configuration</h2>
-            <p className="text-sm text-gray-500 mb-6">
+        <div className="h-full overflow-y-auto overflow-x-hidden p-1 w-full">
+            <h2 className="text-lg sm:text-xl font-semibold mb-2 sm:mb-4 text-gray-900">Advanced Configuration</h2>
+            <p className="text-xs sm:text-sm text-gray-500 mb-4 sm:mb-6">
                 Fine-tune the RAG pipeline parameters. These settings control how data is processed, indexed, and retrieved.
             </p>
 
             {/* Feedback toast */}
             {activationMsg && (
-                <div className={`mb-4 px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 transition-all duration-300 ${activationMsg.startsWith('✓')
+                <div className={`mb-4 px-3 sm:px-4 py-2 sm:py-3 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-all duration-300 ${activationMsg.startsWith('✓')
                     ? 'bg-green-50 text-green-800 border border-green-200'
                     : 'bg-red-50 text-red-800 border border-red-200'
                     }`}>
@@ -262,31 +262,31 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                 </div>
             )}
 
-            <div className="space-y-6">
+            <div className="space-y-4 sm:space-y-6">
                 {/* ============================================================ */}
                 {/* 1. Embedding Configuration                             */}
                 {/* ============================================================ */}
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                    <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-indigo-100 rounded-full">
-                            <svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="bg-white p-3 sm:p-6 rounded-lg border border-gray-200 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
+                        <div className="p-1.5 sm:p-2 bg-indigo-100 rounded-full flex-shrink-0">
+                            <svg className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                             </svg>
                         </div>
-                        <h3 className="text-lg font-medium text-gray-900">Embedding Strategy</h3>
+                        <h3 className="text-base sm:text-lg font-medium text-gray-900">Embedding Strategy</h3>
                         {activeEmbedding && (
-                            <span className="ml-auto inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-green-100 text-green-800">
                                 Active: {activeEmbedding.display_name}
                             </span>
                         )}
                     </div>
 
                     {/* Vector DB Naming Section */}
-                    <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        <label className="block text-sm font-semibold text-gray-800 mb-1">
+                    <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
+                        <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-1">
                             Vector Database Namespace
                         </label>
-                        <p className="text-xs text-gray-500 mb-3">
+                        <p className="text-[10px] sm:text-xs text-gray-500 mb-2 sm:mb-3">
                             A unique identifier for where your embeddings will be stored.
                         </p>
                         <div className="relative">
@@ -296,7 +296,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                                 onChange={(e) => handleChange('embedding', 'vectorDbName', e.target.value)}
                                 disabled={readOnly}
                                 placeholder="e.g. my_dataset_data"
-                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border focus:ring-1 
+                                className={`w-full rounded-md shadow-sm text-xs sm:text-sm p-2 border focus:ring-1 
                                     ${vectorDbValidation.checking ? 'border-gray-300' :
                                         vectorDbValidation.valid ? 'border-green-300 focus:border-green-500 focus:ring-green-500' :
                                             'border-red-300 focus:border-red-500 focus:ring-red-500'}`}
@@ -308,25 +308,25 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                             )}
                         </div>
                         {!vectorDbValidation.checking && vectorDbValidation.message && (
-                            <p className={`mt-1 text-xs ${vectorDbValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
+                            <p className={`mt-1 text-[10px] sm:text-xs ${vectorDbValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
                                 {vectorDbValidation.valid ? '✓ ' : '✗ '}{vectorDbValidation.message}
                             </p>
                         )}
                     </div>
 
                     {loadingModels ? (
-                        <div className="flex items-center gap-2 text-sm text-gray-400 p-3">
+                        <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-400 p-3">
                             <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                             Loading models...
                         </div>
                     ) : modelError || embeddingModels.length === 0 ? (
                         <div className="mb-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Model Name</label>
-                            <input type="text" value={localSettings.embedding.model} onChange={(e) => handleChange('embedding', 'model', e.target.value)} disabled={readOnly} className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border" />
-                            {modelError && <p className="mt-1 text-xs text-amber-600">{modelError}</p>}
+                            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Model Name</label>
+                            <input type="text" value={localSettings.embedding.model} onChange={(e) => handleChange('embedding', 'model', e.target.value)} disabled={readOnly} className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs sm:text-sm p-2 border" />
+                            {modelError && <p className="mt-1 text-[10px] sm:text-xs text-amber-600">{modelError}</p>}
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+                        <div className="grid grid-cols-1 gap-2 sm:gap-3 mb-4">
                             {embeddingModels.map(m => {
                                 const isActive = m.is_active === 1;
                                 const isLoading = activatingId === m.id;
@@ -336,22 +336,22 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                                         type="button"
                                         onClick={() => handleEmbeddingSelect(m.id)}
                                         disabled={readOnly || isActive || !!activatingId}
-                                        className={`text-left p-4 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
+                                        className={`text-left p-3 sm:p-4 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
                                             : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
                                                 : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50 cursor-pointer hover:shadow-sm'
                                             }`}
                                     >
-                                        <div className="flex items-start justify-between">
+                                        <div className="flex items-start justify-between gap-2">
                                             <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <span className={`text-sm font-semibold ${isActive ? 'text-indigo-900' : 'text-gray-800'}`}>{m.display_name}</span>
-                                                    {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Active</span>}
-                                                    {m.is_custom === 1 && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">Custom</span>}
+                                                <div className="flex flex-wrap items-center gap-1 sm:gap-2 mb-1">
+                                                    <span className={`text-xs sm:text-sm font-semibold ${isActive ? 'text-indigo-900' : 'text-gray-800'}`}>{m.display_name}</span>
+                                                    {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Active</span>}
+                                                    {m.is_custom === 1 && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">Custom</span>}
                                                 </div>
-                                                <p className="text-xs text-gray-500 truncate">{m.provider} • {m.model_name}</p>
-                                                <p className="text-xs text-gray-400 mt-1">{m.dimensions}d • Max {m.max_tokens}</p>
+                                                <p className="text-[10px] sm:text-xs text-gray-500 truncate">{m.provider} • {m.model_name}</p>
+                                                <p className="text-[10px] text-gray-400 mt-1">{m.dimensions}d • Max {m.max_tokens}</p>
                                             </div>
-                                            {!isLoading && !isActive && !readOnly && <span className="text-xs text-indigo-500 font-medium ml-2 flex-shrink-0 mt-0.5">Select →</span>}
+                                            {!isLoading && !isActive && !readOnly && <span className="text-[10px] sm:text-xs text-indigo-500 font-medium flex-shrink-0">Select →</span>}
                                         </div>
                                     </button>
                                 );
@@ -362,10 +362,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                                 <button
                                     type="button"
                                     onClick={() => setShowRegisterEmbedding(!showRegisterEmbedding)}
-                                    className="border-2 border-dashed border-gray-300 rounded-lg p-4 flex flex-col items-center justify-center text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-colors"
+                                    className="border-2 border-dashed border-gray-300 rounded-lg p-3 sm:p-4 flex flex-col items-center justify-center text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-colors"
                                 >
-                                    <svg className="w-6 h-6 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                                    <span className="text-sm font-medium">Register Custom Model</span>
+                                    <svg className="w-5 h-5 sm:w-6 sm:h-6 mb-1 sm:mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                                    <span className="text-xs sm:text-sm font-medium">Register Custom Model</span>
                                 </button>
                             )}
                         </div>
@@ -373,37 +373,37 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
 
                     {/* Registration Form */}
                     {showRegisterEmbedding && !readOnly && (
-                        <div className="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-                            <h4 className="text-sm font-medium text-gray-900 mb-3">Register New Embedding Model</h4>
-                            <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="mt-4 p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
+                            <h4 className="text-xs sm:text-sm font-medium text-gray-900 mb-3">Register New Embedding Model</h4>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Provider</label>
-                                    <select value={newModelForm.provider} onChange={e => setNewModelForm({ ...newModelForm, provider: e.target.value })} className="w-full text-sm border-gray-300 rounded-md p-1.5 border">
+                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Provider</label>
+                                    <select value={newModelForm.provider} onChange={e => setNewModelForm({ ...newModelForm, provider: e.target.value })} className="w-full text-xs sm:text-sm border-gray-300 rounded-md p-1.5 border">
                                         <option value="huggingface">HuggingFace</option>
                                         <option value="openai">OpenAI</option>
                                         <option value="sentence-transformers">Sentence Transformers</option>
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Display Name</label>
-                                    <input type="text" placeholder="e.g. My Custom BGE" value={newModelForm.display_name} onChange={e => setNewModelForm({ ...newModelForm, display_name: e.target.value })} className="w-full text-sm rounded-md p-1.5 border border-gray-300" />
+                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Display Name</label>
+                                    <input type="text" placeholder="e.g. My Custom BGE" value={newModelForm.display_name} onChange={e => setNewModelForm({ ...newModelForm, display_name: e.target.value })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
                                 </div>
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Model ID / Name</label>
-                                    <input type="text" placeholder="e.g. BAAI/bge-large-en-v1.5" value={newModelForm.model_name} onChange={e => setNewModelForm({ ...newModelForm, model_name: e.target.value })} className="w-full text-sm rounded-md p-1.5 border border-gray-300" />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Dimensions</label>
-                                    <input type="number" value={newModelForm.dimensions} onChange={e => setNewModelForm({ ...newModelForm, dimensions: parseInt(e.target.value) })} className="w-full text-sm rounded-md p-1.5 border border-gray-300" />
+                                <div className="sm:col-span-2">
+                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Model ID / Name</label>
+                                    <input type="text" placeholder="e.g. BAAI/bge-large-en-v1.5" value={newModelForm.model_name} onChange={e => setNewModelForm({ ...newModelForm, model_name: e.target.value })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
                                 </div>
                                 <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Max Tokens</label>
-                                    <input type="number" value={newModelForm.max_tokens} onChange={e => setNewModelForm({ ...newModelForm, max_tokens: parseInt(e.target.value) })} className="w-full text-sm rounded-md p-1.5 border border-gray-300" />
+                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Dimensions</label>
+                                    <input type="number" value={newModelForm.dimensions} onChange={e => setNewModelForm({ ...newModelForm, dimensions: parseInt(e.target.value) })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Max Tokens</label>
+                                    <input type="number" value={newModelForm.max_tokens} onChange={e => setNewModelForm({ ...newModelForm, max_tokens: parseInt(e.target.value) })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
                                 </div>
                             </div>
                             <div className="flex justify-end gap-2">
                                 <button type="button" onClick={() => setShowRegisterEmbedding(false)} className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 font-medium">Cancel</button>
-                                <button type="button" onClick={() => handleRegisterModel('embedding')} disabled={!newModelForm.model_name || !newModelForm.display_name} className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium disabled:opacity-50">Register Model</button>
+                                <button type="button" onClick={() => handleRegisterModel('embedding')} disabled={!newModelForm.model_name || !newModelForm.display_name} className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium disabled:opacity-50">Register</button>
                             </div>
                         </div>
                     )}
