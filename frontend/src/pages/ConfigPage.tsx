@@ -419,7 +419,7 @@ const ConfigPage: React.FC = () => {
         // Re-fetch backend defaults
         try {
             const { getSystemSettings } = await import('../services/api');
-            const [embSettings, ragSettings] = await Promise.all([
+            const [embSettings, ragSettings, llmSettings] = await Promise.all([
                 getSystemSettings('embedding').catch(() => null),
                 getSystemSettings('rag').catch(() => null),
                 getSystemSettings('llm').catch(() => null)
