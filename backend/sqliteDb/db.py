@@ -41,207 +41,48 @@ class DatabaseService:
         self._run_migrations()
     
     def _run_migrations(self):
-        """Run any pending SQL migrations from the migrations directory."""
+        """Run any pending SQL migrations from the migrations directory.
+        
+        This is the ONLY place where schema changes happen.
+        All table creation and alterations must be done via migration files.
+        """
         try:
-            from backend.sqliteDb.migrations import MigrationRunner
+            # Use relative import to avoid path issues
+            from .migrations import MigrationRunner
             runner = MigrationRunner(self.db_path)
             applied = runner.run_pending_migrations()
             if applied:
                 logger.info(f"Applied {len(applied)} database migrations: {applied}")
+        except ImportError:
+            # Fallback for when running from different contexts
+            try:
+                from backend.sqliteDb.migrations import MigrationRunner
+                runner = MigrationRunner(self.db_path)
+                applied = runner.run_pending_migrations()
+                if applied:
+                    logger.info(f"Applied {len(applied)} database migrations: {applied}")
+            except Exception as e:
+                logger.error(f"Migration runner failed: {e}")
+                raise RuntimeError(f"Database migrations failed: {e}. Cannot start without migrations.")
         except Exception as e:
-            logger.warning(f"Migration runner failed (non-fatal): {e}")
+            logger.error(f"Migration runner failed: {e}")
+            raise RuntimeError(f"Database migrations failed: {e}. Cannot start without migrations.")
     
     def _init_database(self):
-        """Initialize database schema and create default admin user.
+        """Initialize database by running migrations.
         
-        This method:
-        1. Creates the users table if it doesn't exist
-        2. Handles schema migrations (e.g., adding role column to existing databases)
-        3. Creates a default admin user from environment variables
+        This method only ensures the database file exists and runs migrations.
+        ALL schema creation is handled by migration files in the migrations/ directory.
         
-        Environment Variables:
-            ADMIN_USERNAME: Admin username (default: admin)
-            ADMIN_PASSWORD: Admin password (default: admin123 - CHANGE IN PRODUCTION!)
-            ADMIN_EMAIL: Admin email (default: admin@example.com)
-        
-        Note: This runs automatically on service initialization.
+        Industry Standard: Migrations-only approach
+        - 000_initial_schema.sql: Creates all base tables
+        - 001+: Incremental schema changes
         """
         try:
+            # Just ensure we can connect (creates the file if it doesn't exist)
             conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Create users table with all necessary fields for authentication and user management
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    email TEXT UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    full_name TEXT,
-                    role TEXT DEFAULT 'user',
-                    is_active INTEGER DEFAULT 1,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create system_prompts table for dynamic prompt management
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS system_prompts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    prompt_text TEXT NOT NULL,
-                    version INTEGER NOT NULL,
-                    is_active INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_by TEXT,
-                    agent_id INTEGER REFERENCES agents(id)
-                )
-            """)
-
-            # Create db_connections table for managing database endpoints
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS db_connections (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    uri TEXT NOT NULL,
-                    engine_type TEXT DEFAULT 'postgresql',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_by TEXT
-                )
-            """)
-
-            # Create vector_db_registry table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS vector_db_registry (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    data_source_id TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_by TEXT
-                )
-            """)
-
-            # Create prompt_configs table to link prompts to their configuration source
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prompt_configs (
-                    prompt_id INTEGER PRIMARY KEY,
-                    connection_id INTEGER,
-                    schema_selection TEXT, -- JSON string
-                    data_dictionary TEXT,
-                    reasoning TEXT, -- JSON string
-                    example_questions TEXT, -- JSON string list
-                    data_source_type TEXT DEFAULT 'database',
-                    ingestion_documents TEXT, -- JSON string list of ExtractedDocument
-                    ingestion_file_name TEXT,
-                    ingestion_file_type TEXT,
-                    embedding_config TEXT, -- JSON string
-                    retriever_config TEXT, -- JSON string
-                    chunking_config TEXT, -- JSON string
-                    llm_config TEXT, -- JSON string
-                    FOREIGN KEY(prompt_id) REFERENCES system_prompts(id)
-                )
-            """)
-
-            # Create document_index table for incremental embeddings
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS document_index (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    vector_db_name TEXT NOT NULL,
-                    source_id TEXT NOT NULL,
-                    checksum TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(vector_db_name, source_id)
-                )
-            """)
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_index_vdbname ON document_index(vector_db_name)")
-
-            
-            # Add role column if it doesn't exist (migration for existing databases)
-            cursor.execute("PRAGMA table_info(users)")
-            columns = [col[1] for col in cursor.fetchall()]
-            if 'role' not in columns:
-                cursor.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'")
-                logger.info("Added role column to users table")
-
-            # Update vector_db_registry with metadata columns
-            cursor.execute("PRAGMA table_info(vector_db_registry)")
-            vdb_columns = [col[1] for col in cursor.fetchall()]
-            if 'embedding_model' not in vdb_columns:
-                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN embedding_model TEXT")
-            if 'llm' not in vdb_columns:
-                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN llm TEXT")
-            if 'last_full_run' not in vdb_columns:
-                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN last_full_run TIMESTAMP")
-            if 'last_incremental_run' not in vdb_columns:
-                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN last_incremental_run TIMESTAMP")
-            if 'version' not in vdb_columns:
-                cursor.execute("ALTER TABLE vector_db_registry ADD COLUMN version TEXT DEFAULT '1.0.0'")
-            logger.info("Updated vector_db_registry schema with metadata columns")
-
-            # Add reasoning column to prompt_configs if it doesn't exist
-            cursor.execute("PRAGMA table_info(prompt_configs)")
-            pc_columns = [col[1] for col in cursor.fetchall()]
-            if 'reasoning' not in pc_columns:
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN reasoning TEXT")
-                logger.info("Added reasoning column to prompt_configs table")
-
-            if 'example_questions' not in pc_columns:
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN example_questions TEXT")
-                logger.info("Added example_questions column to prompt_configs table")
-            
-            if 'data_source_type' not in pc_columns:
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN data_source_type TEXT DEFAULT 'database'")
-                logger.info("Added data_source_type column to prompt_configs table")
-                
-            if 'ingestion_documents' not in pc_columns:
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_documents TEXT")
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_name TEXT")
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN ingestion_file_type TEXT")
-                logger.info("Added ingestion columns to prompt_configs table")
-
-            if 'embedding_config' not in pc_columns:
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN embedding_config TEXT")
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN retriever_config TEXT")
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN chunking_config TEXT")
-                cursor.execute("ALTER TABLE prompt_configs ADD COLUMN llm_config TEXT")
-                logger.info("Added advanced RAG config columns to prompt_configs table")
-            
-            # Create agents table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS agents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    description TEXT,
-                    type TEXT DEFAULT 'sql', -- 'sql', 'rag', 'supervisor'
-                    db_connection_uri TEXT, -- Encrypted/Secure URI
-                    rag_config_id INTEGER,
-                    system_prompt TEXT,
-                    created_by INTEGER,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(rag_config_id) REFERENCES rag_configurations(id),
-                    FOREIGN KEY(created_by) REFERENCES users(id)
-                )
-            """)
-
-            # Create user_agents table for RBAC
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_agents (
-                    user_id INTEGER,
-                    agent_id INTEGER,
-                    role TEXT DEFAULT 'user', -- 'admin', 'user'
-                    granted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    granted_by INTEGER,
-                    PRIMARY KEY (user_id, agent_id),
-                    FOREIGN KEY(user_id) REFERENCES users(id),
-                    FOREIGN KEY(agent_id) REFERENCES agents(id),
-                    FOREIGN KEY(granted_by) REFERENCES users(id)
-                )
-            """)
-            
-            conn.commit()
             conn.close()
-            logger.info("Database initialized successfully")
+            logger.info("Database connection established")
         except Exception as e:
             logger.error(f"Database initialization failed: {e}")
             raise
@@ -1039,6 +880,24 @@ class DatabaseService:
             JOIN user_agents ua ON a.id = ua.agent_id
             WHERE ua.user_id = ?
         """, (user_id,))
+        rows = cursor.fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def get_agents_for_admin(self, user_id: int) -> list[Dict[str, Any]]:
+        """Get all agents an admin has access to (created by them OR assigned to them).
+        
+        Returns agents with the per-agent role preserved. If the admin created the agent
+        but is not explicitly assigned, they get 'admin' as user_role.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT a.*, COALESCE(ua.role, 'admin') as user_role 
+            FROM agents a
+            LEFT JOIN user_agents ua ON a.id = ua.agent_id AND ua.user_id = ?
+            WHERE a.created_by = ? OR ua.user_id IS NOT NULL
+        """, (user_id, user_id))
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]
