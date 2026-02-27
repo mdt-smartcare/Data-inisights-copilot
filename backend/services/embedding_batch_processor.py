@@ -31,7 +31,7 @@ MIN_MEMORY_HEADROOM_MB = 512  # Keep at least 512MB free
 # Batch size constraints
 MIN_BATCH_SIZE = 10
 MAX_BATCH_SIZE = 500
-DEFAULT_BATCH_SIZE = 50
+DEFAULT_BATCH_SIZE = 128  # Match model's internal batch size for optimal GPU utilization
 
 # Concurrency constraints
 MIN_CONCURRENT = 1
