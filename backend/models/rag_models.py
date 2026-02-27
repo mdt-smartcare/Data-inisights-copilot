@@ -163,6 +163,34 @@ class ParallelizationConfig(BaseModel):
     delta_check_batch_size: int = Field(default=50000, ge=1000, le=100000, description="Documents per delta check batch")
 
 
+class MedicalContextConfig(BaseModel):
+    """
+    Configuration for medical terminology enrichment.
+    
+    Improves embedding quality by expanding clinical abbreviations
+    and recognizing boolean flag patterns in column names.
+    """
+    # Medical abbreviation mappings (column_name -> human_readable_name)
+    # Example: {"bp": "Blood Pressure", "hr": "Heart Rate", "hba1c": "Glycated Hemoglobin"}
+    medical_context: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of column names to human-readable medical terms"
+    )
+    
+    # Clinical boolean flag prefixes to recognize
+    # Example: ["is_", "has_", "was_", "history_of_", "confirmed_"]
+    clinical_flag_prefixes: List[str] = Field(
+        default_factory=lambda: ["is_", "has_", "was_", "history_of_", "flag_", "confirmed_", "requires_", "on_"],
+        description="Column prefixes indicating clinical boolean flags"
+    )
+    
+    # Whether to use defaults from YAML config as base (merge with user config)
+    use_yaml_defaults: bool = Field(
+        default=True,
+        description="Merge with default mappings from embedding_config.yaml"
+    )
+
+
 class EmbeddingJobCreate(BaseModel):
     """Request model for starting a new embedding job."""
     config_id: int = Field(..., description="RAG configuration to generate embeddings for")
@@ -177,6 +205,12 @@ class EmbeddingJobCreate(BaseModel):
     
     # Parallelization Config (optional - uses adaptive defaults if not provided)
     parallelization: Optional[ParallelizationConfig] = Field(default=None, description="Parallelization configuration")
+    
+    # Medical Context Config (optional - improves semantic search for clinical data)
+    medical_context_config: Optional[MedicalContextConfig] = Field(
+        default=None, 
+        description="Medical terminology enrichment configuration"
+    )
     
     # Circuit Breaker Config
     max_consecutive_failures: int = Field(default=5, ge=1, le=20, description="Max consecutive ChromaDB failures before abort")

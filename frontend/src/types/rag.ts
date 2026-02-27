@@ -71,6 +71,23 @@ export interface ParallelizationConfig {
 }
 
 /**
+ * Configuration for medical terminology enrichment.
+ * Improves embedding quality by expanding clinical abbreviations.
+ */
+export interface MedicalContextConfig {
+    // Medical abbreviation mappings (column_name -> human_readable_name)
+    // Example: {"bp": "Blood Pressure", "hr": "Heart Rate"}
+    medical_context: Record<string, string>;
+    
+    // Clinical boolean flag prefixes to recognize
+    // Example: ["is_", "has_", "history_of_"]
+    clinical_flag_prefixes: string[];
+    
+    // Whether to merge with YAML defaults
+    use_yaml_defaults: boolean;
+}
+
+/**
  * Request model for starting a new embedding job.
  * All optional fields have sensible defaults on the backend.
  */
@@ -87,6 +104,9 @@ export interface EmbeddingJobCreate {
     
     // Parallelization Config (optional)
     parallelization?: ParallelizationConfig;
+    
+    // Medical Context Config (optional - improves clinical data search)
+    medical_context_config?: MedicalContextConfig;
     
     // Circuit Breaker Config
     max_consecutive_failures?: number;  // 1-20, default 5
