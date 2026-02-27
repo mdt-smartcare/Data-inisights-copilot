@@ -596,6 +596,7 @@ class EmbeddingBatchProcessor:
         total_batches = math.ceil(total_documents / self.config.batch_size)
         
         logger.info(f"Starting batch processing: {total_documents} documents in {total_batches} batches")
+        logger.info(f"Batch config: size={self.config.batch_size}, concurrent={self.config.max_concurrent}, timeout={self.config.timeout_per_batch_seconds}s")
         
         # Create batches
         batches = []
@@ -611,47 +612,36 @@ class EmbeddingBatchProcessor:
         failed_count = 0
         start_time = time.time()
         
-        # Process batches with concurrency limit
-        semaphore = asyncio.Semaphore(self.config.max_concurrent)
+        # Process batches sequentially to avoid async issues in background tasks
+        # This is more reliable than concurrent processing in FastAPI background context
+        logger.info(f"Processing {len(batches)} batches sequentially...")
         
-        async def process_with_semaphore(batch_info):
-            async with semaphore:
-                if self._cancelled:
-                    return None
-                
-                while self._paused:
-                    await asyncio.sleep(0.5)
-                    if self._cancelled:
-                        return None
-                
-                return await self._process_batch(*batch_info)
-        
-        # Process all batches
-        tasks = [process_with_semaphore(batch) for batch in batches]
-        
-        batches_completed = 0
-        
-        for coro in asyncio.as_completed(tasks):
+        for batch_num, start_idx, batch_docs in batches:
             if self._cancelled:
+                logger.info("Batch processing cancelled")
                 break
             
-            result = await coro
-            if result is None:
-                continue
+            while self._paused:
+                await asyncio.sleep(0.5)
+                if self._cancelled:
+                    break
             
-            batches_completed += 1
-            batch_num, start_idx, batch_docs = batches[result.batch_number - 1]
+            logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch_docs)} docs)...")
+            
+            result = await self._process_batch(batch_num, start_idx, batch_docs)
             
             if result.success and result.embeddings:
                 # Store embeddings
                 for j, emb in enumerate(result.embeddings):
                     all_embeddings[start_idx + j] = emb
                 processed_count += result.documents_processed
+                logger.info(f"Batch {batch_num} completed: {result.documents_processed} docs in {result.processing_time_ms}ms")
             else:
                 # Track failures
                 for j in range(len(batch_docs)):
                     failed_indices.append(start_idx + j)
                 failed_count += len(batch_docs)
+                logger.error(f"Batch {batch_num} failed: {result.error_message}")
             
             # Callbacks
             if on_batch_complete:
@@ -666,8 +656,8 @@ class EmbeddingBatchProcessor:
                 except Exception as e:
                     logger.warning(f"Progress callback failed: {e}")
                     
-            # Detailed console progress logging
-            if batches_completed > 0 and (batches_completed % 10 == 0 or batches_completed == total_batches):
+            # Detailed console progress logging every 10 batches
+            if batch_num % 10 == 0 or batch_num == total_batches:
                 elapsed = time.time() - start_time
                 if elapsed > 0 and processed_count > 0:
                     docs_per_sec = processed_count / elapsed
@@ -677,7 +667,7 @@ class EmbeddingBatchProcessor:
                         import datetime
                         eta_td = datetime.timedelta(seconds=int(eta_seconds))
                         percent = (processed_count / total_documents) * 100
-                        logger.info(f"Batch {batches_completed}/{total_batches} | {processed_count:,}/{total_documents:,} docs | {percent:.1f}% | ETA: {eta_td}")
+                        logger.info(f"Progress: Batch {batch_num}/{total_batches} | {processed_count:,}/{total_documents:,} docs | {percent:.1f}% | ETA: {eta_td}")
         
         total_time = time.time() - start_time
         
