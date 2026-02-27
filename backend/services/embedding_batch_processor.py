@@ -749,8 +749,9 @@ class EmbeddingBatchProcessor:
                     )
                 else:
                     # Fallback: wrap sync call in executor (e.g., BGE, SentenceTransformers)
+                    # Use asyncio.get_running_loop() instead of deprecated get_event_loop()
                     logger.debug(f"Batch {batch_number}: Using executor-wrapped sync embedding")
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     embeddings = await asyncio.wait_for(
                         loop.run_in_executor(
                             None,
@@ -780,6 +781,8 @@ class EmbeddingBatchProcessor:
             except Exception as e:
                 last_error = str(e)
                 logger.warning(f"Batch {batch_number} failed (attempt {attempt + 1}): {e}")
+                import traceback
+                logger.error(f"Batch {batch_number} traceback: {traceback.format_exc()}")
             
             # Exponential backoff before retry
             if attempt < self.config.retry_attempts - 1:
@@ -787,7 +790,7 @@ class EmbeddingBatchProcessor:
                 await asyncio.sleep(delay)
         
         # All retries exhausted
-        logger.error(f"Batch {batch_number} failed after {self.config.retry_attempts} attempts")
+        logger.error(f"Batch {batch_number} failed after {self.config.retry_attempts} attempts: {last_error}")
         
         return BatchResult(
             batch_number=batch_number,

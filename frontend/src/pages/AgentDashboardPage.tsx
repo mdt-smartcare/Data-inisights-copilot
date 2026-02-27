@@ -48,11 +48,14 @@ const AgentDashboardPage: React.FC = () => {
 
     // Load agent
     useEffect(() => {
+        let isMounted = true;
+
         const loadAgent = async () => {
             if (!id) return;
             setIsLoadingAgent(true);
             try {
                 const agents = await getAgents();
+                if (!isMounted) return;
                 const foundAgent = agents.find((a: Agent) => a.id === parseInt(id));
                 if (foundAgent) {
                     setAgent(foundAgent);
@@ -61,22 +64,33 @@ const AgentDashboardPage: React.FC = () => {
                     navigate('/agents');
                 }
             } catch (err) {
+                if (!isMounted) return;
                 console.error('Failed to load agent', err);
                 showError('Error', 'Failed to load agent.');
                 navigate('/agents');
             } finally {
-                setIsLoadingAgent(false);
+                if (isMounted) {
+                    setIsLoadingAgent(false);
+                }
             }
         };
         loadAgent();
-    }, [id, navigate, showError]);
+
+        return () => {
+            isMounted = false;
+        };
+    }, [id, navigate]);
 
     // Load config when agent is loaded
     useEffect(() => {
+        let isMounted = true;
+
         const loadConfig = async () => {
             if (!agent) return;
             try {
                 const config = await getActiveConfigMetadata(agent.id);
+                if (!isMounted) return;
+
                 if (config) {
                     setActiveConfig(config);
 
@@ -98,6 +112,7 @@ const AgentDashboardPage: React.FC = () => {
                     if (config.connection_id) {
                         try {
                             const conns = await getConnections();
+                            if (!isMounted) return;
                             const c = conns.find((x: any) => x.id === config.connection_id);
                             if (c) setConnectionName(c.name);
                         } catch (e) {
@@ -111,11 +126,11 @@ const AgentDashboardPage: React.FC = () => {
                         const vDbName = embConf.vectorDbName || (config.data_source_type === 'database' && config.connection_id ? `db_connection_${config.connection_id}_data` : 'default_vector_db');
                         if (vDbName) {
                             const status = await getVectorDbStatus(vDbName);
-                            setVectorDbStatus(status);
+                            if (isMounted) setVectorDbStatus(status);
                         }
                     } catch (e) {
                         console.log("Could not load Vector DB status");
-                        setVectorDbStatus(null);
+                        if (isMounted) setVectorDbStatus(null);
                     }
 
                     // Fetch any active embedding jobs
@@ -124,6 +139,7 @@ const AgentDashboardPage: React.FC = () => {
                             config_id: config.id || config.prompt_id,
                             limit: 1
                         });
+                        if (!isMounted) return;
                         if (jobs.length > 0) {
                             const latestJob = jobs[0];
                             const activeStatuses = ['QUEUED', 'PREPARING', 'EMBEDDING', 'VALIDATING', 'STORING'];
@@ -137,13 +153,17 @@ const AgentDashboardPage: React.FC = () => {
                 }
                 // Load history
                 const historyData = await getPromptHistory(agent.id);
-                setHistory(historyData);
+                if (isMounted) setHistory(historyData);
             } catch (e) {
                 console.error("Failed to load config", e);
             }
         };
         loadConfig();
-    }, [agent]);
+
+        return () => {
+            isMounted = false;
+        };
+    }, [agent?.id]);
 
     const handleStartEmbedding = async (incremental: boolean = true, settings?: any) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
