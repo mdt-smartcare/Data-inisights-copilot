@@ -3,7 +3,7 @@ name: Deploy to EC2
 on:
   push:
     branches:
-    #   - main
+      - main
       - Chunking-Pipeline  # Your current branch
 
 jobs:
@@ -21,7 +21,4 @@ jobs:
           port: 22
           script: |
             cd ${{ secrets.PROJECT_PATH }}
-            git pull origin main
-            # Add any additional commands you need after pulling, e.g.:
-            # pip install -r requirements.txt
-            # sudo systemctl restart your-service
+            git pull origin Chunking-Pipeline
