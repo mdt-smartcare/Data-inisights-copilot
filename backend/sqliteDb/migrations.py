@@ -87,7 +87,12 @@ class MigrationRunner:
         return hashlib.sha256(content.encode()).hexdigest()[:16]
     
     def _apply_migration(self, conn: sqlite3.Connection, migration_file: Path) -> None:
-        """Apply a single migration file."""
+        """Apply a single migration file.
+        
+        Handles common idempotency issues like:
+        - Duplicate column errors (column already exists)
+        - Duplicate index errors (index already exists)
+        """
         logger.info(f"Applying migration: {migration_file.name}")
         
         content = migration_file.read_text()
@@ -107,6 +112,26 @@ class MigrationRunner:
             conn.commit()
             logger.info(f"Successfully applied migration: {migration_file.name}")
             
+        except sqlite3.OperationalError as e:
+            error_msg = str(e).lower()
+            # Handle idempotent cases - mark migration as applied even if it "failed"
+            # because the schema already has the changes (from _init_database or previous partial run)
+            if 'duplicate column name' in error_msg or 'already exists' in error_msg:
+                logger.info(f"Migration {migration_file.name} skipped (schema already up-to-date): {e}")
+                # Still record the migration as applied
+                conn.rollback()
+                cursor = conn.cursor()
+                checksum = self._calculate_checksum(content)
+                cursor.execute(
+                    "INSERT INTO _migrations (filename, checksum) VALUES (?, ?)",
+                    (migration_file.name, checksum)
+                )
+                conn.commit()
+            else:
+                conn.rollback()
+                logger.error(f"Failed to apply migration {migration_file.name}: {e}")
+                raise
+                
         except sqlite3.Error as e:
             conn.rollback()
             logger.error(f"Failed to apply migration {migration_file.name}: {e}")
