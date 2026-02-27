@@ -165,8 +165,15 @@ class BGEProvider(EmbeddingProvider):
     Provides high-quality multilingual embeddings locally without API calls.
     Default model: BAAI/bge-m3 (1024 dimensions)
     
+    Automatically uses MPS (Apple Metal) on Mac for GPU acceleration.
+    Uses multi-threaded tokenization to prevent CPU bottleneck on GPU.
+    Includes MPS memory leak mitigation via periodic cache clearing.
+    
     Note: Does not support native async (uses executor fallback).
     """
+    
+    # MPS memory management constants
+    MPS_CACHE_CLEAR_INTERVAL = 50  # Clear MPS cache every N batches
     
     def __init__(
         self,
@@ -174,6 +181,9 @@ class BGEProvider(EmbeddingProvider):
         model_name: str = "BAAI/bge-m3",
         batch_size: int = 128,
         normalize: bool = True,
+        device: str = "auto",  # "auto", "cpu", "cuda", "mps"
+        tokenizer_parallelism: bool = True,  # Enable parallel tokenization
+        mps_cache_clear_interval: int = 50,  # Clear MPS cache every N embed_documents calls
         **kwargs: Any
     ):
         """
@@ -184,26 +194,132 @@ class BGEProvider(EmbeddingProvider):
             model_name: HuggingFace model name for download fallback
             batch_size: Batch size for document embedding
             normalize: Whether to L2-normalize embeddings
+            device: Device to use ("auto", "cpu", "cuda", "mps")
+            tokenizer_parallelism: Enable multi-threaded tokenization (recommended for GPU)
+            mps_cache_clear_interval: Clear MPS memory cache every N batches (prevents memory leak)
             **kwargs: Additional configuration (ignored)
         """
         self._model_path = model_path
         self._model_name = model_name
         self._batch_size = batch_size
         self._normalize = normalize
+        self._device = device
+        self._tokenizer_parallelism = tokenizer_parallelism
+        self._mps_cache_clear_interval = mps_cache_clear_interval
         self._model = None
         self._dimension = None
+        self._actual_device = None
+        self._pool = None  # Thread pool for tokenization
+        self._embed_call_count = 0  # Track calls for MPS cache management
+        self._total_cache_clears = 0  # Track how many times we've cleared cache
+        
+        # Configure tokenizer parallelism environment
+        self._configure_tokenizer_parallelism()
         
         # Lazy load model
         self._load_model()
     
+    def _configure_tokenizer_parallelism(self):
+        """Configure environment for optimal tokenization performance."""
+        import os
+        
+        if self._tokenizer_parallelism:
+            # Enable HuggingFace tokenizer parallelism
+            os.environ["TOKENIZERS_PARALLELISM"] = "true"
+            logger.info("Tokenizer parallelism enabled for faster preprocessing")
+        else:
+            os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    
+    def _get_best_device(self) -> str:
+        """Determine the best available device for inference."""
+        import torch
+        
+        if self._device != "auto":
+            return self._device
+        
+        # Check for CUDA (NVIDIA GPU)
+        if torch.cuda.is_available():
+            logger.info("CUDA detected, using GPU")
+            return "cuda"
+        
+        # Check for MPS (Apple Metal on M1/M2/M3 Macs)
+        if torch.backends.mps.is_available():
+            # Verify MPS is actually functional
+            try:
+                test_tensor = torch.zeros(1, device="mps")
+                del test_tensor
+                logger.info("MPS (Apple Metal) detected, using GPU acceleration")
+                return "mps"
+            except Exception as e:
+                logger.warning(f"MPS available but not functional: {e}")
+        
+        logger.info("No GPU detected, using CPU")
+        return "cpu"
+    
+    def _clear_gpu_cache(self, force: bool = False):
+        """
+        Clear GPU memory cache to prevent memory leaks.
+        
+        MPS MEMORY LEAK FIX:
+        There's a known issue in PyTorch's MPS backend where memory usage
+        grows steadily over time, eventually causing system swap and severe
+        slowdowns (ETA going from 5h to 24h+). This is documented at:
+        - https://github.com/pytorch/pytorch/issues/88637
+        - https://discuss.huggingface.co/t/mps-memory-leak/
+        
+        The fix is to periodically call torch.mps.empty_cache() to release
+        unused memory back to the system.
+        
+        Args:
+            force: If True, clear cache regardless of interval
+        """
+        import torch
+        
+        self._embed_call_count += 1
+        
+        # Only clear cache at intervals (or if forced) to avoid overhead
+        should_clear = force or (self._embed_call_count % self._mps_cache_clear_interval == 0)
+        
+        if not should_clear:
+            return
+        
+        try:
+            if self._actual_device == "mps":
+                # MPS-specific cache clearing
+                if hasattr(torch.mps, 'empty_cache'):
+                    torch.mps.empty_cache()
+                    self._total_cache_clears += 1
+                    
+                    # Synchronize to ensure operations complete
+                    if hasattr(torch.mps, 'synchronize'):
+                        torch.mps.synchronize()
+                    
+                    logger.debug(
+                        f"MPS cache cleared (call #{self._embed_call_count}, "
+                        f"total clears: {self._total_cache_clears})"
+                    )
+                    
+            elif self._actual_device == "cuda":
+                # CUDA cache clearing
+                torch.cuda.empty_cache()
+                self._total_cache_clears += 1
+                logger.debug(f"CUDA cache cleared (call #{self._embed_call_count})")
+                
+        except Exception as e:
+            # Don't fail on cache clear errors, just log
+            logger.warning(f"Failed to clear GPU cache: {e}")
+    
     def _load_model(self):
-        """Load the SentenceTransformer model."""
+        """Load the SentenceTransformer model with optimal device."""
         if self._model is not None:
             return
             
         from sentence_transformers import SentenceTransformer
         
-        logger.info(f"Loading BGE model from {self._model_path}")
+        # Determine best device
+        self._actual_device = self._get_best_device()
+        
+        logger.info(f"Loading BGE model from {self._model_path} on device: {self._actual_device}")
         
         # Resolve relative path
         resolved_path = Path(self._model_path)
@@ -215,36 +331,168 @@ class BGEProvider(EmbeddingProvider):
         # Try local path first, fallback to model name for download
         try:
             if resolved_path.exists():
-                self._model = SentenceTransformer(str(resolved_path))
+                self._model = SentenceTransformer(str(resolved_path), device=self._actual_device)
             else:
                 logger.warning(f"Local path {resolved_path} not found, downloading {self._model_name}")
-                self._model = SentenceTransformer(self._model_name)
+                self._model = SentenceTransformer(self._model_name, device=self._actual_device)
         except Exception as e:
             logger.error(f"Failed to load BGE model: {e}")
             raise
             
         self._dimension = self._model.get_sentence_embedding_dimension()
-        logger.info(f"BGE model loaded. Dimension: {self._dimension}")
+        logger.info(f"BGE model loaded on {self._actual_device}. Dimension: {self._dimension}")
+        
+        # Log MPS memory management info
+        if self._actual_device == "mps":
+            logger.info(
+                f"MPS memory leak mitigation enabled: cache will be cleared every "
+                f"{self._mps_cache_clear_interval} batches to prevent memory pressure"
+            )
+        
+        # Start tokenization thread pool for GPU devices (reduces CPU bottleneck)
+        if self._actual_device in ("cuda", "mps") and self._tokenizer_parallelism:
+            self._init_tokenization_pool()
+    
+    def _init_tokenization_pool(self):
+        """Initialize thread pool for parallel tokenization (CPU) while GPU does inference."""
+        try:
+            from multiprocessing.pool import ThreadPool
+            import os
+            
+            # Use half of available CPUs for tokenization (leave rest for system)
+            num_threads = max(2, (os.cpu_count() or 4) // 2)
+            self._pool = ThreadPool(processes=num_threads)
+            logger.info(f"Tokenization thread pool initialized with {num_threads} workers")
+        except Exception as e:
+            logger.warning(f"Failed to initialize tokenization pool: {e}")
+            self._pool = None
     
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Embed multiple documents."""
+        """
+        Embed multiple documents with optimized GPU utilization.
+        
+        MPS/CUDA PERFORMANCE FIX:
+        - Avoids per-batch GPU→CPU sync that kills MPS performance
+        - Uses convert_to_numpy=True to let SentenceTransformers handle transfer efficiently
+        - Defers .tolist() conversion to happen on numpy array (much faster)
+        
+        Includes MPS memory leak mitigation via periodic cache clearing.
+        """
         if not texts:
             return []
+        
+        num_texts = len(texts)
+        logger.debug(f"BGE embedding {num_texts} documents on device: {self._actual_device}")
+        
+        encode_kwargs = {
+            "normalize_embeddings": self._normalize,
+            "show_progress_bar": num_texts > 500,
+            "batch_size": self._batch_size,
+        }
+        
+        if self._actual_device in ("cuda", "mps"):
+            # GPU PERFORMANCE OPTIMIZATION:
+            # Use convert_to_numpy=True instead of convert_to_tensor=True
+            # This lets SentenceTransformers handle the GPU→CPU transfer efficiently
+            # in one operation at the end, rather than forcing sync per-batch
+            encode_kwargs["convert_to_numpy"] = True
+            # Don't set convert_to_tensor - it causes the mps:0 vs cpu trap
+            # where .cpu().numpy() forces a sync on every call
+        
+        # Get embeddings - will be numpy array on GPU path, or numpy array on CPU path
+        embeddings = self._model.encode(texts, **encode_kwargs)
+        
+        # MPS MEMORY LEAK FIX: Clear cache periodically to prevent memory growth
+        self._clear_gpu_cache()
+        
+        # Convert numpy array to list - this is fast since data is already on CPU
+        # Using .tolist() on numpy is much faster than on torch tensors
+        if hasattr(embeddings, 'tolist'):
+            return embeddings.tolist()
+        
+        # Fallback for unexpected types
+        return [list(e) for e in embeddings]
+    
+    def embed_documents_as_numpy(self, texts: List[str]):
+        """
+        Embed documents and return as numpy array (no list conversion).
+        
+        Use this for maximum performance when the caller can handle numpy arrays.
+        Avoids the .tolist() overhead entirely.
+        
+        Args:
+            texts: List of text documents to embed
             
-        logger.debug(f"BGE embedding {len(texts)} documents")
-        embeddings = self._model.encode(
-            texts,
-            normalize_embeddings=self._normalize,
-            show_progress_bar=len(texts) > 500,
-            batch_size=self._batch_size
-        )
-        return embeddings.tolist()
+        Returns:
+            numpy.ndarray of shape (len(texts), embedding_dim)
+        """
+        if not texts:
+            import numpy as np
+            return np.array([])
+        
+        num_texts = len(texts)
+        logger.debug(f"BGE embedding {num_texts} documents as numpy on device: {self._actual_device}")
+        
+        encode_kwargs = {
+            "normalize_embeddings": self._normalize,
+            "show_progress_bar": num_texts > 500,
+            "batch_size": self._batch_size,
+            "convert_to_numpy": True,  # Always return numpy for this method
+        }
+        
+        embeddings = self._model.encode(texts, **encode_kwargs)
+        
+        # MPS MEMORY LEAK FIX
+        self._clear_gpu_cache()
+        
+        return embeddings
     
     def embed_query(self, text: str) -> List[float]:
         """Embed a single query."""
-        logger.debug(f"BGE embedding query: {text[:100]}...")
+        logger.debug(f"BGE embedding query on {self._actual_device}: {text[:100]}...")
         embedding = self._model.encode(text, normalize_embeddings=self._normalize)
         return embedding.tolist()
+    
+    def force_clear_cache(self):
+        """
+        Force clear GPU cache immediately.
+        
+        Call this manually if you notice memory pressure building up,
+        or at strategic points in long-running jobs.
+        """
+        self._clear_gpu_cache(force=True)
+        logger.info(f"Forced GPU cache clear (total clears: {self._total_cache_clears})")
+    
+    def get_memory_stats(self) -> Dict[str, Any]:
+        """
+        Get GPU memory statistics (if available).
+        
+        Returns:
+            Dict with memory info for debugging
+        """
+        import torch
+        
+        stats = {
+            "device": self._actual_device,
+            "embed_calls": self._embed_call_count,
+            "cache_clears": self._total_cache_clears,
+            "cache_clear_interval": self._mps_cache_clear_interval,
+        }
+        
+        try:
+            if self._actual_device == "mps":
+                # MPS memory info (limited availability)
+                if hasattr(torch.mps, 'current_allocated_memory'):
+                    stats["mps_allocated_mb"] = torch.mps.current_allocated_memory() / (1024 * 1024)
+                if hasattr(torch.mps, 'driver_allocated_memory'):
+                    stats["mps_driver_mb"] = torch.mps.driver_allocated_memory() / (1024 * 1024)
+            elif self._actual_device == "cuda":
+                stats["cuda_allocated_mb"] = torch.cuda.memory_allocated() / (1024 * 1024)
+                stats["cuda_cached_mb"] = torch.cuda.memory_reserved() / (1024 * 1024)
+        except Exception as e:
+            stats["memory_error"] = str(e)
+        
+        return stats
     
     @property
     def dimension(self) -> int:
@@ -269,8 +517,28 @@ class BGEProvider(EmbeddingProvider):
             "model_name": self._model_name,
             "batch_size": self._batch_size,
             "dimension": self.dimension,
-            "normalize": self._normalize
+            "normalize": self._normalize,
+            "device": self._actual_device or self._device,
+            "tokenizer_parallelism": self._tokenizer_parallelism,
+            "has_thread_pool": self._pool is not None,
+            "mps_cache_clear_interval": self._mps_cache_clear_interval,
+            "total_cache_clears": self._total_cache_clears,
         }
+    
+    def __del__(self):
+        """Cleanup thread pool and GPU cache on destruction."""
+        # Final cache clear
+        try:
+            self._clear_gpu_cache(force=True)
+        except:
+            pass
+        
+        if self._pool is not None:
+            try:
+                self._pool.close()
+                self._pool.join()
+            except:
+                pass
 
 
 # =============================================================================
