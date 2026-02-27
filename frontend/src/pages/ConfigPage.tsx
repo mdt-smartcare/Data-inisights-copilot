@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion, getSystemSettings, listEmbeddingJobs } from '../services/api';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion, listEmbeddingJobs } from '../services/api';
 import type { IngestionResponse } from '../services/api';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
@@ -82,7 +82,8 @@ const ConfigPage: React.FC = () => {
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
     const [history, setHistory] = useState<any[]>([]);
-    const [showHistory, setShowHistory] = useState(false);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const [showHistory, _setShowHistory] = useState(false);
     const [showClearConfirm, setShowClearConfirm] = useState(false);
     const [replaceConfirm, setReplaceConfirm] = useState<{ show: boolean; version: any | null }>({ show: false, version: null });
 
@@ -430,6 +431,10 @@ const ConfigPage: React.FC = () => {
                 if (ragSettings) {
                     if (ragSettings.chunk_size) next.chunking.parentChunkSize = ragSettings.chunk_size;
                     if (ragSettings.chunk_overlap) next.chunking.parentChunkOverlap = ragSettings.chunk_overlap;
+                }
+                if (llmSettings) {
+                    if (llmSettings.temperature !== undefined) next.llm.temperature = llmSettings.temperature;
+                    if (llmSettings.max_tokens) next.llm.maxTokens = llmSettings.max_tokens;
                 }
                 return next;
             });
@@ -1835,7 +1840,7 @@ const ConfigPage: React.FC = () => {
                 onClose={() => setShowEmbeddingSettings(false)}
                 onConfirm={handleStartEmbeddingWithSettings}
                 defaultSettings={{
-                    batch_size: 50,
+                    batch_size: 128,  // Optimized for GPU (MPS/CUDA) with local models
                     max_concurrent: 5,
                     chunking: {
                         parent_chunk_size: advancedSettings.chunking.parentChunkSize,

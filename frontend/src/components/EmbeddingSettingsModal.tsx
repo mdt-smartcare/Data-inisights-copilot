@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { Cog6ToothIcon, XMarkIcon, InformationCircleIcon, PencilIcon } from '@heroicons/react/24/outline';
-import type { ChunkingConfig, ParallelizationConfig } from '../types/rag';
+import type { ChunkingConfig, ParallelizationConfig, MedicalContextConfig } from '../types/rag';
 
 interface EmbeddingSettings {
     batch_size: number;
     max_concurrent: number;
     chunking: ChunkingConfig;
     parallelization: ParallelizationConfig;
+    medical_context_config: MedicalContextConfig;
     max_consecutive_failures: number;
     retry_attempts: number;
 }
@@ -19,7 +20,7 @@ interface EmbeddingSettingsModalProps {
 }
 
 const defaultConfig: EmbeddingSettings = {
-    batch_size: 50,
+    batch_size: 128,  // Optimized for GPU (MPS/CUDA) with local models like BGE-M3
     max_concurrent: 5,
     chunking: {
         parent_chunk_size: 800,
@@ -31,6 +32,11 @@ const defaultConfig: EmbeddingSettings = {
         num_workers: undefined, // auto
         chunking_batch_size: undefined, // auto
         delta_check_batch_size: 50000,
+    },
+    medical_context_config: {
+        medical_context: {},
+        clinical_flag_prefixes: ['is_', 'has_', 'was_', 'history_of_', 'confirmed_', 'requires_', 'on_'],
+        use_yaml_defaults: true,
     },
     max_consecutive_failures: 5,
     retry_attempts: 3,
@@ -142,7 +148,7 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
                                 min={10}
                                 max={500}
                                 value={settings.batch_size}
-                                onChange={(e) => setSettings({ ...settings, batch_size: parseInt(e.target.value) || 50 })}
+                                onChange={(e) => setSettings({ ...settings, batch_size: parseInt(e.target.value) || 128 })}
                                 className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                             />
                         </div>
@@ -293,6 +299,172 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
 
                     {showAdvanced && (
                         <div className="space-y-4 animate-in slide-in-from-top-2 duration-200">
+                            {/* Medical Context Settings */}
+                            <div className="bg-emerald-50/50 rounded-lg p-4 border border-emerald-100">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h4 className="text-xs font-semibold text-emerald-900 uppercase tracking-wider flex items-center gap-1">
+                                        Medical Context Enrichment
+                                        <Tooltip text="Map column names to human-readable medical terms for better semantic search. E.g., 'bp' → 'Blood Pressure'" />
+                                    </h4>
+                                    <label className="flex items-center gap-2 text-xs">
+                                        <input
+                                            type="checkbox"
+                                            checked={settings.medical_context_config.use_yaml_defaults}
+                                            onChange={(e) => setSettings({
+                                                ...settings,
+                                                medical_context_config: {
+                                                    ...settings.medical_context_config,
+                                                    use_yaml_defaults: e.target.checked
+                                                }
+                                            })}
+                                            className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+                                        />
+                                        <span className="text-gray-600">Use server defaults</span>
+                                    </label>
+                                </div>
+                                
+                                {/* Medical abbreviation mappings */}
+                                <div className="mb-3">
+                                    <label className="text-xs font-medium text-gray-600 mb-2 block">
+                                        Column → Medical Term Mappings
+                                    </label>
+                                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                                        {Object.entries(settings.medical_context_config.medical_context).map(([key, value], idx) => (
+                                            <div key={idx} className="flex gap-2 items-center">
+                                                <input
+                                                    type="text"
+                                                    value={key}
+                                                    placeholder="Column (e.g., bp)"
+                                                    onChange={(e) => {
+                                                        const newContext = { ...settings.medical_context_config.medical_context };
+                                                        delete newContext[key];
+                                                        newContext[e.target.value] = value;
+                                                        setSettings({
+                                                            ...settings,
+                                                            medical_context_config: {
+                                                                ...settings.medical_context_config,
+                                                                medical_context: newContext
+                                                            }
+                                                        });
+                                                    }}
+                                                    className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs"
+                                                />
+                                                <span className="text-gray-400">→</span>
+                                                <input
+                                                    type="text"
+                                                    value={value}
+                                                    placeholder="Term (e.g., Blood Pressure)"
+                                                    onChange={(e) => {
+                                                        setSettings({
+                                                            ...settings,
+                                                            medical_context_config: {
+                                                                ...settings.medical_context_config,
+                                                                medical_context: {
+                                                                    ...settings.medical_context_config.medical_context,
+                                                                    [key]: e.target.value
+                                                                }
+                                                            }
+                                                        });
+                                                    }}
+                                                    className="flex-1 px-2 py-1 border border-gray-300 rounded text-xs"
+                                                />
+                                                <button
+                                                    onClick={() => {
+                                                        const newContext = { ...settings.medical_context_config.medical_context };
+                                                        delete newContext[key];
+                                                        setSettings({
+                                                            ...settings,
+                                                            medical_context_config: {
+                                                                ...settings.medical_context_config,
+                                                                medical_context: newContext
+                                                            }
+                                                        });
+                                                    }}
+                                                    className="p-1 text-red-500 hover:bg-red-50 rounded"
+                                                    title="Remove mapping"
+                                                >
+                                                    <XMarkIcon className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <button
+                                        onClick={() => {
+                                            setSettings({
+                                                ...settings,
+                                                medical_context_config: {
+                                                    ...settings.medical_context_config,
+                                                    medical_context: {
+                                                        ...settings.medical_context_config.medical_context,
+                                                        '': ''
+                                                    }
+                                                }
+                                            });
+                                        }}
+                                        className="mt-2 text-xs text-emerald-600 hover:text-emerald-700 flex items-center gap-1"
+                                    >
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                        </svg>
+                                        Add mapping
+                                    </button>
+                                </div>
+
+                                {/* Clinical flag prefixes */}
+                                <div>
+                                    <label className="text-xs font-medium text-gray-600 mb-2 block">
+                                        Clinical Flag Prefixes (columns starting with these are expanded)
+                                    </label>
+                                    <div className="flex flex-wrap gap-1">
+                                        {settings.medical_context_config.clinical_flag_prefixes.map((prefix, idx) => (
+                                            <span
+                                                key={idx}
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded text-xs"
+                                            >
+                                                {prefix}
+                                                <button
+                                                    onClick={() => {
+                                                        setSettings({
+                                                            ...settings,
+                                                            medical_context_config: {
+                                                                ...settings.medical_context_config,
+                                                                clinical_flag_prefixes: settings.medical_context_config.clinical_flag_prefixes.filter((_, i) => i !== idx)
+                                                            }
+                                                        });
+                                                    }}
+                                                    className="hover:text-red-600"
+                                                >
+                                                    ×
+                                                </button>
+                                            </span>
+                                        ))}
+                                        <input
+                                            type="text"
+                                            placeholder="Add prefix..."
+                                            className="px-2 py-0.5 border border-dashed border-gray-300 rounded text-xs w-20"
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' && e.currentTarget.value) {
+                                                    setSettings({
+                                                        ...settings,
+                                                        medical_context_config: {
+                                                            ...settings.medical_context_config,
+                                                            clinical_flag_prefixes: [
+                                                                ...settings.medical_context_config.clinical_flag_prefixes,
+                                                                e.currentTarget.value
+                                                            ]
+                                                        }
+                                                    });
+                                                    e.currentTarget.value = '';
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-gray-400 mt-1">
+                                        Example: is_diabetic → "Is Diabetic: Yes/No"
+                                    </p>
+                                </div>
+                            </div>
+
                             {/* Parallelization Settings */}
                             <div className="bg-purple-50/50 rounded-lg p-4 border border-purple-100">
                                 <h4 className="text-xs font-semibold text-purple-900 mb-3 uppercase tracking-wider">Parallelization</h4>
