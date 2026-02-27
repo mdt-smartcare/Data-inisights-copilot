@@ -47,6 +47,8 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
             success('Agent Created', `${newAgent.name} has been created.`);
             setShowCreateModal(false);
             setNewAgentData({ name: '', description: '' });
+            // Navigate to configure the new agent
+            onSelectAgent(newAgent);
         } catch (err) {
             showError('Failed to create agent', handleApiError(err));
         } finally {
