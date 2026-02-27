@@ -567,7 +567,7 @@ const AgentConfigPage: React.FC = () => {
                             Back
                         </button>
 
-                        {currentStep === 3 ? (
+                        {currentStep === 4 ? (
                             <button
                                 onClick={handleGenerate}
                                 disabled={generating || !canEdit}
