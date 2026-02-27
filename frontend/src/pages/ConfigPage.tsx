@@ -1709,7 +1709,7 @@ const ConfigPage: React.FC = () => {
                                             </>
                                         )}
                                     </button>
-                                ) : currentStep === 5 ? (
+                                ) : currentStep === 6 ? (
                                     canPublish ? (
                                         <button
                                             onClick={handlePublish}
@@ -1730,7 +1730,7 @@ const ConfigPage: React.FC = () => {
                                         className={`px-6 py-2 rounded-md font-medium text-white transition-colors duration-200 flex items-center
                                 ${generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                     >
-                                        {publishing ? 'Publishing...' : currentStep === 6 ? 'Done' : 'Next'}
+                                        {publishing ? 'Publishing...' : currentStep === 7 ? 'Done' : 'Next'}
                                     </button>
                                 )}
                             </div>
