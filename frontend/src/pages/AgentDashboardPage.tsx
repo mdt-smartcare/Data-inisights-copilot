@@ -145,27 +145,36 @@ const AgentDashboardPage: React.FC = () => {
         loadConfig();
     }, [agent]);
 
-    const handleStartEmbedding = async (incremental: boolean = true) => {
+    const handleStartEmbedding = async (incremental: boolean = true, settings?: any) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
         if (!configId) return;
 
         try {
-            let batchSize = 50;
-            let maxConcurrent = 5;
+            // Use settings from modal if provided, otherwise fetch defaults
+            let batchSize = settings?.batch_size || 50;
+            let maxConcurrent = settings?.max_concurrent || 5;
 
-            try {
-                const settings = await getSystemSettings('embedding');
-                if (settings?.batch_size) batchSize = settings.batch_size;
-                if (settings?.max_concurrent) maxConcurrent = settings.max_concurrent;
-            } catch (err) {
-                console.warn('Failed to fetch embedding settings, using defaults', err);
+            if (!settings) {
+                try {
+                    const systemSettings = await getSystemSettings('embedding');
+                    if (systemSettings?.batch_size) batchSize = systemSettings.batch_size;
+                    if (systemSettings?.max_concurrent) maxConcurrent = systemSettings.max_concurrent;
+                } catch (err) {
+                    console.warn('Failed to fetch embedding settings, using defaults', err);
+                }
             }
 
             const result = await startEmbeddingJob({
                 config_id: configId,
                 batch_size: batchSize,
                 max_concurrent: maxConcurrent,
-                incremental: incremental
+                incremental: incremental,
+                // Pass additional settings from modal
+                chunking: settings?.chunking,
+                parallelization: settings?.parallelization,
+                medical_context_config: settings?.medical_context_config,
+                max_consecutive_failures: settings?.max_consecutive_failures,
+                retry_attempts: settings?.retry_attempts,
             });
             setEmbeddingJobId(result.job_id);
             showSuccess('Embedding Job Started', result.message);

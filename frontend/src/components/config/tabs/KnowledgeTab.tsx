@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import EmbeddingProgress from '../../EmbeddingProgress';
+import EmbeddingSettingsModal from '../../EmbeddingSettingsModal';
 import ScheduleSelector from '../../ScheduleSelector';
-import { CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import type { ActiveConfig, VectorDbStatus } from '../../../contexts/AgentContext';
 
 interface KnowledgeTabProps {
     activeConfig: ActiveConfig;
     vectorDbStatus: VectorDbStatus | null;
     embeddingJobId: string | null;
-    onStartEmbedding: (incremental: boolean) => void;
+    onStartEmbedding: (incremental: boolean, settings?: any) => void;
     onEmbeddingComplete: () => void;
     onEmbeddingError: (err: string) => void;
     onEmbeddingCancel: () => void;
@@ -23,6 +24,8 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
     onEmbeddingError,
     onEmbeddingCancel
 }) => {
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
+
     // Get vector DB name from config
     const getVectorDbName = () => {
         try {
@@ -40,8 +43,46 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
         }
     };
 
+    // Get chunking config from activeConfig for default settings
+    const getChunkingConfig = () => {
+        try {
+            const chunkConf = activeConfig.chunking_config
+                ? (typeof activeConfig.chunking_config === 'string'
+                    ? JSON.parse(activeConfig.chunking_config)
+                    : activeConfig.chunking_config)
+                : {};
+            return {
+                parent_chunk_size: chunkConf.parentChunkSize || 800,
+                parent_chunk_overlap: chunkConf.parentChunkOverlap || 150,
+                child_chunk_size: chunkConf.childChunkSize || 200,
+                child_chunk_overlap: chunkConf.childChunkOverlap || 50,
+            };
+        } catch {
+            return {
+                parent_chunk_size: 800,
+                parent_chunk_overlap: 150,
+                child_chunk_size: 200,
+                child_chunk_overlap: 50,
+            };
+        }
+    };
+
+    const handleEmbeddingConfirm = (settings: any, incremental: boolean) => {
+        onStartEmbedding(incremental, settings);
+    };
+
     return (
         <div className="space-y-8">
+            {/* Embedding Settings Modal */}
+            <EmbeddingSettingsModal
+                isOpen={showSettingsModal}
+                onClose={() => setShowSettingsModal(false)}
+                onConfirm={handleEmbeddingConfirm}
+                defaultSettings={{
+                    chunking: getChunkingConfig(),
+                }}
+            />
+
             {/* Embedding Section */}
             <div>
                 <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
@@ -66,9 +107,10 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                             </div>
                             <div className="flex gap-3">
                                 <button
-                                    onClick={() => onStartEmbedding(true)}
-                                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all hover:scale-105 active:scale-95"
+                                    onClick={() => setShowSettingsModal(true)}
+                                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all hover:scale-105 active:scale-95 flex items-center gap-2"
                                 >
+                                    <Cog6ToothIcon className="w-4 h-4" />
                                     Update Knowledge
                                 </button>
                                 <button
