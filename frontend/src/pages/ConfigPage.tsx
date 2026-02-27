@@ -24,7 +24,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import type { Agent } from '../types/agent';
 import { canEditPrompt, canManageConnections, canPublishPrompt } from '../utils/permissions';
-import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon, ArrowPathRoundedSquareIcon, UserGroupIcon } from '@heroicons/react/24/outline';
+import { ArrowLeftIcon, Cog6ToothIcon, CheckCircleIcon, CommandLineIcon, AdjustmentsVerticalIcon, ArrowPathRoundedSquareIcon, UserGroupIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
 import { MessageList, ChatInput } from '../components/chat';
 import { chatService } from '../services/chatService';
 import type { Message } from '../types';
@@ -413,7 +413,7 @@ const ConfigPage: React.FC = () => {
         // Re-fetch backend defaults
         try {
             const { getSystemSettings } = await import('../services/api');
-            const [embSettings, ragSettings, llmSettings] = await Promise.all([
+            const [embSettings, ragSettings] = await Promise.all([
                 getSystemSettings('embedding').catch(() => null),
                 getSystemSettings('rag').catch(() => null),
                 getSystemSettings('llm').catch(() => null)
@@ -688,14 +688,6 @@ const ConfigPage: React.FC = () => {
                                             </div>
                                         </div>
                                         <div className="flex gap-2">
-                                            {canEdit && (
-                                                <button
-                                                    onClick={handleStartNew}
-                                                    className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-100"
-                                                >
-                                                    New Configuration
-                                                </button>
-                                            )}
                                             <button
                                                 onClick={handleEditCurrent}
                                                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200"

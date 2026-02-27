@@ -132,7 +132,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
                         <button
                             onClick={() => {
                                 setIsOpen(false);
-                                navigate('/config');
+                                navigate('/agents');
                             }}
                             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-600 hover:bg-gray-50 hover:text-indigo-600 rounded-md transition-colors"
                         >
