@@ -1,0 +1,163 @@
+import React from 'react';
+import ConfigSummary from '../../ConfigSummary';
+import EmbeddingProgress from '../../EmbeddingProgress';
+import { CheckCircleIcon } from '@heroicons/react/24/outline';
+import type { AdvancedSettings, PromptVersion } from '../../../contexts/AgentContext';
+import type { IngestionResponse } from '../../../services/api';
+
+interface SummaryStepProps {
+    connectionId: number | null;
+    connectionName: string;
+    dataSourceType: 'database' | 'file';
+    fileUploadResult: IngestionResponse | null;
+    selectedSchema: Record<string, string[]>;
+    dataDictionary: string;
+    history: PromptVersion[];
+    advancedSettings: AdvancedSettings;
+    embeddingJobId: string | null;
+    onStartEmbedding: (incremental: boolean) => void;
+    onEmbeddingComplete: () => void;
+    onEmbeddingError: (err: string) => void;
+    onEmbeddingCancel: () => void;
+    onGoToDashboard: () => void;
+}
+
+export const SummaryStep: React.FC<SummaryStepProps> = ({
+    connectionId,
+    connectionName,
+    dataSourceType,
+    fileUploadResult,
+    selectedSchema,
+    dataDictionary,
+    history,
+    advancedSettings,
+    embeddingJobId,
+    onStartEmbedding,
+    onEmbeddingComplete,
+    onEmbeddingError,
+    onEmbeddingCancel,
+    onGoToDashboard
+}) => {
+    const activeVersion = history.find(p => p.is_active);
+
+    return (
+        <div className="h-full flex flex-col overflow-y-auto p-6">
+            <h2 className="text-xl font-semibold mb-4">Configuration Summary</h2>
+
+            {/* Success Banner */}
+            <div className="bg-green-50 p-4 rounded-md mb-4 border border-green-200 flex items-center gap-3">
+                <div className="flex-shrink-0">
+                    <CheckCircleIcon className="w-6 h-6 text-green-600" />
+                </div>
+                <div className="flex-1">
+                    <h3 className="font-bold text-green-900">Configuration Published!</h3>
+                    <p className="text-sm text-green-700">Your agent configuration has been saved successfully.</p>
+                </div>
+                <button
+                    onClick={onGoToDashboard}
+                    className="px-4 py-2 bg-white text-green-700 border border-green-300 rounded font-medium shadow-sm hover:bg-green-50"
+                >
+                    Go to Dashboard
+                </button>
+            </div>
+
+            {/* PROMINENT: Vector DB Required Warning */}
+            {!embeddingJobId && (
+                <div className="bg-amber-50 border-2 border-amber-400 rounded-lg p-6 mb-6 shadow-md">
+                    <div className="flex items-start gap-4">
+                        <div className="flex-shrink-0 mt-0.5">
+                            <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                            </svg>
+                        </div>
+                        <div className="flex-1">
+                            <h3 className="text-lg font-bold text-amber-800 mb-2">
+                                Action Required: Build Knowledge Base
+                            </h3>
+                            <p className="text-amber-700 mb-4">
+                                Your configuration is saved, but <strong>the agent cannot answer questions yet</strong>.
+                                You must create the Vector Database to enable the agent's knowledge base.
+                            </p>
+                            <div className="flex flex-wrap gap-3">
+                                <button
+                                    onClick={() => onStartEmbedding(false)}
+                                    className="px-6 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 font-semibold transition-colors shadow-md flex items-center gap-2"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                    </svg>
+                                    Create Vector DB Now
+                                </button>
+                                <span className="text-sm text-amber-600 self-center">
+                                    This may take a few minutes depending on your data size.
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Embedding Progress (shown when job is running) */}
+            {embeddingJobId && (
+                <div className="mb-6">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                        <h3 className="font-semibold text-blue-900 mb-2 flex items-center gap-2">
+                            <svg className="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Building Knowledge Base...
+                        </h3>
+                        <p className="text-sm text-blue-700">Your agent will be ready to answer questions once this completes.</p>
+                    </div>
+                    <EmbeddingProgress
+                        jobId={embeddingJobId}
+                        onComplete={onEmbeddingComplete}
+                        onError={onEmbeddingError}
+                        onCancel={onEmbeddingCancel}
+                    />
+                </div>
+            )}
+
+            <ConfigSummary
+                connectionId={connectionId}
+                connectionName={connectionName}
+                dataSourceType={dataSourceType}
+                fileInfo={fileUploadResult ? { name: fileUploadResult.file_name, type: fileUploadResult.file_type } : undefined}
+                schema={selectedSchema}
+                dataDictionary={dataDictionary}
+                activePromptVersion={typeof activeVersion?.version === 'number' ? activeVersion.version : null}
+                totalPromptVersions={history.length}
+                lastUpdatedBy={activeVersion?.created_by_username}
+                settings={advancedSettings}
+            />
+
+            {/* Additional Options (smaller, secondary) */}
+            {!embeddingJobId && (
+                <div className="mt-6 pt-6 border-t border-gray-200">
+                    <h3 className="text-sm font-medium text-gray-500 mb-3">Additional Options</h3>
+                    <div className="flex gap-3">
+                        <button
+                            onClick={() => onStartEmbedding(true)}
+                            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium transition-colors text-sm"
+                            title="Only process new or changed data"
+                        >
+                            Incremental Update
+                        </button>
+                        <button
+                            onClick={onGoToDashboard}
+                            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium transition-colors text-sm"
+                        >
+                            Skip for Now (Go to Dashboard)
+                        </button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-2">
+                        You can always create or update the vector database later from the Dashboard.
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+};
+
+export default SummaryStep;

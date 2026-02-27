@@ -5,7 +5,9 @@ import ChatPage from './pages/ChatPage';
 import AboutPage from './pages/AboutPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import ConfigPage from './pages/ConfigPage';
+import AgentsPage from './pages/AgentsPage';
+import AgentDashboardPage from './pages/AgentDashboardPage';
+import AgentConfigPage from './pages/AgentConfigPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import CallbackPage from './pages/CallbackPage';
@@ -45,7 +47,7 @@ function DefaultRedirect() {
 
   // Redirect based on role
   if (user?.role === 'admin') {
-    return <Navigate to="/config" replace />;
+    return <Navigate to="/agents" replace />;
   }
 
   // Default to chat for all other users
@@ -93,13 +95,35 @@ function App() {
                   </ProtectedRoute>
                 }
               />
+              {/* Agent routes */}
               <Route
-                path="/config"
+                path="/agents"
                 element={
                   <ProtectedRoute allowedRoles={['admin']}>
-                    <ConfigPage />
+                    <AgentsPage />
                   </ProtectedRoute>
                 }
+              />
+              <Route
+                path="/agents/:id"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <AgentDashboardPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/agents/:id/config"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <AgentConfigPage />
+                  </ProtectedRoute>
+                }
+              />
+              {/* Backward compatibility redirect */}
+              <Route
+                path="/config"
+                element={<Navigate to="/agents" replace />}
               />
               <Route path="/about" element={<AboutPage />} />
               <Route

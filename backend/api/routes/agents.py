@@ -91,8 +91,18 @@ async def create_agent(agent: AgentCreate, current_user: User = Depends(require_
             system_prompt=agent.system_prompt,
             created_by=user_id
         )
+        
+        # Automatically assign the creator as admin of the new agent
+        if user_id and new_agent.get('id'):
+            db.assign_user_to_agent(
+                agent_id=new_agent['id'],
+                user_id=user_id,
+                role=current_user.role if current_user.role else 'admin', # Use current user's role or default to admin
+                granted_by=user_id
+            )
+        
         # Add user_role for response consistency (creator is admin)
-        new_agent['user_role'] = 'admin'
+        new_agent['user_role'] = current_user.role if current_user.role else 'admin'
         return new_agent
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
