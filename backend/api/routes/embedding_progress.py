@@ -8,6 +8,7 @@ Refactored for Production:
 - Circuit breaker pattern for ChromaDB writes
 - All configs now flow from UI inputs
 - CHECKPOINT SUPPORT: Resume from any phase after interruption
+- NON-BLOCKING: Jobs run in separate threads to not block API
 """
 from typing import List, Optional, Dict, Tuple
 from langchain_core.documents import Document
@@ -18,8 +19,10 @@ import uuid
 import os
 import multiprocessing
 import time
+import threading
+import asyncio
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed, ThreadPoolExecutor
 
 from backend.models.schemas import User
 from backend.models.rag_models import (
@@ -28,7 +31,6 @@ from backend.models.rag_models import (
     MedicalContextConfig
 )
 from backend.sqliteDb.db import get_db_service
-from backend.services.sql_service import get_sql_service
 from backend.services.embedding_job_service import get_embedding_job_service, EmbeddingJobService, JobCancelledError
 from backend.services.authorization_service import get_authorization_service, AuthorizationService
 from backend.services.notification_service import get_notification_service
@@ -42,6 +44,52 @@ from backend.services.embedding_registry import get_embedding_processor_registry
 logger = get_embedding_logger()
 
 router = APIRouter(prefix="/embedding-jobs", tags=["Embedding Jobs"])
+
+# Thread pool for running embedding jobs without blocking the event loop
+_embedding_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embedding_job_")
+
+
+def _run_embedding_job_sync_wrapper(
+    job_id: str,
+    config_id: int,
+    user_id: int,
+    incremental: bool,
+    ui_batch_size: Optional[int],
+    ui_max_concurrent: Optional[int],
+    ui_chunking: Optional[ChunkingConfig],
+    ui_parallelization: Optional[ParallelizationConfig],
+    ui_medical_context: Optional[MedicalContextConfig],
+    ui_max_consecutive_failures: int,
+    ui_retry_attempts: int
+):
+    """
+    Synchronous wrapper that creates a new event loop for the async embedding job.
+    This runs in a separate thread to avoid blocking the main FastAPI event loop.
+    """
+    try:
+        # Create a new event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(_run_embedding_job(
+                job_id=job_id,
+                config_id=config_id,
+                user_id=user_id,
+                incremental=incremental,
+                ui_batch_size=ui_batch_size,
+                ui_max_concurrent=ui_max_concurrent,
+                ui_chunking=ui_chunking,
+                ui_parallelization=ui_parallelization,
+                ui_medical_context=ui_medical_context,
+                ui_max_consecutive_failures=ui_max_consecutive_failures,
+                ui_retry_attempts=ui_retry_attempts
+            ))
+        finally:
+            loop.close()
+    except Exception as e:
+        logger.error(f"Embedding job {job_id} thread failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 
 @router.post("", response_model=dict, dependencies=[Depends(require_super_admin)])
@@ -85,10 +133,6 @@ async def start_embedding_job(
         if not model_name:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Embedding model is missing in configuration")
             
-        # Optional: Check if model exists, but don't strictly require it to be in the local LLM Registry 
-        # since embeddings might use a different service or external provider.
-        # We assume if the model string exists, it's valid enough to queue the job.
-            
         total_documents = 100  # Placeholder
         
         # Create job
@@ -114,9 +158,10 @@ async def start_embedding_job(
             }
         )
         
-        # Pass ALL UI configs to background task
-        background_tasks.add_task(
-            _run_embedding_job,
+        # Submit job to thread pool executor (non-blocking)
+        # This ensures the job runs in a completely separate thread with its own event loop
+        _embedding_executor.submit(
+            _run_embedding_job_sync_wrapper,
             job_id=job_id,
             config_id=request.config_id,
             user_id=current_user.id,
@@ -138,6 +183,8 @@ async def start_embedding_job(
             "message": "Embedding generation started in background"
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to start embedding job: {e}")
         raise HTTPException(
@@ -173,7 +220,6 @@ async def _run_embedding_job(
     job_service = get_embedding_job_service()
     notification_service = get_notification_service()
     db_service = get_db_service()
-    sql_service = get_sql_service()
     
     # Initialize checkpoint service early
     checkpoint_service = None
@@ -339,6 +385,11 @@ async def _run_embedding_job(
                 connection_info = db_service.get_db_connection_by_id(connection_id)
                 if not connection_info:
                     raise ValueError(f"Connection {connection_id} not found")
+                
+                # Get the database URI from the connection
+                database_uri = connection_info.get('uri')
+                if not database_uri:
+                    raise ValueError(f"Connection {connection_id} has no URI configured")
                     
                 schema_snapshot_raw = config.get('schema_selection', '{}')
                 try:
@@ -376,7 +427,8 @@ async def _run_embedding_job(
                 config_rel_path = str(settings.rag_config_path).lstrip('./')
                 config_path = str((backend_root / config_rel_path).resolve())
                 
-                extractor = DataExtractor(config_path)
+                # Pass the database_uri from the config to DataExtractor
+                extractor = DataExtractor(config_path, database_uri=database_uri)
                 extractor.get_allowed_tables = lambda: target_tables
 
                 import asyncio
