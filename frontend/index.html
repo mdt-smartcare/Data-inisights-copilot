@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#1e40af" />
     <meta name="description" content="Intelligent clinical data analysis through AI-powered insights" />
     
@@ -15,24 +15,120 @@
     <meta name="apple-mobile-web-app-title" content="AI Copilot" />
     <meta name="application-name" content="AI Copilot" />
     <meta name="msapplication-TileColor" content="#1e40af" />
+    <meta name="msapplication-TileImage" content="/icon-192.png" />
+    
+    <!-- Additional PWA optimization -->
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="color-scheme" content="light dark" />
     
     <link rel="manifest" href="/manifest.json" />
+    
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="/api" />
+    
     <title>Data Insights AI-Copilot</title>
     
     <style>
+      /* Critical CSS for fast initial paint */
+      :root {
+        --safe-area-top: env(safe-area-inset-top, 0px);
+        --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+        --safe-area-left: env(safe-area-inset-left, 0px);
+        --safe-area-right: env(safe-area-inset-right, 0px);
+      }
+      
       /* Prevent pull-to-refresh and overscroll */
       html, body {
         overscroll-behavior: none;
         -webkit-overflow-scrolling: touch;
       }
-      /* Safe area insets for notched devices */
+      
+      /* Safe area handling */
       body {
-        padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+        padding-top: var(--safe-area-top);
+        padding-right: var(--safe-area-right);
+        padding-bottom: var(--safe-area-bottom);
+        padding-left: var(--safe-area-left);
+      }
+      
+      /* PWA splash/loading screen */
+      .pwa-loading {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+        color: white;
+        font-family: system-ui, -apple-system, sans-serif;
+        transition: opacity 0.3s ease-out;
+      }
+      
+      .pwa-loading.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      
+      .pwa-loading-logo {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 16px;
+        border-radius: 16px;
+      }
+      
+      .pwa-loading-text {
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      
+      .pwa-loading-spinner {
+        width: 24px;
+        height: 24px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        border-top-color: white;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      
+      @keyframes spin {
+        to { transform: rotate(360deg); }
       }
     </style>
   </head>
   <body>
+    <!-- PWA Loading Screen -->
+    <div class="pwa-loading" id="pwa-loading">
+      <img src="/icon-192.png" alt="AI Copilot" class="pwa-loading-logo" />
+      <div class="pwa-loading-text">AI Copilot</div>
+      <div class="pwa-loading-spinner"></div>
+    </div>
+    
     <div id="root"></div>
+    
     <script type="module" src="/src/main.tsx"></script>
+    
+    <script>
+      // Hide loading screen once app is ready
+      window.addEventListener('load', function() {
+        setTimeout(function() {
+          var loading = document.getElementById('pwa-loading');
+          if (loading) {
+            loading.classList.add('hidden');
+            setTimeout(function() {
+              loading.remove();
+            }, 300);
+          }
+        }, 100);
+      });
+      
+      // Detect if running as installed PWA
+      if (window.matchMedia('(display-mode: standalone)').matches || 
+          window.navigator.standalone === true) {
+        document.documentElement.classList.add('pwa-standalone');
+      }
+    </script>
   </body>
 </html>
