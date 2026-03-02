@@ -330,15 +330,48 @@ SQL:"""
                          rows: List[Dict], execution_time_ms: float) -> str:
         """Format SQL results into natural language response with chart JSON."""
         
-        # For simple results, format directly
+        # For empty results
         if len(rows) == 0:
             return "No results found for your query."
         
+        question_lower = question.lower()
+        
+        # Detect if this is a rate/percentage question (should use gauge)
+        is_rate_question = any(word in question_lower for word in [
+            'rate', 'percentage', 'percent', '%', 'coverage', 'control rate',
+            'achievement', 'target', 'goal', 'proportion'
+        ])
+        
+        # Single value result handling
         if len(rows) == 1 and len(columns) == 1:
-            # Single value result (e.g., COUNT, AVG)
             value = rows[0][columns[0]]
-            formatted_value = f"{value:,}" if isinstance(value, (int, float)) else str(value)
-            # Return with scorecard chart
+            
+            # Check if it's a rate/percentage (0-1 or 0-100 range)
+            if is_rate_question and isinstance(value, (int, float)):
+                # Convert to percentage if it's a decimal
+                display_value = value * 100 if value <= 1 else value
+                return f"""The answer is: **{display_value:.1f}%**
+
+```json
+{{
+    "chart_json": {{
+        "title": "{columns[0].replace('_', ' ').title()}",
+        "type": "gauge",
+        "value": {display_value:.1f},
+        "min": 0,
+        "max": 100,
+        "target": 80,
+        "thresholds": [
+            {{"value": 80, "color": "#10b981", "label": "Good (≥80%)"}},
+            {{"value": 60, "color": "#f59e0b", "label": "Fair (60-79%)"}},
+            {{"value": 0, "color": "#ef4444", "label": "Poor (<60%)"}}
+        ]
+    }}
+}}
+```"""
+            
+            # Regular single value - use scorecard
+            formatted_value = f"{value:,.2f}" if isinstance(value, float) else (f"{value:,}" if isinstance(value, int) else str(value))
             return f"""The answer is: **{formatted_value}**
 
 ```json
@@ -355,7 +388,24 @@ SQL:"""
 ```"""
         
         # For more complex results, use LLM to format with chart
-        result_preview = json.dumps(rows[:10], indent=2, default=str)
+        result_preview = json.dumps(rows[:15], indent=2, default=str)
+        
+        # Detect question patterns to guide chart selection
+        chart_hint = ""
+        if any(word in question_lower for word in ['cascade', 'funnel', 'journey', 'stages', 'flow']):
+            chart_hint = "USE type='funnel' - This is a care cascade/patient journey question."
+        elif any(word in question_lower for word in ['vs target', 'versus target', 'against target', 'compare', 'performance']):
+            chart_hint = "USE type='bullet' - This compares actual values against targets."
+        elif any(word in question_lower for word in ['highest', 'lowest', 'top', 'bottom', 'rank', 'most', 'least']):
+            chart_hint = "USE type='horizontal_bar' - This is a ranking question. Show top 10."
+        elif any(word in question_lower for word in ['by region', 'by district', 'by location', 'distribution by', 'regional']):
+            chart_hint = "USE type='treemap' - This is a regional/hierarchical distribution."
+        elif any(word in question_lower for word in ['trend', 'over time', 'monthly', 'yearly', 'by month', 'by year']):
+            chart_hint = "USE type='line' - This is a time series trend."
+        elif any(word in question_lower for word in ['breakdown', 'by age', 'by gender', 'by category', 'by type']):
+            chart_hint = "USE type='bar' - This is a categorical breakdown."
+        elif any(word in question_lower for word in ['male', 'female', 'gender', 'proportion', 'percentage of']):
+            chart_hint = "USE type='pie' - This shows proportions/distributions."
         
         prompt = f"""Convert this SQL query result into a clear, natural language answer.
 Also, generate a JSON chart specification for visualization.
@@ -365,12 +415,15 @@ SQL Query: {sql}
 Execution Time: {execution_time_ms:.2f}ms
 Total Rows: {len(rows)}
 
-Results (first 10 rows):
+Results (first 15 rows):
 {result_preview}
+
+{f"IMPORTANT: {chart_hint}" if chart_hint else ""}
 
 RESPOND WITH A CHART JSON:
 1. First, provide a concise natural language answer explaining the data.
 2. Then, you MUST append a JSON code block with chart data.
+   - Include ALL data rows in the chart (not just first few)
    - NEVER skip this step if you have data.
 
 Format:
@@ -387,46 +440,37 @@ Format:
 }}
 ```
 
-CHART TYPE SELECTION GUIDE (choose the most appropriate):
+CHART TYPE RULES:
 
-1. **"gauge"** - For percentage/rate metrics against targets:
-   - Coverage rates, control rates, achievement percentages
-   - Example: "What is the diabetes control rate?" → gauge with value, target
-   - Extra fields: "value": 75, "target": 80, "min": 0, "max": 100
+1. **"gauge"** - ONLY for single percentage/rate values (0-100%):
+   - Extra fields needed: "value": 75, "target": 80, "min": 0, "max": 100
 
-2. **"funnel"** - For care cascades and sequential dropoff:
-   - Patient journey stages, screening → diagnosis → treatment → controlled
-   - Example: "Show the NCD care cascade" → funnel
-   - Data should be ordered from largest to smallest stage
+2. **"funnel"** - For care cascades with sequential stages:
+   - Screened → Diagnosed → Treated → Controlled
+   - Order data from LARGEST to SMALLEST value
 
-3. **"bullet"** - For multiple KPIs vs targets:
-   - Facility performance comparisons, multiple metrics vs goals
-   - Example: "Compare facility screening rates vs targets"
+3. **"bullet"** - For comparing metrics against targets:
+   - Multiple facilities/items with actual vs target
    - Extra fields: "target": 80, "ranges": [30, 70, 100]
 
-4. **"horizontal_bar"** - For rankings and comparisons:
-   - Top/bottom performers, district rankings
-   - Example: "Which districts have highest cases?" → horizontal_bar
+4. **"horizontal_bar"** - For rankings (top/bottom N):
+   - Which places have highest/lowest values
+   - Always sort by value descending
 
-5. **"bar"** - For categorical comparisons:
-   - Breakdowns by age group, gender, category
-   - Example: "Breakdown by age group" → bar
+5. **"treemap"** - For regional/hierarchical distributions:
+   - Distribution BY region, district, location
+   - Shows relative sizes
 
-6. **"pie"** - For proportions/distributions:
-   - Gender distribution, percentage breakdowns
-   - Example: "What percentage are male vs female?" → pie
+6. **"bar"** - For categorical comparisons:
+   - Age groups, categories, types
 
-7. **"line"** - For trends over time:
-   - Monthly/yearly trends, time series
-   - Example: "Show monthly trend of screenings" → line
+7. **"pie"** - For proportions that sum to 100%:
+   - Gender distribution, yes/no splits
 
-8. **"scorecard"** - For single KPI values:
-   - Total counts, single metrics
-   - Example: "Total number of patients" → scorecard
+8. **"line"** - For time-based trends:
+   - Monthly, yearly, quarterly data
 
-9. **"treemap"** - For hierarchical breakdowns:
-   - Regional distributions, nested categories
-   - Example: "Distribution by region and district" → treemap
+9. **"scorecard"** - For single count values only
 
 Response:"""
 
