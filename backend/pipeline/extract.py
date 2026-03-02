@@ -26,9 +26,13 @@ from backend.sqliteDb.db import get_db_service
 logger = logging.getLogger(__name__)
 
 
-def _get_database_uri() -> Optional[str]:
+def _get_database_uri(agent_id: Optional[int] = None, connection_id: Optional[int] = None) -> Optional[str]:
     """
     Get database URI from the active published RAG configuration.
+    
+    Args:
+        agent_id: Optional agent ID to get agent-specific config.
+        connection_id: Optional direct connection ID to use.
     
     Returns:
         Database URI string, or None if no connection is configured.
@@ -36,13 +40,52 @@ def _get_database_uri() -> Optional[str]:
     try:
         db_service = get_db_service()
         
-        # Get active config
-        active_config = db_service.get_active_config()
-        if active_config and active_config.get('connection_id'):
-            connection_id = active_config['connection_id']
+        # If direct connection_id provided, use it
+        if connection_id:
             connection = db_service.get_db_connection_by_id(connection_id)
             if connection and connection.get('uri'):
-                logger.info(f"Using database connection: {connection.get('name')} (ID: {connection_id})")
+                logger.info(f"Using database connection by ID: {connection.get('name')} (ID: {connection_id})")
+                return connection['uri']
+        
+        # Try to get active config for specific agent first
+        if agent_id:
+            active_config = db_service.get_active_config(agent_id=agent_id)
+            if active_config and active_config.get('connection_id'):
+                conn_id = active_config['connection_id']
+                connection = db_service.get_db_connection_by_id(conn_id)
+                if connection and connection.get('uri'):
+                    logger.info(f"Using database connection from agent {agent_id} config: {connection.get('name')} (ID: {conn_id})")
+                    return connection['uri']
+        
+        # Try global config (no agent_id)
+        active_config = db_service.get_active_config()
+        if active_config and active_config.get('connection_id'):
+            conn_id = active_config['connection_id']
+            connection = db_service.get_db_connection_by_id(conn_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection from global config: {connection.get('name')} (ID: {conn_id})")
+                return connection['uri']
+        
+        # Fallback: Check if ANY agent has a published config with a connection
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT pc.connection_id, sp.agent_id
+            FROM system_prompts sp
+            JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            WHERE sp.is_active = 1 AND pc.connection_id IS NOT NULL
+            ORDER BY sp.created_at DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row[0]:
+            fallback_conn_id = row[0]
+            fallback_agent_id = row[1]
+            connection = db_service.get_db_connection_by_id(fallback_conn_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection from agent {fallback_agent_id} config (fallback): {connection.get('name')} (ID: {fallback_conn_id})")
                 return connection['uri']
         
         logger.warning("No active database connection configured.")
@@ -185,26 +228,65 @@ class DataExtractor:
     - Parallel table fetching via connection pool
     - Configurable batch sizes for memory control
     - Async-first API for embedding pipeline integration
+    - Configuration loaded from database (single source of truth)
     """
     
-    def __init__(self, config_path: str = "config/embedding_config.yaml", database_uri: Optional[str] = None):
+    def __init__(self, config_path: str = None, database_uri: Optional[str] = None):
         """
         Initialize extractor with configuration.
         
         Args:
-            config_path: Path to embedding_config.yaml
+            config_path: DEPRECATED - Path to embedding_config.yaml (used as fallback only)
             database_uri: Optional database URI. If not provided, uses active config.
         """
         self.config = self._load_config(config_path)
-        self.excluded_tables = set(self.config['tables'].get('exclude_tables', []))
-        self.global_exclude_columns = set(self.config['tables'].get('global_exclude_columns', []))
-        self.table_specific_exclusions = self.config['tables'].get('table_specific_exclusions', {})
+        self.excluded_tables = set(self.config.get('exclude_tables', []))
+        self.global_exclude_columns = set(self.config.get('global_exclude_columns', []))
+        self.table_specific_exclusions = self.config.get('table_specific_exclusions', {})
         self.db_connector = get_db_connector(database_uri)
     
-    def _load_config(self, config_path: str) -> Dict:
-        """Load YAML configuration file."""
-        with open(config_path, 'r') as file:
-            return yaml.safe_load(file)
+    def _load_config(self, config_path: Optional[str] = None) -> Dict:
+        """
+        Load configuration from database (primary) or YAML file (fallback).
+        
+        The database is the single source of truth for configuration.
+        YAML file is only used as fallback if database is unavailable.
+        """
+        try:
+            # Primary source: Database via ConfigService
+            from backend.services.config_service import get_config_service
+            config_service = get_config_service()
+            pii_rules = config_service.get_pii_rules()
+            
+            logger.info("Loaded PII/extraction config from database")
+            return {
+                'exclude_tables': pii_rules.get('exclude_tables', []),
+                'global_exclude_columns': pii_rules.get('global_exclude_columns', []),
+                'table_specific_exclusions': pii_rules.get('table_specific_exclusions', {}),
+            }
+        except Exception as e:
+            logger.warning(f"Failed to load config from database: {e}. Falling back to YAML.")
+            
+            # Fallback: YAML file
+            if config_path is None:
+                config_path = "config/embedding_config.yaml"
+            
+            try:
+                with open(config_path, 'r') as file:
+                    yaml_config = yaml.safe_load(file)
+                    tables_config = yaml_config.get('tables', {})
+                    return {
+                        'exclude_tables': tables_config.get('exclude_tables', []),
+                        'global_exclude_columns': tables_config.get('global_exclude_columns', []),
+                        'table_specific_exclusions': tables_config.get('table_specific_exclusions', {}),
+                    }
+            except Exception as yaml_error:
+                logger.error(f"Failed to load YAML config: {yaml_error}. Using empty defaults.")
+                return {
+                    'exclude_tables': [],
+                    'global_exclude_columns': [],
+                    'table_specific_exclusions': {},
+                }
     
     def get_allowed_tables(self) -> List[str]:
         """Get list of tables to process (excluding system/PII tables)."""
@@ -218,17 +300,31 @@ class DataExtractor:
         Get columns safe for embedding (PII filtered).
         
         Applies both global and table-specific exclusions.
+        Handles schema-prefixed table names (e.g., 'rnacen.table_name').
         """
+        # Parse schema and table name
+        if '.' in table_name:
+            schema_name, base_table_name = table_name.split('.', 1)
+        else:
+            schema_name = 'public'
+            base_table_name = table_name
+        
         schema = self.db_connector.execute_query(
-            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :table",
-            {"table": table_name}
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = :schema AND table_name = :table",
+            {"schema": schema_name, "table": base_table_name}
         )
         all_columns = [col[0] for col in schema]
+        
+        if not all_columns:
+            logger.warning(f"No columns found for table {table_name} (schema={schema_name}, table={base_table_name})")
         
         # Combine global and table-specific exclusions
         exclude_cols = self.global_exclude_columns.copy()
         if table_name in self.table_specific_exclusions:
             exclude_cols.update(self.table_specific_exclusions[table_name])
+        # Also check base table name for exclusions
+        if base_table_name in self.table_specific_exclusions:
+            exclude_cols.update(self.table_specific_exclusions[base_table_name])
         
         safe_columns = [col for col in all_columns if col not in exclude_cols]
         return safe_columns
@@ -292,8 +388,15 @@ class DataExtractor:
                 logger.warning(f"No safe columns for table {table_name}, skipping.")
                 continue
             
+            # Parse schema and table name for query
+            if '.' in table_name:
+                schema_name, base_table_name = table_name.split('.', 1)
+                full_table_ref = f'"{schema_name}"."{base_table_name}"'
+            else:
+                full_table_ref = f'public."{table_name}"'
+            
             cols_str = ", ".join([f'"{c}"' for c in safe_columns])
-            query = f'SELECT {cols_str} FROM public."{table_name}"'
+            query = f'SELECT {cols_str} FROM {full_table_ref}'
             if table_limit:
                 query += f" LIMIT {table_limit}"
             

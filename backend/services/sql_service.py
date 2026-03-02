@@ -84,13 +84,17 @@ class QueryCache:
 _query_cache = QueryCache(max_size=100, ttl_seconds=300)
 
 
-def _get_active_database_url() -> Optional[str]:
+def _get_active_database_url(agent_id: Optional[int] = None, connection_id: Optional[int] = None) -> Optional[str]:
     """
     Get the database URL from the active published config.
     
     Clinical database connections are managed via the `db_connections` table
     and assigned to agents. There is no hardcoded fallback - a connection
     must be configured via the frontend.
+    
+    Args:
+        agent_id: Optional agent ID to get agent-specific config.
+        connection_id: Optional direct connection ID to use (bypasses config lookup).
     
     Returns:
         Database URI string, or None if no connection is configured.
@@ -99,13 +103,53 @@ def _get_active_database_url() -> Optional[str]:
         from backend.sqliteDb.db import get_db_service
         db_service = get_db_service()
         
-        # Get active config
+        # If direct connection_id provided, use it
+        if connection_id:
+            connection = db_service.get_db_connection_by_id(connection_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection by ID: {connection.get('name')} (ID: {connection_id})")
+                return connection['uri']
+        
+        # Try to get active config for specific agent first
+        if agent_id:
+            active_config = db_service.get_active_config(agent_id=agent_id)
+            if active_config and active_config.get('connection_id'):
+                conn_id = active_config['connection_id']
+                connection = db_service.get_db_connection_by_id(conn_id)
+                if connection and connection.get('uri'):
+                    logger.info(f"Using database connection from agent {agent_id} config: {connection.get('name')} (ID: {conn_id})")
+                    return connection['uri']
+        
+        # Try global config (no agent_id)
         active_config = db_service.get_active_config()
         if active_config and active_config.get('connection_id'):
             connection_id = active_config['connection_id']
             connection = db_service.get_db_connection_by_id(connection_id)
             if connection and connection.get('uri'):
-                logger.info(f"Using database connection from active config: {connection.get('name')} (ID: {connection_id})")
+                logger.info(f"Using database connection from global config: {connection.get('name')} (ID: {connection_id})")
+                return connection['uri']
+        
+        # Fallback: Check if ANY agent has a published config with a connection
+        # This handles the case where only agent-specific configs exist
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT pc.connection_id, sp.agent_id
+            FROM system_prompts sp
+            JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            WHERE sp.is_active = 1 AND pc.connection_id IS NOT NULL
+            ORDER BY sp.created_at DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row[0]:
+            fallback_conn_id = row[0]
+            fallback_agent_id = row[1]
+            connection = db_service.get_db_connection_by_id(fallback_conn_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection from agent {fallback_agent_id} config (fallback): {connection.get('name')} (ID: {fallback_conn_id})")
                 return connection['uri']
         
         logger.warning("No active database connection configured. Please configure a connection via the frontend.")
