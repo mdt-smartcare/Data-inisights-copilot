@@ -750,7 +750,7 @@ Return ONLY the corrected SQL query."""
         logger.info(" API Call: Format natural language response (using gpt-3.5-turbo)")
         
         format_prompt = f"""Convert this database result into a clear, natural language answer.
-Also, generate a JSON chart specification if the data is suitable for visualization.
+Also, generate a JSON chart specification for visualization.
 
 SQL Query: {sql_query}
 Result: {result}
@@ -761,29 +761,65 @@ RESPOND WITH A CHART JSON:
 1. First, provide a concise natural language answer explaining the data.
 2. Then, you MUST append a JSON code block with chart data.
    - NEVER skip this step if you have data.
-   - If data is sparse (e.g., 1 row), still plot it.
 
 Format:
 ```json
 {{
     "chart_json": {{
         "title": "Descriptive Chart Title",
-        "type": "pie|bar|line|scorecard|treemap",
-        "data": {{ ... }}
+        "type": "<chart_type>",
+        "data": {{
+            "labels": ["label1", "label2", ...],
+            "values": [value1, value2, ...]
+        }}
     }}
 }}
 ```
 
-Chart type guidelines:
-- Use "treemap" for: ANY distribution by Region, District, or Location.
-- Use "scorecard" for: single numeric values or totals.
-- Use "bar" for: comparisons.
-- Use "pie" for: percentages.
+CHART TYPE SELECTION GUIDE (choose the most appropriate):
+
+1. **"gauge"** - For percentage/rate metrics against targets:
+   - Coverage rates, control rates, achievement percentages
+   - Example: "What is the diabetes control rate?" → gauge with value, target
+   - Extra fields: "value": 75, "target": 80, "min": 0, "max": 100
+
+2. **"funnel"** - For care cascades and sequential dropoff:
+   - Patient journey stages, screening → diagnosis → treatment → controlled
+   - Example: "Show the NCD care cascade" → funnel
+   - Data should be ordered from largest to smallest stage
+
+3. **"bullet"** - For multiple KPIs vs targets:
+   - Facility performance comparisons, multiple metrics vs goals
+   - Example: "Compare facility screening rates vs targets"
+   - Extra fields: "target": 80, "ranges": [30, 70, 100]
+
+4. **"horizontal_bar"** - For rankings and comparisons:
+   - Top/bottom performers, district rankings
+   - Example: "Which districts have highest cases?" → horizontal_bar
+
+5. **"bar"** - For categorical comparisons:
+   - Breakdowns by age group, gender, category
+   - Example: "Breakdown by age group" → bar
+
+6. **"pie"** - For proportions/distributions:
+   - Gender distribution, percentage breakdowns
+   - Example: "What percentage are male vs female?" → pie
+
+7. **"line"** - For trends over time:
+   - Monthly/yearly trends, time series
+   - Example: "Show monthly trend of screenings" → line
+
+8. **"scorecard"** - For single KPI values:
+   - Total counts, single metrics
+   - Example: "Total number of patients" → scorecard
+
+9. **"treemap"** - For hierarchical/regional breakdowns:
+   - Regional distributions, nested categories
+   - Example: "Distribution by region and district" → treemap
 
 Response:"""
 
         # OPTIMIZATION: Use fast model (gpt-3.5-turbo) for response formatting
-        # This saves ~3-5 seconds compared to gpt-4o
         formatted_response = self.llm_fast.invoke(format_prompt)
         return formatted_response.content.strip()
 
