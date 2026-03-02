@@ -1,44 +1,21 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:15-alpine
-    container_name: fhir_rag_postgres
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: admin
-      POSTGRES_DB: Spice_BD
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d Spice_BD"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - fhir_rag_network
-
   # Backend Service
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
-    container_name: fhir_rag_backend
+    container_name: data_insights_backend
     environment:
-      # Database
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_USER: admin
-      DB_PASSWORD: admin
-      DB_NAME: Spice_BD
+      # Internal SQLite database path (for app config, users, settings)
+      SQLITE_DB_PATH: ./sqliteDb/copilot.db
       
-      # API Configuration
+      # Server Configuration
+      HOST: 0.0.0.0
+      PORT: 8000
       API_V1_PREFIX: /api/v1
       DEBUG: "false"
-      LOG_LEVEL: INFO
       
       # CORS
       CORS_ORIGINS: http://localhost:3000,http://localhost:5173,http://localhost
@@ -46,15 +23,19 @@ services:
       # Security (CHANGE THESE IN PRODUCTION!)
       SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-this-in-production-min-32-chars}
       
-      # OpenAI (provide your own key)
+      # OpenAI API Key (required)
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       
-      # Embedding paths
-      EMBEDDING_MODEL_PATH: ./models/bge-m3
-      VECTOR_DB_PATH: ./data/indexes/chroma_db_advanced
+      # File paths
+      LOG_FILE: ./logs/backend.log
+      MODELS_PATH: ./models
+      DATA_PATH: ./data
       
-      # Optional: Langfuse
+      # Optional: OIDC/Keycloak (leave empty to use local auth)
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-data-insights-copilot}
+      
+      # Optional: Langfuse tracing
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       ENABLE_LANGFUSE: ${ENABLE_LANGFUSE:-false}
@@ -63,12 +44,9 @@ services:
       - ./backend/models:/app/backend/models
       - ./backend/data:/app/backend/data
       - ./backend/logs:/app/backend/logs
-      - ./backend/config:/app/backend/config
+      - ./backend/sqliteDb:/app/backend/sqliteDb
     ports:
       - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -76,7 +54,7 @@ services:
       retries: 3
       start_period: 40s
     networks:
-      - fhir_rag_network
+      - copilot_network
     restart: unless-stopped
 
   # Frontend Service
@@ -84,19 +62,28 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.frontend
-    container_name: fhir_rag_frontend
+    container_name: data_insights_frontend
     ports:
       - "3000:80"
     depends_on:
       - backend
     networks:
-      - fhir_rag_network
+      - copilot_network
     restart: unless-stopped
 
-volumes:
-  postgres_data:
-    driver: local
-
 networks:
-  fhir_rag_network:
+  copilot_network:
     driver: bridge
+
+# =============================================================================
+# NOTE: Clinical database connections are NOT configured here.
+# They are managed via the frontend Settings > Database Connections page
+# and stored in the `db_connections` table.
+#
+# To connect to a clinical database:
+# 1. Start the application
+# 2. Go to Settings > Database Connections
+# 3. Add your PostgreSQL/MySQL connection details
+# 4. Create a RAG Configuration that uses the connection
+# 5. Publish the configuration
+# =============================================================================
