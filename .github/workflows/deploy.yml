@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - '**'  # Deploy on push to ANY branch
-      - '!main'  # EXCEPT main branch (still in development)
 
 jobs:
   deploy:
@@ -22,10 +21,28 @@ jobs:
           script: |
             export NVM_DIR="$HOME/.nvm"
             [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            
+            # Navigate to project
             cd ${{ secrets.PROJECT_PATH }}
+            
+            # Pull latest code
             git fetch origin
             git checkout ${{ github.ref_name }}
             git pull origin ${{ github.ref_name }}
+            
+            # Install backend dependencies
+            source ~/miniconda3/etc/profile.d/conda.sh
+            conda activate fhir_rag_env
+            pip install -r requirements.txt --quiet
+            
+            # Install frontend dependencies and build
             cd frontend
             npm install
             npm run build
+            
+            # Restart PM2 services
+            cd ..
+            pm2 restart beta-backend beta-frontend --update-env
+            pm2 save
+            
+            echo "Deployment complete!"
