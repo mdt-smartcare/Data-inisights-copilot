@@ -142,6 +142,10 @@ app.include_router(observability.router, prefix=settings.api_v1_prefix)
 from backend.api.routes import vector_db
 app.include_router(vector_db.router, prefix=settings.api_v1_prefix)
 
+# File ingestion routes (upload, SQL queries on files)
+from backend.api.routes import ingestion
+app.include_router(ingestion.router, prefix=settings.api_v1_prefix)
+
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)
 
