@@ -6,7 +6,6 @@ OPTIMIZED: Added query result caching and reduced agent iterations.
 """
 from functools import lru_cache
 from typing import Optional, Tuple, List, Dict, Any
-from datetime import datetime
 from collections import OrderedDict
 import re
 import time
@@ -16,8 +15,6 @@ from sqlalchemy import inspect
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
-from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.outputs import LLMResult
 
 # Langfuse imports for tracing
 from langfuse import observe
@@ -26,7 +23,7 @@ try:
 except ImportError:
     langfuse_context = None
 
-from backend.config import get_settings
+from backend.config import get_settings, get_llm_settings
 from backend.core.logging import get_logger
 from backend.services.reflection_service import get_critique_service
 
@@ -61,7 +58,7 @@ class QueryCache:
             if time.time() - timestamp < self.ttl_seconds:
                 # Move to end (most recently used)
                 self.cache.move_to_end(key)
-                logger.info(f"⚡ Cache HIT for query (saved ~3s)")
+                logger.info("Cache HIT for query (saved ~3s)")
                 return result
             else:
                 # Expired, remove it
@@ -87,10 +84,16 @@ class QueryCache:
 _query_cache = QueryCache(max_size=100, ttl_seconds=300)
 
 
-def _get_active_database_url() -> str:
+def _get_active_database_url() -> Optional[str]:
     """
     Get the database URL from the active published config.
-    Falls back to settings.database_url if no active config or connection.
+    
+    Clinical database connections are managed via the `db_connections` table
+    and assigned to agents. There is no hardcoded fallback - a connection
+    must be configured via the frontend.
+    
+    Returns:
+        Database URI string, or None if no connection is configured.
     """
     try:
         from backend.sqliteDb.db import get_db_service
@@ -105,25 +108,42 @@ def _get_active_database_url() -> str:
                 logger.info(f"Using database connection from active config: {connection.get('name')} (ID: {connection_id})")
                 return connection['uri']
         
-        logger.info("No active config connection found, using default database URL")
-        return settings.database_url
+        logger.warning("No active database connection configured. Please configure a connection via the frontend.")
+        return None
         
     except Exception as e:
-        logger.warning(f"Failed to get active database URL: {e}. Using default.")
-        return settings.database_url
+        logger.error(f"Failed to get active database URL: {e}")
+        return None
 
 
 class SQLService:
     """Service for SQL database operations."""
     
     def __init__(self, database_url: Optional[str] = None):
-        # Use provided URL, or get from active config, or fall back to settings
+        """
+        Initialize SQL service with a database connection.
+        
+        Args:
+            database_url: Optional database URI. If not provided, will attempt
+                         to get from active config in db_connections table.
+                         
+        Raises:
+            ValueError: If no database connection is available.
+        """
+        # Use provided URL, or get from active config
         if database_url:
             self._database_url = database_url
         else:
             self._database_url = _get_active_database_url()
+        
+        if not self._database_url:
+            raise ValueError(
+                "No database connection configured. "
+                "Please add a database connection via Settings > Database Connections "
+                "and publish a RAG configuration that uses it."
+            )
             
-        logger.info(f"Connecting to database at {self._database_url}")
+        logger.info("Connecting to database...")
         
         try:
             # Initialize critique service
@@ -156,6 +176,11 @@ class SQLService:
             
             self._cache_schema()
             
+            # Get LLM settings from database (runtime configurable)
+            llm_settings = get_llm_settings()
+            llm_model = llm_settings.get('model_name', 'gpt-4o')
+            llm_temperature = llm_settings.get('temperature', 0.0)
+            
             self.llm_fast = ChatOpenAI(
                 temperature=0,
                 model_name="gpt-3.5-turbo",
@@ -164,8 +189,8 @@ class SQLService:
             )
             
             self.llm = ChatOpenAI(
-                temperature=settings.openai_temperature,
-                model_name=settings.openai_model,
+                temperature=llm_temperature,
+                model_name=llm_model,
                 api_key=settings.openai_api_key,
                 verbose=True
             )
@@ -754,10 +779,9 @@ Response:"""
                 
                 # Get FK info if possible (useful for graph relationships)
                 try:
-                    fks = inspector.get_foreign_keys(table)
-                    # Enrich column details with FK info? 
-                    # For now just store columns as generator expects
-                except:
+                    _ = inspector.get_foreign_keys(table)
+                    # FK info available for future use
+                except Exception:
                     pass
                 
                 schema_info[table] = column_details

@@ -18,9 +18,148 @@ from typing import Dict, List, Iterator, Tuple, Optional, AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-from backend.connector import db_connector
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
+
+from backend.sqliteDb.db import get_db_service
 
 logger = logging.getLogger(__name__)
+
+
+def _get_database_uri() -> Optional[str]:
+    """
+    Get database URI from the active published RAG configuration.
+    
+    Returns:
+        Database URI string, or None if no connection is configured.
+    """
+    try:
+        db_service = get_db_service()
+        
+        # Get active config
+        active_config = db_service.get_active_config()
+        if active_config and active_config.get('connection_id'):
+            connection_id = active_config['connection_id']
+            connection = db_service.get_db_connection_by_id(connection_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection: {connection.get('name')} (ID: {connection_id})")
+                return connection['uri']
+        
+        logger.warning("No active database connection configured.")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Failed to get database URI: {e}")
+        return None
+
+
+class DatabaseConnector:
+    """
+    Database connector that uses connections from the db_connections table.
+    
+    Replaces the legacy connector that used db_config.yaml.
+    """
+    
+    def __init__(self, database_uri: Optional[str] = None):
+        """
+        Initialize connector with a database URI.
+        
+        Args:
+            database_uri: Optional URI. If not provided, fetches from active config.
+        """
+        self._database_uri = database_uri
+        self.engine = None
+        self.connection = None
+        self.is_connected = False
+
+    def connect(self) -> bool:
+        """Establish database connection."""
+        if self.is_connected and self.connection:
+            return True
+            
+        try:
+            # Get URI from active config if not provided
+            uri = self._database_uri or _get_database_uri()
+            if not uri:
+                raise ValueError(
+                    "No database connection configured. "
+                    "Please configure a connection via Settings > Database Connections "
+                    "and publish a RAG configuration."
+                )
+            
+            logger.info("Connecting to database...")
+            self.engine = create_engine(
+                uri, 
+                pool_size=20, 
+                max_overflow=50, 
+                pool_timeout=60
+            )
+            self.connection = self.engine.connect()
+            self.connection.execute(text("SELECT 1"))
+            logger.info("Database connection successful.")
+            self.is_connected = True
+            return True
+            
+        except Exception as e:
+            logger.error(f"Database connection failed: {e}")
+            self.is_connected = False
+            return False
+
+    def disconnect(self):
+        """Close database connection."""
+        if self.connection:
+            self.connection.close()
+        if self.engine:
+            self.engine.dispose()
+        self.is_connected = False
+        logger.info("Database connection closed.")
+
+    def execute_query(self, query: str, params: Optional[Dict] = None) -> List:
+        """Execute a SQL query and return results."""
+        if not self.is_connected:
+            if not self.connect():
+                raise Exception("No database connection available")
+        try:
+            result = self.connection.execute(text(query), params or {})
+            return result.fetchall()
+        except SQLAlchemyError as e:
+            logger.error(f"Query execution failed: {e}")
+            return []
+
+    def get_all_tables(self) -> List[str]:
+        """Get all table names from the public schema."""
+        query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_type = 'BASE TABLE' 
+            ORDER BY table_name
+        """
+        results = self.execute_query(query)
+        return [row[0] for row in results] if results else []
+
+
+# Lazy-initialized singleton
+_db_connector: Optional[DatabaseConnector] = None
+
+
+def get_db_connector(database_uri: Optional[str] = None) -> DatabaseConnector:
+    """
+    Get or create database connector instance.
+    
+    Args:
+        database_uri: Optional URI to use. If provided, creates a new connector.
+    """
+    global _db_connector
+    
+    if database_uri:
+        # Create new connector with specific URI
+        return DatabaseConnector(database_uri)
+    
+    if _db_connector is None:
+        _db_connector = DatabaseConnector()
+    
+    return _db_connector
 
 
 @dataclass
@@ -48,17 +187,19 @@ class DataExtractor:
     - Async-first API for embedding pipeline integration
     """
     
-    def __init__(self, config_path: str = "config/embedding_config.yaml"):
+    def __init__(self, config_path: str = "config/embedding_config.yaml", database_uri: Optional[str] = None):
         """
         Initialize extractor with configuration.
         
         Args:
             config_path: Path to embedding_config.yaml
+            database_uri: Optional database URI. If not provided, uses active config.
         """
         self.config = self._load_config(config_path)
         self.excluded_tables = set(self.config['tables'].get('exclude_tables', []))
         self.global_exclude_columns = set(self.config['tables'].get('global_exclude_columns', []))
         self.table_specific_exclusions = self.config['tables'].get('table_specific_exclusions', {})
+        self.db_connector = get_db_connector(database_uri)
     
     def _load_config(self, config_path: str) -> Dict:
         """Load YAML configuration file."""
@@ -67,7 +208,7 @@ class DataExtractor:
     
     def get_allowed_tables(self) -> List[str]:
         """Get list of tables to process (excluding system/PII tables)."""
-        all_tables = db_connector.get_all_tables()
+        all_tables = self.db_connector.get_all_tables()
         allowed_tables = [table for table in all_tables if table not in self.excluded_tables]
         logger.info(f"Found {len(allowed_tables)} tables to process.")
         return allowed_tables
@@ -78,7 +219,7 @@ class DataExtractor:
         
         Applies both global and table-specific exclusions.
         """
-        schema = db_connector.execute_query(
+        schema = self.db_connector.execute_query(
             "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = :table",
             {"table": table_name}
         )
@@ -157,7 +298,7 @@ class DataExtractor:
                 query += f" LIMIT {table_limit}"
             
             try:
-                results = db_connector.execute_query(query)
+                results = self.db_connector.execute_query(query)
                 df = pd.DataFrame(results, columns=safe_columns)
                 if not df.empty:
                     yield table_name, df
@@ -203,7 +344,7 @@ class DataExtractor:
                 query += f" LIMIT {table_limit}"
             
             try:
-                results = db_connector.execute_query(query)
+                results = self.db_connector.execute_query(query)
                 df = pd.DataFrame(results, columns=safe_columns)
                 return table_name, df if not df.empty else None
             except Exception as e:
@@ -264,7 +405,7 @@ class DataExtractor:
         # Get total row count
         count_query = f'SELECT COUNT(*) FROM public."{table_name}"'
         try:
-            result = db_connector.execute_query(count_query)
+            result = self.db_connector.execute_query(count_query)
             total_rows = result[0][0]
         except Exception as e:
             logger.error(f"Failed to get count for {table_name}: {e}")
@@ -278,7 +419,7 @@ class DataExtractor:
             query = f'SELECT {cols_str} FROM public."{table_name}" LIMIT {batch_size} OFFSET {offset}'
             
             try:
-                results = db_connector.execute_query(query)
+                results = self.db_connector.execute_query(query)
                 df = pd.DataFrame(results, columns=safe_columns)
                 
                 yield TableBatch(
@@ -292,6 +433,6 @@ class DataExtractor:
                 logger.error(f"Failed to extract batch {batch_idx} from {table_name}: {e}")
 
 
-def create_data_extractor(config_path: str = "config/embedding_config.yaml") -> DataExtractor:
-    """Factory function for DataExtractor (backward compatibility)."""
-    return DataExtractor(config_path)
+def create_data_extractor(config_path: str = "config/embedding_config.yaml", database_uri: Optional[str] = None) -> DataExtractor:
+    """Factory function for DataExtractor."""
+    return DataExtractor(config_path, database_uri)
