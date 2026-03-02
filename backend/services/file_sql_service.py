@@ -328,7 +328,7 @@ SQL:"""
     
     def _format_response(self, question: str, sql: str, columns: List[str], 
                          rows: List[Dict], execution_time_ms: float) -> str:
-        """Format SQL results into natural language response."""
+        """Format SQL results into natural language response with chart JSON."""
         
         # For simple results, format directly
         if len(rows) == 0:
@@ -337,12 +337,28 @@ SQL:"""
         if len(rows) == 1 and len(columns) == 1:
             # Single value result (e.g., COUNT, AVG)
             value = rows[0][columns[0]]
-            return f"The answer is: **{value:,}**" if isinstance(value, (int, float)) else f"The answer is: {value}"
+            formatted_value = f"{value:,}" if isinstance(value, (int, float)) else str(value)
+            # Return with scorecard chart
+            return f"""The answer is: **{formatted_value}**
+
+```json
+{{
+    "chart_json": {{
+        "title": "Result",
+        "type": "scorecard",
+        "data": {{
+            "labels": ["{columns[0]}"],
+            "values": [{value if isinstance(value, (int, float)) else f'"{value}"'}]
+        }}
+    }}
+}}
+```"""
         
-        # For more complex results, use LLM to format
+        # For more complex results, use LLM to format with chart
         result_preview = json.dumps(rows[:10], indent=2, default=str)
         
         prompt = f"""Convert this SQL query result into a clear, natural language answer.
+Also, generate a JSON chart specification for visualization.
 
 Question: {question}
 SQL Query: {sql}
@@ -352,9 +368,34 @@ Total Rows: {len(rows)}
 Results (first 10 rows):
 {result_preview}
 
-Provide a concise, informative answer. If the data is suitable for visualization, suggest what type of chart would work best.
+RESPOND WITH A CHART JSON:
+1. First, provide a concise natural language answer explaining the data.
+2. Then, you MUST append a JSON code block with chart data.
+   - NEVER skip this step if you have data.
+   - If data is sparse (e.g., 1 row), still plot it.
 
-Answer:"""
+Format:
+```json
+{{
+    "chart_json": {{
+        "title": "Descriptive Chart Title",
+        "type": "pie|bar|line|scorecard|treemap",
+        "data": {{
+            "labels": ["label1", "label2", ...],
+            "values": [value1, value2, ...]
+        }}
+    }}
+}}
+```
+
+Chart type guidelines:
+- Use "scorecard" for: single numeric values or totals.
+- Use "bar" for: comparisons across categories, breakdowns by groups.
+- Use "pie" for: percentages, proportions, distributions.
+- Use "line" for: trends over time.
+- Use "treemap" for: hierarchical data, regional distributions.
+
+Response:"""
 
         response = self.llm_fast.invoke(prompt)
         return response.content.strip()
