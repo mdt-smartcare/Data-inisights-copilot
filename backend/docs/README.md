@@ -27,29 +27,27 @@ The system is exposed through an interactive Gradio web interface that includes 
 
 ```
 fhir_rag/
-├── app.py                  # Deprecated Gradio app, main logic is now in main.py
+├── app.py                  # FastAPI application entry point
 ├── config/
-│   ├── db_config.yaml      # Database connection settings
 │   └── embedding_config.yaml # RAG pipeline, models, and chunking config
 ├── data/
 │   └── indexes/            # Stores the generated ChromaDB vector index
-├── main.py                 # Entry point for the main Gradio application
 ├── models/                 # Directory to store local embedding and reranker models
 ├── notebooks/              # Jupyter notebooks for exploration and testing
 ├── requirements.txt        # Python dependencies
-├── src/
-│   ├── db/                 # Database connector
-│   ├── main.py             # Entry point for the data indexing pipeline
-│   ├── pipeline/           # Modules for Extract, Transform, Load (ETL) and Indexing
-│   │   ├── build_index.py
-│   │   ├── embed.py
-│   │   ├── extract.py
-│   │   ├── transform.py
-│   │   └── utils.py
-│   └── rag/
-│       └── retrieve.py     # Core logic for the AdvancedRAGRetriever
-└── .env                    # For storing secrets like API keys and DB URLs
+├── sqliteDb/               # Internal SQLite database for app configuration
+├── api/                    # API routes and endpoints
+├── services/               # Business logic services
+├── pipeline/               # ETL and indexing modules
+│   ├── build_index.py
+│   ├── embed.py
+│   ├── extract.py
+│   └── transform.py
+└── rag/
+    └── retrieve.py         # Core logic for the AdvancedRAGRetriever
 ```
+
+**Note:** Database connections are now configured via the frontend UI at **Settings > Database Connections**, not via YAML files.
 
 ##  Setup and Installation
 
@@ -104,7 +102,7 @@ OPENAI_API_KEY="sk-..."
 
 # PostgreSQL Connection URL
 # Format: postgresql://<user>:<password>@<host>:<port>/<database_name>
-DATABASE_URL="postgresql://admin:admin@localhost:5432/Spice_BD"
+DATABASE_URL="postgresql://admin:admin@localhost:5432/Database_Name"
 
 # Langfuse Observability (Optional)
 LANGFUSE_PUBLIC_KEY="pk-lf-..."
@@ -114,7 +112,7 @@ LANGFUSE_HOST="https://cloud.langfuse.com"
 
 ### 7. Set Up the Database
 
-Ensure your PostgreSQL server is running. Create the `Spice_BD` database and populate it with your schema and data. The application expects the tables defined in the pipeline (e.g., `patient_tracker`, `patient_diagnosis`, etc.).
+Ensure your PostgreSQL server is running. Create the `Database_Name` database and populate it with your schema and data. The application expects the tables defined in the pipeline (e.g., `patient_tracker`, `patient_diagnosis`, etc.).
 
 ##  Running the System
 
