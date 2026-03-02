@@ -28,8 +28,10 @@ from backend.core.logging import get_logger
 settings = get_settings()
 logger = get_logger(__name__)
 
-# Storage directory (same as ingestion.py)
-DATA_STORAGE_DIR = Path(__file__).parent.parent / "data" / "duckdb_files"
+# Storage directory - use project root /data folder, not backend/data
+# Path(__file__) = backend/services/file_sql_service.py
+# Go up 3 levels to reach project root, then into data/duckdb_files
+DATA_STORAGE_DIR = Path(__file__).parent.parent.parent / "data" / "duckdb_files"
 
 
 # =============================================================================
