@@ -5,7 +5,7 @@ import {
   Treemap, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
   ResponsiveContainer, Cell, LabelList, FunnelChart, Funnel, LabelList as FunnelLabelList
 } from 'recharts';
-import html2canvas from 'html2canvas';
+import domtoimage from 'dom-to-image-more';
 
 interface ChartData {
   type: 'line' | 'bar' | 'horizontal_bar' | 'pie' | 'area' | 'scorecard' | 'radar' | 'treemap' | 'gauge' | 'funnel' | 'bullet';
@@ -60,29 +60,28 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
     
     setCopyStatus('copying');
     try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: '#ffffff',
-        scale: 2, // Higher quality for PPT
-        logging: false,
+      const blob = await domtoimage.toBlob(chartRef.current, {
+        bgcolor: '#ffffff',
+        scale: 2,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left'
+        }
       });
       
-      canvas.toBlob(async (blob) => {
-        if (blob) {
-          try {
-            await navigator.clipboard.write([
-              new ClipboardItem({ 'image/png': blob })
-            ]);
-            setCopyStatus('success');
-            setTimeout(() => setCopyStatus('idle'), 2000);
-          } catch (err) {
-            // Fallback: download if clipboard write fails
-            console.warn('Clipboard write failed, downloading instead');
-            downloadImage(canvas);
-            setCopyStatus('success');
-            setTimeout(() => setCopyStatus('idle'), 2000);
-          }
-        }
-      }, 'image/png');
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ 'image/png': blob })
+        ]);
+        setCopyStatus('success');
+        setTimeout(() => setCopyStatus('idle'), 2000);
+      } catch (err) {
+        // Fallback: download if clipboard write fails
+        console.warn('Clipboard write failed, downloading instead');
+        downloadBlob(blob);
+        setCopyStatus('success');
+        setTimeout(() => setCopyStatus('idle'), 2000);
+      }
     } catch (err) {
       console.error('Failed to copy chart:', err);
       setCopyStatus('error');
@@ -94,22 +93,27 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
     if (!chartRef.current) return;
     
     try {
-      const canvas = await html2canvas(chartRef.current, {
-        backgroundColor: '#ffffff',
+      const blob = await domtoimage.toBlob(chartRef.current, {
+        bgcolor: '#ffffff',
         scale: 2,
-        logging: false,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left'
+        }
       });
-      downloadImage(canvas);
+      downloadBlob(blob);
     } catch (err) {
       console.error('Failed to download chart:', err);
     }
   };
 
-  const downloadImage = (canvas: HTMLCanvasElement) => {
+  const downloadBlob = (blob: Blob) => {
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.download = `${title || 'chart'}-${new Date().toISOString().slice(0, 10)}.png`;
-    link.href = canvas.toDataURL('image/png');
+    link.href = url;
     link.click();
+    URL.revokeObjectURL(url);
   };
 
   // Export toolbar component
