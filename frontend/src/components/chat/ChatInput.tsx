@@ -1,19 +1,29 @@
 import { useState, useRef } from 'react';
+import QueryModeSelector, { type QueryMode } from '../QueryModeSelector';
 
 interface ChatInputProps {
-  onSendMessage: (message: string) => void;
+  onSendMessage: (message: string, mode: QueryMode) => void;
   isDisabled?: boolean;
   placeholder?: string;
   maxLength?: number;
+  sqlAvailable?: boolean;
+  ragAvailable?: boolean;
+  agenticHybridAvailable?: boolean;
+  showModeSelector?: boolean;
 }
 
 export default function ChatInput({
   onSendMessage,
   isDisabled = false,
   placeholder = 'Type your message...',
-  maxLength = 2000
+  maxLength = 2000,
+  sqlAvailable = true,
+  ragAvailable = false,
+  agenticHybridAvailable = false,
+  showModeSelector = true
 }: ChatInputProps) {
   const [input, setInput] = useState('');
+  const [queryMode, setQueryMode] = useState<QueryMode>('auto');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -22,7 +32,7 @@ export default function ChatInput({
 
     if (!trimmedInput || isDisabled) return;
 
-    onSendMessage(trimmedInput);
+    onSendMessage(trimmedInput, queryMode);
     setInput('');
 
     // Reset textarea height after sending
@@ -45,7 +55,19 @@ export default function ChatInput({
   return (
     <div className="bg-white border-t border-gray-200 px-4 py-3 shadow-lg">
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
+          {/* Query Mode Selector */}
+          {showModeSelector && (sqlAvailable || ragAvailable) && (
+            <QueryModeSelector
+              selectedMode={queryMode}
+              onModeChange={setQueryMode}
+              sqlAvailable={sqlAvailable}
+              ragAvailable={ragAvailable}
+              agenticHybridAvailable={agenticHybridAvailable}
+              compact={true}
+            />
+          )}
+
           <div className="flex gap-2">
             <textarea
               ref={textareaRef}
