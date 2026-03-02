@@ -3,9 +3,9 @@ import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area, 
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, 
   Treemap, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
-  ResponsiveContainer, Cell, LabelList, FunnelChart, Funnel, LabelList as FunnelLabelList
+  ResponsiveContainer, Cell, LabelList, FunnelChart, Funnel
 } from 'recharts';
-import domtoimage from 'dom-to-image-more';
+import { domToPng } from 'modern-screenshot';
 
 interface ChartData {
   type: 'line' | 'bar' | 'horizontal_bar' | 'pie' | 'area' | 'scorecard' | 'radar' | 'treemap' | 'gauge' | 'funnel' | 'bullet';
@@ -47,107 +47,56 @@ const FUNNEL_COLORS = ['#3b82f6', '#6366f1', '#8b5cf6', '#a855f7', '#d946ef'];
 export default function ChartRenderer({ chartData }: ChartRendererProps) {
   const { type, data: rawData, xKey, yKey, title, colors = COLORS, metrics } = chartData;
   const chartRef = useRef<HTMLDivElement>(null);
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copying' | 'success' | 'error'>('idle');
+  const [isExporting, setIsExporting] = useState(false);
 
   // Debug logging
   console.log('ChartRenderer received:', { type, title, rawData, metrics });
 
   // ============================================
-  // EXPORT FUNCTIONS
+  // EXPORT FUNCTION - Capture rendered chart as PNG
   // ============================================
-  const handleCopyToClipboard = async () => {
-    if (!chartRef.current) return;
+  const handleDownload = async () => {
+    if (!chartRef.current || isExporting) return;
     
-    setCopyStatus('copying');
+    setIsExporting(true);
     try {
-      const blob = await domtoimage.toBlob(chartRef.current, {
-        bgcolor: '#ffffff',
-        scale: 2,
-        style: {
-          transform: 'scale(1)',
-          transformOrigin: 'top left'
-        }
+      const dataUrl = await domToPng(chartRef.current, {
+        scale: 2, // 2x resolution for crisp PPT images
+        backgroundColor: '#ffffff',
       });
       
-      try {
-        await navigator.clipboard.write([
-          new ClipboardItem({ 'image/png': blob })
-        ]);
-        setCopyStatus('success');
-        setTimeout(() => setCopyStatus('idle'), 2000);
-      } catch (err) {
-        // Fallback: download if clipboard write fails
-        console.warn('Clipboard write failed, downloading instead');
-        downloadBlob(blob);
-        setCopyStatus('success');
-        setTimeout(() => setCopyStatus('idle'), 2000);
-      }
+      // Download the PNG
+      const link = document.createElement('a');
+      link.download = `${(title || 'chart').replace(/[^a-zA-Z0-9]/g, '-')}-${new Date().toISOString().slice(0, 10)}.png`;
+      link.href = dataUrl;
+      link.click();
     } catch (err) {
-      console.error('Failed to copy chart:', err);
-      setCopyStatus('error');
-      setTimeout(() => setCopyStatus('idle'), 2000);
+      console.error('Failed to export chart:', err);
+      alert('Failed to export. Try using screenshot:\n• Mac: Cmd+Shift+4\n• Windows: Win+Shift+S');
+    } finally {
+      setIsExporting(false);
     }
-  };
-
-  const handleDownload = async () => {
-    if (!chartRef.current) return;
-    
-    try {
-      const blob = await domtoimage.toBlob(chartRef.current, {
-        bgcolor: '#ffffff',
-        scale: 2,
-        style: {
-          transform: 'scale(1)',
-          transformOrigin: 'top left'
-        }
-      });
-      downloadBlob(blob);
-    } catch (err) {
-      console.error('Failed to download chart:', err);
-    }
-  };
-
-  const downloadBlob = (blob: Blob) => {
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.download = `${title || 'chart'}-${new Date().toISOString().slice(0, 10)}.png`;
-    link.href = url;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   // Export toolbar component
   const ExportToolbar = () => (
     <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
       <button
-        onClick={handleCopyToClipboard}
-        className="p-1.5 bg-white border border-gray-300 rounded shadow-sm hover:bg-gray-50 transition-colors"
-        title="Copy to clipboard (for PPT)"
-        disabled={copyStatus === 'copying'}
+        onClick={handleDownload}
+        disabled={isExporting}
+        className="p-1.5 bg-white border border-gray-300 rounded shadow-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+        title="Download as PNG (for PowerPoint)"
       >
-        {copyStatus === 'copying' ? (
+        {isExporting ? (
           <svg className="w-4 h-4 text-gray-400 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-        ) : copyStatus === 'success' ? (
-          <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-          </svg>
         ) : (
           <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
           </svg>
         )}
-      </button>
-      <button
-        onClick={handleDownload}
-        className="p-1.5 bg-white border border-gray-300 rounded shadow-sm hover:bg-gray-50 transition-colors"
-        title="Download as PNG"
-      >
-        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-        </svg>
       </button>
     </div>
   );
