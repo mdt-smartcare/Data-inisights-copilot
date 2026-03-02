@@ -1,14 +1,42 @@
 """
-Settings Service - Unified configuration management with caching and validation.
+Settings Service - Unified configuration management with TTL caching and validation.
 Provides CRUD operations for system settings with history tracking.
+
+This is the SINGLE SOURCE OF TRUTH for all runtime-configurable settings.
+Instead of reading from YAML files, all configuration is stored in the 
+system_settings database table and cached in memory with TTL expiration.
+
+HOT-RELOAD SUPPORT:
+Services can register as listeners to be notified when settings change.
+This enables immediate cache invalidation without waiting for TTL expiration.
 """
 import json
 import logging
-from typing import Optional, Dict, Any, List, Literal
+import time
+import threading
+from typing import Optional, Dict, Any, List, Literal, Callable, Set
 from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================================================
+# Cache Configuration
+# ============================================================================
+
+# Default cache TTL in seconds (5 minutes)
+# This balances freshness with database load reduction
+DEFAULT_CACHE_TTL_SECONDS = 300
+
+
+# ============================================================================
+# Change Listener Type
+# ============================================================================
+
+# Type for change listener callbacks
+# Signature: callback(category: str, updated_keys: List[str], updated_by: str)
+ChangeListener = Callable[[str, List[str], str], None]
 
 
 # ============================================================================
@@ -201,15 +229,17 @@ class SettingsService:
     - In-memory caching with invalidation
     - Validation via Pydantic models
     - History tracking for audit and rollback
+    - Hot-reload support with change listeners
     """
     
-    def __init__(self, db_service=None):
+    def __init__(self, db_service=None, cache_ttl: int = DEFAULT_CACHE_TTL_SECONDS):
         """
         Initialize settings service.
         
         Args:
             db_service: Optional DatabaseService instance. If not provided,
                        will use the singleton from sqliteDb.db
+            cache_ttl: Time-to-live for cache in seconds
         """
         if db_service is None:
             from backend.sqliteDb.db import get_db_service
@@ -218,48 +248,56 @@ class SettingsService:
         self.db = db_service
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._cache_valid = False
+        self._cache_ttl = cache_ttl
+        self._cache_timestamp = 0
+        self._cache_lock = threading.Lock()
+        self._listeners: Set[ChangeListener] = set()
         logger.info("SettingsService initialized")
     
     def _invalidate_cache(self):
         """Invalidate the settings cache."""
-        self._cache = {}
-        self._cache_valid = False
+        with self._cache_lock:
+            self._cache = {}
+            self._cache_valid = False
+            self._cache_timestamp = 0
         logger.debug("Settings cache invalidated")
     
     def _ensure_cache(self):
-        """Load all settings into cache if not already loaded."""
-        if self._cache_valid:
-            return
-        
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT category, key, value, value_type, is_sensitive
-                FROM system_settings
-            """)
-            rows = cursor.fetchall()
+        """Load all settings into cache if not already loaded or expired."""
+        with self._cache_lock:
+            if self._cache_valid and (time.time() - self._cache_timestamp) < self._cache_ttl:
+                return
             
-            self._cache = {}
-            for row in rows:
-                category = row['category']
-                if category not in self._cache:
-                    self._cache[category] = {}
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            
+            try:
+                cursor.execute("""
+                    SELECT category, key, value, value_type, is_sensitive
+                    FROM system_settings
+                """)
+                rows = cursor.fetchall()
                 
-                # Parse value based on type
-                value = self._parse_value(row['value'], row['value_type'])
-                self._cache[category][row['key']] = {
-                    'value': value,
-                    'value_type': row['value_type'],
-                    'is_sensitive': row['is_sensitive']
-                }
-            
-            self._cache_valid = True
-            logger.debug(f"Settings cache loaded with {len(rows)} settings")
-            
-        finally:
-            conn.close()
+                self._cache = {}
+                for row in rows:
+                    category = row['category']
+                    if category not in self._cache:
+                        self._cache[category] = {}
+                    
+                    # Parse value based on type
+                    value = self._parse_value(row['value'], row['value_type'])
+                    self._cache[category][row['key']] = {
+                        'value': value,
+                        'value_type': row['value_type'],
+                        'is_sensitive': row['is_sensitive']
+                    }
+                
+                self._cache_valid = True
+                self._cache_timestamp = time.time()
+                logger.debug(f"Settings cache loaded with {len(rows)} settings")
+                
+            finally:
+                conn.close()
     
     def _parse_value(self, value_str: str, value_type: str) -> Any:
         """Parse a stored value string into its proper type."""
@@ -464,6 +502,7 @@ class SettingsService:
             
             conn.commit()
             self._invalidate_cache()
+            self._notify_listeners(category, list(settings.keys()), updated_by)
             
             return self.get_category_settings(category)
             
@@ -608,6 +647,7 @@ class SettingsService:
             
             conn.commit()
             self._invalidate_cache()
+            self._notify_listeners(category, [key], rolled_back_by)
             
             logger.info(f"Setting {category}.{key} rolled back by {rolled_back_by}")
             
@@ -685,6 +725,41 @@ class SettingsService:
                 results[category] = len(category_settings)
         
         return results
+    
+    def register_listener(self, listener: ChangeListener):
+        """
+        Register a change listener to be notified when settings change.
+        
+        Args:
+            listener: A callable that takes (category, updated_keys, updated_by)
+        """
+        self._listeners.add(listener)
+        logger.debug("Change listener registered")
+    
+    def unregister_listener(self, listener: ChangeListener):
+        """
+        Unregister a previously registered change listener.
+        
+        Args:
+            listener: The listener to unregister
+        """
+        self._listeners.discard(listener)
+        logger.debug("Change listener unregistered")
+    
+    def _notify_listeners(self, category: str, updated_keys: List[str], updated_by: str):
+        """
+        Notify all registered listeners of a settings change.
+        
+        Args:
+            category: The category of the changed settings
+            updated_keys: List of keys that were updated
+            updated_by: Username who made the change
+        """
+        for listener in self._listeners:
+            try:
+                listener(category, updated_keys, updated_by)
+            except Exception as e:
+                logger.error(f"Error notifying listener: {e}")
 
 
 # ============================================================================
