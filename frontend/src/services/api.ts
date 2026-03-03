@@ -1129,3 +1129,217 @@ export const getWorkflowCapabilities = async (): Promise<WorkflowCapabilities> =
   return response.data;
 };
 
+// ============================================================================
+// VECTOR DB REGISTRY API - Central management of all vector databases
+// ============================================================================
+
+export interface VectorDbRegistryItem {
+  id: number;
+  name: string;
+  data_source_id: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  embedding_model: string | null;
+  llm: string | null;
+  version: string;
+  last_full_run: string | null;
+  last_incremental_run: string | null;
+  disk_size_bytes: number;
+  disk_size_formatted: string;
+  document_count: number;
+  vector_count: number;
+  last_updated: string | null;
+  chroma_exists: boolean;
+  schedule: {
+    enabled: boolean;
+    schedule_type: string;
+    next_run_at: string | null;
+    last_run_at: string | null;
+    last_run_status: string | null;
+  } | null;
+  health_status: 'healthy' | 'warning' | 'error' | 'missing' | 'orphaned';
+}
+
+export interface OrphanedVectorDb {
+  name: string;
+  path: string;
+  disk_size_bytes: number;
+  disk_size_formatted: string;
+  vector_count: number;
+  health_status: 'orphaned';
+}
+
+export interface VectorDbRegistryResponse {
+  status: string;
+  total_vector_dbs: number;
+  total_disk_size_bytes: number;
+  total_disk_size_formatted: string;
+  vector_dbs: VectorDbRegistryItem[];
+  orphaned_dbs: OrphanedVectorDb[];
+}
+
+/**
+ * Get all vector databases with their disk sizes, document counts, and sync status.
+ * Provides a centralized registry view for IT admins.
+ */
+export const getVectorDbRegistry = async (): Promise<VectorDbRegistryResponse> => {
+  const response = await apiClient.get('/api/v1/vector-db/registry');
+  return response.data;
+};
+
+/**
+ * Delete a vector database from the registry and optionally remove its files.
+ */
+export const deleteVectorDb = async (
+  vectorDbName: string,
+  deleteFiles: boolean = true
+): Promise<{ status: string; message: string; files_deleted: boolean }> => {
+  const response = await apiClient.delete(`/api/v1/vector-db/registry/${vectorDbName}`, {
+    params: { delete_files: deleteFiles }
+  });
+  return response.data;
+};
+
+// ============================================================================
+// SCHEMA DRIFT DETECTION API
+// ============================================================================
+
+export interface SchemaDrift {
+  drift_type: 'table_removed' | 'table_added' | 'column_removed' | 'column_added' | 'column_type_changed';
+  severity: 'critical' | 'warning' | 'info';
+  entity_name: string;
+  table_name?: string;
+  column_name?: string;
+  old_value?: string;
+  new_value?: string;
+  message: string;
+}
+
+export interface DriftReport {
+  vector_db_name: string;
+  has_critical_drift: boolean;
+  has_warnings: boolean;
+  total_drifts: number;
+  critical_count: number;
+  warning_count: number;
+  info_count: number;
+  drifts: SchemaDrift[];
+  checked_at: string;
+  can_run_embedding: boolean;
+  summary: string;
+}
+
+export interface DriftStatus {
+  vector_db_name: string;
+  has_snapshot: boolean;
+  snapshot_at: string | null;
+  connection_id: string | null;
+  unresolved_count: number;
+  critical_count: number;
+  warning_count: number;
+  unresolved_drifts: Array<{
+    id: number;
+    drift_type: string;
+    severity: string;
+    entity_name: string;
+    details: string;
+    detected_at: string;
+    acknowledged_at: string | null;
+    acknowledged_by: string | null;
+  }>;
+  can_run_embedding: boolean;
+}
+
+export interface DriftHistoryItem {
+  id: number;
+  vector_db_name: string;
+  drift_type: string;
+  severity: string;
+  entity_name: string;
+  details: string;
+  detected_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+}
+
+/**
+ * Check for schema drift between stored snapshot and current database.
+ * Should be called before starting embedding jobs to prevent failures.
+ */
+export const checkSchemaDrift = async (
+  vectorDbName: string,
+  connectionId: number
+): Promise<DriftReport> => {
+  const response = await apiClient.post('/api/v1/schema-drift/check', {
+    vector_db_name: vectorDbName,
+    connection_id: connectionId,
+  });
+  return response.data;
+};
+
+/**
+ * Get current drift status for a vector DB including unresolved issues.
+ */
+export const getSchemaDriftStatus = async (vectorDbName: string): Promise<DriftStatus> => {
+  const response = await apiClient.get(`/api/v1/schema-drift/status/${vectorDbName}`);
+  return response.data;
+};
+
+/**
+ * Acknowledge a drift alert (mark as seen but not resolved).
+ */
+export const acknowledgeSchemaDrift = async (driftId: number): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.post('/api/v1/schema-drift/acknowledge', { drift_id: driftId });
+  return response.data;
+};
+
+/**
+ * Mark a drift as resolved.
+ */
+export const resolveSchemaDrift = async (driftId: number): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.post(`/api/v1/schema-drift/resolve/${driftId}`);
+  return response.data;
+};
+
+/**
+ * Update schema snapshot for a vector DB (re-baseline after schema changes).
+ */
+export const updateSchemaSnapshot = async (
+  vectorDbName: string,
+  connectionId: number,
+  resolveExisting: boolean = true
+): Promise<{
+  status: string;
+  message: string;
+  snapshot_info: { tables: number; columns: number; captured_at: string };
+  resolved_drifts: number;
+}> => {
+  const response = await apiClient.post('/api/v1/schema-drift/snapshot/update', {
+    vector_db_name: vectorDbName,
+    connection_id: connectionId,
+    resolve_existing: resolveExisting,
+  });
+  return response.data;
+};
+
+/**
+ * Get drift detection history for a vector DB.
+ */
+export const getSchemaDriftHistory = async (
+  vectorDbName: string,
+  includeResolved: boolean = false,
+  limit: number = 50
+): Promise<{
+  vector_db_name: string;
+  total_records: number;
+  include_resolved: boolean;
+  history: DriftHistoryItem[];
+}> => {
+  const response = await apiClient.get(`/api/v1/schema-drift/history/${vectorDbName}`, {
+    params: { include_resolved: includeResolved, limit },
+  });
+  return response.data;
+};
+
