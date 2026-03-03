@@ -145,9 +145,14 @@ def require_at_least(min_role: str):
 # ============================================
 # These use the centralized Role enum for consistency
 
-require_admin = require_role([Role.ADMIN.value])
+# Super admin only - highest privilege level
+require_super_admin = require_role([Role.SUPER_ADMIN.value])
+
+# Admin or super admin - both can perform admin operations
+require_admin = require_role([Role.SUPER_ADMIN.value, Role.ADMIN.value])
+
+# Any authenticated user with at least user role
 require_user = require_at_least(Role.USER.value)
 
-# Backward compatibility aliases
-require_super_admin = require_admin  # Alias for migration
+# Backward compatibility alias
 require_editor = require_admin  # Alias for migration (editor -> admin)

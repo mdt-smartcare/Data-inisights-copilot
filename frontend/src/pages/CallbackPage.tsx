@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { oidcService } from '../services/oidcService';
 import { apiClient } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
+import { roleAtLeast } from '../utils/permissions';
 import type { User } from '../types';
 
 /**
@@ -38,8 +39,8 @@ export default function CallbackPage() {
           // Update auth context
           setUser(userProfile);
 
-          // Redirect based on role
-          if (userProfile.role === 'admin') {
+          // Redirect based on role - super_admin and admin go to config
+          if (roleAtLeast(userProfile.role, 'admin')) {
             navigate('/config', { replace: true });
           } else {
             navigate('/chat', { replace: true });

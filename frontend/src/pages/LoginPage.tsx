@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Alert from '../components/Alert';
 import logo from '../assets/logo.svg';
 import { ErrorCode } from '../constants/errorCodes';
+import { roleAtLeast } from '../utils/permissions';
 
 // Error messages for different error codes (using ErrorCode constants as keys)
 const ERROR_MESSAGES: Record<string, string> = {
@@ -44,8 +45,8 @@ export default function LoginPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
-      // Redirect based on role
-      if (user?.role === 'admin') {
+      // Redirect based on role - super_admin and admin go to config
+      if (roleAtLeast(user?.role, 'admin')) {
         navigate('/config', { replace: true });
       } else {
         navigate('/chat', { replace: true });

@@ -5,6 +5,7 @@ import { MemoryRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as AuthContext from '../contexts/AuthContext';
 import type { User, UserRole } from '../types';
+import { roleAtLeast } from '../utils/permissions';
 
 // Mock AuthContext
 vi.mock('../contexts/AuthContext', async () => {
@@ -71,9 +72,14 @@ function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
     return <div data-testid="loading">Loading...</div>;
   }
 
-  // Check role-based access
-  if (allowedRoles && user && user.role && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/chat" replace />;
+  // Check role-based access using hierarchy (matching updated App.tsx logic)
+  if (allowedRoles && user && user.role) {
+    const hasAccess = allowedRoles.some(allowedRole => 
+      roleAtLeast(user.role, allowedRole)
+    );
+    if (!hasAccess) {
+      return <Navigate to="/chat" replace />;
+    }
   }
 
   return <>{children}</>;
@@ -134,8 +140,9 @@ const createAuthState = (user: User | null, isLoading = false) => ({
 
 const mockUsers: Record<string, User> = {
   viewer: { id: 1, username: 'viewer', role: 'user' as UserRole, email: 'v@test.com' },
-  editor: { id: 2, username: 'editor', role: 'user' as UserRole, email: 'e@test.com' },  // Changed to 'user'
-  superAdmin: { id: 3, username: 'admin', role: 'admin' as UserRole, email: 'a@test.com' },  // Changed to 'admin'
+  editor: { id: 2, username: 'editor', role: 'user' as UserRole, email: 'e@test.com' },
+  admin: { id: 3, username: 'admin', role: 'admin' as UserRole, email: 'a@test.com' },
+  superAdmin: { id: 4, username: 'superadmin', role: 'super_admin' as UserRole, email: 'sa@test.com' },
 };
 
 describe('App Routing and ProtectedRoute', () => {

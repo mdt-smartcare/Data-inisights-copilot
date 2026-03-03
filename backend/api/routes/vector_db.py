@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
 from backend.sqliteDb.db import get_db_service, DatabaseService
-from backend.core.permissions import require_super_admin, User
+from backend.core.permissions import require_admin, User
 from backend.core.logging import get_logger
 from backend.services.scheduler_service import (
     get_scheduler_service, SchedulerService, ScheduleType
@@ -50,7 +50,7 @@ class ScheduleResponse(BaseModel):
 # Vector DB Status Endpoint (Enhanced)
 # ============================================
 
-@router.get("/status/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+@router.get("/status/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def get_vector_db_status(
     vector_db_name: str,
     db_service: DatabaseService = Depends(get_db_service),
@@ -58,7 +58,7 @@ async def get_vector_db_status(
 ):
     """
     Get detailed statistics for a Vector Database including index count, vectors, and schedule info.
-    Requires Super Admin role.
+    Requires Admin role or above.
     """
     try:
         conn = db_service.get_connection()
@@ -161,16 +161,16 @@ async def get_vector_db_status(
 # Schedule Management Endpoints
 # ============================================
 
-@router.post("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+@router.post("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def create_or_update_schedule(
     vector_db_name: str,
     request: ScheduleCreateRequest,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     scheduler_service: SchedulerService = Depends(get_scheduler_service)
 ):
     """
     Create or update a sync schedule for a Vector Database.
-    Requires Super Admin role.
+    Requires Admin role or above.
     """
     try:
         # Validate schedule_type
@@ -209,14 +209,14 @@ async def create_or_update_schedule(
         )
 
 
-@router.get("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+@router.get("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def get_schedule(
     vector_db_name: str,
     scheduler_service: SchedulerService = Depends(get_scheduler_service)
 ):
     """
     Get schedule configuration for a Vector Database.
-    Requires Super Admin role.
+    Requires Admin role or above.
     """
     schedule = scheduler_service.get_schedule(vector_db_name)
     
@@ -229,14 +229,14 @@ async def get_schedule(
     return schedule
 
 
-@router.delete("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+@router.delete("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def delete_schedule(
     vector_db_name: str,
     scheduler_service: SchedulerService = Depends(get_scheduler_service)
 ):
     """
     Delete a schedule for a Vector Database.
-    Requires Super Admin role.
+    Requires Admin role or above.
     """
     deleted = scheduler_service.delete_schedule(vector_db_name)
     
@@ -252,26 +252,26 @@ async def delete_schedule(
     }
 
 
-@router.get("/schedules", response_model=List[Dict[str, Any]], dependencies=[Depends(require_super_admin)])
+@router.get("/schedules", response_model=List[Dict[str, Any]], dependencies=[Depends(require_admin)])
 async def list_schedules(
     scheduler_service: SchedulerService = Depends(get_scheduler_service)
 ):
     """
     List all Vector DB schedules.
-    Requires Super Admin role.
+    Requires Admin role or above.
     """
     return scheduler_service.list_schedules()
 
 
-@router.post("/schedule/{vector_db_name}/trigger", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+@router.post("/schedule/{vector_db_name}/trigger", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def trigger_sync_now(
     vector_db_name: str,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     scheduler_service: SchedulerService = Depends(get_scheduler_service)
 ):
     """
     Manually trigger an immediate sync for a Vector Database.
-    Requires Super Admin role.
+    Requires Admin role or above.
     """
     try:
         message = scheduler_service.trigger_now(vector_db_name)
@@ -299,14 +299,14 @@ async def trigger_sync_now(
 # Vector DB Name Validation Endpoint
 # ============================================
 
-@router.get("/check-name", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+@router.get("/check-name", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def check_vector_db_name(
     name: str,
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Check if a Vector DB name is valid and available.
-    Requires Super Admin role.
+    Requires Admin role or above.
     """
     from backend.core.vector_db_utils import validate_vector_db_name
     

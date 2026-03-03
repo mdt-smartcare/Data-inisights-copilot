@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from pydantic import BaseModel
 
 from backend.services.observability_service import ObservabilityService, get_observability_service
-from backend.api.deps import require_super_admin
+from backend.api.deps import require_super_admin, require_admin
 from backend.models.schemas import User
 
 router = APIRouter(prefix="/observability", tags=["observability"])
@@ -18,7 +18,7 @@ class ObservabilityConfigUpdate(BaseModel):
 @router.get("/config", summary="Get observability configuration")
 async def get_observability_config(
     service: ObservabilityService = Depends(get_observability_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ):
     """Get current observability settings."""
     return await service.get_config()
@@ -39,7 +39,7 @@ async def update_observability_config(
 async def get_usage_statistics(
     period: str = Query("24h", regex="^(1h|24h|7d|30d)$"),
     service: ObservabilityService = Depends(get_observability_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ):
     """
     Get aggregated usage statistics (costs, tokens, latency) from Langfuse.
@@ -56,7 +56,7 @@ async def get_usage_statistics(
 async def get_recent_traces(
     limit: int = Query(20, ge=1, le=100),
     service: ObservabilityService = Depends(get_observability_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ) -> List[Dict[str, Any]]:
     """
     Get recent traces for display in the observability dashboard.
@@ -72,7 +72,7 @@ async def get_recent_traces(
 async def get_trace_detail(
     trace_id: str,
     service: ObservabilityService = Depends(get_observability_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ) -> Dict[str, Any]:
     """
     Get detailed trace information including all spans and generations.
@@ -100,7 +100,7 @@ async def test_log_emission(
 @router.get("/health", summary="Check Langfuse connection health")
 async def check_langfuse_health(
     service: ObservabilityService = Depends(get_observability_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ) -> Dict[str, Any]:
     """Check if Langfuse is properly configured and reachable."""
     health = {

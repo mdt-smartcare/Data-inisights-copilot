@@ -28,7 +28,7 @@ from backend.services.embedding_batch_processor import EmbeddingBatchProcessor, 
 from backend.services.embedding_document_generator import get_document_generator
 from backend.pipeline.extract import create_data_extractor
 from backend.pipeline.transform import AdvancedDataTransformer
-from backend.core.permissions import require_super_admin, get_current_user
+from backend.core.permissions import require_admin, get_current_user
 from backend.core.logging import get_embedding_logger
 from backend.services.embedding_registry import get_embedding_processor_registry
 
@@ -37,11 +37,11 @@ logger = get_embedding_logger()
 router = APIRouter(prefix="/embedding-jobs", tags=["Embedding Jobs"])
 
 
-@router.post("", response_model=dict, dependencies=[Depends(require_super_admin)])
+@router.post("", response_model=dict, dependencies=[Depends(require_admin)])
 async def start_embedding_job(
     request: EmbeddingJobCreate,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     job_service: EmbeddingJobService = Depends(get_embedding_job_service),
     auth_service: AuthorizationService = Depends(get_authorization_service)
 ):
@@ -51,7 +51,7 @@ async def start_embedding_job(
     This kicks off async embedding generation and returns immediately
     with a job ID that can be used to track progress.
     
-    Requires SuperAdmin role.
+    Requires Admin role or above.
     """
     try:
         from backend.sqliteDb.db import get_db_service
@@ -759,7 +759,7 @@ def _parallel_delta_worker(doc_batch: List[Document], existing_docs: Dict[str, s
 @router.get("/{job_id}/progress", response_model=EmbeddingJobProgress)
 async def get_embedding_progress(
     job_id: str,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     job_service: EmbeddingJobService = Depends(get_embedding_job_service)
 ):
     """
@@ -768,7 +768,7 @@ async def get_embedding_progress(
     Use this for polling-based progress updates.
     For real-time updates, use the WebSocket endpoint.
     
-    Requires SuperAdmin role.
+    Requires Admin role or above.
     """
     progress = job_service.get_job_progress(job_id)
     
@@ -784,13 +784,13 @@ async def get_embedding_progress(
 @router.get("/{job_id}/summary", response_model=EmbeddingJobSummary)
 async def get_embedding_summary(
     job_id: str,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     job_service: EmbeddingJobService = Depends(get_embedding_job_service)
 ):
     """
     Get summary of a completed embedding job.
     
-    Requires SuperAdmin role.
+    Requires Admin role or above.
     """
     summary = job_service.get_job_summary(job_id)
     
@@ -806,7 +806,7 @@ async def get_embedding_summary(
 @router.post("/{job_id}/cancel", response_model=dict)
 async def cancel_embedding_job(
     job_id: str,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     job_service: EmbeddingJobService = Depends(get_embedding_job_service),
     auth_service: AuthorizationService = Depends(get_authorization_service)
 ):
@@ -815,7 +815,7 @@ async def cancel_embedding_job(
     
     Only jobs in QUEUED, PREPARING, or EMBEDDING status can be cancelled.
     
-    Requires SuperAdmin role.
+    Requires Admin role or above.
     """
     success = job_service.cancel_job(job_id, current_user)
     
@@ -852,13 +852,13 @@ async def list_embedding_jobs(
     config_id: Optional[int] = None,
     limit: int = 10,
     offset: int = 0,
-    current_user: User = Depends(require_super_admin),
+    current_user: User = Depends(require_admin),
     job_service: EmbeddingJobService = Depends(get_embedding_job_service)
 ):
     """
     List all embedding jobs with optional filtering.
     
-    Requires SuperAdmin role.
+    Requires Admin role or above.
     """
     jobs = job_service.list_jobs(
         status=status_filter,

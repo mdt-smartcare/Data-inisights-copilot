@@ -116,10 +116,10 @@ export const mockUsers = {
     username: 'super_admin_user',
     email: 'admin@test.com',
     full_name: 'Super Admin',
-    role: 'admin' as const,  // Changed from 'super_admin' to 'admin'
+    role: 'super_admin' as const,
   },
   admin: {
-    id: 3,
+    id: 4,
     username: 'admin_user',
     email: 'admin@test.com',
     full_name: 'Admin User',

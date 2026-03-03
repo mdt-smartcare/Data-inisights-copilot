@@ -15,6 +15,7 @@ import NotificationsPage from './pages/NotificationsPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import type { UserRole } from './types';
+import { roleAtLeast } from './utils/permissions';
 
 // Create a client
 const queryClient = new QueryClient({
@@ -45,8 +46,8 @@ function DefaultRedirect() {
     return <div>Loading...</div>;
   }
 
-  // Redirect based on role
-  if (user?.role === 'admin') {
+  // Redirect based on role - super_admin and admin go to agents page
+  if (roleAtLeast(user?.role, 'admin')) {
     return <Navigate to="/agents" replace />;
   }
 
@@ -68,9 +69,19 @@ function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
     return <Navigate to="/login" replace />;
   }
 
-  if (allowedRoles && user?.role && !allowedRoles.includes(user.role)) {
-    // User is not authorized for this route
-    return <Navigate to="/chat" replace />;
+  // Check role authorization using hierarchy
+  // If allowedRoles is specified, user must have at least one of the allowed roles
+  // Using roleAtLeast ensures super_admin can access admin routes
+  if (allowedRoles && user?.role) {
+    // Find the minimum required role (lowest in hierarchy = most restrictive)
+    // If user's role is at least as privileged as any allowed role, grant access
+    const hasAccess = allowedRoles.some(allowedRole => 
+      roleAtLeast(user.role, allowedRole)
+    );
+    if (!hasAccess) {
+      // User is not authorized for this route
+      return <Navigate to="/chat" replace />;
+    }
   }
 
   return <>{children}</>;
