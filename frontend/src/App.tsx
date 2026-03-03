@@ -12,7 +12,7 @@ import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import CallbackPage from './pages/CallbackPage';
 import NotificationsPage from './pages/NotificationsPage';
-import FileDataPage from './pages/FileDataPage';
+import DataManagementPage from './pages/DataManagementPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import type { UserRole } from './types';
@@ -152,10 +152,10 @@ function App() {
                 }
               />
               <Route
-                path="/file-data"
+                path="/data-management"
                 element={
                   <ProtectedRoute allowedRoles={['admin']}>
-                    <FileDataPage />
+                    <DataManagementPage />
                   </ProtectedRoute>
                 }
               />
