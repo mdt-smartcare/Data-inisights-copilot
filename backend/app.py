@@ -146,6 +146,10 @@ app.include_router(vector_db.router, prefix=settings.api_v1_prefix)
 from backend.api.routes import ingestion
 app.include_router(ingestion.router, prefix=settings.api_v1_prefix)
 
+# Schema drift detection routes
+from backend.api.routes import schema_drift
+app.include_router(schema_drift.router, prefix=settings.api_v1_prefix)
+
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)
 
