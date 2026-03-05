@@ -3,6 +3,7 @@ SQLite database service for user authentication.
 """
 import sqlite3
 import os
+import shutil
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import logging
@@ -987,6 +988,152 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Failed to get users for agent {agent_id}: {e}")
             return []
+        finally:
+            conn.close()
+
+    def update_agent(self, agent_id: int, name: str = None, description: str = None) -> Optional[Dict[str, Any]]:
+        """Update an agent's name and/or description.
+        
+        Args:
+            agent_id: The ID of the agent to update
+            name: New name for the agent (optional)
+            description: New description for the agent (optional)
+            
+        Returns:
+            Updated agent dict or None if not found
+            
+        Raises:
+            ValueError: If name is already taken by another agent
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if agent exists
+            cursor.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+            existing = cursor.fetchone()
+            if not existing:
+                return None
+            
+            # Build update query dynamically based on provided fields
+            updates = []
+            params = []
+            
+            if name is not None:
+                # Check for name uniqueness (excluding current agent)
+                cursor.execute("SELECT id FROM agents WHERE name = ? AND id != ?", (name, agent_id))
+                if cursor.fetchone():
+                    raise ValueError(f"Agent with name '{name}' already exists")
+                updates.append("name = ?")
+                params.append(name)
+                
+            if description is not None:
+                updates.append("description = ?")
+                params.append(description)
+            
+            if not updates:
+                # Nothing to update
+                return dict(existing)
+            
+            params.append(agent_id)
+            query = f"UPDATE agents SET {', '.join(updates)} WHERE id = ?"
+            cursor.execute(query, params)
+            conn.commit()
+            
+            return self.get_agent_by_id(agent_id)
+        finally:
+            conn.close()
+
+    def delete_agent(self, agent_id: int) -> bool:
+        """Delete an agent and all related records (cascade deletion).
+        
+        Deletion order (child tables first):
+        1. Get all vector_db_names from prompt_configs (embedded in embedding_config JSON)
+        2. Delete prompt_configs (via system_prompts)
+        3. Delete system_prompts
+        4. Delete user_agents
+        5. Delete vector_db related records for each vector_db_name
+        6. Nullify audit_logs resource_id
+        7. Delete agents
+        
+        Args:
+            agent_id: The ID of the agent to delete
+            
+        Returns:
+            True if agent was deleted, False if not found
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # Check if agent exists
+            cursor.execute("SELECT id FROM agents WHERE id = ?", (agent_id,))
+            if not cursor.fetchone():
+                return False
+            
+            # Get all vector_db_names associated with this agent from prompt_configs
+            cursor.execute("""
+                SELECT pc.embedding_config 
+                FROM prompt_configs pc
+                JOIN system_prompts sp ON pc.prompt_id = sp.id
+                WHERE sp.agent_id = ?
+            """, (agent_id,))
+            
+            vector_db_names = set()
+            for row in cursor.fetchall():
+                if row['embedding_config']:
+                    try:
+                        config = json.loads(row['embedding_config']) if isinstance(row['embedding_config'], str) else row['embedding_config']
+                        if config and 'vectorDbName' in config:
+                            vector_db_names.add(config['vectorDbName'])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            
+            # 1. Delete prompt_configs for prompts belonging to this agent
+            cursor.execute("""
+                DELETE FROM prompt_configs 
+                WHERE prompt_id IN (SELECT id FROM system_prompts WHERE agent_id = ?)
+            """, (agent_id,))
+            
+            # 2. Delete system_prompts
+            cursor.execute("DELETE FROM system_prompts WHERE agent_id = ?", (agent_id,))
+            
+            # 3. Delete user_agents
+            cursor.execute("DELETE FROM user_agents WHERE agent_id = ?", (agent_id,))
+            
+            # 4. Delete vector_db related records and ChromaDB folders for each vector_db_name
+            chroma_base_path = DB_DIR.parent / "data" / "indexes"
+            for vdb_name in vector_db_names:
+                cursor.execute("DELETE FROM vector_db_schedules WHERE vector_db_name = ?", (vdb_name,))
+                cursor.execute("DELETE FROM document_index WHERE vector_db_name = ?", (vdb_name,))
+                cursor.execute("DELETE FROM schema_drift_logs WHERE vector_db_name = ?", (vdb_name,))
+                cursor.execute("DELETE FROM vector_db_registry WHERE name = ?", (vdb_name,))
+                
+                # Delete ChromaDB folder on disk
+                chroma_path = chroma_base_path / vdb_name
+                if chroma_path.exists() and chroma_path.is_dir():
+                    try:
+                        shutil.rmtree(chroma_path)
+                        logger.info(f"Deleted ChromaDB folder: {chroma_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete ChromaDB folder {chroma_path}: {e}")
+            
+            # 5. Nullify audit_logs resource_id for this agent
+            cursor.execute("""
+                UPDATE audit_logs 
+                SET resource_id = NULL 
+                WHERE resource_type = 'agent' AND resource_id = ?
+            """, (str(agent_id),))
+            
+            # 6. Delete the agent itself
+            cursor.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+            
+            conn.commit()
+            logger.info(f"Successfully deleted agent {agent_id} and all related records (vector_dbs: {vector_db_names})")
+            return True
+            
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to delete agent {agent_id}: {e}")
+            raise
         finally:
             conn.close()
 

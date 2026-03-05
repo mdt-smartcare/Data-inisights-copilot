@@ -265,6 +265,15 @@ export const createAgent = async (data: { name: string; description?: string; ty
   return response.data;
 };
 
+export const updateAgent = async (agentId: number, data: { name?: string; description?: string }): Promise<Agent> => {
+  const response = await apiClient.patch(`/api/v1/agents/${agentId}`, data);
+  return response.data;
+};
+
+export const deleteAgent = async (agentId: number): Promise<void> => {
+  await apiClient.delete(`/api/v1/agents/${agentId}`);
+};
+
 export const assignUserToAgent = async (agentId: number, userId: number, role: string): Promise<{ status: string }> => {
   const response = await apiClient.post(`/api/v1/agents/${agentId}/users`, { user_id: userId, role });
   return response.data;

@@ -81,6 +81,20 @@ const AgentDashboardPage: React.FC = () => {
         };
     }, [id, navigate]);
 
+    // Function to reload agent data (called after update)
+    const reloadAgent = async () => {
+        if (!id) return;
+        try {
+            const agents = await getAgents();
+            const foundAgent = agents.find((a: Agent) => a.id === parseInt(id));
+            if (foundAgent) {
+                setAgent(foundAgent);
+            }
+        } catch (err) {
+            console.error('Failed to reload agent', err);
+        }
+    };
+
     // Load config when agent is loaded
     useEffect(() => {
         let isMounted = true;
@@ -368,7 +382,12 @@ const AgentDashboardPage: React.FC = () => {
                                 )}
 
                                 {dashboardTab === 'specs' && (
-                                    <SettingsTab activeConfig={activeConfig} />
+                                    <SettingsTab
+                                        activeConfig={activeConfig}
+                                        agent={agent}
+                                        canEdit={canEdit}
+                                        onAgentUpdate={reloadAgent}
+                                    />
                                 )}
 
                                 {dashboardTab === 'users' && (
