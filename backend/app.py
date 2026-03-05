@@ -4,9 +4,10 @@ FastAPI application entrypoint for the RAG Chatbot Backend.
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Load environment variables manually for libraries that rely on os.environ (like OpenAI)
 load_dotenv(Path(__file__).parent / ".env")
@@ -60,6 +61,38 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+# =============================================================================
+# Global Exception Handlers - Ensure CORS headers on all error responses
+# =============================================================================
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Handle HTTP exceptions with proper CORS headers."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions with proper CORS headers."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"},
+        headers={
+            "Access-Control-Allow-Origin": request.headers.get("origin", "*"),
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -108,6 +141,14 @@ app.include_router(observability.router, prefix=settings.api_v1_prefix)
 # Ingestion routes
 from backend.api.routes import vector_db
 app.include_router(vector_db.router, prefix=settings.api_v1_prefix)
+
+# File ingestion routes (upload, SQL queries on files)
+from backend.api.routes import ingestion
+app.include_router(ingestion.router, prefix=settings.api_v1_prefix)
+
+# Schema drift detection routes
+from backend.api.routes import schema_drift
+app.include_router(schema_drift.router, prefix=settings.api_v1_prefix)
 
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)

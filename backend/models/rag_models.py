@@ -148,12 +148,73 @@ class EmbeddingVersion(EmbeddingVersionBase):
 # Embedding Job Models
 # ============================================
 
+class ChunkingConfig(BaseModel):
+    """Configuration for parent-child chunking strategy."""
+    parent_chunk_size: int = Field(default=800, ge=200, le=2000, description="Parent chunk size in tokens")
+    parent_chunk_overlap: int = Field(default=150, ge=0, le=500, description="Parent chunk overlap in tokens")
+    child_chunk_size: int = Field(default=200, ge=50, le=500, description="Child chunk size in tokens")
+    child_chunk_overlap: int = Field(default=50, ge=0, le=100, description="Child chunk overlap in tokens")
+
+
+class ParallelizationConfig(BaseModel):
+    """Configuration for parallel processing."""
+    num_workers: Optional[int] = Field(default=None, ge=1, le=16, description="Number of worker processes. None = auto")
+    chunking_batch_size: Optional[int] = Field(default=None, ge=100, le=50000, description="Documents per chunking batch. None = auto")
+    delta_check_batch_size: int = Field(default=50000, ge=1000, le=100000, description="Documents per delta check batch")
+
+
+class MedicalContextConfig(BaseModel):
+    """
+    Configuration for medical terminology enrichment.
+    
+    Improves embedding quality by expanding clinical abbreviations
+    and recognizing boolean flag patterns in column names.
+    """
+    # Medical abbreviation mappings (column_name -> human_readable_name)
+    # Example: {"bp": "Blood Pressure", "hr": "Heart Rate", "hba1c": "Glycated Hemoglobin"}
+    medical_context: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of column names to human-readable medical terms"
+    )
+    
+    # Clinical boolean flag prefixes to recognize
+    # Example: ["is_", "has_", "was_", "history_of_", "confirmed_"]
+    clinical_flag_prefixes: List[str] = Field(
+        default_factory=lambda: ["is_", "has_", "was_", "history_of_", "flag_", "confirmed_", "requires_", "on_"],
+        description="Column prefixes indicating clinical boolean flags"
+    )
+    
+    # Whether to use defaults from YAML config as base (merge with user config)
+    use_yaml_defaults: bool = Field(
+        default=True,
+        description="Merge with default mappings from embedding_config.yaml"
+    )
+
+
 class EmbeddingJobCreate(BaseModel):
     """Request model for starting a new embedding job."""
     config_id: int = Field(..., description="RAG configuration to generate embeddings for")
-    batch_size: int = Field(default=50, ge=10, le=200, description="Documents per batch")
-    max_concurrent: int = Field(default=5, ge=1, le=10, description="Max concurrent batches")
+    
+    # Batch Processing Config
+    batch_size: int = Field(default=50, ge=10, le=500, description="Documents per embedding batch")
+    max_concurrent: int = Field(default=5, ge=1, le=20, description="Max concurrent embedding batches")
     incremental: bool = Field(default=True, description="Whether to run incrementally")
+    
+    # Chunking Config (optional - uses defaults if not provided)
+    chunking: Optional[ChunkingConfig] = Field(default=None, description="Chunking configuration")
+    
+    # Parallelization Config (optional - uses adaptive defaults if not provided)
+    parallelization: Optional[ParallelizationConfig] = Field(default=None, description="Parallelization configuration")
+    
+    # Medical Context Config (optional - improves semantic search for clinical data)
+    medical_context_config: Optional[MedicalContextConfig] = Field(
+        default=None, 
+        description="Medical terminology enrichment configuration"
+    )
+    
+    # Circuit Breaker Config
+    max_consecutive_failures: int = Field(default=5, ge=1, le=20, description="Max consecutive ChromaDB failures before abort")
+    retry_attempts: int = Field(default=3, ge=1, le=10, description="Retry attempts per batch")
 
 
 class EmbeddingJobProgress(BaseModel):

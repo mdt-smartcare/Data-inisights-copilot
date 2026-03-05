@@ -50,12 +50,23 @@ class ChartData(BaseModel):
     """Chart visualization data.
     
     Supports multiple chart types:
-    - List-based: pie, bar, line (data contains lists of labels/values)
-    - Single-value: scorecard, metric (data contains single value/label)
+    - List-based: pie, bar, line, horizontal_bar, treemap, funnel (data contains lists of labels/values)
+    - Single-value: scorecard, gauge (uses value field or data)
+    - Comparison: bullet (data contains actual/target pairs)
     """
-    title: str = Field(..., description="Chart title")
-    type: str = Field(..., description="Chart type (pie, bar, line, scorecard, metric)")
-    data: Dict[str, Any] = Field(..., description="Chart data - format depends on chart type")
+    title: Optional[str] = Field(default=None, description="Chart title")
+    type: str = Field(..., description="Chart type (pie, bar, line, scorecard, gauge, funnel, bullet, horizontal_bar, treemap)")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="Chart data - format depends on chart type")
+    
+    # Gauge-specific fields
+    value: Optional[float] = Field(default=None, description="Value for gauge charts")
+    min: Optional[float] = Field(default=None, description="Minimum value for gauge")
+    max: Optional[float] = Field(default=None, description="Maximum value for gauge")
+    target: Optional[float] = Field(default=None, description="Target value for gauge/bullet")
+    thresholds: Optional[List[Dict[str, Any]]] = Field(default=None, description="Threshold definitions for gauge")
+    
+    # Bullet-specific fields
+    ranges: Optional[List[float]] = Field(default=None, description="Range boundaries for bullet chart")
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
@@ -254,5 +265,143 @@ class ErrorResponse(BaseModel):
             "detail": {"field": "query", "issue": "Cannot be empty"},
             "trace_id": "550e8400-e29b-41d4-a716-446655440000",
             "timestamp": "2025-12-30T10:30:00Z"
+        }
+    })
+
+
+# ============================================
+# Ingestion Schemas (Phase 3: Payload Injection)
+# ============================================
+
+class IngestionOverrideConfig(BaseModel):
+    """
+    Override configuration for ad-hoc ingestion jobs.
+    
+    Allows users to run ingestion with custom settings that differ
+    from the global system defaults stored in the database.
+    """
+    # Chunking overrides
+    parent_chunk_size: Optional[int] = Field(
+        None, ge=100, le=4000,
+        description="Override parent chunk size (default from DB: 800)"
+    )
+    parent_chunk_overlap: Optional[int] = Field(
+        None, ge=0, le=500,
+        description="Override parent chunk overlap (default from DB: 150)"
+    )
+    child_chunk_size: Optional[int] = Field(
+        None, ge=50, le=1000,
+        description="Override child chunk size (default from DB: 200)"
+    )
+    child_chunk_overlap: Optional[int] = Field(
+        None, ge=0, le=200,
+        description="Override child chunk overlap (default from DB: 50)"
+    )
+    min_chunk_length: Optional[int] = Field(
+        None, ge=10, le=500,
+        description="Override minimum chunk length (default from DB: 50)"
+    )
+    
+    # PII overrides
+    exclude_columns: Optional[List[str]] = Field(
+        None,
+        description="Override columns to exclude from embedding (PII protection)"
+    )
+    exclude_tables: Optional[List[str]] = Field(
+        None,
+        description="Override tables to exclude entirely from embedding"
+    )
+    
+    # Embedding overrides
+    batch_size: Optional[int] = Field(
+        None, ge=1, le=1024,
+        description="Override embedding batch size"
+    )
+    
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "parent_chunk_size": 1000,
+            "parent_chunk_overlap": 200,
+            "exclude_columns": ["ssn", "credit_card"],
+            "batch_size": 64
+        }
+    })
+
+
+class IngestionRequest(BaseModel):
+    """
+    Request payload for triggering an ingestion/embedding job.
+    
+    Supports ad-hoc configuration overrides that take precedence
+    over the global database defaults for this specific job.
+    """
+    source_id: str = Field(
+        ...,
+        description="Identifier for the data source (connection ID, file name, or agent ID)"
+    )
+    source_type: str = Field(
+        default="database",
+        description="Type of data source: 'database', 'file', or 'agent'"
+    )
+    agent_id: Optional[int] = Field(
+        None,
+        description="Target agent ID for the embedding job"
+    )
+    vector_db_name: Optional[str] = Field(
+        None,
+        description="Target vector database/collection name"
+    )
+    override_config: Optional[IngestionOverrideConfig] = Field(
+        None,
+        description="Optional overrides for chunking, PII rules, and embedding settings. "
+                    "If provided, these values take precedence over database defaults."
+    )
+    force_reindex: bool = Field(
+        default=False,
+        description="Force re-indexing even if documents already exist"
+    )
+    
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "source_id": "conn-123",
+            "source_type": "database",
+            "agent_id": 1,
+            "vector_db_name": "clinical_data_v2",
+            "override_config": {
+                "parent_chunk_size": 1000,
+                "batch_size": 64
+            },
+            "force_reindex": False
+        }
+    })
+
+
+class IngestionJobResponse(BaseModel):
+    """Response after triggering an ingestion job."""
+    job_id: str = Field(..., description="Unique job identifier for tracking")
+    status: str = Field(..., description="Initial job status")
+    message: str = Field(..., description="Human-readable status message")
+    source_id: str = Field(..., description="Data source being processed")
+    config_applied: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Final configuration applied (merged defaults + overrides)"
+    )
+    estimated_documents: Optional[int] = Field(
+        None,
+        description="Estimated number of documents to process"
+    )
+    
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "job_id": "emb-job-abc123def456",
+            "status": "queued",
+            "message": "Ingestion job queued successfully",
+            "source_id": "conn-123",
+            "config_applied": {
+                "parent_chunk_size": 1000,
+                "parent_chunk_overlap": 150,
+                "batch_size": 64
+            },
+            "estimated_documents": 5000
         }
     })

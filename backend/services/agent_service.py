@@ -16,7 +16,7 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 
-from backend.config import get_settings
+from backend.config import get_settings, get_llm_settings, get_embedding_settings
 from backend.core.logging import get_logger
 from backend.services.sql_service import get_sql_service, SQLService
 from backend.services.vector_store import get_vector_store
@@ -40,21 +40,51 @@ Please contact the administrator to configure the active system prompt in the da
 class AgentService:
     """Main RAG agent service for processing user queries."""
     
-    def __init__(self, agent_config: Optional[Dict[str, Any]] = None):
+    def __init__(self, agent_config: Optional[Dict[str, Any]] = None, user_id: Optional[int] = None):
         """Initialize the agent with tools and LLM."""
         logger.info(f"Initializing AgentService (Config: {agent_config.get('name') if agent_config else 'Default'})")
         
         # Initialize services
         self.db_service = get_db_service()
         self.agent_config = agent_config
-
-        if agent_config and agent_config.get('db_connection_uri'):
+        self.user_id = user_id
+        
+        # Determine data source type from active config
+        agent_id = agent_config.get('id') if agent_config else None
+        active_config = self.db_service.get_active_config(agent_id=agent_id)
+        self.data_source_type = active_config.get('data_source_type', 'database') if active_config else 'database'
+        
+        logger.info(f"Data source type for agent: {self.data_source_type}")
+        
+        # Initialize SQL service based on data source type
+        if self.data_source_type == 'file':
+            # Use FileSQLService (DuckDB) for Excel/CSV file-based agents
+            from backend.services.file_sql_service import FileSQLService
+            if user_id:
+                try:
+                    self._file_sql_service = FileSQLService(user_id=user_id)
+                    # Wrap FileSQLService.query to return string like SQLService
+                    self.sql_service = self._create_file_sql_wrapper(self._file_sql_service)
+                    self.fixed_system_prompt = agent_config.get('system_prompt') if agent_config else None
+                    logger.info(f"Using FileSQLService (DuckDB) for user {user_id}")
+                except ValueError as e:
+                    logger.warning(f"FileSQLService init failed: {e}. No uploaded files for user.")
+                    self.sql_service = self._create_dummy_sql_service()
+                    self.fixed_system_prompt = agent_config.get('system_prompt') if agent_config else None
+            else:
+                logger.warning("File-based agent requires user_id for FileSQLService")
+                self.sql_service = self._create_dummy_sql_service()
+                self.fixed_system_prompt = agent_config.get('system_prompt') if agent_config else None
+        elif agent_config and agent_config.get('db_connection_uri'):
+            # Use SQLService with dedicated database connection
             logger.info(f"Connecting to dedicated agent database: {agent_config['db_connection_uri']}")
             self.sql_service = SQLService(database_url=agent_config['db_connection_uri'])
             self.fixed_system_prompt = agent_config.get('system_prompt')
         else:
+            # Use default SQLService (PostgreSQL)
             self.sql_service = get_sql_service()
             self.fixed_system_prompt = None
+
         # Don't load vector store on init - lazy load it when needed!
         self._vector_store = None
         self.embedding_model = get_embedding_model()
@@ -73,7 +103,6 @@ class AgentService:
         self.llm = base_provider.get_langchain_llm()
         
         # Check active config for LLM overrides (temperature, max_tokens)
-        active_config = self.db_service.get_active_config(agent_id=self.agent_config.get('id') if self.agent_config else None)
         if active_config and active_config.get('llm_config'):
             try:
                 llm_conf = json.loads(active_config['llm_config'])
@@ -98,7 +127,7 @@ class AgentService:
         self.tools = [
             Tool(
                 name="sql_query_tool",
-                func=self.sql_service.query,
+                func=self.sql_service.query if self.sql_service else lambda x: "SQL service not available.",
                 description="""**PRIMARY TOOL FOR STATISTICS - Pass NATURAL LANGUAGE questions only.**
 
 This tool accepts natural language questions (NOT SQL queries) and automatically generates and executes SQL.
@@ -476,13 +505,14 @@ Use this to search unstructured text, notes, and semantic descriptions.
                     suggested_questions = []
             
             # Build response
+            embedding_settings = get_embedding_settings()
             response = ChatResponse(
                 answer=self._clean_answer(full_response),
                 chart_data=chart_data,
                 suggested_questions=suggested_questions,
                 reasoning_steps=reasoning_steps,
                 embedding_info=EmbeddingInfo(
-                    model=settings.embedding_model_name,
+                    model=embedding_settings.get('model_name', 'BAAI/bge-m3'),
                     dimensions=self.embedding_model.dimension,
                     search_method="hybrid" if rag_used else "structured",
                     vector_norm=embedding_info.get("norm"),
@@ -503,9 +533,10 @@ Use this to search unstructured text, notes, and semantic descriptions.
                     obs_service = get_observability_service()
                     input_tokens = len(query.split()) * 1.3
                     output_tokens = len(full_response.split()) * 1.3
+                    llm_settings = get_llm_settings()
                     await obs_service.track_usage(
                         operation="rag_pipeline",
-                        model=settings.openai_model,
+                        model=llm_settings.get('model_name', 'gpt-4o'),
                         input_tokens=int(input_tokens),
                         output_tokens=int(output_tokens),
                         latency_ms=int(duration * 1000),
@@ -665,6 +696,38 @@ Use this to search unstructured text, notes, and semantic descriptions.
         
         return steps
 
+    def _create_file_sql_wrapper(self, file_sql_service):
+        """Create a wrapper around FileSQLService to match SQLService interface."""
+        class FileSQLWrapper:
+            def __init__(self, service):
+                self._service = service
+                # Provide cached_schema for compatibility with intent router
+                self.cached_schema = service.get_schema_for_prompt()
+                # Provide db attribute for hybrid queries (if needed)
+                self.db = None
+            
+            def query(self, question: str) -> str:
+                """Query wrapper that returns string like SQLService."""
+                result = self._service.query(question)
+                if isinstance(result, dict):
+                    if result.get('status') == 'error':
+                        return f"Error: {result.get('error', 'Unknown error')}"
+                    return result.get('answer', str(result))
+                return str(result)
+        
+        return FileSQLWrapper(file_sql_service)
+    
+    def _create_dummy_sql_service(self):
+        """Create a dummy SQL service for when FileSQLService can't be initialized."""
+        class DummySQLService:
+            cached_schema = ""
+            db = None
+            
+            def query(self, question: str) -> str:
+                return "SQL service not available. Please ensure you have uploaded files for this agent."
+        
+        return DummySQLService()
+
 
 # Singleton instance for default agent
 _agent_service: Optional[AgentService] = None
@@ -698,7 +761,7 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
              raise ValueError(f"Agent {agent_id} not found")
              
         # Create and cache new instance
-        service = AgentService(agent_config=agent_config)
+        service = AgentService(agent_config=agent_config, user_id=user_id)
         _agent_cache[agent_id] = service
         return service
 

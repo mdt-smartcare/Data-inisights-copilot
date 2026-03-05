@@ -1,68 +1,76 @@
 """
 Configuration management using Pydantic Settings.
-Loads and validates environment variables with type safety.
+
+This module handles INFRASTRUCTURE/ENVIRONMENT settings only:
+- Secrets (API keys)
+- Internal database path (SQLite for app config)
+- OIDC/Auth provider configuration
+- Server binding (host, port, CORS)
+
+RUNTIME-CONFIGURABLE settings (LLM, embedding, RAG, rate limiting, etc.)
+are managed via the SettingsService and stored in the database.
+
+CLINICAL DATABASE CONNECTIONS are managed via the `db_connections` table
+and selected per-agent via the frontend. Not hardcoded here.
 """
 from typing import Optional, List
-from functools import lru_cache
 from pathlib import Path
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings with validation."""
+    """
+    Infrastructure and environment settings.
+    
+    These are settings that:
+    - Come from environment variables or .env files
+    - Cannot be changed at runtime without restart
+    - Are required for the server to start
+    
+    NOTE: Clinical database connections are NOT configured here.
+    They are managed via the `db_connections` table and assigned to agents.
+    """
     
     model_config = SettingsConfigDict(
-        env_file=str(Path(__file__).parent / ".env"),  # Look for .env in backend/ directory
+        env_file=str(Path(__file__).parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore"
     )
     
     # ============================================
-    # OpenAI Configuration
+    # API Keys & Secrets (from environment only)
     # ============================================
     openai_api_key: str = Field(..., description="OpenAI API key")
-    openai_model: str = Field(default="gpt-4o", description="OpenAI model name")
-    openai_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
     
     # ============================================
-    # Database Configuration
+    # Internal App Database (SQLite - for config storage)
     # ============================================
-    db_user: str = Field(default="admin")
-    db_password: str = Field(default="admin")
-    db_name: str = Field(default="Spice_BD")
-    db_host: str = Field(default="localhost")
-    db_port: int = Field(default=5432)
-    
-    @property
-    def database_url(self) -> str:
-        """Construct database URL from components."""
-        return f"postgresql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+    # This is the internal database for storing users, settings, prompts, etc.
+    # NOT the clinical data database (that comes from db_connections table)
+    sqlite_db_path: str = Field(
+        default="./sqliteDb/copilot.db",
+        description="Path to internal SQLite database for app configuration"
+    )
     
     # ============================================
-    # Embedding Model Configuration
+    # Security Configuration (secrets/infrastructure)
     # ============================================
-    embedding_model_path: str = Field(default="./models/bge-m3")
-    embedding_model_name: str = Field(default="BAAI/bge-m3")
-    embedding_provider: str = Field(default="sentence-transformers")
-    embedding_batch_size: int = Field(default=128)
-    vector_db_path: str = Field(default="./data/indexes/chroma_db_advanced")
-    
-    # ============================================
-    # Security Configuration
-    # ============================================
-    secret_key: str = Field(default="development-secret-key-change-in-production", description="JWT signing key (legacy, kept for compatibility)")
+    secret_key: str = Field(
+        default="development-secret-key-change-in-production",
+        description="JWT signing key"
+    )
     algorithm: str = Field(default="HS256")
-    access_token_expire_minutes: int = Field(default=720, gt=0)  # 12 hours
+    access_token_expire_minutes: int = Field(default=720, gt=0)
     refresh_token_expire_days: int = Field(default=7, gt=0)
     
     # ============================================
-    # OIDC/Keycloak Configuration
+    # OIDC/Keycloak Configuration (infrastructure)
     # ============================================
     oidc_issuer_url: str = Field(
-        default="https://keycloak.mdtlabs.org/realms/medtronicLabs",
-        description="Keycloak realm issuer URL"
+        default="",
+        description="Keycloak realm issuer URL (leave empty to disable OIDC)"
     )
     oidc_client_id: str = Field(
         default="data-insights-copilot",
@@ -81,20 +89,22 @@ class Settings(BaseSettings):
         description="Default role for newly provisioned OIDC users"
     )
     oidc_role_claim: str = Field(
-        default="resource_access.data-insights-copilot.roles",
-        description="Claim path for roles in OIDC token (e.g., 'realm_access.roles' or 'resource_access.{client}.roles')"
+        default="realm_access.roles",
+        description="Claim path for roles in OIDC token"
     )
     
     # ============================================
-    # API Configuration
+    # Server Configuration (infrastructure)
     # ============================================
+    host: str = Field(default="0.0.0.0", description="Server bind host")
+    port: int = Field(default=8000, description="Server bind port")
     api_v1_prefix: str = Field(default="/api/v1")
     project_name: str = Field(default="Data Insights Copilot API")
     version: str = Field(default="1.0.0")
     debug: bool = Field(default=False)
     
     # ============================================
-    # CORS Configuration
+    # CORS Configuration (startup config)
     # ============================================
     cors_origins: str = Field(default="http://localhost:3000,http://localhost:5173")
     cors_allow_credentials: bool = Field(default=True)
@@ -112,12 +122,18 @@ class Settings(BaseSettings):
         return [method.strip() for method in self.cors_allow_methods.split(",")]
     
     # ============================================
-    # Langfuse Tracing (Optional)
+    # Langfuse Configuration (secrets/infrastructure)
     # ============================================
     langfuse_public_key: Optional[str] = Field(default=None)
     langfuse_secret_key: Optional[str] = Field(default=None)
-    langfuse_host: str = Field(default="http://localhost:3001")
+    langfuse_host: str = Field(default="https://cloud.langfuse.com")
     enable_langfuse: bool = Field(default=False)
+    
+    # ============================================
+    # Logging Configuration (infrastructure - needed at startup)
+    # ============================================
+    log_level: str = Field(default="INFO", description="Logging level (DEBUG, INFO, WARNING, ERROR)")
+    log_format: str = Field(default="json", description="Log format (json or text)")
     
     # ============================================
     # Feature Flags
@@ -128,35 +144,13 @@ class Settings(BaseSettings):
     )
     
     # ============================================
-    # Logging Configuration
+    # File Paths (infrastructure - needed at startup)
     # ============================================
-    log_level: str = Field(default="INFO")
-    log_format: str = Field(default="json")
     log_file: str = Field(default="./logs/backend.log")
     embedding_log_file: str = Field(default="./logs/embedding.log")
-    
-    @field_validator("log_level")
-    @classmethod
-    def validate_log_level(cls, v: str) -> str:
-        """Validate log level."""
-        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        if v.upper() not in valid_levels:
-            raise ValueError(f"Invalid log level. Must be one of {valid_levels}")
-        return v.upper()
-    
-    # ============================================
-    # RAG Configuration
-    # ============================================
-    rag_top_k: int = Field(default=5, gt=0)
-    rag_similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    rag_rerank: bool = Field(default=True)
-    rag_config_path: str = Field(default="./config/embedding_config.yaml")
-    
-    # ============================================
-    # Rate Limiting (Optional)
-    # ============================================
-    rate_limit_enabled: bool = Field(default=True)
-    rate_limit_per_minute: int = Field(default=60, gt=0)
+    models_path: str = Field(default="./models", description="Path to local ML models")
+    data_path: str = Field(default="./data", description="Path to data directory")
+    rag_config_path: str = Field(default="./config/embedding_config.yaml", description="Path to RAG config YAML (fallback defaults)")
     
     # ============================================
     # Testing Configuration
@@ -167,13 +161,208 @@ class Settings(BaseSettings):
 
 def get_settings() -> Settings:
     """
-    Get settings instance.
-    Use this function throughout the application to access settings.
+    Get infrastructure settings instance.
     
-    Note: Cache removed to allow .env changes to take effect on server reload.
+    For runtime-configurable settings (LLM, embedding, RAG, etc.),
+    use get_runtime_setting() or SettingsService directly.
+    
+    For clinical database connections, use the db_connections table
+    via the DatabaseService.
     """
     return Settings()
 
+
+# =============================================================================
+# Runtime Settings Helper (reads from database)
+# =============================================================================
+
+def get_runtime_setting(category: str, key: str, default=None):
+    """
+    Get a runtime-configurable setting from the database.
+    
+    This is a convenience helper for accessing settings that can be
+    changed via the frontend without server restart.
+    
+    Categories:
+    - 'llm': provider, model_name, temperature, max_tokens
+    - 'embedding': provider, model_name, batch_size, dimensions
+    - 'rag': top_k_initial, top_k_final, hybrid_weights, rerank_enabled, chunk_size
+    - 'security': rate_limit_enabled, rate_limit_per_minute
+    - 'observability': log_level, enable_tracing
+    - 'ui': app_name, theme, primary_color
+    - 'data_privacy': global_exclude_columns, exclude_tables, table_specific_exclusions
+    - 'medical_context': terminology_mappings, clinical_flag_prefixes
+    - 'chunking': parent_chunk_size, child_chunk_size, etc.
+    - 'vector_store': type, default_collection
+    
+    Args:
+        category: Setting category (llm, embedding, rag, etc.)
+        key: Setting key within the category
+        default: Default value if setting not found
+        
+    Returns:
+        The setting value, or default if not found
+        
+    Example:
+        model = get_runtime_setting('llm', 'model_name', 'gpt-4o')
+        temperature = get_runtime_setting('llm', 'temperature', 0.0)
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        settings_service = get_settings_service()
+        value = settings_service.get_setting(category, key)
+        return value if value is not None else default
+    except Exception:
+        # Fallback to default if settings service unavailable
+        return default
+
+
+def get_llm_settings() -> dict:
+    """
+    Get all LLM settings as a dictionary.
+    
+    Returns:
+        Dict with keys: provider, model_name, temperature, max_tokens, api_key
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        return get_settings_service().get_category_settings_raw('llm')
+    except Exception:
+        # Fallback defaults
+        return {
+            'provider': 'openai',
+            'model_name': 'gpt-4o',
+            'temperature': 0.0,
+            'max_tokens': 4096,
+            'api_key': ''
+        }
+
+
+def get_embedding_settings() -> dict:
+    """
+    Get all embedding settings as a dictionary.
+    
+    Returns:
+        Dict with keys: provider, model_name, model_path, batch_size, dimensions
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        return get_settings_service().get_category_settings_raw('embedding')
+    except Exception:
+        # Fallback defaults
+        return {
+            'provider': 'bge-m3',
+            'model_name': 'BAAI/bge-m3',
+            'model_path': './models/bge-m3',
+            'batch_size': 128,
+            'dimensions': 1024
+        }
+
+
+def get_rag_settings() -> dict:
+    """
+    Get all RAG pipeline settings as a dictionary.
+    
+    Returns:
+        Dict with keys: top_k_initial, top_k_final, hybrid_weights, 
+                       rerank_enabled, reranker_model, chunk_size, chunk_overlap
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        return get_settings_service().get_category_settings_raw('rag')
+    except Exception:
+        # Fallback defaults
+        return {
+            'top_k_initial': 50,
+            'top_k_final': 10,
+            'hybrid_weights': [0.75, 0.25],
+            'rerank_enabled': True,
+            'reranker_model': 'BAAI/bge-reranker-base',
+            'chunk_size': 800,
+            'chunk_overlap': 150
+        }
+
+
+def get_data_privacy_settings() -> dict:
+    """
+    Get data privacy settings (PII protection rules).
+    
+    Returns:
+        Dict with keys: global_exclude_columns, exclude_tables, table_specific_exclusions
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        return get_settings_service().get_category_settings_raw('data_privacy')
+    except Exception:
+        # Fallback defaults
+        return {
+            'global_exclude_columns': ['first_name', 'last_name', 'phone_number', 'date_of_birth', 'password', 'national_id'],
+            'exclude_tables': ['audit', 'user_token', 'flyway_schema_history'],
+            'table_specific_exclusions': {}
+        }
+
+
+def get_medical_context_settings() -> dict:
+    """
+    Get medical context settings (terminology mappings).
+    
+    Returns:
+        Dict with keys: terminology_mappings, clinical_flag_prefixes
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        return get_settings_service().get_category_settings_raw('medical_context')
+    except Exception:
+        # Fallback defaults
+        return {
+            'terminology_mappings': {},
+            'clinical_flag_prefixes': ['is_', 'has_', 'was_', 'history_of_', 'flag_', 'confirmed_', 'requires_', 'on_']
+        }
+
+
+def get_chunking_settings() -> dict:
+    """
+    Get chunking strategy settings.
+    
+    Returns:
+        Dict with keys: parent_chunk_size, parent_chunk_overlap, 
+                       child_chunk_size, child_chunk_overlap, min_chunk_length
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        return get_settings_service().get_category_settings_raw('chunking')
+    except Exception:
+        # Fallback defaults
+        return {
+            'parent_chunk_size': 800,
+            'parent_chunk_overlap': 150,
+            'child_chunk_size': 200,
+            'child_chunk_overlap': 50,
+            'min_chunk_length': 50
+        }
+
+
+def get_vector_store_settings() -> dict:
+    """
+    Get vector store settings.
+    
+    Returns:
+        Dict with keys: type, default_collection
+    """
+    try:
+        from backend.services.settings_service import get_settings_service
+        return get_settings_service().get_category_settings_raw('vector_store')
+    except Exception:
+        # Fallback defaults
+        return {
+            'type': 'chroma',
+            'default_collection': 'default_collection'
+        }
+
+
+# =============================================================================
+# Legacy Support
+# =============================================================================
 
 # Default hardcoded users (legacy - kept for backward compatibility)
 # With OIDC/Keycloak integration, users are now provisioned automatically

@@ -103,20 +103,20 @@ docker-compose ps
 
 # Execute command in container
 docker-compose exec backend bash
-docker-compose exec postgres psql -U admin -d Spice_BD
+docker-compose exec postgres psql -U admin -d your_database
 ```
 
 ### Database Management
 
 ```bash
 # Access PostgreSQL
-docker-compose exec postgres psql -U admin -d Spice_BD
+docker-compose exec postgres psql -U admin -d your_database
 
 # Backup database
-docker-compose exec postgres pg_dump -U admin Spice_BD > backup.sql
+docker-compose exec postgres pg_dump -U admin your_database > backup.sql
 
 # Restore database
-cat backup.sql | docker-compose exec -T postgres psql -U admin -d Spice_BD
+cat backup.sql | docker-compose exec -T postgres psql -U admin -d your_database
 
 # View database logs
 docker-compose logs postgres

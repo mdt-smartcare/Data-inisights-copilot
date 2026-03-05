@@ -46,10 +46,9 @@ load_dotenv()
 class Config:
     """Centralized configuration for the application."""
     OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
-    DB_USER: str = "admin"
-    DB_PASSWORD: str = "admin"
-    DB_NAME: str = "Spice_BD"
-    DB_URI: str = f"postgresql://{DB_USER}:{DB_PASSWORD}@localhost:5432/{DB_NAME}"
+    # NOTE: Database connections are now configured via the frontend
+    # Settings > Database Connections page. This is just a fallback for the Gradio demo.
+    DB_URI: str = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/your_database")
     EMBEDDING_MODEL_PATH: str = "./models/bge-m3"
     LLM_MODEL: str = "gpt-4o"
     FEEDBACK_LOG_FILE: str = "feedback_log.csv"

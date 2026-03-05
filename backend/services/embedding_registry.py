@@ -81,21 +81,21 @@ class EmbeddingRegistry:
             self._initialized = True
             
     def _load_initial_provider(self):
-        """Load the initial provider from configuration/settings."""
+        """Load the initial provider from database settings."""
         try:
-            from backend.config import get_settings
-            settings = get_settings()
+            from backend.config import get_embedding_settings
             
-            provider_type = settings.embedding_provider
+            embedding_settings = get_embedding_settings()
+            provider_type = embedding_settings.get('provider', 'bge-m3')
             logger.info(f"Loading initial provider from settings: {provider_type}")
             
             # Map settings to config
             config = {
-                "model_name": settings.embedding_model_name,
-                "batch_size": settings.embedding_batch_size
+                "model_name": embedding_settings.get('model_name', 'BAAI/bge-m3'),
+                "batch_size": embedding_settings.get('batch_size', 128)
             }
-            if hasattr(settings, "embedding_model_path"):
-                 config["model_path"] = settings.embedding_model_path
+            if embedding_settings.get('model_path'):
+                config["model_path"] = embedding_settings.get('model_path')
             
             self._set_provider(provider_type, config)
         except Exception as e:

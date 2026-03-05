@@ -376,7 +376,7 @@ echo "SECRET_KEY=$(openssl rand -hex 32)" >> backend/.env
 **Error:** `Could not connect to database`
 ```bash
 # Solution: Verify PostgreSQL is running
-psql -U admin -d Spice_BD -c "SELECT 1"
+psql -U admin -d Database_Name -c "SELECT 1"
 ```
 
 **Error:** `Vector store not found`

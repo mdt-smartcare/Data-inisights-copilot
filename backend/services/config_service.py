@@ -1,32 +1,367 @@
+"""
+Configuration Service for Data Insights AI-Copilot.
+
+This service provides:
+- System prompt generation and management
+- Access to runtime-configurable settings from database (via SettingsService)
+- Operational configuration access (chunking, PII rules, medical context)
+- Hot-reload support: automatically invalidates cache when settings change
+
+IMPORTANT: This service reads configuration from the database (system_settings table),
+NOT from static YAML files. The database is the single source of truth.
+"""
 import logging
-from typing import List, Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import json
 from langchain.prompts import ChatPromptTemplate
-from backend.services.sql_service import get_sql_service
-from backend.services.agent_service import get_agent_service
+from backend.services.settings_service import get_settings_service, SettingsService
 from backend.sqliteDb.db import get_db_service
 
 logger = logging.getLogger(__name__)
 
+
+# Categories that ConfigService cares about for hot-reload
+OPERATIONAL_CONFIG_CATEGORIES = {
+    'chunking', 'data_privacy', 'medical_context', 'vector_store',
+    'embedding', 'rag'
+}
+
+
 class ConfigService:
-    def __init__(self):
+    """
+    Configuration service for managing system prompts and runtime settings.
+    
+    All configuration is read from the database via SettingsService,
+    which provides TTL-cached access to prevent database hammering.
+    
+    HOT-RELOAD: This service registers as a listener with SettingsService
+    to immediately invalidate its internal cache when settings change.
+    """
+    
+    def __init__(self, settings_service: Optional[SettingsService] = None):
+        """
+        Initialize ConfigService.
+        
+        Args:
+            settings_service: Optional SettingsService instance for dependency injection.
+                            If not provided, uses the singleton.
+        """
         self._sql_service = None
         self._llm = None
         self.db_service = get_db_service()
+        self._settings_service = settings_service
+        self._config_cache: Dict[str, Any] = {}
+        self._cache_valid = False
+        
+        # Register for hot-reload notifications
+        self._register_for_updates()
+
+    def _register_for_updates(self):
+        """Register as a listener with SettingsService for hot-reload support."""
+        try:
+            self.settings_service.register_listener(self._on_settings_changed)
+            logger.info("ConfigService registered for settings change notifications")
+        except Exception as e:
+            logger.warning(f"Failed to register for settings updates: {e}")
+
+    def _on_settings_changed(self, category: str, updated_keys: List[str], updated_by: str):
+        """
+        Callback invoked when settings change.
+        
+        This enables hot-reloading: the next ingestion job will use
+        the new parameters without requiring a server restart.
+        
+        Args:
+            category: The category of settings that changed
+            updated_keys: List of keys that were updated
+            updated_by: Username who made the change
+        """
+        if category in OPERATIONAL_CONFIG_CATEGORIES:
+            logger.info(
+                f"Hot-reload triggered: {category}.{updated_keys} changed by {updated_by}. "
+                "ConfigService cache invalidated."
+            )
+            self._invalidate_cache()
+
+    def _invalidate_cache(self):
+        """Invalidate the internal configuration cache."""
+        self._config_cache = {}
+        self._cache_valid = False
+
+    @property
+    def settings_service(self) -> SettingsService:
+        """Lazy initialization of settings service."""
+        if self._settings_service is None:
+            self._settings_service = get_settings_service()
+            # Register for updates if we just initialized
+            self._settings_service.register_listener(self._on_settings_changed)
+        return self._settings_service
 
     @property
     def sql_service(self):
         """Lazy initialization of SQL service (PostgreSQL connection)."""
         if self._sql_service is None:
+            from backend.services.sql_service import get_sql_service
             self._sql_service = get_sql_service()
         return self._sql_service
 
     @property
     def llm(self):
-        """Lazy initialization of LLM."""
+        """Lazy initialization of LLM.
+        
+        Gets LLM directly from the LLM registry to avoid initializing
+        AgentService (which requires a database connection).
+        This allows prompt generation to work before a config is published.
+        """
         if self._llm is None:
-            self._llm = get_agent_service().llm
+            from backend.services.llm_registry import get_llm_registry
+            llm_registry = get_llm_registry()
+            provider = llm_registry.get_active_provider()
+            self._llm = provider.get_langchain_llm()
         return self._llm
+
+    # =========================================================================
+    # Operational Configuration Access (from database via SettingsService)
+    # =========================================================================
+
+    def get_chunking_params(self) -> Dict[str, Any]:
+        """
+        Get chunking parameters from database.
+        
+        Returns:
+            Dict with keys: parent_chunk_size, parent_chunk_overlap,
+                          child_chunk_size, child_chunk_overlap, min_chunk_length
+        """
+        return self.settings_service.get_category_settings_raw('chunking')
+
+    def get_pii_rules(self) -> Dict[str, Any]:
+        """
+        Get PII protection rules from database.
+        
+        Returns:
+            Dict with keys: global_exclude_columns, exclude_tables, table_specific_exclusions
+        """
+        return self.settings_service.get_category_settings_raw('data_privacy')
+
+    def get_medical_context(self) -> Dict[str, Any]:
+        """
+        Get medical context settings from database.
+        
+        Returns:
+            Dict with keys: terminology_mappings, clinical_flag_prefixes
+        """
+        return self.settings_service.get_category_settings_raw('medical_context')
+
+    def get_vector_store_config(self) -> Dict[str, Any]:
+        """
+        Get vector store configuration from database.
+        
+        Returns:
+            Dict with keys: type, default_collection, chroma_base_path
+        """
+        return self.settings_service.get_category_settings_raw('vector_store')
+
+    def get_embedding_config(self) -> Dict[str, Any]:
+        """
+        Get embedding model configuration from database.
+        
+        Returns:
+            Dict with keys: provider, model_name, model_path, batch_size, dimensions
+        """
+        return self.settings_service.get_category_settings_raw('embedding')
+
+    def get_rag_config(self) -> Dict[str, Any]:
+        """
+        Get RAG pipeline configuration from database.
+        
+        Returns:
+            Dict with keys: top_k_initial, top_k_final, hybrid_weights,
+                          rerank_enabled, reranker_model, chunk_size, chunk_overlap
+        """
+        return self.settings_service.get_category_settings_raw('rag')
+
+    def get_full_embedding_pipeline_config(self) -> Dict[str, Any]:
+        """
+        Get complete embedding pipeline configuration.
+        
+        This combines all operational settings needed for the embedding pipeline
+        into a single unified configuration dictionary.
+        
+        Returns:
+            Complete configuration dictionary with all pipeline settings
+        """
+        chunking = self.get_chunking_params()
+        pii_rules = self.get_pii_rules()
+        medical_context = self.get_medical_context()
+        vector_store = self.get_vector_store_config()
+        embedding = self.get_embedding_config()
+        rag = self.get_rag_config()
+
+        return {
+            'embedding': embedding,
+            'chunking': chunking,
+            'vector_store': vector_store,
+            'retriever': {
+                'top_k_initial': rag.get('top_k_initial', 50),
+                'top_k_final': rag.get('top_k_final', 10),
+                'hybrid_search_weights': rag.get('hybrid_weights', [0.75, 0.25]),
+                'rerank_enabled': rag.get('rerank_enabled', True),
+                'reranker_model_name': rag.get('reranker_model', 'BAAI/bge-reranker-base'),
+            },
+            'tables': {
+                'global_exclude_columns': pii_rules.get('global_exclude_columns', []),
+                'exclude_tables': pii_rules.get('exclude_tables', []),
+                'table_specific_exclusions': pii_rules.get('table_specific_exclusions', {}),
+            },
+            'medical_context': medical_context.get('terminology_mappings', {}),
+            'clinical_flag_prefixes': medical_context.get('clinical_flag_prefixes', []),
+            'text_processing': {
+                'min_chunk_length': chunking.get('min_chunk_length', 50),
+            },
+        }
+
+    # =========================================================================
+    # Update Methods (with hot-reload via SettingsService)
+    # =========================================================================
+
+    def merge_with_overrides(self, override_config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Merge database defaults with optional ad-hoc overrides.
+        
+        This is used for Phase 3: Payload Injection - allowing users to run
+        specific ingestion jobs with custom settings without changing global defaults.
+        
+        Args:
+            override_config: Optional dict with override values. Keys can include:
+                - parent_chunk_size, parent_chunk_overlap, child_chunk_size, etc.
+                - exclude_columns, exclude_tables
+                - batch_size
+                
+        Returns:
+            Complete configuration dict with overrides applied on top of defaults
+        """
+        # Get all defaults from database
+        base_config = self.get_full_embedding_pipeline_config()
+        
+        if not override_config:
+            return base_config
+        
+        # Apply chunking overrides
+        chunking_keys = ['parent_chunk_size', 'parent_chunk_overlap', 
+                        'child_chunk_size', 'child_chunk_overlap', 'min_chunk_length']
+        for key in chunking_keys:
+            if key in override_config and override_config[key] is not None:
+                base_config['chunking'][key] = override_config[key]
+        
+        # Apply PII/table overrides
+        if 'exclude_columns' in override_config and override_config['exclude_columns'] is not None:
+            base_config['tables']['global_exclude_columns'] = override_config['exclude_columns']
+        
+        if 'exclude_tables' in override_config and override_config['exclude_tables'] is not None:
+            base_config['tables']['exclude_tables'] = override_config['exclude_tables']
+        
+        # Apply embedding overrides
+        if 'batch_size' in override_config and override_config['batch_size'] is not None:
+            base_config['embedding']['batch_size'] = override_config['batch_size']
+        
+        logger.info(f"Config merged with overrides: {list(override_config.keys())}")
+        return base_config
+
+    def update_chunking_params(
+        self, 
+        settings: Dict[str, Any], 
+        updated_by: str,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update chunking parameters.
+        
+        Hot-reload: Changes take effect immediately for the next ingestion job.
+        
+        Args:
+            settings: Dict with chunking parameters to update
+            updated_by: Username making the change
+            reason: Optional reason for the change
+            
+        Returns:
+            Updated chunking settings
+        """
+        return self.settings_service.update_category_settings(
+            'chunking', settings, updated_by, reason
+        )
+
+    def update_pii_rules(
+        self, 
+        settings: Dict[str, Any], 
+        updated_by: str,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update PII protection rules.
+        
+        Hot-reload: Changes take effect immediately for the next ingestion job.
+        
+        Args:
+            settings: Dict with PII rules to update
+            updated_by: Username making the change
+            reason: Optional reason for the change
+            
+        Returns:
+            Updated PII settings
+        """
+        return self.settings_service.update_category_settings(
+            'data_privacy', settings, updated_by, reason
+        )
+
+    def update_medical_context(
+        self, 
+        settings: Dict[str, Any], 
+        updated_by: str,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update medical context settings.
+        
+        Hot-reload: Changes take effect immediately for the next ingestion job.
+        
+        Args:
+            settings: Dict with medical context to update
+            updated_by: Username making the change
+            reason: Optional reason for the change
+            
+        Returns:
+            Updated medical context settings
+        """
+        return self.settings_service.update_category_settings(
+            'medical_context', settings, updated_by, reason
+        )
+
+    def update_vector_store_config(
+        self, 
+        settings: Dict[str, Any], 
+        updated_by: str,
+        reason: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update vector store configuration.
+        
+        Hot-reload: Changes take effect immediately for the next ingestion job.
+        
+        Args:
+            settings: Dict with vector store settings to update
+            updated_by: Username making the change
+            reason: Optional reason for the change
+            
+        Returns:
+            Updated vector store settings
+        """
+        return self.settings_service.update_category_settings(
+            'vector_store', settings, updated_by, reason
+        )
+
+    # =========================================================================
+    # System Prompt Generation
+    # =========================================================================
 
     def generate_draft_prompt(self, data_dictionary: str, data_source_type: str = 'database') -> Dict[str, Any]:
         """
@@ -155,6 +490,10 @@ class ConfigService:
             "example_questions": questions
         }
 
+    # =========================================================================
+    # System Prompt Publishing
+    # =========================================================================
+
     def publish_system_prompt(self, prompt_text: str, user_id: str, 
                               connection_id: Optional[int] = None, 
                               schema_selection: Optional[str] = None, 
@@ -209,6 +548,10 @@ class ConfigService:
             ingestion_file_type=ingestion_file_type
         )
 
+    # =========================================================================
+    # Prompt History & Active Config
+    # =========================================================================
+
     def get_prompt_history(self, agent_id: Optional[int] = None):
         """Get history of all system prompts."""
         return self.db_service.get_all_prompts(agent_id=agent_id)
@@ -217,10 +560,17 @@ class ConfigService:
         """Get the active prompt configuration."""
         return self.db_service.get_active_config(agent_id=agent_id)
 
-# Singleton instance pattern not strictly requested but good practice if needed.
-# For now, just the class is requested, but usually services are singletons or instantiated per request.
-# The prompt asks to "Create a class ConfigService". 
-# The API route will likely instantiate it.
+
+# =========================================================================
+# Singleton Pattern
+# =========================================================================
+
+_config_service: Optional[ConfigService] = None
+
 
 def get_config_service() -> ConfigService:
-    return ConfigService()
+    """Get the singleton ConfigService instance."""
+    global _config_service
+    if _config_service is None:
+        _config_service = ConfigService()
+    return _config_service

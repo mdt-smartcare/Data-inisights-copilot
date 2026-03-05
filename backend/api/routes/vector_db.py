@@ -17,6 +17,33 @@ router = APIRouter(prefix="/vector-db", tags=["Vector Database"])
 
 
 # ============================================
+# Helper function to calculate directory size
+# ============================================
+
+def get_directory_size(path: str) -> int:
+    """Calculate total size of a directory in bytes."""
+    total_size = 0
+    if os.path.exists(path):
+        for dirpath, dirnames, filenames in os.walk(path):
+            for filename in filenames:
+                filepath = os.path.join(dirpath, filename)
+                try:
+                    total_size += os.path.getsize(filepath)
+                except (OSError, FileNotFoundError):
+                    pass
+    return total_size
+
+
+def format_size(size_bytes: int) -> str:
+    """Format bytes to human-readable size."""
+    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+        if size_bytes < 1024.0:
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024.0
+    return f"{size_bytes:.2f} PB"
+
+
+# ============================================
 # Pydantic Models for Schedule API
 # ============================================
 
@@ -94,7 +121,7 @@ async def get_vector_db_status(
         conn.close()
 
         # 2. Get vector count directly from ChromaDB
-        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../../data/indexes/{vector_db_name}"))
+        chroma_path = os.path.abspath(os.path.join(os.path.dirname(__file__), f"../../data/indexes/{vector_db_name}"))
         vector_count = 0
         chroma_exists = False
         
@@ -329,3 +356,266 @@ async def check_vector_db_name(
         
     finally:
         conn.close()
+
+
+# ============================================
+# Vector DB Registry - List All Vector Databases
+# ============================================
+
+@router.get("/registry", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
+async def list_all_vector_databases(
+    db_service: DatabaseService = Depends(get_db_service),
+    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+):
+    """
+    List all Vector Databases with their disk sizes, document counts, and sync status.
+    Provides a centralized registry view for IT admins.
+    Requires Super Admin role.
+    """
+    try:
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        
+        # Get all vector DBs from registry
+        cursor.execute('''
+            SELECT 
+                r.id,
+                r.name,
+                r.data_source_id,
+                r.created_at,
+                r.created_by,
+                r.embedding_model,
+                r.llm,
+                r.last_full_run,
+                r.last_incremental_run,
+                r.version
+            FROM vector_db_registry r
+            ORDER BY r.created_at DESC
+        ''')
+        
+        registry_rows = cursor.fetchall()
+        
+        # Get document counts per vector DB
+        cursor.execute('''
+            SELECT vector_db_name, COUNT(*) as doc_count, MAX(updated_at) as last_updated
+            FROM document_index
+            GROUP BY vector_db_name
+        ''')
+        doc_counts = {row['vector_db_name']: {'count': row['doc_count'], 'last_updated': row['last_updated']} 
+                      for row in cursor.fetchall()}
+        
+        conn.close()
+        
+        # Base path for ChromaDB indexes
+        indexes_base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/indexes"))
+        vector_stores_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../vector_stores"))
+        
+        vector_dbs = []
+        total_disk_size = 0
+        
+        for row in registry_rows:
+            name = row['name']
+            
+            # Calculate disk size from ChromaDB folder
+            chroma_path = os.path.join(indexes_base_path, name)
+            alt_chroma_path = os.path.join(vector_stores_path, name)
+            
+            disk_size_bytes = 0
+            chroma_exists = False
+            vector_count = 0
+            
+            # Check primary path
+            if os.path.exists(chroma_path):
+                disk_size_bytes = get_directory_size(chroma_path)
+                chroma_exists = True
+            # Check alternate path
+            elif os.path.exists(alt_chroma_path):
+                disk_size_bytes = get_directory_size(alt_chroma_path)
+                chroma_path = alt_chroma_path
+                chroma_exists = True
+            
+            # Get vector count from ChromaDB
+            if chroma_exists:
+                try:
+                    client = chromadb.PersistentClient(path=chroma_path, settings=Settings(anonymized_telemetry=False))
+                    try:
+                        collection = client.get_collection(name=name)
+                        vector_count = collection.count()
+                    except ValueError:
+                        pass
+                except Exception as e:
+                    logger.warning(f"Could not read ChromaDB for {name}: {e}")
+            
+            total_disk_size += disk_size_bytes
+            
+            # Get schedule info
+            schedule = scheduler_service.get_schedule(name)
+            schedule_info = None
+            if schedule:
+                schedule_info = {
+                    "enabled": schedule.get('enabled', False),
+                    "schedule_type": schedule.get('schedule_type', 'daily'),
+                    "next_run_at": schedule.get('next_run_at'),
+                    "last_run_at": schedule.get('last_run_at'),
+                    "last_run_status": schedule.get('last_run_status')
+                }
+            
+            # Get document count
+            doc_info = doc_counts.get(name, {'count': 0, 'last_updated': None})
+            
+            # Determine health status
+            health_status = "healthy"
+            if not chroma_exists:
+                health_status = "missing"
+            elif vector_count == 0 and doc_info['count'] > 0:
+                health_status = "error"
+            elif schedule_info and schedule_info.get('last_run_status') == 'failed':
+                health_status = "warning"
+            
+            vector_dbs.append({
+                "id": row['id'],
+                "name": name,
+                "data_source_id": row['data_source_id'],
+                "created_at": row['created_at'],
+                "created_by": row['created_by'],
+                "embedding_model": row['embedding_model'],
+                "llm": row['llm'],
+                "version": row['version'] or "1.0.0",
+                "last_full_run": row['last_full_run'],
+                "last_incremental_run": row['last_incremental_run'],
+                "disk_size_bytes": disk_size_bytes,
+                "disk_size_formatted": format_size(disk_size_bytes),
+                "document_count": doc_info['count'],
+                "vector_count": vector_count,
+                "last_updated": doc_info['last_updated'],
+                "chroma_exists": chroma_exists,
+                "schedule": schedule_info,
+                "health_status": health_status
+            })
+        
+        # Also scan for orphaned ChromaDB folders (exist on disk but not in registry)
+        orphaned_dbs = []
+        registered_names = {row['name'] for row in registry_rows}
+        
+        for scan_path in [indexes_base_path, vector_stores_path]:
+            if os.path.exists(scan_path):
+                for folder_name in os.listdir(scan_path):
+                    folder_path = os.path.join(scan_path, folder_name)
+                    if os.path.isdir(folder_path) and folder_name not in registered_names:
+                        # Check if it's a valid ChromaDB folder
+                        if os.path.exists(os.path.join(folder_path, "chroma.sqlite3")):
+                            disk_size_bytes = get_directory_size(folder_path)
+                            total_disk_size += disk_size_bytes
+                            
+                            vector_count = 0
+                            try:
+                                client = chromadb.PersistentClient(path=folder_path, settings=Settings(anonymized_telemetry=False))
+                                collections = client.list_collections()
+                                for coll in collections:
+                                    vector_count += coll.count()
+                            except Exception:
+                                pass
+                            
+                            orphaned_dbs.append({
+                                "name": folder_name,
+                                "path": folder_path,
+                                "disk_size_bytes": disk_size_bytes,
+                                "disk_size_formatted": format_size(disk_size_bytes),
+                                "vector_count": vector_count,
+                                "health_status": "orphaned"
+                            })
+                            registered_names.add(folder_name)  # Avoid duplicates
+        
+        return {
+            "status": "success",
+            "total_vector_dbs": len(vector_dbs),
+            "total_disk_size_bytes": total_disk_size,
+            "total_disk_size_formatted": format_size(total_disk_size),
+            "vector_dbs": vector_dbs,
+            "orphaned_dbs": orphaned_dbs
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing vector databases: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list vector databases: {str(e)}"
+        )
+
+
+@router.delete("/registry/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
+async def delete_vector_database(
+    vector_db_name: str,
+    delete_files: bool = True,
+    current_user: User = Depends(require_admin),
+    db_service: DatabaseService = Depends(get_db_service),
+    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+):
+    """
+    Delete a Vector Database from the registry and optionally remove its files.
+    Requires Super Admin role.
+    """
+    import shutil
+    
+    try:
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        
+        # Check if exists in registry
+        cursor.execute('SELECT id FROM vector_db_registry WHERE name = ?', (vector_db_name,))
+        existing = cursor.fetchone()
+        
+        if not existing:
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Vector DB '{vector_db_name}' not found in registry"
+            )
+        
+        # Delete from registry
+        cursor.execute('DELETE FROM vector_db_registry WHERE name = ?', (vector_db_name,))
+        
+        # Delete from document_index
+        cursor.execute('DELETE FROM document_index WHERE vector_db_name = ?', (vector_db_name,))
+        
+        conn.commit()
+        conn.close()
+        
+        # Delete schedule if exists
+        try:
+            scheduler_service.delete_schedule(vector_db_name)
+        except Exception:
+            pass
+        
+        # Delete files if requested
+        files_deleted = False
+        if delete_files:
+            indexes_base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/indexes"))
+            vector_stores_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../vector_stores"))
+            
+            for base_path in [indexes_base_path, vector_stores_path]:
+                chroma_path = os.path.join(base_path, vector_db_name)
+                if os.path.exists(chroma_path):
+                    try:
+                        shutil.rmtree(chroma_path)
+                        files_deleted = True
+                        logger.info(f"Deleted ChromaDB folder: {chroma_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to delete ChromaDB folder {chroma_path}: {e}")
+        
+        logger.info(f"Vector DB '{vector_db_name}' deleted by {current_user.username}")
+        
+        return {
+            "status": "success",
+            "message": f"Vector DB '{vector_db_name}' deleted successfully",
+            "files_deleted": files_deleted
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting vector database {vector_db_name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete vector database: {str(e)}"
+        )

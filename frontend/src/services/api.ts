@@ -711,3 +711,635 @@ export const getSystemSettings = async (category: string): Promise<Record<string
   return response.data;
 };
 
+// ============================================================================
+// FILE SQL API - DuckDB-based SQL queries on uploaded files
+// ============================================================================
+
+export interface FileTable {
+  name: string;
+  original_filename: string;
+  file_type: string;
+  row_count: number;
+  columns: string[];
+  created_at: string | null;
+}
+
+export interface SQLQueryResult {
+  status: string;
+  query: string;
+  row_count: number;
+  columns: string[];
+  rows: Record<string, any>[];
+  execution_time_ms?: number;
+  error?: string;
+}
+
+export interface TableSchema {
+  table_name: string;
+  schema: Array<{ column_name: string; data_type: string }>;
+}
+
+export interface NaturalLanguageQueryResult {
+  status: string;
+  answer?: string;
+  sql?: string;
+  columns?: string[];
+  rows?: Record<string, any>[];
+  total_rows?: number;
+  execution_time_ms?: number;
+  error?: string;
+}
+
+/**
+ * List all uploaded file tables available for SQL querying.
+ */
+export const getFileSqlTables = async (): Promise<{ tables: FileTable[] }> => {
+  const response = await apiClient.get('/api/v1/ingestion/sql/tables');
+  return response.data;
+};
+
+/**
+ * Execute a raw SQL query against uploaded file data using DuckDB.
+ * Only SELECT queries are allowed for security.
+ */
+export const executeFileSqlQuery = async (query: string): Promise<SQLQueryResult> => {
+  const response = await apiClient.post('/api/v1/ingestion/sql/query', { query });
+  return response.data;
+};
+
+/**
+ * Delete a specific uploaded file table and its data.
+ */
+export const deleteFileSqlTable = async (tableName: string): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.delete(`/api/v1/ingestion/sql/tables/${tableName}`);
+  return response.data;
+};
+
+/**
+ * Delete all uploaded file tables for the current user.
+ */
+export const deleteAllFileSqlTables = async (): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.delete('/api/v1/ingestion/sql/tables');
+  return response.data;
+};
+
+/**
+ * Get the schema (columns and types) of a specific table.
+ */
+export const getFileSqlTableSchema = async (tableName: string): Promise<TableSchema> => {
+  const response = await apiClient.get(`/api/v1/ingestion/sql/schema/${tableName}`);
+  return response.data;
+};
+
+/**
+ * Check if a table is ready for querying (useful for background processing).
+ */
+export const getFileSqlTableStatus = async (tableName: string): Promise<{
+  status: string;
+  ready: boolean;
+  row_count?: number;
+  created_at?: string;
+  error?: string;
+}> => {
+  const response = await apiClient.get(`/api/v1/ingestion/sql/status/${tableName}`);
+  return response.data;
+};
+
+/**
+ * Text-to-SQL: Ask questions in natural language about uploaded data.
+ * The LLM translates the question to SQL and returns results with an answer.
+ */
+export const askNaturalLanguageQuery = async (question: string): Promise<NaturalLanguageQueryResult> => {
+  const response = await apiClient.post('/api/v1/ingestion/sql/ask', { question });
+  return response.data;
+};
+
+/**
+ * Get the full schema context for LLM prompts.
+ */
+export const getSchemaContext = async (): Promise<{
+  status: string;
+  tables: FileTable[];
+  schema_text: string;
+  message?: string;
+}> => {
+  const response = await apiClient.get('/api/v1/ingestion/sql/schema-context');
+  return response.data;
+};
+
+// ============================================================================
+// FILE RAG API - Semantic search on text columns
+// ============================================================================
+
+export interface ColumnClassification {
+  type: string;
+  confidence: number;
+  reason: string;
+  avg_length: number;
+  sample_values: string[];
+}
+
+export interface ColumnClassificationResult {
+  status: string;
+  table_name: string;
+  total_columns: number;
+  text_columns: string[];
+  structured_columns: string[];
+  classifications: Record<string, ColumnClassification>;
+  recommendation: {
+    embed_for_rag: string[];
+    sql_only: string[];
+    estimated_rag_rows: string;
+  };
+}
+
+export interface RAGConfig {
+  table_name: string;
+  text_columns: string[];
+  id_column?: string;
+  parent_chunk_size?: number;
+  child_chunk_size?: number;
+}
+
+export interface RAGProcessingResult {
+  status: string;
+  table_name: string;
+  text_columns: string[];
+  total_documents?: number;
+  parent_chunks?: number;
+  child_chunks?: number;
+  embeddings_created?: number;
+  processing_time_seconds?: number;
+  message?: string;
+  error?: string;
+}
+
+export interface RAGStatus {
+  status: string;
+  table_name: string;
+  text_columns?: string[];
+  id_column?: string;
+  stats?: {
+    parent_chunks?: number;
+    child_chunks?: number;
+    embeddings_created?: number;
+    error?: string;
+  };
+  updated_at?: string;
+  error?: string;
+}
+
+export interface RAGTableInfo {
+  table_name: string;
+  text_columns: string[];
+  id_column: string;
+  status: string;
+  parent_chunks?: number;
+  child_chunks?: number;
+  embeddings_created?: number;
+  updated_at?: string;
+}
+
+export interface SemanticSearchResult {
+  status: string;
+  query: string;
+  table_name: string;
+  result_count: number;
+  results: Array<{
+    content: string;
+    metadata: Record<string, any>;
+    score: number;
+    parent_content?: string;
+  }>;
+}
+
+/**
+ * Classify columns in a table as structured vs unstructured.
+ * Returns recommendations for which columns should be embedded for RAG.
+ */
+export const classifyTableColumns = async (tableName: string): Promise<ColumnClassificationResult> => {
+  const response = await apiClient.get(`/api/v1/ingestion/columns/classify/${tableName}`);
+  return response.data;
+};
+
+/**
+ * Start RAG embedding for selected text columns in a table.
+ * Processing runs in background for large datasets.
+ */
+export const startRAGEmbedding = async (config: RAGConfig): Promise<RAGProcessingResult> => {
+  const response = await apiClient.post('/api/v1/ingestion/rag/embed', {
+    table_name: config.table_name,
+    text_columns: config.text_columns,
+    id_column: config.id_column || 'patient_id',
+    parent_chunk_size: config.parent_chunk_size || 800,
+    child_chunk_size: config.child_chunk_size || 200,
+  });
+  return response.data;
+};
+
+/**
+ * Check the RAG embedding status for a table.
+ */
+export const getRAGStatus = async (tableName: string): Promise<RAGStatus> => {
+  const response = await apiClient.get(`/api/v1/ingestion/rag/status/${tableName}`);
+  return response.data;
+};
+
+/**
+ * List all tables that have RAG embedding configured.
+ */
+export const getRAGEnabledTables = async (): Promise<{ tables: RAGTableInfo[] }> => {
+  const response = await apiClient.get('/api/v1/ingestion/rag/tables');
+  return response.data;
+};
+
+/**
+ * Delete RAG embeddings for a table.
+ */
+export const deleteRAGEmbeddings = async (tableName: string): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.delete(`/api/v1/ingestion/rag/${tableName}`);
+  return response.data;
+};
+
+/**
+ * Perform semantic search on a specific table's text columns.
+ */
+export const semanticSearchTable = async (
+  tableName: string,
+  query: string,
+  topK: number = 10
+): Promise<SemanticSearchResult> => {
+  const response = await apiClient.post(
+    `/api/v1/ingestion/rag/search/${tableName}?query=${encodeURIComponent(query)}&top_k=${topK}`
+  );
+  return response.data;
+};
+
+// ============================================================================
+// UNIFIED QUERY API - Automatic SQL/RAG routing
+// ============================================================================
+
+export interface UnifiedQueryResult {
+  status: string;
+  query_type: string;  // 'sql', 'rag', 'hybrid', 'sql_fallback'
+  intent: string;
+  confidence: number;
+  
+  // Final answer
+  final_answer?: string;
+  
+  // SQL results
+  sql_answer?: string;
+  sql_query?: string;
+  sql_rows?: Record<string, any>[];
+  sql_execution_ms?: number;
+  
+  // RAG results
+  rag_answer?: string;
+  rag_documents?: Array<{ content: string; metadata: Record<string, any> }>;
+  rag_sources?: string[];
+  
+  // Metadata
+  routing_reason?: string;
+  error?: string;
+}
+
+export interface RoutingPreview {
+  status: string;
+  question: string;
+  engine: string;
+  intent?: string;
+  confidence?: number;
+  reasoning?: string;
+  message?: string;
+}
+
+export interface AgenticHybridResult {
+  status: string;
+  question: string;
+  
+  // Workflow stages
+  stage_1_rag: {
+    query: string;
+    matches_found: number;
+    patient_ids?: string[];
+    sample_contexts?: string[];
+  };
+  stage_2_sql: {
+    generated_sql: string;
+    rows_returned: number;
+    columns: string[];
+    sample_rows?: Record<string, any>[];
+  };
+  stage_3_synthesis: {
+    prompt_context: string;
+    model_used: string;
+  };
+  
+  // Final answer
+  final_answer: string;
+  
+  // Performance metrics
+  total_time_ms: number;
+  rag_time_ms: number;
+  sql_time_ms: number;
+  synthesis_time_ms: number;
+  
+  error?: string;
+}
+
+export interface WorkflowCapabilities {
+  status: string;
+  workflows: {
+    sql: {
+      available: boolean;
+      tables: string[];
+      description: string;
+    };
+    rag: {
+      available: boolean;
+      tables: string[];
+      description: string;
+    };
+    agentic_hybrid: {
+      available: boolean;
+      description: string;
+      example_queries: string[];
+    };
+  };
+  recommended_endpoint: string;
+  message?: string;
+}
+
+/**
+ * Unified query endpoint with automatic intent routing.
+ * Automatically determines optimal retrieval strategy (SQL, RAG, or Hybrid).
+ */
+export const unifiedQuery = async (
+  question: string,
+  useLlmRouting: boolean = true
+): Promise<UnifiedQueryResult> => {
+  const response = await apiClient.post('/api/v1/ingestion/query', {
+    question,
+    use_llm_routing: useLlmRouting,
+  });
+  return response.data;
+};
+
+/**
+ * Preview how a query will be routed WITHOUT executing it.
+ * Useful for UI to show users which engine will handle their query.
+ */
+export const previewQueryRouting = async (question: string): Promise<RoutingPreview> => {
+  const response = await apiClient.post('/api/v1/ingestion/query/preview', {
+    question,
+    use_llm_routing: true,
+  });
+  return response.data;
+};
+
+/**
+ * Agentic Hybrid Query: RAG → SQL → Synthesis workflow.
+ * Most sophisticated query approach combining semantic search with SQL aggregations.
+ * 
+ * Example: "What is the average age of patients with migraine symptoms?"
+ * - Stage 1: RAG finds patients mentioning migraines
+ * - Stage 2: SQL aggregates ages for those patient IDs
+ * - Stage 3: LLM synthesizes final answer
+ */
+export const agenticHybridQuery = async (
+  question: string,
+  tableName?: string,
+  ragTopK: number = 50
+): Promise<AgenticHybridResult> => {
+  const response = await apiClient.post('/api/v1/ingestion/query/agentic-hybrid', {
+    question,
+    table_name: tableName,
+    rag_top_k: ragTopK,
+  });
+  return response.data;
+};
+
+/**
+ * Check which query workflows are available for the current user.
+ * Returns status of SQL, RAG, and Agentic Hybrid capabilities.
+ */
+export const getWorkflowCapabilities = async (): Promise<WorkflowCapabilities> => {
+  const response = await apiClient.get('/api/v1/ingestion/query/workflow-status');
+  return response.data;
+};
+
+// ============================================================================
+// VECTOR DB REGISTRY API - Central management of all vector databases
+// ============================================================================
+
+export interface VectorDbRegistryItem {
+  id: number;
+  name: string;
+  data_source_id: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  embedding_model: string | null;
+  llm: string | null;
+  version: string;
+  last_full_run: string | null;
+  last_incremental_run: string | null;
+  disk_size_bytes: number;
+  disk_size_formatted: string;
+  document_count: number;
+  vector_count: number;
+  last_updated: string | null;
+  chroma_exists: boolean;
+  schedule: {
+    enabled: boolean;
+    schedule_type: string;
+    next_run_at: string | null;
+    last_run_at: string | null;
+    last_run_status: string | null;
+  } | null;
+  health_status: 'healthy' | 'warning' | 'error' | 'missing' | 'orphaned';
+}
+
+export interface OrphanedVectorDb {
+  name: string;
+  path: string;
+  disk_size_bytes: number;
+  disk_size_formatted: string;
+  vector_count: number;
+  health_status: 'orphaned';
+}
+
+export interface VectorDbRegistryResponse {
+  status: string;
+  total_vector_dbs: number;
+  total_disk_size_bytes: number;
+  total_disk_size_formatted: string;
+  vector_dbs: VectorDbRegistryItem[];
+  orphaned_dbs: OrphanedVectorDb[];
+}
+
+/**
+ * Get all vector databases with their disk sizes, document counts, and sync status.
+ * Provides a centralized registry view for IT admins.
+ */
+export const getVectorDbRegistry = async (): Promise<VectorDbRegistryResponse> => {
+  const response = await apiClient.get('/api/v1/vector-db/registry');
+  return response.data;
+};
+
+/**
+ * Delete a vector database from the registry and optionally remove its files.
+ */
+export const deleteVectorDb = async (
+  vectorDbName: string,
+  deleteFiles: boolean = true
+): Promise<{ status: string; message: string; files_deleted: boolean }> => {
+  const response = await apiClient.delete(`/api/v1/vector-db/registry/${vectorDbName}`, {
+    params: { delete_files: deleteFiles }
+  });
+  return response.data;
+};
+
+// ============================================================================
+// SCHEMA DRIFT DETECTION API
+// ============================================================================
+
+export interface SchemaDrift {
+  drift_type: 'table_removed' | 'table_added' | 'column_removed' | 'column_added' | 'column_type_changed';
+  severity: 'critical' | 'warning' | 'info';
+  entity_name: string;
+  table_name?: string;
+  column_name?: string;
+  old_value?: string;
+  new_value?: string;
+  message: string;
+}
+
+export interface DriftReport {
+  vector_db_name: string;
+  has_critical_drift: boolean;
+  has_warnings: boolean;
+  total_drifts: number;
+  critical_count: number;
+  warning_count: number;
+  info_count: number;
+  drifts: SchemaDrift[];
+  checked_at: string;
+  can_run_embedding: boolean;
+  summary: string;
+}
+
+export interface DriftStatus {
+  vector_db_name: string;
+  has_snapshot: boolean;
+  snapshot_at: string | null;
+  connection_id: string | null;
+  unresolved_count: number;
+  critical_count: number;
+  warning_count: number;
+  unresolved_drifts: Array<{
+    id: number;
+    drift_type: string;
+    severity: string;
+    entity_name: string;
+    details: string;
+    detected_at: string;
+    acknowledged_at: string | null;
+    acknowledged_by: string | null;
+  }>;
+  can_run_embedding: boolean;
+}
+
+export interface DriftHistoryItem {
+  id: number;
+  vector_db_name: string;
+  drift_type: string;
+  severity: string;
+  entity_name: string;
+  details: string;
+  detected_at: string;
+  resolved_at: string | null;
+  resolved_by: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+}
+
+/**
+ * Check for schema drift between stored snapshot and current database.
+ * Should be called before starting embedding jobs to prevent failures.
+ */
+export const checkSchemaDrift = async (
+  vectorDbName: string,
+  connectionId: number
+): Promise<DriftReport> => {
+  const response = await apiClient.post('/api/v1/schema-drift/check', {
+    vector_db_name: vectorDbName,
+    connection_id: connectionId,
+  });
+  return response.data;
+};
+
+/**
+ * Get current drift status for a vector DB including unresolved issues.
+ */
+export const getSchemaDriftStatus = async (vectorDbName: string): Promise<DriftStatus> => {
+  const response = await apiClient.get(`/api/v1/schema-drift/status/${vectorDbName}`);
+  return response.data;
+};
+
+/**
+ * Acknowledge a drift alert (mark as seen but not resolved).
+ */
+export const acknowledgeSchemaDrift = async (driftId: number): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.post('/api/v1/schema-drift/acknowledge', { drift_id: driftId });
+  return response.data;
+};
+
+/**
+ * Mark a drift as resolved.
+ */
+export const resolveSchemaDrift = async (driftId: number): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.post(`/api/v1/schema-drift/resolve/${driftId}`);
+  return response.data;
+};
+
+/**
+ * Update schema snapshot for a vector DB (re-baseline after schema changes).
+ */
+export const updateSchemaSnapshot = async (
+  vectorDbName: string,
+  connectionId: number,
+  resolveExisting: boolean = true
+): Promise<{
+  status: string;
+  message: string;
+  snapshot_info: { tables: number; columns: number; captured_at: string };
+  resolved_drifts: number;
+}> => {
+  const response = await apiClient.post('/api/v1/schema-drift/snapshot/update', {
+    vector_db_name: vectorDbName,
+    connection_id: connectionId,
+    resolve_existing: resolveExisting,
+  });
+  return response.data;
+};
+
+/**
+ * Get drift detection history for a vector DB.
+ */
+export const getSchemaDriftHistory = async (
+  vectorDbName: string,
+  includeResolved: boolean = false,
+  limit: number = 50
+): Promise<{
+  vector_db_name: string;
+  total_records: number;
+  include_resolved: boolean;
+  history: DriftHistoryItem[];
+}> => {
+  const response = await apiClient.get(`/api/v1/schema-drift/history/${vectorDbName}`, {
+    params: { include_resolved: includeResolved, limit },
+  });
+  return response.data;
+};
+

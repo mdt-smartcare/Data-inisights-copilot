@@ -48,11 +48,14 @@ const AgentDashboardPage: React.FC = () => {
 
     // Load agent
     useEffect(() => {
+        let isMounted = true;
+
         const loadAgent = async () => {
             if (!id) return;
             setIsLoadingAgent(true);
             try {
                 const agents = await getAgents();
+                if (!isMounted) return;
                 const foundAgent = agents.find((a: Agent) => a.id === parseInt(id));
                 if (foundAgent) {
                     setAgent(foundAgent);
@@ -61,22 +64,33 @@ const AgentDashboardPage: React.FC = () => {
                     navigate('/agents');
                 }
             } catch (err) {
+                if (!isMounted) return;
                 console.error('Failed to load agent', err);
                 showError('Error', 'Failed to load agent.');
                 navigate('/agents');
             } finally {
-                setIsLoadingAgent(false);
+                if (isMounted) {
+                    setIsLoadingAgent(false);
+                }
             }
         };
         loadAgent();
-    }, [id, navigate, showError]);
+
+        return () => {
+            isMounted = false;
+        };
+    }, [id, navigate]);
 
     // Load config when agent is loaded
     useEffect(() => {
+        let isMounted = true;
+
         const loadConfig = async () => {
             if (!agent) return;
             try {
                 const config = await getActiveConfigMetadata(agent.id);
+                if (!isMounted) return;
+
                 if (config) {
                     setActiveConfig(config);
 
@@ -98,6 +112,7 @@ const AgentDashboardPage: React.FC = () => {
                     if (config.connection_id) {
                         try {
                             const conns = await getConnections();
+                            if (!isMounted) return;
                             const c = conns.find((x: any) => x.id === config.connection_id);
                             if (c) setConnectionName(c.name);
                         } catch (e) {
@@ -111,11 +126,11 @@ const AgentDashboardPage: React.FC = () => {
                         const vDbName = embConf.vectorDbName || (config.data_source_type === 'database' && config.connection_id ? `db_connection_${config.connection_id}_data` : 'default_vector_db');
                         if (vDbName) {
                             const status = await getVectorDbStatus(vDbName);
-                            setVectorDbStatus(status);
+                            if (isMounted) setVectorDbStatus(status);
                         }
                     } catch (e) {
                         console.log("Could not load Vector DB status");
-                        setVectorDbStatus(null);
+                        if (isMounted) setVectorDbStatus(null);
                     }
 
                     // Fetch any active embedding jobs
@@ -124,6 +139,7 @@ const AgentDashboardPage: React.FC = () => {
                             config_id: config.id || config.prompt_id,
                             limit: 1
                         });
+                        if (!isMounted) return;
                         if (jobs.length > 0) {
                             const latestJob = jobs[0];
                             const activeStatuses = ['QUEUED', 'PREPARING', 'EMBEDDING', 'VALIDATING', 'STORING'];
@@ -137,35 +153,48 @@ const AgentDashboardPage: React.FC = () => {
                 }
                 // Load history
                 const historyData = await getPromptHistory(agent.id);
-                setHistory(historyData);
+                if (isMounted) setHistory(historyData);
             } catch (e) {
                 console.error("Failed to load config", e);
             }
         };
         loadConfig();
-    }, [agent]);
 
-    const handleStartEmbedding = async (incremental: boolean = true) => {
+        return () => {
+            isMounted = false;
+        };
+    }, [agent?.id]);
+
+    const handleStartEmbedding = async (incremental: boolean = true, settings?: any) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
         if (!configId) return;
 
         try {
-            let batchSize = 50;
-            let maxConcurrent = 5;
+            // Use settings from modal if provided, otherwise fetch defaults
+            let batchSize = settings?.batch_size || 50;
+            let maxConcurrent = settings?.max_concurrent || 5;
 
-            try {
-                const settings = await getSystemSettings('embedding');
-                if (settings?.batch_size) batchSize = settings.batch_size;
-                if (settings?.max_concurrent) maxConcurrent = settings.max_concurrent;
-            } catch (err) {
-                console.warn('Failed to fetch embedding settings, using defaults', err);
+            if (!settings) {
+                try {
+                    const systemSettings = await getSystemSettings('embedding');
+                    if (systemSettings?.batch_size) batchSize = systemSettings.batch_size;
+                    if (systemSettings?.max_concurrent) maxConcurrent = systemSettings.max_concurrent;
+                } catch (err) {
+                    console.warn('Failed to fetch embedding settings, using defaults', err);
+                }
             }
 
             const result = await startEmbeddingJob({
                 config_id: configId,
                 batch_size: batchSize,
                 max_concurrent: maxConcurrent,
-                incremental: incremental
+                incremental: incremental,
+                // Pass additional settings from modal
+                chunking: settings?.chunking,
+                parallelization: settings?.parallelization,
+                medical_context_config: settings?.medical_context_config,
+                max_consecutive_failures: settings?.max_consecutive_failures,
+                retry_attempts: settings?.retry_attempts,
             });
             setEmbeddingJobId(result.job_id);
             showSuccess('Embedding Job Started', result.message);
@@ -248,7 +277,7 @@ const AgentDashboardPage: React.FC = () => {
         { id: 'overview', name: 'Overview', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg> },
         { id: 'knowledge', name: 'Vector DB', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg> },
         { id: 'sandbox', name: 'Sandbox', icon: (props: any) => <CommandLineIcon {...props} /> },
-        { id: 'specs', name: 'Settings & Specs', icon: (props: any) => <AdjustmentsVerticalIcon {...props} /> },
+        { id: 'specs', name: 'Agent Settings & Specs', icon: (props: any) => <AdjustmentsVerticalIcon {...props} /> },
         { id: 'users', name: 'Users', icon: (props: any) => <UserGroupIcon {...props} /> },
         { id: 'monitoring', name: 'Monitoring', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> },
         { id: 'history', name: 'System Prompt History', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> }
@@ -259,51 +288,54 @@ const AgentDashboardPage: React.FC = () => {
             <ChatHeader title={APP_CONFIG.APP_NAME} />
             <div className="flex-1 overflow-auto">
                 <div className="h-full flex flex-col overflow-y-auto">
-                    <header className="bg-white px-8 pt-8 pb-4 border-b border-gray-200">
-                        <div className="flex justify-between items-center mb-6">
-                            <div className="flex items-center gap-4">
+                    <header className="bg-white px-4 sm:px-8 pt-4 sm:pt-8 pb-4 border-b border-gray-200">
+                        <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4 mb-4 sm:mb-6">
+                            <div className="flex items-center gap-2 sm:gap-4 min-w-0">
                                 <button
                                     onClick={() => navigate('/agents')}
-                                    className="p-2 -ml-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                                    className="p-2 -ml-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
                                     title="Back to Agents"
                                 >
-                                    <ArrowLeftIcon className="w-6 h-6" />
+                                    <ArrowLeftIcon className="w-5 h-5 sm:w-6 sm:h-6" />
                                 </button>
-                                <div>
-                                    <h1 className="text-2xl font-bold text-gray-900">{agent.name}</h1>
-                                    <p className="text-sm text-gray-500">Agent Configuration & Insights Dashboard</p>
+                                <div className="min-w-0">
+                                    <h1 className="text-lg sm:text-2xl font-bold text-gray-900 truncate">{agent.name}</h1>
+                                    <p className="text-xs sm:text-sm text-gray-500 truncate">Agent Configuration & Insights Dashboard</p>
                                 </div>
                             </div>
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 flex-shrink-0">
                                 <button
                                     onClick={() => navigate(`/agents/${agent.id}/config`)}
-                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200"
+                                    className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200 text-sm sm:text-base whitespace-nowrap"
                                 >
                                     {canEdit ? 'Edit Active Config' : 'View Configuration'}
                                 </button>
                             </div>
                         </div>
 
-                        {/* Tabs */}
-                        <div className="flex gap-8 border-t border-gray-100 pt-2">
-                            {tabs.map(tab => (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => setDashboardTab(tab.id)}
-                                    className={`flex items-center gap-2 py-4 px-1 border-b-2 font-medium text-sm transition-all
-                                        ${dashboardTab === tab.id
-                                            ? 'border-blue-600 text-blue-600'
-                                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                        }`}
-                                >
-                                    <tab.icon className={`w-5 h-5 ${dashboardTab === tab.id ? 'text-blue-600' : 'text-gray-400'}`} />
-                                    {tab.name}
-                                </button>
-                            ))}
+                        {/* Tabs - Scrollable on mobile */}
+                        <div className="overflow-x-auto -mx-4 sm:-mx-8 px-4 sm:px-8 scrollbar-hide">
+                            <div className="flex gap-4 sm:gap-8 border-t border-gray-100 pt-2 min-w-max">
+                                {tabs.map(tab => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setDashboardTab(tab.id)}
+                                        className={`flex items-center gap-1 sm:gap-2 py-3 sm:py-4 px-1 border-b-2 font-medium text-xs sm:text-sm transition-all whitespace-nowrap
+                                            ${dashboardTab === tab.id
+                                                ? 'border-blue-600 text-blue-600'
+                                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                            }`}
+                                    >
+                                        <tab.icon className={`w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0 ${dashboardTab === tab.id ? 'text-blue-600' : 'text-gray-400'}`} />
+                                        <span className="hidden sm:inline">{tab.name}</span>
+                                        <span className="sm:hidden">{tab.name.split(' ')[0]}</span>
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     </header>
 
-                    <div className="p-8 pb-16">
+                    <div className="p-4 sm:p-8 pb-16">
                         {activeConfig ? (
                             <div className="flex-1 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                 {dashboardTab === 'overview' && (

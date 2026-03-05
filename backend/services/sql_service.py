@@ -6,7 +6,6 @@ OPTIMIZED: Added query result caching and reduced agent iterations.
 """
 from functools import lru_cache
 from typing import Optional, Tuple, List, Dict, Any
-from datetime import datetime
 from collections import OrderedDict
 import re
 import time
@@ -16,8 +15,6 @@ from sqlalchemy import inspect
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 from langchain_openai import ChatOpenAI
-from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.outputs import LLMResult
 
 # Langfuse imports for tracing
 from langfuse import observe
@@ -26,7 +23,7 @@ try:
 except ImportError:
     langfuse_context = None
 
-from backend.config import get_settings
+from backend.config import get_settings, get_llm_settings
 from backend.core.logging import get_logger
 from backend.services.reflection_service import get_critique_service
 
@@ -61,7 +58,7 @@ class QueryCache:
             if time.time() - timestamp < self.ttl_seconds:
                 # Move to end (most recently used)
                 self.cache.move_to_end(key)
-                logger.info(f"⚡ Cache HIT for query (saved ~3s)")
+                logger.info("Cache HIT for query (saved ~3s)")
                 return result
             else:
                 # Expired, remove it
@@ -87,74 +84,236 @@ class QueryCache:
 _query_cache = QueryCache(max_size=100, ttl_seconds=300)
 
 
-def _get_active_database_url() -> str:
+def _get_active_database_url(agent_id: Optional[int] = None, connection_id: Optional[int] = None) -> Optional[str]:
     """
     Get the database URL from the active published config.
-    Falls back to settings.database_url if no active config or connection.
+    
+    Clinical database connections are managed via the `db_connections` table
+    and assigned to agents. There is no hardcoded fallback - a connection
+    must be configured via the frontend.
+    
+    Args:
+        agent_id: Optional agent ID to get agent-specific config.
+        connection_id: Optional direct connection ID to use (bypasses config lookup).
+    
+    Returns:
+        Database URI string, or None if no connection is configured.
     """
     try:
         from backend.sqliteDb.db import get_db_service
         db_service = get_db_service()
         
-        # Get active config
+        # If direct connection_id provided, use it
+        if connection_id:
+            connection = db_service.get_db_connection_by_id(connection_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection by ID: {connection.get('name')} (ID: {connection_id})")
+                return connection['uri']
+        
+        # Try to get active config for specific agent first
+        if agent_id:
+            active_config = db_service.get_active_config(agent_id=agent_id)
+            if active_config and active_config.get('connection_id'):
+                conn_id = active_config['connection_id']
+                connection = db_service.get_db_connection_by_id(conn_id)
+                if connection and connection.get('uri'):
+                    logger.info(f"Using database connection from agent {agent_id} config: {connection.get('name')} (ID: {conn_id})")
+                    return connection['uri']
+        
+        # Try global config (no agent_id)
         active_config = db_service.get_active_config()
         if active_config and active_config.get('connection_id'):
             connection_id = active_config['connection_id']
             connection = db_service.get_db_connection_by_id(connection_id)
             if connection and connection.get('uri'):
-                logger.info(f"Using database connection from active config: {connection.get('name')} (ID: {connection_id})")
+                logger.info(f"Using database connection from global config: {connection.get('name')} (ID: {connection_id})")
                 return connection['uri']
         
-        logger.info("No active config connection found, using default database URL")
-        return settings.database_url
+        # Fallback: Check if ANY agent has a published config with a connection
+        # This handles the case where only agent-specific configs exist
+        conn = db_service.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT pc.connection_id, sp.agent_id
+            FROM system_prompts sp
+            JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            WHERE sp.is_active = 1 AND pc.connection_id IS NOT NULL
+            ORDER BY sp.created_at DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        conn.close()
+        
+        if row and row[0]:
+            fallback_conn_id = row[0]
+            fallback_agent_id = row[1]
+            connection = db_service.get_db_connection_by_id(fallback_conn_id)
+            if connection and connection.get('uri'):
+                logger.info(f"Using database connection from agent {fallback_agent_id} config (fallback): {connection.get('name')} (ID: {fallback_conn_id})")
+                return connection['uri']
+        
+        logger.warning("No active database connection configured. Please configure a connection via the frontend.")
+        return None
         
     except Exception as e:
-        logger.warning(f"Failed to get active database URL: {e}. Using default.")
-        return settings.database_url
+        logger.error(f"Failed to get active database URL: {e}")
+        return None
 
 
 class SQLService:
     """Service for SQL database operations."""
     
     def __init__(self, database_url: Optional[str] = None):
-        # Use provided URL, or get from active config, or fall back to settings
+        """
+        Initialize SQL service with a database connection.
+        
+        Args:
+            database_url: Optional database URI. If not provided, will attempt
+                         to get from active config in db_connections table.
+                         
+        Raises:
+            ValueError: If no database connection is available.
+        """
+        # Use provided URL, or get from active config
         if database_url:
             self._database_url = database_url
         else:
             self._database_url = _get_active_database_url()
+        
+        if not self._database_url:
+            raise ValueError(
+                "No database connection configured. "
+                "Please add a database connection via Settings > Database Connections "
+                "and publish a RAG configuration that uses it."
+            )
             
-        logger.info(f"Connecting to database at {self._database_url}")
+        logger.info("Connecting to database...")
         
         try:
             # Initialize critique service
             self.critique_service = get_critique_service()
 
-            # Check if patient_tracker exists to determine if we should ignore demo 'patient' table
-            # First, create a temporary connection to check tables
-            temp_db = SQLDatabase.from_uri(
-                self._database_url, 
-                view_support=True,
-                engine_args={'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
+            # WORKAROUND for PostgreSQL permission issues:
+            # Some PostgreSQL instances don't grant access to pg_collation system table.
+            # SQLAlchemy's full metadata reflection tries to load domains which requires pg_collation.
+            # Solution: First get table names via a lightweight query, then use include_tables
+            # to limit reflection to only those tables (avoids domain inspection).
+            
+            from sqlalchemy import create_engine, text
+            
+            # Create engine for lightweight table discovery
+            engine = create_engine(
+                self._database_url,
+                pool_size=20, 
+                max_overflow=50, 
+                pool_timeout=60
             )
-            all_tables = temp_db.get_usable_table_names()
+            
+            all_table_names = []
+            detected_schema = 'public'
+            
+            # Get table names without triggering full reflection
+            with engine.connect() as conn:
+                # First, try to get tables from ALL accessible schemas (not just public)
+                try:
+                    # Query for regular tables across all schemas the user can access
+                    tables_result = conn.execute(text("""
+                        SELECT table_schema, table_name 
+                        FROM information_schema.tables 
+                        WHERE table_type = 'BASE TABLE'
+                        AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                        ORDER BY table_schema, table_name
+                    """))
+                    tables_with_schema = [(row[0], row[1]) for row in tables_result]
+                    
+                    # Query for views across all schemas
+                    views_result = conn.execute(text("""
+                        SELECT table_schema, table_name 
+                        FROM information_schema.views 
+                        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                        ORDER BY table_schema, table_name
+                    """))
+                    views_with_schema = [(row[0], row[1]) for row in views_result]
+                    
+                    # Combine and determine the primary schema
+                    all_objects = tables_with_schema + views_with_schema
+                    
+                    if all_objects:
+                        # Use the schema that has the most tables
+                        from collections import Counter
+                        schema_counts = Counter(obj[0] for obj in all_objects)
+                        detected_schema = schema_counts.most_common(1)[0][0]
+                        logger.info(f"Detected primary schema: {detected_schema}")
+                        
+                        # Get table names from the primary schema
+                        all_table_names = [obj[1] for obj in all_objects if obj[0] == detected_schema]
+                        logger.info(f"Found {len(all_table_names)} tables/views in schema '{detected_schema}'")
+                    
+                except Exception as e:
+                    logger.warning(f"information_schema query failed: {e}")
+                
+                # Fallback: If information_schema didn't work, try pg_class directly
+                if not all_table_names:
+                    try:
+                        logger.info("Trying pg_class fallback for table discovery...")
+                        result = conn.execute(text("""
+                            SELECT c.relname 
+                            FROM pg_class c
+                            JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE c.relkind IN ('r', 'v')  -- r=table, v=view
+                            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+                            AND has_table_privilege(c.oid, 'SELECT')
+                            ORDER BY c.relname
+                        """))
+                        all_table_names = [row[0] for row in result]
+                        logger.info(f"pg_class fallback found {len(all_table_names)} accessible tables/views")
+                    except Exception as e2:
+                        logger.warning(f"pg_class fallback also failed: {e2}")
+            
+            engine.dispose()
+            
+            logger.info(f"Discovered {len(all_table_names)} tables/views total")
             
             # Determine tables to ignore (demo tables that shouldn't be used)
             ignore_tables = []
-            if 'patient_tracker' in all_tables and 'patient' in all_tables:
+            if 'patient_tracker' in all_table_names and 'patient' in all_table_names:
                 ignore_tables.append('patient')
                 logger.info("Will ignore demo 'patient' table - using 'patient_tracker' for patient data")
+            
+            # Filter out ignored tables
+            include_tables = [t for t in all_table_names if t not in ignore_tables]
 
-            # Initialize database connection with dynamic table discovery
-            # No hardcoded view names - uses whatever tables/views exist in the database
-            self.db = SQLDatabase.from_uri(
-                self._database_url,
-                view_support=True,
-                ignore_tables=ignore_tables if ignore_tables else None,
-                engine_args={'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
-            )
+            # CRITICAL: If no tables found, we cannot use include_tables=[] 
+            # as SQLAlchemy will still try full reflection. Instead, raise a clear error.
+            if not include_tables:
+                raise ValueError(
+                    "No accessible tables found in the database. "
+                    "Please ensure the database user has SELECT permission on at least one table. "
+                    "Check that tables exist and are not in system schemas."
+                )
+
+            # Initialize database connection with explicit include_tables
+            # This avoids full metadata reflection that requires pg_collation access
+            db_kwargs = {
+                'view_support': True,
+                'include_tables': include_tables,
+                'engine_args': {'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
+            }
+            
+            # If we detected a non-public schema, we need to set it
+            if detected_schema != 'public':
+                db_kwargs['schema'] = detected_schema
+                logger.info(f"Using schema: {detected_schema}")
+            
+            self.db = SQLDatabase.from_uri(self._database_url, **db_kwargs)
             logger.info("Database connection established with view support")
             
             self._cache_schema()
+            
+            # Get LLM settings from database (runtime configurable)
+            llm_settings = get_llm_settings()
+            llm_model = llm_settings.get('model_name', 'gpt-4o')
+            llm_temperature = llm_settings.get('temperature', 0.0)
             
             self.llm_fast = ChatOpenAI(
                 temperature=0,
@@ -164,8 +323,8 @@ class SQLService:
             )
             
             self.llm = ChatOpenAI(
-                temperature=settings.openai_temperature,
-                model_name=settings.openai_model,
+                temperature=llm_temperature,
+                model_name=llm_model,
                 api_key=settings.openai_api_key,
                 verbose=True
             )
@@ -591,7 +750,7 @@ Return ONLY the corrected SQL query."""
         logger.info(" API Call: Format natural language response (using gpt-3.5-turbo)")
         
         format_prompt = f"""Convert this database result into a clear, natural language answer.
-Also, generate a JSON chart specification if the data is suitable for visualization.
+Also, generate a JSON chart specification for visualization.
 
 SQL Query: {sql_query}
 Result: {result}
@@ -602,29 +761,65 @@ RESPOND WITH A CHART JSON:
 1. First, provide a concise natural language answer explaining the data.
 2. Then, you MUST append a JSON code block with chart data.
    - NEVER skip this step if you have data.
-   - If data is sparse (e.g., 1 row), still plot it.
 
 Format:
 ```json
 {{
     "chart_json": {{
         "title": "Descriptive Chart Title",
-        "type": "pie|bar|line|scorecard|treemap",
-        "data": {{ ... }}
+        "type": "<chart_type>",
+        "data": {{
+            "labels": ["label1", "label2", ...],
+            "values": [value1, value2, ...]
+        }}
     }}
 }}
 ```
 
-Chart type guidelines:
-- Use "treemap" for: ANY distribution by Region, District, or Location.
-- Use "scorecard" for: single numeric values or totals.
-- Use "bar" for: comparisons.
-- Use "pie" for: percentages.
+CHART TYPE SELECTION GUIDE (choose the most appropriate):
+
+1. **"gauge"** - For percentage/rate metrics against targets:
+   - Coverage rates, control rates, achievement percentages
+   - Example: "What is the diabetes control rate?" → gauge with value, target
+   - Extra fields: "value": 75, "target": 80, "min": 0, "max": 100
+
+2. **"funnel"** - For care cascades and sequential dropoff:
+   - Patient journey stages, screening → diagnosis → treatment → controlled
+   - Example: "Show the NCD care cascade" → funnel
+   - Data should be ordered from largest to smallest stage
+
+3. **"bullet"** - For multiple KPIs vs targets:
+   - Facility performance comparisons, multiple metrics vs goals
+   - Example: "Compare facility screening rates vs targets"
+   - Extra fields: "target": 80, "ranges": [30, 70, 100]
+
+4. **"horizontal_bar"** - For rankings and comparisons:
+   - Top/bottom performers, district rankings
+   - Example: "Which districts have highest cases?" → horizontal_bar
+
+5. **"bar"** - For categorical comparisons:
+   - Breakdowns by age group, gender, category
+   - Example: "Breakdown by age group" → bar
+
+6. **"pie"** - For proportions/distributions:
+   - Gender distribution, percentage breakdowns
+   - Example: "What percentage are male vs female?" → pie
+
+7. **"line"** - For trends over time:
+   - Monthly/yearly trends, time series
+   - Example: "Show monthly trend of screenings" → line
+
+8. **"scorecard"** - For single KPI values:
+   - Total counts, single metrics
+   - Example: "Total number of patients" → scorecard
+
+9. **"treemap"** - For hierarchical/regional breakdowns:
+   - Regional distributions, nested categories
+   - Example: "Distribution by region and district" → treemap
 
 Response:"""
 
         # OPTIMIZATION: Use fast model (gpt-3.5-turbo) for response formatting
-        # This saves ~3-5 seconds compared to gpt-4o
         formatted_response = self.llm_fast.invoke(format_prompt)
         return formatted_response.content.strip()
 
@@ -723,45 +918,89 @@ Response:"""
             table_names: Optional list of tables to inspect. If None, fetches all.
         """
         try:
-            # Create a temporary connection
-            temp_db = SQLDatabase.from_uri(
+            from sqlalchemy import create_engine, text
+            
+            # Create engine for lightweight table discovery (avoids pg_collation issue)
+            engine = create_engine(
                 uri,
-                engine_args={'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
+                pool_size=20, 
+                max_overflow=50, 
+                pool_timeout=60
             )
             
-            # If explicit tables requested, use those. Otherwise discover all.
+            all_table_names = []
+            
+            # Get table names without triggering full reflection
+            with engine.connect() as conn:
+                # Query for tables across all accessible schemas
+                try:
+                    tables_result = conn.execute(text("""
+                        SELECT table_schema, table_name 
+                        FROM information_schema.tables 
+                        WHERE table_type = 'BASE TABLE'
+                        AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                        ORDER BY table_schema, table_name
+                    """))
+                    tables_with_schema = [(row[0], row[1]) for row in tables_result]
+                    
+                    views_result = conn.execute(text("""
+                        SELECT table_schema, table_name 
+                        FROM information_schema.views 
+                        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+                        ORDER BY table_schema, table_name
+                    """))
+                    views_with_schema = [(row[0], row[1]) for row in views_result]
+                    
+                    all_objects = tables_with_schema + views_with_schema
+                    all_table_names = [obj[1] for obj in all_objects]
+                    
+                except Exception as e:
+                    logger.warning(f"information_schema query failed: {e}")
+                
+                # Fallback to pg_class if information_schema didn't work
+                if not all_table_names:
+                    try:
+                        result = conn.execute(text("""
+                            SELECT c.relname 
+                            FROM pg_class c
+                            JOIN pg_namespace n ON n.oid = c.relnamespace
+                            WHERE c.relkind IN ('r', 'v')
+                            AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+                            AND has_table_privilege(c.oid, 'SELECT')
+                            ORDER BY c.relname
+                        """))
+                        all_table_names = [row[0] for row in result]
+                    except Exception as e2:
+                        logger.warning(f"pg_class fallback also failed: {e2}")
+            
+            # If explicit tables requested, filter to only those that exist
             if table_names:
-                all_tables = temp_db.get_usable_table_names()
-                # Filter to only those that actually exist
-                target_tables = [t for t in table_names if t in all_tables]
+                target_tables = [t for t in table_names if t in all_table_names]
             else:
-                target_tables = temp_db.get_usable_table_names()
+                target_tables = all_table_names
             
             schema_info = {}
-            inspector = inspect(temp_db._engine)
+            inspector = inspect(engine)
             
             for table in target_tables:
-                # Get column info
-                columns = inspector.get_columns(table)
-                
-                column_details = []
-                for col in columns:
-                    column_details.append({
-                        "name": col["name"],
-                        "type": str(col["type"]),
-                        "nullable": col.get("nullable", True)
-                    })
-                
-                # Get FK info if possible (useful for graph relationships)
                 try:
-                    fks = inspector.get_foreign_keys(table)
-                    # Enrich column details with FK info? 
-                    # For now just store columns as generator expects
-                except:
-                    pass
-                
-                schema_info[table] = column_details
-                
+                    # Get column info
+                    columns = inspector.get_columns(table)
+                    
+                    column_details = []
+                    for col in columns:
+                        column_details.append({
+                            "name": col["name"],
+                            "type": str(col["type"]),
+                            "nullable": col.get("nullable", True)
+                        })
+                    
+                    schema_info[table] = column_details
+                except Exception as e:
+                    logger.warning(f"Could not get columns for table {table}: {e}")
+                    schema_info[table] = []
+            
+            engine.dispose()
             return {"tables": target_tables, "details": schema_info}
             
         except Exception as e:

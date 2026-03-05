@@ -25,9 +25,9 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
 
     if (dataSourceType === 'database' && connectionId) {
         return (
-            <div className="max-w-4xl mx-auto">
-                <h2 className="text-xl font-semibold mb-4">Select Tables</h2>
-                <p className="text-gray-500 text-sm mb-6">
+            <div className="w-full max-w-4xl mx-auto overflow-x-hidden">
+                <h2 className="text-lg sm:text-xl font-semibold mb-2 sm:mb-4">Select Tables</h2>
+                <p className="text-gray-500 text-xs sm:text-sm mb-4 sm:mb-6">
                     Select which tables contain relevant data for analysis. The AI will only be aware of the tables you select.
                 </p>
                 <SchemaSelector
@@ -52,8 +52,8 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     }
 
     return (
-        <div className="max-w-2xl mx-auto text-center py-12">
-            <p className="text-gray-500">
+        <div className="w-full max-w-2xl mx-auto text-center py-8 sm:py-12 px-4">
+            <p className="text-gray-500 text-sm">
                 Please go back and {dataSourceType === 'database' ? 'select a database connection' : 'upload a file'} first.
             </p>
         </div>

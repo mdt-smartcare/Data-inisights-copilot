@@ -132,13 +132,8 @@ cat > .env << 'EOF'
 OPENAI_API_KEY="sk-proj-YOUR-API-KEY-HERE"
 OPENAI_MODEL="gpt-4o"
 
-# PostgreSQL Database
-DB_USER="admin"
-DB_PASSWORD="admin"
-DB_NAME="Spice_BD"
-DB_HOST="localhost"
-DB_PORT="5432"
-DATABASE_URL="postgresql://admin:admin@localhost:5432/Spice_BD"
+# NOTE: Clinical database connections are configured via the frontend
+# Settings > Database Connections page, NOT in this file.
 
 # Langfuse Tracing (Optional)
 LANGFUSE_PUBLIC_KEY="pk-lf-YOUR-KEY"
@@ -159,13 +154,8 @@ OPENAI_API_KEY=sk-proj-YOUR-API-KEY-HERE
 OPENAI_MODEL=gpt-4o
 OPENAI_TEMPERATURE=0
 
-# Database Configuration
-DB_USER=admin
-DB_PASSWORD=admin
-DB_NAME=Spice_BD
-DB_HOST=localhost
-DB_PORT=5432
-DATABASE_URL=postgresql://admin:admin@localhost:5432/Spice_BD
+# NOTE: Clinical database connections are configured via the frontend
+# Settings > Database Connections page, NOT in this file.
 
 # Embedding Model Configuration
 EMBEDDING_MODEL_PATH=models/bge-m3
@@ -210,22 +200,18 @@ SECRET_KEY=$(openssl rand -hex 32)
 echo "SECRET_KEY=$SECRET_KEY" >> backend/.env
 ```
 
-### Step 7: Start PostgreSQL Database
+### Step 7: Configure Database Connection
 
-```bash
-# Check if PostgreSQL is running
-pg_isready -h localhost -p 5432
+Database connections are now configured via the frontend UI:
 
-# If not running, start it (method depends on installation)
-# Homebrew:
-brew services start postgresql
-
-# Or direct:
-pg_ctl -D /usr/local/var/postgres start
-
-# Verify database exists
-psql -U admin -d Spice_BD -c "SELECT version();"
-```
+1. Start the backend server (see next section)
+2. Open the frontend at http://localhost:5173
+3. Navigate to **Settings > Database Connections**
+4. Click **Add Connection** and enter your PostgreSQL details:
+   - Name: "My Database"
+   - URI: `postgresql://user:password@localhost:5432/your_database`
+   - Engine Type: PostgreSQL
+5. Click **Save** and then **Publish Configuration**
 
 ### Step 8: Build the RAG Index
 
@@ -847,8 +833,8 @@ tail -20 feedback_log.csv
 ### Monitor Database
 
 ```bash
-# Connect to database
-psql -U admin -d Spice_BD
+# Connect to database (use your configured database name)
+psql -U admin -d your_database
 
 # Check table sizes
 SELECT 
@@ -1009,7 +995,7 @@ curl -X POST http://localhost:8000/api/v1/chat \
 tail -f logs/backend.log
 
 # Check database
-psql -U admin -d Spice_BD -c "SELECT COUNT(*) FROM patient_tracker;"
+psql -U admin -d your_database -c "SELECT COUNT(*) FROM patient_tracker;"
 ```
 
 ---

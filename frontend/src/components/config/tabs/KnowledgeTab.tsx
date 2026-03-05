@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import EmbeddingProgress from '../../EmbeddingProgress';
+import EmbeddingSettingsModal from '../../EmbeddingSettingsModal';
 import ScheduleSelector from '../../ScheduleSelector';
-import { CheckCircleIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline';
+import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { ActiveConfig, VectorDbStatus } from '../../../contexts/AgentContext';
 
 interface KnowledgeTabProps {
     activeConfig: ActiveConfig;
     vectorDbStatus: VectorDbStatus | null;
     embeddingJobId: string | null;
-    onStartEmbedding: (incremental: boolean) => void;
+    onStartEmbedding: (incremental: boolean, settings?: any) => void;
     onEmbeddingComplete: () => void;
     onEmbeddingError: (err: string) => void;
     onEmbeddingCancel: () => void;
@@ -23,6 +24,8 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
     onEmbeddingError,
     onEmbeddingCancel
 }) => {
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
+
     // Get vector DB name from config
     const getVectorDbName = () => {
         try {
@@ -40,8 +43,64 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
         }
     };
 
+    // Get chunking config from activeConfig for default settings
+    const getChunkingConfig = () => {
+        try {
+            const chunkConf = activeConfig.chunking_config
+                ? (typeof activeConfig.chunking_config === 'string'
+                    ? JSON.parse(activeConfig.chunking_config)
+                    : activeConfig.chunking_config)
+                : {};
+            return {
+                parent_chunk_size: chunkConf.parentChunkSize || 800,
+                parent_chunk_overlap: chunkConf.parentChunkOverlap || 150,
+                child_chunk_size: chunkConf.childChunkSize || 200,
+                child_chunk_overlap: chunkConf.childChunkOverlap || 50,
+            };
+        } catch {
+            return {
+                parent_chunk_size: 800,
+                parent_chunk_overlap: 150,
+                child_chunk_size: 200,
+                child_chunk_overlap: 50,
+            };
+        }
+    };
+
+    // Get complete default settings for the modal
+    const getDefaultSettings = () => ({
+        batch_size: 128,  // Optimized for GPU
+        max_concurrent: 5,
+        chunking: getChunkingConfig(),
+        parallelization: {
+            num_workers: undefined,
+            chunking_batch_size: undefined,
+            delta_check_batch_size: 50000,
+        },
+        medical_context_config: {
+            medical_context: {},
+            clinical_flag_prefixes: ['is_', 'has_', 'was_', 'history_of_', 'confirmed_', 'requires_', 'on_'],
+            use_yaml_defaults: true,
+        },
+        max_consecutive_failures: 5,
+        retry_attempts: 3,
+    });
+
+    const handleEmbeddingConfirm = (settings: any, incremental: boolean) => {
+        onStartEmbedding(incremental, settings);
+        setShowSettingsModal(false);
+    };
+
     return (
         <div className="space-y-8">
+            {/* Embedding Settings Modal */}
+            <EmbeddingSettingsModal
+                isOpen={showSettingsModal}
+                onClose={() => setShowSettingsModal(false)}
+                onConfirm={handleEmbeddingConfirm}
+                defaultSettings={getDefaultSettings()}
+            />
+
             {/* Embedding Section */}
             <div>
                 <h2 className="text-lg font-bold mb-4 text-gray-900 flex items-center gap-2">
@@ -56,20 +115,30 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                         onCancel={onEmbeddingCancel}
                     />
                 ) : (
-                    <div className="bg-white p-8 rounded-xl border border-gray-200 shadow-sm transition-all hover:shadow-md">
-                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
+                    <div className="bg-white p-4 sm:p-8 rounded-xl border border-gray-200 shadow-sm transition-all hover:shadow-md">
+                        <div className="flex flex-col gap-4 sm:gap-6 mb-6 sm:mb-8">
                             <div className="max-w-xl">
-                                <h3 className="text-lg font-semibold text-gray-900">Manage Knowledge Base</h3>
-                                <p className="text-gray-500 mt-2">
+                                <h3 className="text-base sm:text-lg font-semibold text-gray-900">Manage Knowledge Base</h3>
+                                <p className="text-sm text-gray-500 mt-2">
                                     Keep your agent's vector representations up-to-date with your latest data. Update manually or set an automatic sync schedule below.
                                 </p>
                             </div>
-                            <div className="flex gap-3">
+                            <div className="flex flex-wrap gap-2 sm:gap-3">
                                 <button
                                     onClick={() => onStartEmbedding(true)}
-                                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all hover:scale-105 active:scale-95"
+                                    className="flex-1 sm:flex-none px-4 sm:px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold shadow-sm transition-all hover:scale-105 active:scale-95 flex items-center justify-center gap-2 text-sm sm:text-base"
+                                    title="Quick incremental sync - only processes new or changed data"
                                 >
-                                    Update Knowledge
+                                    <ArrowPathIcon className="w-4 h-4" />
+                                    <span>Sync Now</span>
+                                </button>
+                                <button
+                                    onClick={() => setShowSettingsModal(true)}
+                                    className="px-3 sm:px-4 py-2.5 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-semibold transition-all flex items-center justify-center gap-2 text-sm sm:text-base"
+                                    title="Configure batch size, chunking, parallelization, and more"
+                                >
+                                    <Cog6ToothIcon className="w-4 h-4" />
+                                    <span className="hidden sm:inline">Advanced</span>
                                 </button>
                                 <button
                                     onClick={() => {
@@ -77,37 +146,38 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                             onStartEmbedding(false);
                                         }
                                     }}
-                                    className="px-6 py-2.5 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold transition-all hover:border-red-300"
+                                    className="px-3 sm:px-6 py-2.5 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 font-semibold transition-all hover:border-red-300 text-sm sm:text-base"
                                 >
-                                    Rebuild DB
+                                    <span className="sm:hidden">Rebuild</span>
+                                    <span className="hidden sm:inline">Rebuild DB</span>
                                 </button>
                             </div>
                         </div>
 
                         {/* Vector DB Stats Card */}
                         {vectorDbStatus && (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-8 border-t border-gray-100">
-                                <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 pt-6 sm:pt-8 border-t border-gray-100">
+                                <div className="p-3 sm:p-4 bg-blue-50/50 rounded-xl border border-blue-100">
                                     <p className="text-xs text-blue-600 font-bold uppercase tracking-wider mb-2">Stored Documents</p>
                                     <div className="flex items-end gap-2">
-                                        <p className="text-3xl font-bold text-gray-900">{vectorDbStatus.total_documents_indexed.toLocaleString()}</p>
+                                        <p className="text-2xl sm:text-3xl font-bold text-gray-900">{vectorDbStatus.total_documents_indexed.toLocaleString()}</p>
                                         <p className="text-sm text-gray-500 font-medium mb-1">Items</p>
                                     </div>
                                 </div>
 
-                                <div className="p-4 bg-purple-50/50 rounded-xl border border-purple-100">
+                                <div className="p-3 sm:p-4 bg-purple-50/50 rounded-xl border border-purple-100">
                                     <p className="text-xs text-purple-600 font-bold uppercase tracking-wider mb-2">Vector Embeddings</p>
                                     <div className="flex items-end gap-2">
-                                        <p className="text-3xl font-bold text-gray-900">{vectorDbStatus.total_vectors.toLocaleString()}</p>
+                                        <p className="text-2xl sm:text-3xl font-bold text-gray-900">{vectorDbStatus.total_vectors.toLocaleString()}</p>
                                         <p className="text-sm text-gray-500 font-medium mb-1">Vectors</p>
                                     </div>
                                 </div>
 
-                                <div className="p-4 bg-green-50/50 rounded-xl border border-green-100">
+                                <div className="p-3 sm:p-4 bg-green-50/50 rounded-xl border border-green-100 sm:col-span-2 md:col-span-1">
                                     <p className="text-xs text-green-600 font-bold uppercase tracking-wider mb-2">Last Synchronized</p>
                                     <div className="flex items-center gap-2 mt-2">
-                                        <CheckCircleIcon className="w-6 h-6 text-green-600" />
-                                        <p className="text-base font-semibold text-gray-900">
+                                        <CheckCircleIcon className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" />
+                                        <p className="text-sm sm:text-base font-semibold text-gray-900">
                                             {vectorDbStatus.last_updated_at
                                                 ? new Date(vectorDbStatus.last_updated_at + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
                                                 : 'Never run'}
@@ -116,28 +186,28 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                 </div>
 
                                 {/* Enhanced Metadata Fields */}
-                                <div className="col-span-1 md:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-2">
-                                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                <div className="col-span-1 sm:col-span-2 md:col-span-3 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-2">
+                                    <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Embedding Model</p>
-                                        <p className="text-sm font-medium text-gray-800 truncate" title={vectorDbStatus.embedding_model || 'N/A'}>
+                                        <p className="text-xs sm:text-sm font-medium text-gray-800 truncate" title={vectorDbStatus.embedding_model || 'N/A'}>
                                             {vectorDbStatus.embedding_model || 'N/A'}
                                         </p>
                                     </div>
-                                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                    <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">LLM Model</p>
-                                        <p className="text-sm font-medium text-gray-800">
+                                        <p className="text-xs sm:text-sm font-medium text-gray-800 truncate">
                                             {vectorDbStatus.llm || 'N/A'}
                                         </p>
                                     </div>
-                                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                    <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Last Full Sync</p>
-                                        <p className="text-sm font-medium text-gray-800">
+                                        <p className="text-xs sm:text-sm font-medium text-gray-800">
                                             {vectorDbStatus.last_full_run ? new Date(vectorDbStatus.last_full_run + 'Z').toLocaleDateString() : 'N/A'}
                                         </p>
                                     </div>
-                                    <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                    <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Version</p>
-                                        <p className="text-sm font-medium text-gray-800">
+                                        <p className="text-xs sm:text-sm font-medium text-gray-800">
                                             {vectorDbStatus.version}
                                         </p>
                                     </div>

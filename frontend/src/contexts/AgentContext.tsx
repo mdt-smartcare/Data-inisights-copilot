@@ -19,6 +19,9 @@ export interface ActiveConfig {
     chunking_config?: string;
     retriever_config?: string;
     data_source_type?: 'database' | 'file';
+    ingestion_file_name?: string;
+    ingestion_file_type?: string;
+    ingestion_documents?: string;
     created_by_username?: string;
     created_at?: string;
     is_active?: boolean;

@@ -38,7 +38,7 @@ curl -X POST "https://api.your-copilot-domain.com/api/v1/embedding-jobs" \
      -H "Content-Type: application/json" \
      -d '{
            "config_id": 5, 
-           "batch_size": 50, 
+           "batch_size": 128, 
            "max_concurrent": 5, 
            "incremental": true 
          }'

@@ -49,11 +49,68 @@ export interface EmbeddingJobSummary {
     completed_at: string | null;
 }
 
+/**
+ * Configuration for parent-child chunking strategy.
+ * Controls how documents are split for embedding.
+ */
+export interface ChunkingConfig {
+    parent_chunk_size: number;      // 200-2000, default 800
+    parent_chunk_overlap: number;   // 0-500, default 150
+    child_chunk_size: number;       // 50-500, default 200
+    child_chunk_overlap: number;    // 0-100, default 50
+}
+
+/**
+ * Configuration for parallel processing.
+ * Controls worker count and batch sizes.
+ */
+export interface ParallelizationConfig {
+    num_workers?: number;           // 1-16, null = auto
+    chunking_batch_size?: number;   // 100-50000, null = auto
+    delta_check_batch_size: number; // 1000-100000, default 50000
+}
+
+/**
+ * Configuration for medical terminology enrichment.
+ * Improves embedding quality by expanding clinical abbreviations.
+ */
+export interface MedicalContextConfig {
+    // Medical abbreviation mappings (column_name -> human_readable_name)
+    // Example: {"bp": "Blood Pressure", "hr": "Heart Rate"}
+    medical_context: Record<string, string>;
+    
+    // Clinical boolean flag prefixes to recognize
+    // Example: ["is_", "has_", "history_of_"]
+    clinical_flag_prefixes: string[];
+    
+    // Whether to merge with YAML defaults
+    use_yaml_defaults: boolean;
+}
+
+/**
+ * Request model for starting a new embedding job.
+ * All optional fields have sensible defaults on the backend.
+ */
 export interface EmbeddingJobCreate {
     config_id: number;
-    batch_size?: number;
-    max_concurrent?: number;
-    incremental?: boolean;
+    
+    // Batch Processing Config
+    batch_size?: number;            // 10-500, default 50
+    max_concurrent?: number;        // 1-20, default 5
+    incremental?: boolean;          // default true
+    
+    // Chunking Config (optional)
+    chunking?: ChunkingConfig;
+    
+    // Parallelization Config (optional)
+    parallelization?: ParallelizationConfig;
+    
+    // Medical Context Config (optional - improves clinical data search)
+    medical_context_config?: MedicalContextConfig;
+    
+    // Circuit Breaker Config
+    max_consecutive_failures?: number;  // 1-20, default 5
+    retry_attempts?: number;            // 1-10, default 3
 }
 
 // ============================================

@@ -15,7 +15,7 @@ from pathlib import Path
 from functools import lru_cache
 from langchain_core.embeddings import Embeddings
 
-from backend.config import get_settings
+from backend.config import get_settings, get_embedding_settings
 from backend.core.logging import get_logger
 
 settings = get_settings()
@@ -47,7 +47,9 @@ class _EmbeddingService:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
             
-            model_path = settings.embedding_model_path
+            # Get model path from runtime settings (database)
+            embedding_settings = get_embedding_settings()
+            model_path = embedding_settings.get('model_path', './models/bge-m3')
             logger.info(f"Loading embedding model from {model_path}")
             
             resolved_path = Path(model_path)

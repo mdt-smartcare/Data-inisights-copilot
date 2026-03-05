@@ -1,6 +1,43 @@
-# Table inclusion and exclusion rules
+# =============================================================================
+# Embedding Pipeline Configuration - FALLBACK DEFAULTS ONLY
+# =============================================================================
+#
+# ⚠️  IMPORTANT: This file is NO LONGER the primary configuration source.
+#
+# PRIMARY SOURCE: Database `system_settings` table (managed via frontend Settings page)
+# 
+# The system now reads all configuration from the database via SettingsService
+# with TTL-based caching (default: 5 minutes) to prevent database hammering.
+#
+# This file serves as:
+# 1. DOCUMENTATION of available settings and their default values
+# 2. FALLBACK values if database is unavailable during startup
+# 3. REFERENCE for the migration script (migrations/014_operational_config.sql)
+#
+# To modify these settings at runtime:
+# - Use the frontend Settings page (Settings > Operational Config)
+# - Or use the Settings API: PUT /api/v1/settings/{category}
+#
+# Database categories for operational config:
+# - data_privacy: PII protection rules (global_exclude_columns, exclude_tables, etc.)
+# - medical_context: Clinical terminology mappings
+# - chunking: Text chunking parameters
+# - vector_store: Vector database configuration
+# =============================================================================
+
+# =============================================================================
+# Vector Store Infrastructure (paths - typically don't change at runtime)
+# =============================================================================
+vector_store:
+  chroma_base_path: "./data/indexes"
+
+# =============================================================================
+# Table Inclusion and Exclusion Rules
+# =============================================================================
+# These rules control which tables and columns are included in embeddings.
+# Primary source: system_settings.data_privacy category
 tables:
-  # Global column exclusions (applied to all tables)
+  # Global column exclusions (applied to all tables) - PII protection
   global_exclude_columns:
     - "first_name"
     - "last_name"
@@ -15,9 +52,11 @@ tables:
     - "father_educational_qualification"
     - "password"
     - "national_id"
+    - "email"
+    - "address"
+    - "social_security_number"
 
-
-  # Exclude entire tables (no medical/clinical value)
+  # Exclude entire tables (no clinical/analytical value)
   exclude_tables:
     - "audit"                               # System audit logs
     - "awsdms_ddl_audit"                    # AWS DMS migration logs
@@ -67,41 +106,124 @@ tables:
       - "password"
       - "username"
 
-# Embedding configuration
-embedding:
-  model_name: "BAAI/bge-m3"
-  model_path: "./models/bge-m3"
-  batch_size: 128
+# =============================================================================
+# Medical Context Mappings for Clinical Terminology Enrichment
+# =============================================================================
+# These mappings provide human-readable names for clinical database columns,
+# improving embedding quality by adding semantic context for the LLM.
+# Primary source: system_settings.medical_context.terminology_mappings
+# Format: column_name: "Human Readable Name"
+medical_context:
+  # Vital Signs
+  bp: "Blood Pressure"
+  bp_systolic: "Systolic Blood Pressure"
+  bp_diastolic: "Diastolic Blood Pressure"
+  hr: "Heart Rate"
+  pulse: "Pulse Rate"
+  rr: "Respiratory Rate"
+  spo2: "Oxygen Saturation (SpO2)"
+  temp: "Body Temperature"
+  temperature: "Body Temperature"
+  
+  # Anthropometric Measurements
+  bmi: "Body Mass Index"
+  height: "Height"
+  weight: "Weight"
+  waist_circumference: "Waist Circumference"
+  hip_circumference: "Hip Circumference"
+  
+  # Diabetes & Glucose Metrics
+  hba1c: "Glycated Hemoglobin (HbA1c)"
+  fbs: "Fasting Blood Sugar"
+  rbs: "Random Blood Sugar"
+  ppbs: "Post-Prandial Blood Sugar"
+  glucose: "Blood Glucose"
+  fasting_glucose: "Fasting Glucose Level"
+  
+  # Lipid Profile
+  cholesterol: "Total Cholesterol"
+  hdl: "HDL Cholesterol (Good)"
+  ldl: "LDL Cholesterol (Bad)"
+  triglycerides: "Triglycerides"
+  vldl: "VLDL Cholesterol"
+  
+  # Renal Function
+  creatinine: "Serum Creatinine"
+  bun: "Blood Urea Nitrogen"
+  egfr: "Estimated Glomerular Filtration Rate (eGFR)"
+  uric_acid: "Uric Acid"
+  
+  # Liver Function
+  sgot: "SGOT (AST) Liver Enzyme"
+  sgpt: "SGPT (ALT) Liver Enzyme"
+  alp: "Alkaline Phosphatase"
+  bilirubin: "Bilirubin"
+  albumin: "Serum Albumin"
+  
+  # Hematology
+  hb: "Hemoglobin"
+  hemoglobin: "Hemoglobin Level"
+  wbc: "White Blood Cell Count"
+  rbc: "Red Blood Cell Count"
+  platelet: "Platelet Count"
+  platelets: "Platelet Count"
+  pcv: "Packed Cell Volume (Hematocrit)"
+  
+  # Thyroid
+  tsh: "Thyroid Stimulating Hormone"
+  t3: "Triiodothyronine (T3)"
+  t4: "Thyroxine (T4)"
+  ft3: "Free T3"
+  ft4: "Free T4"
+  
+  # Cardiovascular Risk
+  cvd_risk: "Cardiovascular Disease Risk Score"
+  cvd_risk_score: "CVD Risk Assessment Score"
+  risk_level: "Risk Classification Level"
+  
+  # Clinical Identifiers
+  patient_track_id: "Patient Tracking ID"
+  encounter_id: "Clinical Encounter ID"
+  visit_id: "Visit Identifier"
+  screening_id: "Screening Session ID"
+  
+  # Medication & Treatment
+  medication_name: "Medication Name"
+  dosage: "Medication Dosage"
+  frequency: "Dosing Frequency"
+  prescription_id: "Prescription ID"
+  
+  # Diagnosis & Conditions
+  diagnosis_code: "Diagnosis Code"
+  icd_code: "ICD Diagnosis Code"
+  condition: "Medical Condition"
+  comorbidity: "Comorbid Condition"
+  
+  # Screening Scores
+  phq9_score: "PHQ-9 Depression Score"
+  phq4_score: "PHQ-4 Mental Health Score"
+  gad7_score: "GAD-7 Anxiety Score"
+  audit_score: "AUDIT Alcohol Use Score"
 
-# Advanced Chunking Configuration for Small-to-Big Retrieval
-chunking:
-  parent_splitter:
-    chunk_size: 800       # Reduced from 1000 - better for structured medical data
-    chunk_overlap: 150    # Reduced proportionally
-  child_splitter:
-    chunk_size: 200       # Reduced from 250 - captures single medical concepts better
-    chunk_overlap: 50     # Increased from 30 - ensures key medical terms aren't split
+# =============================================================================
+# Clinical Boolean Flag Prefixes
+# =============================================================================
+# Column prefixes that indicate clinical boolean flags.
+# Used by _enrich_medical_content() to provide semantic context.
+# Primary source: system_settings.medical_context.clinical_flag_prefixes
+clinical_flag_prefixes:
+  - "is_"           # e.g., is_diabetic, is_hypertensive
+  - "has_"          # e.g., has_allergy, has_complication
+  - "was_"          # e.g., was_hospitalized, was_referred
+  - "history_of_"   # e.g., history_of_smoking, history_of_stroke
+  - "flag_"         # e.g., flag_high_risk, flag_follow_up
+  - "confirmed_"    # e.g., confirmed_diagnosis, confirmed_pregnancy
+  - "requires_"     # e.g., requires_insulin, requires_referral
+  - "on_"           # e.g., on_medication, on_insulin
 
-# Vector store configuration
-vector_store:
-  type: "chroma"
-  chroma_path: "./data/indexes/chroma_db_advanced"
-  collection_name: "spice_healthcare_advanced"
-
-# Advanced Retriever Configuration
-retriever:
-  # Weights for combining dense (vector) and sparse (keyword) search
-  hybrid_search_weights: [0.75, 0.25] # Increased semantic weight - medical concepts are semantic
-  # Number of initial documents to fetch before reranking
-  top_k_initial: 50      # Increased from 20 - cast wider net for medical data
-  # Number of final documents to return after reranking
-  top_k_final: 10        # Increased from 5 - provide richer context to LLM
-  # Model for the final reranking step
-  reranker_model_name: "BAAI/bge-reranker-base"
-
-# Text processing
+# =============================================================================
+# Text Processing Defaults
+# =============================================================================
 text_processing:
-  chunk_size: 1000
-  chunk_overlap: 200
   min_chunk_length: 50
 

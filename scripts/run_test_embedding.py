@@ -38,7 +38,7 @@ def create_test_connection(token):
     headers = {"Authorization": f"Bearer {token}"}
     data = {
         "name": "Test Connection",
-        "uri": "postgresql://admin:admin@localhost:5432/Spice_BD", # Default fallback
+        "uri": "postgresql://user:password@localhost:5432/your_database",  # Configure via UI instead
         "engine_type": "postgresql"
     }
     response = requests.post(f"{BASE_URL}/data/connections", json=data, headers=headers)

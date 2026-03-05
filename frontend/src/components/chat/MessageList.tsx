@@ -16,6 +16,7 @@ interface MessageListProps {
     subtitle?: string;
     suggestions?: string[];
   };
+  renderMessageExtra?: (message: Message) => React.ReactNode;
 }
 
 export default function MessageList({
@@ -24,7 +25,8 @@ export default function MessageList({
   username,
   onSuggestedQuestionClick,
   onFeedback,
-  emptyStateProps
+  emptyStateProps,
+  renderMessageExtra
 }: MessageListProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const lastAssistantMessageRef = useRef<HTMLDivElement>(null);
@@ -63,6 +65,7 @@ export default function MessageList({
                     onSuggestedQuestionClick={onSuggestedQuestionClick}
                     onFeedback={onFeedback}
                   />
+                  {renderMessageExtra && renderMessageExtra(message)}
                 </div>
               );
             })}

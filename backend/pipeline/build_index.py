@@ -222,7 +222,6 @@ if __name__ == "__main__":
     import sys
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
     from backend.services.embeddings import get_embedding_model
-    from backend.pipeline.utils import load_config
     from backend.pipeline.extract import create_data_extractor
     from backend.pipeline.transform import AdvancedDataTransformer
 
@@ -242,11 +241,22 @@ if __name__ == "__main__":
     print(f" Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80 + "\n")
 
-    config = load_config("config/embedding_config.yaml")
+    # Load configuration from database (primary source) or YAML fallback
+    try:
+        from backend.services.config_service import get_config_service
+        config_service = get_config_service()
+        config = config_service.get_full_embedding_pipeline_config()
+        print(" Configuration loaded from database (single source of truth)")
+    except Exception as e:
+        print(f" Warning: Could not load config from database: {e}")
+        print(" Falling back to YAML configuration file...")
+        from backend.pipeline.utils import load_config
+        config = load_config("config/embedding_config.yaml")
     
     print(" Step 1/4: Extracting data from database...")
-    extractor = create_data_extractor("config/embedding_config.yaml")
-    table_data = extractor.extract_all_tables()
+    extractor = create_data_extractor()  # Will load config from database
+    import asyncio
+    table_data = asyncio.run(extractor.extract_all_tables())
     
     print(f"\n Step 2/4: Transforming {len(table_data)} tables into documents...")
     transformer = AdvancedDataTransformer(config)
@@ -268,6 +278,6 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print(" INDEX BUILD PROCESS COMPLETED SUCCESSFULLY!")
     print("="*80)
-    print(f"Index Location: {config['vector_store']['chroma_path']}")
+    print(f"Index Location: {config.get('vector_store', {}).get('chroma_path', 'N/A')}")
     print(f"Completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80 + "\n")

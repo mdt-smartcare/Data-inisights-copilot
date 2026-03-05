@@ -12,6 +12,7 @@ import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import CallbackPage from './pages/CallbackPage';
 import NotificationsPage from './pages/NotificationsPage';
+import DataManagementPage from './pages/DataManagementPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import type { UserRole } from './types';
@@ -158,6 +159,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <NotificationsPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/data-management"
+                element={
+                  <ProtectedRoute allowedRoles={['admin']}>
+                    <DataManagementPage />
                   </ProtectedRoute>
                 }
               />

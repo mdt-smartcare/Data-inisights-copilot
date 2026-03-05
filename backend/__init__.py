@@ -1,3 +1,7 @@
-from .connector import db_connector
+"""
+Backend package for Data Insights AI-Copilot.
 
-__all__ = ["db_connector"]
+Database connections are now managed via the frontend UI at Settings > Database Connections.
+"""
+
+__all__ = []

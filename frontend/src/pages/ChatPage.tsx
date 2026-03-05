@@ -3,12 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { chatService } from '../services/chatService';
 import { getActiveConfigMetadata } from '../services/api';
-import type { Message } from '../types';
+import type { Message, QueryMode, AgenticHybridResult } from '../types';
 import {
   ChatHeader,
   MessageList,
   ChatInput
 } from '../components/chat';
+import AgenticHybridResultsDisplay from '../components/AgenticHybridResultsDisplay';
 import { useAuth } from '../contexts/AuthContext';
 import { canExecuteQuery } from '../utils/permissions';
 import { APP_CONFIG } from '../config';
@@ -31,6 +32,10 @@ export default function ChatPage() {
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<number | undefined>(undefined);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
+  
+  // RAG availability state
+  const [ragAvailable, setRagAvailable] = useState(false);
+  const [agenticHybridAvailable, setAgenticHybridAvailable] = useState(false);
 
   useEffect(() => {
     // Load agents on mount
@@ -87,8 +92,36 @@ export default function ChatPage() {
     loadSuggestions();
   }, []);
 
+  // Check RAG availability when agent changes
+  useEffect(() => {
+    const checkRagAvailability = async () => {
+      if (!selectedAgentId) {
+        setRagAvailable(false);
+        setAgenticHybridAvailable(false);
+        return;
+      }
+
+      try {
+        // Check if the selected agent has RAG capabilities
+        const selectedAgent = agents.find(a => a.id === selectedAgentId);
+        if (selectedAgent) {
+          // RAG is available if agent has embeddings configured or is a RAG-type agent
+          const hasRag = selectedAgent.type === 'rag' || selectedAgent.has_embeddings || selectedAgent.rag_enabled;
+          setRagAvailable(hasRag);
+          // Agentic hybrid requires both SQL and RAG capabilities
+          setAgenticHybridAvailable(hasRag && selectedAgent.type === 'sql');
+        }
+      } catch (err) {
+        console.error('Failed to check RAG availability', err);
+      }
+    };
+    
+    checkRagAvailability();
+  }, [selectedAgentId, agents]);
+
   const chatMutation = useMutation({
-    mutationFn: (data: any) => chatService.sendMessage({ ...data, agent_id: selectedAgentId }),
+    mutationFn: (data: { query: string; session_id: string; query_mode?: QueryMode }) => 
+      chatService.sendMessage({ ...data, agent_id: selectedAgentId }),
     onSuccess: (data) => {
       const assistantMessage: Message = {
         id: Date.now().toString(),
@@ -101,6 +134,8 @@ export default function ChatPage() {
         chartData: data.chart_data,
         traceId: data.trace_id,
         processingTime: data.processing_time,
+        queryMode: data.query_mode as QueryMode,
+        agenticHybridResult: data.agentic_hybrid_result as AgenticHybridResult,
       };
       setMessages((prev) => [...prev, assistantMessage]);
     },
@@ -116,18 +151,20 @@ export default function ChatPage() {
     },
   });
 
-  const handleSendMessage = (content: string) => {
+  const handleSendMessage = (content: string, queryMode: QueryMode = 'auto') => {
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
       content,
       timestamp: new Date(),
+      queryMode,
     };
 
     setMessages((prev) => [...prev, userMessage]);
     chatMutation.mutate({
       query: content,
       session_id: sessionId,
+      query_mode: queryMode,
     });
   };
 
@@ -271,12 +308,24 @@ export default function ChatPage() {
             messages={messages}
             isLoading={chatMutation.isPending}
             username={user?.username}
-            onSuggestedQuestionClick={handleSendMessage}
+            onSuggestedQuestionClick={(question) => handleSendMessage(question, 'auto')}
             onFeedback={handleFeedback}
             emptyStateProps={{
               title: 'Ask me anything about healthcare data!',
               subtitle: 'Start a conversation by typing a message below',
               suggestions: suggestions
+            }}
+            renderMessageExtra={(message) => {
+              // Render AgenticHybridResultsDisplay for messages with agentic hybrid results
+              if (message.agenticHybridResult) {
+                return (
+                  <AgenticHybridResultsDisplay
+                    result={message.agenticHybridResult}
+                    isLoading={false}
+                  />
+                );
+              }
+              return null;
             }}
           />
 
@@ -285,6 +334,10 @@ export default function ChatPage() {
             isDisabled={!canChat || chatMutation.isPending}
             placeholder={canChat ? "Type your message..." : "Read-only access"}
             maxLength={2000}
+            sqlAvailable={true}
+            ragAvailable={ragAvailable}
+            agenticHybridAvailable={agenticHybridAvailable}
+            showModeSelector={true}
           />
         </>
       )}
