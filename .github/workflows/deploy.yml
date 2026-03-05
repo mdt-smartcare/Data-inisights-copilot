@@ -1,9 +1,13 @@
 name: Deploy to EC2
 
+# Temporarily disabled - uncomment when ready to deploy to EC2
+# on:
+#   push:
+#     branches:
+#       - '**'  # Deploy on push to ANY branch
+
 on:
-  push:
-    branches:
-      - '**'  # Deploy on push to ANY branch
+  workflow_dispatch:  # Manual trigger only
 
 jobs:
   deploy:
