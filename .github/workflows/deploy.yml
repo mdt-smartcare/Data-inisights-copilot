@@ -46,7 +46,7 @@ jobs:
             
             # Restart PM2 services
             cd ..
-            pm2 restart beta-backend beta-frontend --update-env
+            pm2 restart data-insights-backend data-insights-frontend --update-env
             pm2 save
             
             echo "Deployment complete!"
