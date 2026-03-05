@@ -231,7 +231,7 @@ const ObservabilityPanel: React.FC = () => {
                             </label>
                         </div>
                         <p className="mt-1 text-xs text-gray-500">
-                            {stats?.langfuse_enabled ? '✓ Langfuse connected' : 'Destination for RAG pipeline traces.'}
+                            {stats?.langfuse_enabled ? 'Langfuse connected' : 'Destination for RAG pipeline traces.'}
                         </p>
                     </div>
                 </div>
@@ -280,8 +280,8 @@ const ObservabilityPanel: React.FC = () => {
                     />
                     <StatCard
                         label="P95 Latency"
-                        value={`${((latencyPercentiles.p95 || 0) * 1000).toFixed(0)}ms`}
-                        subtext={`P50: ${((latencyPercentiles.p50 || 0) * 1000).toFixed(0)}ms`}
+                        value={`${(latencyPercentiles.p95 || 0).toFixed(2)}s`}
+                        subtext={`P50: ${(latencyPercentiles.p50 || 0).toFixed(2)}s`}
                     />
                 </div>
             </div>
