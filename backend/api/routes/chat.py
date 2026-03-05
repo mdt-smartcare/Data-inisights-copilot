@@ -59,36 +59,34 @@ async def chat(
     trace_id = str(uuid.uuid4())
     langfuse_handler = None
     
-    if settings.enable_langfuse:
+    try:
+        # Get Langfuse handler for tracing
+        langfuse_handler = get_langfuse_handler(
+            trace_name="chat-request",
+            session_id=session_id,
+            user_id=user_id,
+            tags=["chat"],
+            trace_id=trace_id
+        )
+        logger.info(f"Langfuse handler created: trace_id={langfuse_handler.get_trace_id()}")
+    except Exception as e:
+        logger.warning(f"Langfuse handler creation failed with params, trying minimal: {e}")
         try:
-            # Create callback handler - Langfuse v3.x uses minimal constructor
-            # Credentials are read from environment variables automatically
-            langfuse_handler = LangfuseCallbackHandler(
-                public_key=settings.langfuse_public_key,
-                user_id=user_id,
-                session_id=session_id,
-                trace_name="chat-query",
-                tags=["chat", "sql-query"] if request.agent_id else ["chat"],
-            )
-            logger.info(f"Langfuse handler created: trace_id={trace_id}")
-        except TypeError as te:
-            # If some params are not supported, try minimal version
-            logger.warning(f"Langfuse handler creation failed with params, trying minimal: {te}")
-            try:
-                langfuse_handler = LangfuseCallbackHandler()
-                logger.info(f"Langfuse handler created (minimal): trace_id={trace_id}")
-            except Exception as e2:
-                logger.warning(f"Failed to create minimal Langfuse handler: {e2}")
-        except Exception as e:
-            logger.warning(f"Failed to create Langfuse handler: {e}")
+            # Fallback to minimal handler
+            langfuse_handler = get_langfuse_handler(trace_id=trace_id)
+            logger.info(f"Langfuse handler created (minimal): trace_id={langfuse_handler.get_trace_id()}")
+        except Exception as e_minimal:
+            logger.error(f"Minimal Langfuse handler creation failed: {e_minimal}")
+            langfuse_handler = None
     
     # Process the query
     try:
-        # Get agent service with Langfuse handler for tracing
+        # Get the appropriate agent service
+        # This will handle access control and dedicated agent configurations
         agent_service = get_agent_service(
             agent_id=request.agent_id,
             user_id=user_int_id,
-            langfuse_trace=langfuse_handler  # Pass the callback handler!
+            langfuse_trace=langfuse_handler
         )
         
         # Process the query
