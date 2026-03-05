@@ -6,7 +6,7 @@ from sqlalchemy import create_engine, inspect
 from backend.sqliteDb.db import get_db_service, DatabaseService
 from backend.models.data import DbConnectionCreate, DbConnectionResponse
 from backend.core.logging import get_logger
-from backend.core.permissions import require_super_admin, require_at_least, UserRole, get_current_user, User
+from backend.core.permissions import require_admin, require_at_least, UserRole, get_current_user, User
 from backend.services.audit_service import get_audit_service, AuditAction
 
 logger = get_logger(__name__)
@@ -25,13 +25,13 @@ async def list_connections(
         logger.error(f"Error listing connections: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/connections", response_model=Dict[str, Any], dependencies=[Depends(require_super_admin)])
+@router.post("/connections", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def create_connection(
     connection: DbConnectionCreate,
     current_user: User = Depends(get_current_user),
     db_service: DatabaseService = Depends(get_db_service)
 ):
-    """Add a new database connection. Requires Super Admin role."""
+    """Add a new database connection. Requires Admin role or above."""
     try:
         conn_id = db_service.add_db_connection(
             name=connection.name,
@@ -60,13 +60,13 @@ async def create_connection(
         logger.error(f"Error adding connection: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/connections/{connection_id}", dependencies=[Depends(require_super_admin)])
+@router.delete("/connections/{connection_id}", dependencies=[Depends(require_admin)])
 async def delete_connection(
     connection_id: int,
     current_user: User = Depends(get_current_user),
     db_service: DatabaseService = Depends(get_db_service)
 ):
-    """Delete a database connection. Requires Super Admin role."""
+    """Delete a database connection. Requires Admin role or above."""
     try:
         # Get connection info before deleting for audit log
         conn_info = db_service.get_db_connection_by_id(connection_id)

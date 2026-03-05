@@ -18,13 +18,14 @@ class Role(str, Enum):
     """
     Application roles with descending privilege levels.
     
-    ADMIN > USER
+    SUPER_ADMIN > ADMIN > USER
     
     To add a new role:
     1. Add it here
     2. Add it to ROLE_HIERARCHY in the correct position
     3. Optionally add Keycloak mappings in KEYCLOAK_ROLE_MAPPINGS
     """
+    SUPER_ADMIN = "super_admin"
     ADMIN = "admin"
     USER = "user"
 
@@ -36,6 +37,7 @@ UserRole = Role
 # Role hierarchy: index 0 = highest privilege
 # Lower index = more privileges
 ROLE_HIERARCHY: List[str] = [
+    Role.SUPER_ADMIN.value,
     Role.ADMIN.value,
     Role.USER.value,
 ]
@@ -51,7 +53,8 @@ DEFAULT_ROLE: str = Role.USER.value
 # Checked in order (first match wins)
 KEYCLOAK_ROLE_MAPPINGS: List[tuple] = [
     # (list of keycloak role names, app role)
-    (["admin", "super_admin", "superadmin", "administrator"], Role.ADMIN.value),
+    (["super_admin", "superadmin"], Role.SUPER_ADMIN.value),
+    (["admin", "administrator"], Role.ADMIN.value),
     (["user", "default-roles-data-insights-copilot", "member"], Role.USER.value),
 ]
 
@@ -125,7 +128,8 @@ class Permission(str, Enum):
 
 
 # Map permissions to minimum required role
-# Using role_at_least, so admin gets all user permissions too
+# Using role_at_least, so higher roles get all lower role permissions too
+# SUPER_ADMIN > ADMIN > USER
 PERMISSION_REQUIREMENTS: Dict[Permission, str] = {
     Permission.MANAGE_USERS: Role.ADMIN.value,
     Permission.VIEW_AUDIT_LOGS: Role.ADMIN.value,

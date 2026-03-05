@@ -34,12 +34,12 @@ vi.mock('../../utils/permissions', () => ({
   getRoleDisplayName: vi.fn((role: string) => {
     const names: Record<string, string> = {
       super_admin: 'Super Admin',
-      editor: 'Editor',
+      admin: 'Admin',
       user: 'User',
     };
     return names[role] || role;
   }),
-  ROLE_HIERARCHY: ['super_admin', 'editor', 'user'],
+  ROLE_HIERARCHY: ['super_admin', 'admin', 'user'],
 }));
 
 vi.mock('../../components/chat', () => ({

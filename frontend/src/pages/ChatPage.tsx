@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { chatService } from '../services/chatService';
 import { getActiveConfigMetadata } from '../services/api';
@@ -15,6 +16,7 @@ import { APP_CONFIG } from '../config';
 
 export default function ChatPage() {
   const { user } = useAuth();
+  const [searchParams] = useSearchParams();
   const canChat = canExecuteQuery(user);
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -46,6 +48,17 @@ export default function ChatPage() {
         const agentList = await getAgents();
         setAgents(agentList);
 
+        // Check for agent ID in URL query param
+        const agentIdParam = searchParams.get('agent');
+        if (agentIdParam) {
+          const agentId = parseInt(agentIdParam, 10);
+          // Verify agent exists in the list (user has access)
+          if (agentList.some((a: any) => a.id === agentId)) {
+            setSelectedAgentId(agentId);
+            return;
+          }
+        }
+        
         // Auto-select ONLY if there is exactly 1 agent
         if (agentList.length === 1) {
           setSelectedAgentId(agentList[0].id);
@@ -246,23 +259,25 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <button
-              onClick={() => {
-                setSelectedAgentId(undefined);
-                setMessages([]); // Optional: clear messages when switching? Or keep them? User didn't specify, but switching context usually implies fresh start or at least leaving the view.
-                // Keeping messages might be confusing if they belong to another agent.
-                // For now, let's NOT clear messages automatically unless user explicitly clears, but navigating back usually implies "I'm done with this agent".
-                // Actually, if I go back and select the SAME agent, I might expect history.
-                // Does `selectedAgentId(undefined)` clear history? No, `messages` state is in ChatPage.
-                // If I switch agents, the `chatMutation` payload changes `agent_id`.
-                // It is safer to clear messages on switch to avoid sending previous context to new agent?
-                // The prompt says "go back and select a new agent".
-                // Let's just go back for now.
-              }}
-              className="text-sm text-gray-600 hover:text-indigo-600 font-medium px-3 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
-            >
-              Change Assistant
-            </button>
+            {agents.length > 1 && (
+              <button
+                onClick={() => {
+                  setSelectedAgentId(undefined);
+                  setMessages([]); // Optional: clear messages when switching? Or keep them? User didn't specify, but switching context usually implies fresh start or at least leaving the view.
+                  // Keeping messages might be confusing if they belong to another agent.
+                  // For now, let's NOT clear messages automatically unless user explicitly clears, but navigating back usually implies "I'm done with this agent".
+                  // Actually, if I go back and select the SAME agent, I might expect history.
+                  // Does `selectedAgentId(undefined)` clear history? No, `messages` state is in ChatPage.
+                  // If I switch agents, the `chatMutation` payload changes `agent_id`.
+                  // It is safer to clear messages on switch to avoid sending previous context to new agent?
+                  // The prompt says "go back and select a new agent".
+                  // Let's just go back for now.
+                }}
+                className="text-sm text-gray-600 hover:text-indigo-600 font-medium px-3 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
+              >
+                Change Assistant
+              </button>
+            )}
           </div>
 
           {messages.length > 0 && (

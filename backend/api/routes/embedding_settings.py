@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional, List
 
-from backend.core.permissions import require_super_admin, require_editor, get_current_user
+from backend.core.permissions import require_admin, require_editor, get_current_user
 from backend.models.schemas import User
 from backend.services.embedding_registry import get_embedding_registry, EmbeddingRegistry
 from backend.services.model_registry_service import (
@@ -108,11 +108,11 @@ async def list_providers(
     "",
     response_model=SwitchProviderResponse,
     summary="Switch embedding provider",
-    description="Switch to a different embedding provider. Requires super admin role."
+    description="Switch to a different embedding provider. Requires Admin role or above."
 )
 async def update_embedding_config(
     config: EmbeddingProviderConfig,
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ) -> SwitchProviderResponse:
     """
     Switch the active embedding provider (hot-swap).
@@ -174,7 +174,7 @@ async def update_embedding_config(
 )
 async def test_provider(
     request: ProviderTestRequest,
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ) -> Dict[str, Any]:
     """
     Test a provider configuration before switching to it.
@@ -226,7 +226,7 @@ async def get_health(
 )
 async def trigger_reindex(
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ) -> Dict[str, Any]:
     """
     Trigger a full reindex of the vector store.
@@ -279,12 +279,12 @@ async def list_embedding_models(
     response_model=Dict[str, Any],
     status_code=status.HTTP_201_CREATED,
     summary="Register a custom embedding model",
-    description="Add a new custom embedding model to the registry. Requires Super Admin."
+    description="Add a new custom embedding model to the registry. Requires Admin role or above."
 )
 async def register_embedding_model(
     data: EmbeddingModelCreate,
     model_registry: ModelRegistryService = Depends(get_model_registry_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ):
     """Register a new custom embedding model."""
     try:
@@ -305,12 +305,12 @@ async def register_embedding_model(
     "/models/{model_id}/activate",
     response_model=Dict[str, Any],
     summary="Activate an embedding model",
-    description="Set a registered embedding model as active. Requires Super Admin."
+    description="Set a registered embedding model as active. Requires Admin role or above."
 )
 async def activate_embedding_model(
     model_id: int,
     model_registry: ModelRegistryService = Depends(get_model_registry_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)
 ):
     """Activate a registered embedding model by ID."""
     try:

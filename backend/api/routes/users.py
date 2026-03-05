@@ -7,16 +7,18 @@ With OIDC/Keycloak integration:
 - This API manages local user attributes (role, active status)
 - User creation with password is deprecated (handled by Keycloak)
 
-Only accessible by Admin role.
+Access levels:
+- Super Admin: Can edit/deactivate admins and users, promote to any role
+- Admin: Can only assign agents to users (via agents API), cannot edit/deactivate
 """
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from backend.sqliteDb.db import get_db_service, DatabaseService
-from backend.core.permissions import require_admin, User
+from backend.core.permissions import require_admin, require_super_admin, User
 from backend.core.logging import get_logger
-from backend.core.roles import get_all_roles, is_valid_role
+from backend.core.roles import get_all_roles, is_valid_role, Role, role_at_least
 from backend.services.audit_service import get_audit_service, AuditAction
 
 logger = get_logger(__name__)
@@ -124,22 +126,26 @@ async def get_user(
     return dict(zip(columns, row))
 
 
-@router.patch("/{user_id}", response_model=UserResponse, dependencies=[Depends(require_admin)])
+@router.patch("/{user_id}", response_model=UserResponse)
 async def update_user(
     user_id: int,
     request: UserUpdateRequest,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Update a user's profile or role.
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
+    
+    Role restrictions:
+    - Cannot edit other super_admin users
+    - Cannot promote users to super_admin (must be done via Keycloak)
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
     
-    # Get current user
+    # Get target user
     cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
@@ -147,6 +153,20 @@ async def update_user(
     
     columns = [desc[0] for desc in cursor.description]
     existing_user = dict(zip(columns, row))
+    
+    # Prevent editing other super_admins
+    if existing_user['role'] == Role.SUPER_ADMIN.value:
+        raise HTTPException(
+            status_code=403, 
+            detail="Cannot edit super_admin users. Super admin role is managed via identity provider."
+        )
+    
+    # Prevent promotion to super_admin
+    if request.role == Role.SUPER_ADMIN.value:
+        raise HTTPException(
+            status_code=403, 
+            detail="Cannot promote users to super_admin. Super admin role must be assigned via identity provider."
+        )
     
     # Build update query
     updates = []
@@ -166,6 +186,15 @@ async def update_user(
             raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {get_all_roles()}")
         updates.append("role = ?")
         params.append(request.role)
+        
+        # Clean up per-agent roles when demoting from admin to user
+        # Users with system role 'user' cannot have per-agent role 'admin'
+        if existing_user['role'] == Role.ADMIN.value and request.role == Role.USER.value:
+            cursor.execute("""
+                UPDATE user_agents SET role = 'user' 
+                WHERE user_id = ? AND role = 'admin'
+            """, (user_id,))
+            logger.info(f"Downgraded per-agent roles for user {user_id} (demoted from admin to user)")
     
     if request.is_active is not None:
         updates.append("is_active = ?")
@@ -196,10 +225,10 @@ async def update_user(
     return await get_user(user_id, db_service)
 
 
-@router.post("/{user_id}/deactivate", dependencies=[Depends(require_admin)])
+@router.post("/{user_id}/deactivate")
 async def deactivate_user(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
@@ -207,12 +236,14 @@ async def deactivate_user(
     
     Deactivated users cannot authenticate even with valid Keycloak tokens.
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
+    
+    Cannot deactivate other super_admin users.
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
     
-    # Get user to delete
+    # Get user to deactivate
     cursor.execute("SELECT username, role FROM users WHERE id = ?", (user_id,))
     row = cursor.fetchone()
     if not row:
@@ -220,9 +251,16 @@ async def deactivate_user(
     
     username, role = row
     
-    # Prevent self-deletion
+    # Prevent self-deactivation
     if current_user.username == username:
-        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+        raise HTTPException(status_code=400, detail="Cannot deactivate your own account")
+    
+    # Prevent deactivating other super_admins
+    if role == Role.SUPER_ADMIN.value:
+        raise HTTPException(
+            status_code=403, 
+            detail="Cannot deactivate super_admin users. Super admin accounts are managed via identity provider."
+        )
     
     # Soft delete (deactivate)
     cursor.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
@@ -243,16 +281,16 @@ async def deactivate_user(
     return {"status": "success", "message": f"User '{username}' has been deactivated"}
 
 
-@router.post("/{user_id}/activate", dependencies=[Depends(require_admin)])
+@router.post("/{user_id}/activate")
 async def activate_user(
     user_id: int,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_super_admin),
     db_service: DatabaseService = Depends(get_db_service)
 ):
     """
     Reactivate a deactivated user account.
     
-    **Requires Admin role.**
+    **Requires Super Admin role.**
     """
     conn = db_service.get_connection()
     cursor = conn.cursor()
@@ -297,6 +335,8 @@ async def get_user_agents(
     """
     Get all agents assigned to a specific user.
     
+    Returns agents with their per-agent role (admin = configure, user = chat only).
+    
     **Requires Admin role.**
     """
     # Get user to validate they exist
@@ -309,10 +349,21 @@ async def get_user_agents(
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
     
-    # Admin users have access to all agents by default
-    if row[2] == 'admin':
-        return {"agents": [], "is_admin": True, "message": "Admin users have access to all agents by default"}
+    target_user_id, username, role = row
     
-    # Get assigned agents for non-admin users
-    agents = db_service.get_agents_for_user(user_id)
-    return {"agents": agents, "is_admin": False}
+    # Super admin has access to all agents
+    if role == Role.SUPER_ADMIN.value:
+        all_agents = db_service.list_all_agents()
+        # Super admin has admin (configure) access to all
+        for a in all_agents:
+            a['user_role'] = 'admin'
+        return {"agents": all_agents, "role": role}
+    
+    # Admin users: return agents they created + assigned (with per-agent roles)
+    if role == Role.ADMIN.value:
+        agents = db_service.get_agents_for_admin(target_user_id)
+        return {"agents": agents, "role": role}
+    
+    # Regular users: return only assigned agents
+    agents = db_service.get_agents_for_user(target_user_id)
+    return {"agents": agents, "role": role}

@@ -36,6 +36,7 @@ from backend.core.roles import (
 )
 from backend.sqliteDb.db import get_db_service
 from backend.models.schemas import User
+from backend.services.audit_service import AuditService, AuditAction
 
 
 # HTTP Bearer for extracting tokens
@@ -56,7 +57,8 @@ async def get_current_user(
     1. Validates the token against Keycloak's JWKS
     2. Extracts user claims (sub, email, name, roles)
     3. Looks up or creates the user in local database
-    4. Uses local role if set, otherwise maps Keycloak roles
+    4. Syncs super_admin role from Keycloak (promotions and demotions)
+       - admin/user role changes are managed locally, not synced
     """
     settings = get_settings()
     token = credentials.credentials
@@ -85,8 +87,56 @@ async def get_current_user(
                 detail={"message": "User account is inactive", "error_code": ErrorCode.USER_INACTIVE}
             )
         
-        # Use local role (hybrid approach - local takes precedence)
-        role = user_data.get('role', settings.oidc_default_role)
+        local_role = user_data.get('role', settings.oidc_default_role)
+        
+        # Sync super_admin role from Keycloak token (promotions and demotions)
+        # Only super_admin changes are synced; admin/user changes are managed locally
+        keycloak_role = map_keycloak_role(claims.roles)
+        is_keycloak_super_admin = keycloak_role == Role.SUPER_ADMIN.value
+        is_local_super_admin = local_role == Role.SUPER_ADMIN.value
+        
+        if is_keycloak_super_admin and not is_local_super_admin:
+            # Promotion: Keycloak has super_admin, local doesn't
+            db_service.update_user_role(user_data['id'], Role.SUPER_ADMIN.value)
+            audit_service = AuditService()
+            audit_service.log(
+                action=AuditAction.USER_ROLE_SYNC,
+                actor_id=user_data['id'],
+                actor_username=user_data.get('username'),
+                actor_role=Role.SUPER_ADMIN.value,
+                resource_type="user",
+                resource_id=str(user_data['id']),
+                resource_name=user_data.get('username'),
+                details={
+                    "previous_role": local_role,
+                    "new_role": Role.SUPER_ADMIN.value,
+                    "action": "promotion",
+                    "source": "keycloak_token"
+                }
+            )
+            role = Role.SUPER_ADMIN.value
+        elif is_local_super_admin and not is_keycloak_super_admin:
+            # Demotion: Local has super_admin, Keycloak doesn't
+            db_service.update_user_role(user_data['id'], keycloak_role)
+            audit_service = AuditService()
+            audit_service.log(
+                action=AuditAction.USER_ROLE_SYNC,
+                actor_id=user_data['id'],
+                actor_username=user_data.get('username'),
+                actor_role=keycloak_role,
+                resource_type="user",
+                resource_id=str(user_data['id']),
+                resource_name=user_data.get('username'),
+                details={
+                    "previous_role": local_role,
+                    "new_role": keycloak_role,
+                    "action": "demotion",
+                    "source": "keycloak_token"
+                }
+            )
+            role = keycloak_role
+        else:
+            role = local_role
     else:
         # First-time login - create user with default role from Keycloak
         keycloak_default_role = map_keycloak_role(claims.roles)
@@ -145,9 +195,14 @@ def require_at_least(min_role: str):
 # ============================================
 # These use the centralized Role enum for consistency
 
-require_admin = require_role([Role.ADMIN.value])
+# Super admin only - highest privilege level
+require_super_admin = require_role([Role.SUPER_ADMIN.value])
+
+# Admin or super admin - both can perform admin operations
+require_admin = require_role([Role.SUPER_ADMIN.value, Role.ADMIN.value])
+
+# Any authenticated user with at least user role
 require_user = require_at_least(Role.USER.value)
 
-# Backward compatibility aliases
-require_super_admin = require_admin  # Alias for migration
+# Backward compatibility alias
 require_editor = require_admin  # Alias for migration (editor -> admin)

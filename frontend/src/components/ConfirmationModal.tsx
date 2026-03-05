@@ -47,7 +47,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100] p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden transform transition-all" style={{ maxWidth: '28rem' }}>
                 <div className="p-6">
                     <div className="flex items-start gap-4">
                         <div className={`w-12 h-12 rounded-full ${style.bg} flex items-center justify-center flex-shrink-0 animate-pulse`}>

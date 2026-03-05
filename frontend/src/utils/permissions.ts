@@ -4,10 +4,10 @@ import type { User } from '../types';
  * RBAC Permission Utilities
  * 
  * Role Hierarchy (descending privilege):
- * SUPER_ADMIN > EDITOR > USER > VIEWER
+ * SUPER_ADMIN > ADMIN > USER
  */
 
-export const ROLE_HIERARCHY = ['admin', 'user'] as const;
+export const ROLE_HIERARCHY = ['super_admin', 'admin', 'user'] as const;
 export type UserRole = typeof ROLE_HIERARCHY[number];
 
 /**
@@ -21,20 +21,34 @@ export const roleAtLeast = (userRole: string | undefined, requiredRole: UserRole
     return userIdx <= reqIdx;
 };
 
+/**
+ * Check if user is a super admin.
+ */
+export const isSuperAdmin = (user: User | null): boolean => {
+    return user?.role === 'super_admin';
+};
+
+/**
+ * Check if user is at least an admin (includes super_admin).
+ */
+export const isAtLeastAdmin = (user: User | null): boolean => {
+    return roleAtLeast(user?.role, 'admin');
+};
+
 // ============================================
 // Permission Checks
 // ============================================
 
 export const canManageUsers = (user: User | null): boolean => {
-    return user?.role === 'admin';
+    return roleAtLeast(user?.role, 'admin');
 };
 
 export const canViewAllAuditLogs = (user: User | null): boolean => {
-    return user?.role === 'admin';
+    return roleAtLeast(user?.role, 'admin');
 };
 
 export const canManageConnections = (user: User | null): boolean => {
-    return user?.role === 'admin';
+    return roleAtLeast(user?.role, 'admin');
 };
 
 export const canEditConfig = (user: User | null): boolean => {
@@ -46,13 +60,13 @@ export const canEditPrompt = (user: User | null): boolean => {
 };
 
 export const canPublishPrompt = (user: User | null): boolean => {
-    // Only Super Admin can publish
-    return user?.role === 'admin';
+    // Admins can publish their own agents
+    return isAtLeastAdmin(user);
 };
 
-// Only Super Admin can rollback
+// Admins can rollback their own agents
 export const canRollback = (user: User | null): boolean => {
-    return user?.role === 'admin';
+    return isAtLeastAdmin(user);
 };
 
 export const canExecuteQuery = (user: User | null): boolean => {
@@ -60,7 +74,7 @@ export const canExecuteQuery = (user: User | null): boolean => {
 };
 
 export const canViewConfig = (user: User | null): boolean => {
-    return user?.role === 'admin';
+    return roleAtLeast(user?.role, 'admin');
 };
 
 // Helper for UI disabled states
@@ -70,6 +84,7 @@ export const isReadOnly = (user: User | null): boolean => {
 
 // Role display name mapping
 export const ROLE_DISPLAY_NAMES: Record<UserRole, string> = {
+    super_admin: 'Super Admin',
     admin: 'Admin',
     user: 'User',
 };

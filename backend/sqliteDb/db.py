@@ -844,7 +844,7 @@ class DatabaseService:
     def create_agent(self, name: str, description: str = None, agent_type: str = 'sql', 
                     db_connection_uri: str = None, rag_config_id: int = None, 
                     system_prompt: str = None, created_by: int = None) -> Dict[str, Any]:
-        """Create a new agent."""
+        """Create a new agent and automatically assign the creator as admin."""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -854,6 +854,14 @@ class DatabaseService:
             """, (name, description, agent_type, db_connection_uri, rag_config_id, system_prompt, created_by))
             conn.commit()
             agent_id = cursor.lastrowid
+            
+            # Auto-assign creator as admin in user_agents table
+            if created_by:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO user_agents (user_id, agent_id, role, granted_by)
+                    VALUES (?, ?, 'admin', ?)
+                """, (created_by, agent_id, created_by))
+                conn.commit()
                 
             return self.get_agent_by_id(agent_id)
         except sqlite3.IntegrityError:
@@ -885,19 +893,18 @@ class DatabaseService:
         return [dict(row) for row in rows]
 
     def get_agents_for_admin(self, user_id: int) -> list[Dict[str, Any]]:
-        """Get all agents an admin has access to (created by them OR assigned to them).
+        """Get all agents an admin has access to via user_agents table.
         
-        Returns agents with the per-agent role preserved. If the admin created the agent
-        but is not explicitly assigned, they get 'admin' as user_role.
+        Access is determined solely by user_agents assignments. The created_by field
+        is for audit purposes only and does not grant implicit access.
         """
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT a.*, COALESCE(ua.role, 'admin') as user_role 
+            SELECT a.*, ua.role as user_role 
             FROM agents a
-            LEFT JOIN user_agents ua ON a.id = ua.agent_id AND ua.user_id = ?
-            WHERE a.created_by = ? OR ua.user_id IS NOT NULL
-        """, (user_id, user_id))
+            INNER JOIN user_agents ua ON a.id = ua.agent_id AND ua.user_id = ?
+        """, (user_id,))
         rows = cursor.fetchall()
         conn.close()
         return [dict(row) for row in rows]

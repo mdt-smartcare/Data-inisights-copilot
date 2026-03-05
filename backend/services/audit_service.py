@@ -21,6 +21,7 @@ class AuditAction(str, Enum):
     USER_DEACTIVATE = "user.deactivate"
     USER_LOGIN = "user.login"
     USER_LOGOUT = "user.logout"
+    USER_ROLE_SYNC = "user.role.sync"  # Role synced from Keycloak
     
     # Connection Management
     CONNECTION_CREATE = "connection.create"
@@ -41,6 +42,13 @@ class AuditAction(str, Enum):
     # System
     CONFIG_EXPORT = "config.export"
     CONFIG_IMPORT = "config.import"
+    
+    # Agent Management
+    AGENT_CREATE = "agent.create"
+    AGENT_UPDATE = "agent.update"
+    AGENT_DELETE = "agent.delete"
+    AGENT_USER_ASSIGN = "agent.user.assign"
+    AGENT_USER_REVOKE = "agent.user.revoke"
 
 
 class AuditService:
