@@ -327,3 +327,32 @@ def observe_vector_search(func):
 # Singleton Accessor
 def get_tracing_manager() -> TracingManager:
     return TracingManager()
+
+
+def get_langfuse_handler(
+    trace_name: str = "rag_query",
+    trace_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    tags: Optional[List[str]] = None
+) -> Optional[LangfuseCallbackHandler]:
+    """
+    Convenience function to get a Langfuse callback handler.
+    
+    Args:
+        trace_name: Name for the trace
+        trace_id: Optional trace ID (generated if not provided)
+        session_id: Optional session ID for grouping traces
+        user_id: Optional user ID for attribution
+        tags: Optional list of tags
+        
+    Returns:
+        LangfuseCallbackHandler or None if tracing is disabled
+    """
+    manager = get_tracing_manager()
+    return manager.get_langchain_callback(
+        trace_id=trace_id,
+        session_id=session_id,
+        user_id=user_id,
+        trace_name=trace_name
+    )

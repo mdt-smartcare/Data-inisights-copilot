@@ -9,6 +9,7 @@ from backend.models.schemas import ChatRequest, ChatResponse, User, ErrorRespons
 from backend.services.agent_service import get_agent_service
 from backend.core.permissions import require_user
 from backend.core.logging import get_logger
+from backend.core.tracing import get_langfuse_handler
 from backend.config import get_settings
 
 settings = get_settings()
