@@ -40,7 +40,7 @@ Please contact the administrator to configure the active system prompt in the da
 class AgentService:
     """Main RAG agent service for processing user queries."""
     
-    def __init__(self, agent_config: Optional[Dict[str, Any]] = None, user_id: Optional[int] = None):
+    def __init__(self, agent_config: Optional[Dict[str, Any]] = None, user_id: Optional[int] = None, langfuse_trace: Optional[Any] = None):
         """Initialize the agent with tools and LLM."""
         logger.info(f"Initializing AgentService (Config: {agent_config.get('name') if agent_config else 'Default'})")
         
@@ -48,6 +48,7 @@ class AgentService:
         self.db_service = get_db_service()
         self.agent_config = agent_config
         self.user_id = user_id
+        self.langfuse_trace = langfuse_trace
         
         # Determine data source type from active config
         agent_id = agent_config.get('id') if agent_config else None
@@ -62,7 +63,9 @@ class AgentService:
             from backend.services.file_sql_service import FileSQLService
             if user_id:
                 try:
-                    self._file_sql_service = FileSQLService(user_id=user_id)
+                    # Pass callbacks to FileSQLService for Langfuse tracing
+                    callbacks = [langfuse_trace] if langfuse_trace else []
+                    self._file_sql_service = FileSQLService(user_id=user_id, callbacks=callbacks)
                     # Wrap FileSQLService.query to return string like SQLService
                     self.sql_service = self._create_file_sql_wrapper(self._file_sql_service)
                     self.fixed_system_prompt = agent_config.get('system_prompt') if agent_config else None
@@ -183,7 +186,7 @@ Use this to search unstructured text, notes, and semantic descriptions.
         )
         
         # Initialize follow-up question service (shares LLM instance)
-        self.followup_service = FollowUpService(llm=self.llm)
+        self.followup_service = FollowUpService(llm=self.llm, langfuse_callback_handler=langfuse_trace)
         
         # Initialize Intent Router
         self.intent_router = IntentClassifier(llm=self.llm)
@@ -296,23 +299,10 @@ Use this to search unstructured text, notes, and semantic descriptions.
         trace_id = str(uuid.uuid4())
         start_time = datetime.now(timezone.utc)
         
-        # Get tracing manager
-        from backend.core.tracing import get_tracing_manager
-        tracer = get_tracing_manager()
-        
         logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
         
-        # Create LangChain callback with user input visible
-        # In Langfuse v3.x, all tracing is done via the callback handler
-        langfuse_handler = tracer.get_langchain_callback(
-            trace_id=trace_id,
-            session_id=session_id,
-            user_id=user_id,
-            trace_name="rag_query"
-        )
-        
-        # Build callbacks list for LangChain
-        callbacks = [langfuse_handler] if langfuse_handler else []
+        # Use the handler passed during initialization
+        callbacks = [self.langfuse_trace] if self.langfuse_trace else []
         
         try:
             # =================================================================
@@ -485,7 +475,8 @@ Use this to search unstructured text, notes, and semantic descriptions.
                     self.followup_service.generate_followups(
                         original_question=query,
                         system_response=self._clean_answer(full_response),
-                        callbacks=[]
+                        # Pass callbacks to the followup service as well
+                        callbacks=callbacks
                     )
                 )
             
@@ -551,8 +542,6 @@ Use this to search unstructured text, notes, and semantic descriptions.
                     )
                 except Exception as e:
                     logger.warning(f"Background tracking failed: {e}")
-                finally:
-                    tracer.flush()
             
             asyncio.create_task(_track_and_flush())
             
@@ -560,7 +549,6 @@ Use this to search unstructured text, notes, and semantic descriptions.
             
         except Exception as e:
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
-            tracer.flush()
             raise
     
 
@@ -736,13 +724,19 @@ _agent_service: Optional[AgentService] = None
 _agent_cache: Dict[int, AgentService] = {}
 
 
-def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = None) -> AgentService:
+def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = None, langfuse_trace: Optional[Any] = None) -> AgentService:
     """Get agent service instance.
     
     If agent_id is provided, checks specific user access and returns a dedicated instance.
     Dedicated instances are cached to reuse database connections.
     Otherwise returns the singleton default instance (legacy behavior).
     """
+    # Langfuse traces are request-specific, so we should not use a cached service if a trace is present.
+    if agent_id and not langfuse_trace:
+        # Check cache first only if no trace is passed
+        if agent_id in _agent_cache:
+            return _agent_cache[agent_id]
+
     if agent_id:
         db = get_db_service()
         # Verify access if user_id is provided (skip for internal system calls if user_id is None)
@@ -752,20 +746,23 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
                 logger.warning(f"Access denied for user {user_id} to agent {agent_id}")
                 raise PermissionError(f"User {user_id} does not have access to agent {agent_id}")
         
-        # Check cache first
-        if agent_id in _agent_cache:
-            return _agent_cache[agent_id]
-            
         agent_config = db.get_agent_by_id(agent_id)
         if not agent_config:
              raise ValueError(f"Agent {agent_id} not found")
              
-        # Create and cache new instance
-        service = AgentService(agent_config=agent_config, user_id=user_id)
-        _agent_cache[agent_id] = service
+        # Create new instance
+        service = AgentService(agent_config=agent_config, user_id=user_id, langfuse_trace=langfuse_trace)
+        
+        # Cache the service only if no request-specific trace was passed
+        if not langfuse_trace:
+            _agent_cache[agent_id] = service
         return service
 
     global _agent_service
+    # Avoid using the singleton if a trace is passed
+    if langfuse_trace:
+        return AgentService(langfuse_trace=langfuse_trace)
+        
     if _agent_service is None:
         _agent_service = AgentService()
     return _agent_service

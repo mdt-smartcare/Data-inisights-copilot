@@ -27,7 +27,7 @@ async def get_observability_config(
 async def update_observability_config(
     updates: Dict[str, Any] = Body(...),
     service: ObservabilityService = Depends(get_observability_service),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)  # Changed from require_super_admin to require_admin
 ):
     """Update observability settings and apply changes immediately."""
     try:
@@ -86,7 +86,7 @@ async def get_trace_detail(
 async def test_log_emission(
     level: str = Query("INFO", regex="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$"),
     message: str = Query("Test log message from admin panel"),
-    current_user: User = Depends(require_super_admin)
+    current_user: User = Depends(require_admin)  # Changed from require_super_admin to require_admin
 ):
     """Emit a log message to test logging configuration."""
     import logging

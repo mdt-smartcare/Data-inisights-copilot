@@ -20,6 +20,13 @@ from backend.api.websocket import embedding_progress as embedding_ws
 from backend.services.embeddings import preload_embedding_model
 from backend.services.scheduler_service import get_scheduler_service
 
+# Conditional Langfuse import
+try:
+    from langfuse import Langfuse
+    LANGFUSE_AVAILABLE = True
+except ImportError:
+    LANGFUSE_AVAILABLE = False
+
 # Initialize settings and logging
 settings = get_settings()
 setup_logging()
@@ -35,6 +42,34 @@ async def lifespan(app: FastAPI):
     logger.info(f"Starting {settings.project_name} v{settings.version}")
     preload_embedding_model()
     
+    # Initialize Langfuse client if enabled
+    if settings.enable_langfuse and LANGFUSE_AVAILABLE:
+        if settings.langfuse_public_key and settings.langfuse_secret_key:
+            try:
+                app.state.langfuse_client = Langfuse(
+                    public_key=settings.langfuse_public_key,
+                    secret_key=settings.langfuse_secret_key,
+                    host=settings.langfuse_host,
+                    release=f"{settings.project_name}-{settings.version}",
+
+                    debug=True,  # Enable debug to see what's happening
+                )
+                app.state.langfuse_enabled = True
+                logger.info(f"Langfuse client initialized successfully. Host: {settings.langfuse_host}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Langfuse: {e}", exc_info=True)
+                app.state.langfuse_client = None
+                app.state.langfuse_enabled = False
+        else:
+            logger.warning("Langfuse is enabled but missing public_key or secret_key in configuration.")
+            app.state.langfuse_client = None
+            app.state.langfuse_enabled = False
+    else:
+        app.state.langfuse_client = None
+        app.state.langfuse_enabled = False
+        if settings.enable_langfuse and not LANGFUSE_AVAILABLE:
+            logger.warning("Langfuse is enabled in settings, but the 'langfuse' package is not installed.")
+
     # Start the scheduler service for vector DB sync jobs
     scheduler_service = get_scheduler_service()
     scheduler_service.start()
@@ -47,6 +82,9 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down application")
+    if app.state.langfuse_client:
+        app.state.langfuse_client.flush()
+        logger.info("Langfuse client flushed.")
     scheduler_service.shutdown()
     logger.info("Scheduler service stopped")
 

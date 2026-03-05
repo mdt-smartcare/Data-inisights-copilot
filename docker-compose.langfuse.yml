@@ -20,7 +20,7 @@ services:
       langfuse-minio:
         condition: service_healthy
     ports:
-      - "3001:3000"
+      - "${LANGFUSE_PORT:-3001}:3000"
     environment: &langfuse-env
       # Database
       DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
@@ -47,24 +47,24 @@ services:
       LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
       LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
       LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
-      # Auth
-      NEXTAUTH_SECRET: langfuse-nextauth-secret-change-me
-      NEXTAUTH_URL: http://localhost:3001
-      SALT: langfuse-salt-change-me
-      ENCRYPTION_KEY: 7dbe3c53a8a22c8051f32446563fecf062ad49014a7e3cb5ca83d13ab197dd6a
+      # Auth - Use environment variables or defaults
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-langfuse-nextauth-secret-change-me}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3001}
+      SALT: ${LANGFUSE_SALT:-langfuse-salt-change-me}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-7dbe3c53a8a22c8051f32446563fecf062ad49014a7e3cb5ca83d13ab197dd6a}
       # Features
       TELEMETRY_ENABLED: "false"
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
-      # Auto-create initial user and project
-      LANGFUSE_INIT_ORG_ID: data-insights
-      LANGFUSE_INIT_ORG_NAME: Data Insights
-      LANGFUSE_INIT_PROJECT_ID: copilot
-      LANGFUSE_INIT_PROJECT_NAME: AI Copilot
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-local-dev-public-key
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-local-dev-secret-key
-      LANGFUSE_INIT_USER_EMAIL: admin@example.com
-      LANGFUSE_INIT_USER_NAME: Admin
-      LANGFUSE_INIT_USER_PASSWORD: admin123
+      # Auto-create initial user and project - Use environment variables
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-data-insights}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Data Insights}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-copilot}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-AI Copilot}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local-dev-public-key}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local-dev-secret-key}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@example.com}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-admin123}
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/public/health"]
       interval: 30s

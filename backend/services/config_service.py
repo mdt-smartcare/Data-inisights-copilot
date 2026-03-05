@@ -16,6 +16,8 @@ import json
 from langchain.prompts import ChatPromptTemplate
 from backend.services.settings_service import get_settings_service, SettingsService
 from backend.sqliteDb.db import get_db_service
+import os
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,12 @@ class ConfigService:
             settings_service: Optional SettingsService instance for dependency injection.
                             If not provided, uses the singleton.
         """
+        load_dotenv()
+        self.config = {
+            "db_url": os.getenv("DATABASE_URL"),
+            "jwt_secret": os.getenv("JWT_SECRET"),
+            "debug": os.getenv("DEBUG", "False").lower() in ("true", "1", "t"),
+        }
         self._sql_service = None
         self._llm = None
         self.db_service = get_db_service()
