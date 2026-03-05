@@ -5,7 +5,7 @@ Generates context-aware follow-up questions based on response content.
 OPTIMIZED: Uses gpt-3.5-turbo for faster generation with reduced timeout.
 """
 import asyncio
-from typing import List, Optional
+from typing import List, Optional, Any
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -47,12 +47,13 @@ class FollowUpService:
         "What trends are visible in this data?"
     ]
     
-    def __init__(self, llm=None):
+    def __init__(self, llm=None, langfuse_callback_handler: Optional[Any] = None):
         """
         Initialize the FollowUpService.
         
         Args:
             llm: LangChain LLM instance (ignored - we use dedicated fast model)
+            langfuse_callback_handler: Optional Langfuse trace for tracing (kept for compatibility).
         """
         # Use dedicated fast model for follow-ups (gpt-3.5-turbo is 10x faster)
         self.llm = ChatOpenAI(
@@ -64,6 +65,7 @@ class FollowUpService:
         )
         
         self.parser = JsonOutputParser(pydantic_object=FollowUpQuestions)
+        self.langfuse_trace = langfuse_callback_handler  # Store trace for potential use
         
         # Simplified prompt for faster processing
         self.prompt = ChatPromptTemplate.from_messages([
@@ -93,7 +95,7 @@ Response Summary: {system_response}
         Args:
             original_question: The user's original query
             system_response: The system's response text (truncated for speed)
-            callbacks: Optional list of callback handlers for tracing
+            callbacks: Optional list of callback handlers for tracing (not used in v3.x)
             
         Returns:
             List of 3 follow-up question strings
@@ -101,10 +103,10 @@ Response Summary: {system_response}
         try:
             # Truncate response to first 500 chars for faster processing
             truncated_response = system_response[:500] if len(system_response) > 500 else system_response
-            
+
             # Use asyncio.wait_for to enforce timeout
             return await asyncio.wait_for(
-                self._generate_followups_internal(original_question, truncated_response, callbacks),
+                self._generate_followups_internal(original_question, truncated_response),
                 timeout=FOLLOWUP_TIMEOUT_SECONDS
             )
         except asyncio.TimeoutError:
@@ -121,25 +123,18 @@ Response Summary: {system_response}
     async def _generate_followups_internal(
         self, 
         original_question: str, 
-        system_response: str,
-        callbacks: Optional[List[BaseCallbackHandler]] = None
+        system_response: str
     ) -> List[str]:
         """Internal method that performs the actual LLM call."""
         # Build and execute the chain
         chain = self.prompt | self.llm | self.parser
-        
-        # Build config with callbacks if provided (for Langfuse tracing)
-        config = {}
-        if callbacks:
-            config["callbacks"] = callbacks
         
         result = await chain.ainvoke(
             {
                 "original_question": original_question,
                 "system_response": system_response,
                 "format_instructions": self.parser.get_format_instructions()
-            },
-            config=config if config else None
+            }
         )
         
         questions = result.get("questions", [])

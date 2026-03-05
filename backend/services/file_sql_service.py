@@ -81,15 +81,19 @@ class FileSQLService:
     DuckDB queries CSV files directly from disk without loading into RAM.
     """
     
-    def __init__(self, user_id: int):
+    def __init__(self, user_id: int, callbacks: list = None, trace_id: str = None):
         """
         Initialize File SQL service for a specific user.
         
         Args:
             user_id: User ID whose uploaded files to query
+            callbacks: Optional list of LangChain callbacks (e.g., LangfuseCallbackHandler)
+            trace_id: Optional trace ID to group all LLM calls under one trace
         """
         self.user_id = user_id
         self.db_path = DATA_STORAGE_DIR / f"user_{user_id}" / "database.duckdb"
+        self.callbacks = callbacks or []
+        self.trace_id = trace_id
         
         if not self.db_path.exists():
             raise ValueError(f"No uploaded files found for user {user_id}")
@@ -230,7 +234,9 @@ Return ONLY the SQL query. No markdown, no explanation, no comments.
 
 SQL:"""
 
-        response = self.llm_fast.invoke(prompt)
+        # Use callbacks for tracing if available
+        invoke_config = {"callbacks": self.callbacks} if self.callbacks else {}
+        response = self.llm_fast.invoke(prompt, config=invoke_config)
         sql = response.content.strip()
         
         # Clean up any markdown formatting
@@ -474,7 +480,9 @@ CHART TYPE RULES:
 
 Response:"""
 
-        response = self.llm_fast.invoke(prompt)
+        # Use callbacks for tracing if available
+        invoke_config = {"callbacks": self.callbacks} if self.callbacks else {}
+        response = self.llm_fast.invoke(prompt, config=invoke_config)
         return response.content.strip()
     
     def query(self, question: str) -> Dict[str, Any]:

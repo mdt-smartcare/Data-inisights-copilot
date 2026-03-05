@@ -2,13 +2,16 @@
 Chat endpoint for RAG chatbot queries.
 """
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 
 from backend.models.schemas import ChatRequest, ChatResponse, User, ErrorResponse
 from backend.services.agent_service import get_agent_service
-from backend.core.permissions import require_user, get_current_user
+from backend.core.permissions import require_user
 from backend.core.logging import get_logger
+from backend.config import get_settings
 
+settings = get_settings()
 router = APIRouter(prefix="/chat", tags=["Chat"])
 logger = get_logger(__name__)
 
@@ -19,6 +22,7 @@ logger = get_logger(__name__)
 })
 async def chat(
     request: ChatRequest,
+    fastapi_req: Request,
     current_user: User = Depends(require_user)
 ):
     """
@@ -28,7 +32,7 @@ async def chat(
     - **user_id**: Optional user identifier (extracted from JWT if not provided)
     
     Returns comprehensive response with answer, charts, suggestions, and reasoning.
-    
+
     **Authentication Required:** Bearer token in Authorization header.
     **Requires Role:** User or above (Super Admin, Editor, User)
     """
@@ -45,38 +49,74 @@ async def chat(
         extra={"user_id": user_id, "session_id": session_id}
     )
     
+    # Get user ID for agent service
+    from backend.sqliteDb.db import get_db_service
+    db = get_db_service()
+    user_record = db.get_user_by_username(current_user.username)
+    user_int_id = user_record['id'] if user_record else None
+    
+    # Create a single trace_id that will group all LLM calls for this request
+    trace_id = str(uuid.uuid4())
+    langfuse_handler = None
+    
+    if settings.enable_langfuse:
+        try:
+            # Create callback handler - Langfuse v3.x uses minimal constructor
+            # Credentials are read from environment variables automatically
+            langfuse_handler = LangfuseCallbackHandler(
+                public_key=settings.langfuse_public_key,
+                user_id=user_id,
+                session_id=session_id,
+                trace_name="chat-query",
+                tags=["chat", "sql-query"] if request.agent_id else ["chat"],
+            )
+            logger.info(f"Langfuse handler created: trace_id={trace_id}")
+        except TypeError as te:
+            # If some params are not supported, try minimal version
+            logger.warning(f"Langfuse handler creation failed with params, trying minimal: {te}")
+            try:
+                langfuse_handler = LangfuseCallbackHandler()
+                logger.info(f"Langfuse handler created (minimal): trace_id={trace_id}")
+            except Exception as e2:
+                logger.warning(f"Failed to create minimal Langfuse handler: {e2}")
+        except Exception as e:
+            logger.warning(f"Failed to create Langfuse handler: {e}")
+    
+    # Process the query
     try:
-        # Get agent service (dedicated instance if agent_id provided)
-        # Verify RBAC via user_id
-        current_user_id = current_user.id if hasattr(current_user, 'id') else None
-        
-        # If user_id is not available in current_user object (depends on auth implementation), 
-        # we might need to fetch it or rely on username. 
-        # For now assuming current_user has id or we look it up.
-        # Actually, get_agent_service takes user_id as int.
-        
-        # Let's resolve the user ID from the database if we only have username
-        # This is a bit of overhead but necessary for RBAC if IDs are used
-        
-        from backend.sqliteDb.db import get_db_service
-        db = get_db_service()
-        user_record = db.get_user_by_username(current_user.username)
-        user_int_id = user_record['id'] if user_record else None
-
+        # Get agent service with Langfuse handler for tracing
         agent_service = get_agent_service(
             agent_id=request.agent_id,
-            user_id=user_int_id
+            user_id=user_int_id,
+            langfuse_trace=langfuse_handler  # Pass the callback handler!
         )
         
+        # Process the query
         result = await agent_service.process_query(
             query=request.query,
             user_id=user_id,
             session_id=session_id
         )
         
+        logger.info(f"Chat request completed: trace_id={trace_id}")
+        
+        # Flush to ensure trace is sent
+        if langfuse_handler:
+            try:
+                langfuse_handler.flush()
+            except Exception as e:
+                logger.debug(f"Langfuse flush: {e}")
+        
         return result
         
     except Exception as e:
+        # Flush even on error
+        if langfuse_handler:
+            try:
+                langfuse_handler.flush()
+            except Exception:
+                pass
+        
         logger.error(
             f"Chat request failed for user={user_id}: {str(e)}",
             exc_info=True,
