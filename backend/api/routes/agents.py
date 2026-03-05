@@ -60,6 +60,10 @@ class AgentCreate(BaseModel):
     db_connection_uri: Optional[str] = None # Optional, normally created by svc or admin
     system_prompt: Optional[str] = None
 
+class AgentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+
 # --- Routes ---
 
 @router.get("", response_model=List[AgentResponse])
@@ -147,6 +151,106 @@ async def create_agent(agent: AgentCreate, current_user: User = Depends(require_
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error creating agent: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{agent_id}", response_model=AgentResponse)
+async def update_agent(agent_id: int, agent_update: AgentUpdate, current_user: User = Depends(require_admin)):
+    """
+    Update an agent's name and/or description.
+    Requires admin access to the specific agent.
+    """
+    db = get_db_service()
+    
+    # Verify current user has admin access to this agent
+    if not check_agent_admin_access(db, agent_id, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have admin access to this agent"
+        )
+    
+    try:
+        updated_agent = db.update_agent(
+            agent_id=agent_id,
+            name=agent_update.name,
+            description=agent_update.description
+        )
+        
+        if not updated_agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        
+        # Log audit event
+        audit = get_audit_service()
+        audit.log(
+            action=AuditAction.AGENT_UPDATE,
+            actor_id=current_user.id,
+            actor_username=current_user.username,
+            actor_role=current_user.role,
+            resource_type="agent",
+            resource_id=str(agent_id),
+            resource_name=updated_agent.get('name'),
+            details={"name": agent_update.name, "description": agent_update.description}
+        )
+        
+        return updated_agent
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_agent(agent_id: int, current_user: User = Depends(require_admin)):
+    """
+    Delete an agent and all related data (cascade deletion).
+    
+    This will permanently delete:
+    - All user assignments (user_agents)
+    - All prompts and configurations (system_prompts, prompt_configs)
+    - All vector database entries (vector_db_registry, schedules, indexes)
+    - Audit log references will be nullified
+    
+    Requires admin access to the specific agent.
+    """
+    db = get_db_service()
+    
+    # Verify current user has admin access to this agent
+    if not check_agent_admin_access(db, agent_id, current_user):
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have admin access to this agent"
+        )
+    
+    # Get agent details for audit log before deletion
+    agent = db.get_agent_by_id(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    agent_name = agent.get('name')
+    
+    try:
+        deleted = db.delete_agent(agent_id)
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        
+        # Log audit event
+        audit = get_audit_service()
+        audit.log(
+            action=AuditAction.AGENT_DELETE,
+            actor_id=current_user.id,
+            actor_username=current_user.username,
+            actor_role=current_user.role,
+            resource_type="agent",
+            resource_id=str(agent_id),
+            resource_name=agent_name,
+            details={"cascade": True}
+        )
+        
+        return None
+    except Exception as e:
+        logger.error(f"Error deleting agent {agent_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
