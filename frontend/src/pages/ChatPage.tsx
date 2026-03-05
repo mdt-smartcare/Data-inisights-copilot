@@ -185,7 +185,7 @@ export default function ChatPage() {
 
       {!selectedAgentId ? (
         // Agent Landing Page State
-        <div className="flex-1 overflow-auto p-6 flex flex-col items-center justify-center">
+        <div className="flex-1 overflow-auto p-6 pt-12 flex flex-col items-center">
           <div className="max-w-4xl w-full">
             <div className="text-center mb-10">
               <h1 className="text-3xl font-bold text-gray-900 mb-4">Welcome to {APP_CONFIG.APP_NAME}</h1>
