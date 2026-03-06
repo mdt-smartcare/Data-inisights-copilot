@@ -100,10 +100,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
-   * Initiate OIDC login flow - redirects to Keycloak
+   * Initiate OIDC login flow via new tab
+   * Opens Keycloak login in a new tab and updates state after success
    */
   const login = useCallback(async () => {
-    await oidcService.login();
+    const oidcUserResult = await oidcService.login();
+    setOidcUser(oidcUserResult);
+    const userProfile = await fetchUserProfile();
+    setUser(userProfile);
   }, []);
 
   /**
