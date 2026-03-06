@@ -91,8 +91,8 @@ class TestSimpleInMemoryStore:
         assert len(results) == 1
         assert results[0].page_content == "Content 1"
     
-    def test_mget_skips_missing_keys(self):
-        """Test that mget skips missing keys."""
+    def test_mget_returns_none_for_missing_keys(self):
+        """Test that mget returns None for missing keys (BaseStore contract)."""
         from backend.pipeline.transform import SimpleInMemoryStore
         
         store = SimpleInMemoryStore()
@@ -101,7 +101,9 @@ class TestSimpleInMemoryStore:
         
         results = store.mget(["key1", "missing_key"])
         
-        assert len(results) == 1
+        assert len(results) == 2
+        assert results[0].page_content == "Content 1"
+        assert results[1] is None
     
     def test_mdelete_removes_documents(self):
         """Test deleting documents."""
@@ -217,52 +219,53 @@ class TestAdvancedDataTransformerEnrich:
 
 
 class TestAdvancedDataTransformerGetRowId:
-    """Tests for _get_row_id method."""
+    """Tests for _generate_row_id method."""
     
     def test_uses_id_column(self, mock_config):
         """Test that id column is preferred."""
         from backend.pipeline.transform import AdvancedDataTransformer
         
         transformer = AdvancedDataTransformer(mock_config)
-        row = pd.Series({"id": 123, "name": "Test"})
+        row = {"id": 123, "name": "Test"}
         
-        result = transformer._get_row_id(row)
+        result = transformer._generate_row_id(row, "test_table")
         
-        assert result == "123"
+        assert result == "test_table_123"
     
     def test_uses_patient_track_id(self, mock_config):
         """Test fallback to patient_track_id."""
         from backend.pipeline.transform import AdvancedDataTransformer
         
         transformer = AdvancedDataTransformer(mock_config)
-        row = pd.Series({"patient_track_id": 456, "name": "Test"})
+        row = {"patient_track_id": 456, "name": "Test"}
         
-        result = transformer._get_row_id(row)
+        result = transformer._generate_row_id(row, "test_table")
         
-        assert result == "456"
+        assert result == "test_table_456"
     
     def test_uses_user_id(self, mock_config):
         """Test fallback to user_id."""
         from backend.pipeline.transform import AdvancedDataTransformer
         
         transformer = AdvancedDataTransformer(mock_config)
-        row = pd.Series({"user_id": 789, "name": "Test"})
+        row = {"user_id": 789, "name": "Test"}
         
-        result = transformer._get_row_id(row)
+        result = transformer._generate_row_id(row, "test_table")
         
-        assert result == "789"
+        assert result == "test_table_789"
     
     def test_generates_hash_when_no_id(self, mock_config):
         """Test hash generation when no ID column exists."""
         from backend.pipeline.transform import AdvancedDataTransformer
         
         transformer = AdvancedDataTransformer(mock_config)
-        row = pd.Series({"name": "Test", "value": 100})
+        row = {"name": "Test", "value": 100}
         
-        result = transformer._get_row_id(row)
+        result = transformer._generate_row_id(row, "test_table")
         
-        # Should be a 12-character hash
-        assert len(result) == 12
+        # Should be table_name + 16-char SHA-256 hash
+        assert result.startswith("test_table_")
+        assert len(result) == len("test_table_") + 16
 
 
 class TestAdvancedDataTransformerDocuments:
@@ -291,7 +294,7 @@ class TestAdvancedDataTransformerDocuments:
         for doc in docs:
             assert "source_table" in doc.metadata
             assert "source_id" in doc.metadata
-            assert "is_latest" in doc.metadata
+            assert "extraction_time" in doc.metadata
     
     def test_documents_contain_row_content(self, mock_config, sample_table_data):
         """Test that document content contains row data."""

@@ -1,5 +1,6 @@
 import json
-from typing import Optional
+import time
+from typing import Optional, Dict, Tuple
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -8,6 +9,15 @@ from backend.core.logging import get_logger
 
 settings = get_settings()
 logger = get_logger(__name__)
+
+# =============================================================================
+# Intent Classification Cache (Task 6)
+# =============================================================================
+# Caches LLM classification results to avoid redundant API calls.
+# Queries often repeat within a session (follow-up questions, retries).
+_CLASSIFICATION_CACHE: Dict[str, Tuple['IntentClassification', float]] = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+_CACHE_MAX_SIZE = 200
 
 
 class IntentClassification(BaseModel):
@@ -91,6 +101,17 @@ For Intent C, you must ALSO provide a valid PostgreSQL query in 'sql_filter' tha
         """Classify the user intent and optionally generate a SQL filter."""
         logger.info(f"Classifying intent for query: {query}")
         
+        # Task 6: Check classification cache first
+        cache_key = query.strip().lower()
+        now = time.time()
+        if cache_key in _CLASSIFICATION_CACHE:
+            cached_result, timestamp = _CLASSIFICATION_CACHE[cache_key]
+            if now - timestamp < _CACHE_TTL_SECONDS:
+                logger.info(f"Classification cache HIT: Intent={cached_result.intent}")
+                return cached_result
+            else:
+                del _CLASSIFICATION_CACHE[cache_key]  # Expired
+        
         # Quick heuristic pre-check for obvious SQL queries
         query_lower = query.lower()
         sql_keywords = [
@@ -103,12 +124,36 @@ For Intent C, you must ALSO provide a valid PostgreSQL query in 'sql_filter' tha
         
         if any(keyword in query_lower for keyword in sql_keywords):
             logger.info(f"Pre-classified as Intent A (SQL) based on keywords")
-            return IntentClassification(intent="A", sql_filter=None)
+            result = IntentClassification(intent="A", sql_filter=None)
+            _CLASSIFICATION_CACHE[cache_key] = (result, now)
+            return result
+        
+        # Task 6: Quick heuristic for obvious Vector-only queries
+        vector_keywords = [
+            'notes', 'documents', 'clinical summaries', 'tell me about',
+            'find mentions', 'patient history', 'narrative', 'what did',
+            'doctor wrote', 'patient notes', 'document search', 'records for patient',
+            'medical history', 'patient summary'
+        ]
+        
+        if any(keyword in query_lower for keyword in vector_keywords):
+            logger.info(f"Pre-classified as Intent B (Vector) based on keywords")
+            result = IntentClassification(intent="B", sql_filter=None)
+            _CLASSIFICATION_CACHE[cache_key] = (result, now)
+            return result
         
         try:
             chain = self.prompt | self.structured_llm
             result = chain.invoke({"query": query, "schema": schema_context})
             logger.info(f"Classification result: Intent={result.intent}, SQL Filter={result.sql_filter}")
+            
+            # Cache the LLM result
+            _CLASSIFICATION_CACHE[cache_key] = (result, now)
+            # Evict oldest if over capacity
+            if len(_CLASSIFICATION_CACHE) > _CACHE_MAX_SIZE:
+                oldest_key = next(iter(_CLASSIFICATION_CACHE))
+                del _CLASSIFICATION_CACHE[oldest_key]
+            
             return result
         except Exception as e:
             logger.error(f"Failed to classify intent: {e}")
