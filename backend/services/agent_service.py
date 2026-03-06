@@ -551,14 +551,34 @@ Use this to search unstructured text, notes, and semantic descriptions.
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
             raise
     
-
+    # Cached SQL examples: (examples_list, example_embeddings or None)
+    _cached_examples = None
+    _cached_example_embeddings = None
+    
     def _get_relevant_examples(self, query: str) -> List[str]:
         """
         Retrieve relevant SQL examples using semantic search.
-        Refactored to be robust and fail-safe.
+        
+        OPTIMIZED (Task 14): Caches examples and pre-computes embeddings.
+        Uses embedding similarity instead of keyword overlap for better accuracy.
         """
         try:
-            examples = self.db_service.get_sql_examples()
+            # Load and cache examples on first call
+            if AgentService._cached_examples is None:
+                examples = self.db_service.get_sql_examples()
+                AgentService._cached_examples = examples or []
+                
+                # Pre-compute embeddings for all examples
+                if AgentService._cached_examples and self.embedding_model:
+                    try:
+                        example_texts = [ex['question'] for ex in AgentService._cached_examples]
+                        AgentService._cached_example_embeddings = self.embedding_model.embed_documents(example_texts)
+                        logger.info(f"Pre-computed embeddings for {len(example_texts)} SQL examples")
+                    except Exception as e:
+                        logger.warning(f"Failed to embed examples, falling back to keyword: {e}")
+                        AgentService._cached_example_embeddings = None
+            
+            examples = AgentService._cached_examples
             if not examples:
                 return []
             
@@ -566,21 +586,30 @@ Use this to search unstructured text, notes, and semantic descriptions.
             if len(examples) <= 3:
                 return [f"Q: {ex['question']}\nSQL: {ex['sql_query']}" for ex in examples]
 
-            # Simple keyword overlap as baseline score (fast, no embedding call)
+            # Try embedding-based similarity (fast: cached embeddings + single query embed)
+            if AgentService._cached_example_embeddings is not None:
+                try:
+                    query_emb = self.embedding_model.embed_query(query)
+                    query_arr = np.array(query_emb)
+                    example_arrs = np.array(AgentService._cached_example_embeddings)
+                    
+                    # Cosine similarity via dot product (embeddings are typically normalized)
+                    similarities = np.dot(example_arrs, query_arr)
+                    top_indices = np.argsort(similarities)[-3:][::-1]
+                    
+                    return [f"Q: {examples[i]['question']}\nSQL: {examples[i]['sql_query']}" for i in top_indices]
+                except Exception as e:
+                    logger.warning(f"Embedding-based example search failed: {e}")
+            
+            # Fallback: keyword overlap
             scored_examples = []
             for ex in examples:
-                score = 0
                 q_words = set(query.lower().split())
                 ex_words = set(ex['question'].lower().split())
-                overlap = len(q_words.intersection(ex_words))
-                score += overlap * 0.1
-                
+                score = len(q_words.intersection(ex_words)) * 0.1
                 scored_examples.append((score, ex))
             
-            # Sort by score DESC
             scored_examples.sort(key=lambda x: x[0], reverse=True)
-            
-            # Take top 3
             top_examples = scored_examples[:3]
             return [f"Q: {ex['question']}\nSQL: {ex['sql_query']}" for _, ex in top_examples]
 
@@ -730,14 +759,19 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
     If agent_id is provided, checks specific user access and returns a dedicated instance.
     Dedicated instances are cached to reuse database connections.
     Otherwise returns the singleton default instance (legacy behavior).
+    
+    OPTIMIZATION (Task 13): Langfuse traces are request-specific, but the AgentService
+    itself is expensive to create (~300ms: LLM init, tool creation, agent executor).
+    We now cache the service and set the trace per-request instead of re-creating.
     """
-    # Langfuse traces are request-specific, so we should not use a cached service if a trace is present.
-    if agent_id and not langfuse_trace:
-        # Check cache first only if no trace is passed
-        if agent_id in _agent_cache:
-            return _agent_cache[agent_id]
-
     if agent_id:
+        # Check cache first
+        if agent_id in _agent_cache:
+            service = _agent_cache[agent_id]
+            # Set request-scoped trace on cached instance
+            service.langfuse_trace = langfuse_trace
+            return service
+
         db = get_db_service()
         
         agent_config = db.get_agent_by_id(agent_id)
@@ -768,19 +802,18 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
             else:
                 logger.warning(f"File-based agent {agent_id} has no created_by field, using requesting user's files")
 
-        # Create new instance
+        # Create new instance (without trace — trace is set per-request)
         service = AgentService(agent_config=agent_config, user_id=service_user_id, langfuse_trace=langfuse_trace)
         
-        # Cache the service only if no request-specific trace was passed
-        if not langfuse_trace:
-            _agent_cache[agent_id] = service
+        # Always cache the service instance
+        _agent_cache[agent_id] = service
         return service
 
     global _agent_service
-    # Avoid using the singleton if a trace is passed
-    if langfuse_trace:
-        return AgentService(langfuse_trace=langfuse_trace)
-        
     if _agent_service is None:
-        _agent_service = AgentService()
+        _agent_service = AgentService(langfuse_trace=langfuse_trace)
+    else:
+        # Set request-scoped trace on cached singleton
+        _agent_service.langfuse_trace = langfuse_trace
     return _agent_service
+

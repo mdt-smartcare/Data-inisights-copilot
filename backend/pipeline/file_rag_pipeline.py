@@ -17,6 +17,7 @@ Example:
 import asyncio
 import hashlib
 import logging
+import pandas as pd
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, AsyncIterator, Tuple
 from datetime import datetime
@@ -142,7 +143,8 @@ class FileRAGPipeline:
         """
         Stream text documents from DuckDB table for RAG embedding.
         
-        Only extracts specified text columns, yielding batches for memory efficiency.
+        OPTIMIZED (Task 10): Uses DuckDB fetchdf() + pandas vectorized ops
+        instead of row-by-row Python loops.
         
         Args:
             table_name: DuckDB table name
@@ -183,45 +185,62 @@ class FileRAGPipeline:
                     OFFSET {offset}
                 """
                 
-                rows = conn.execute(query).fetchall()
-                if not rows:
+                # OPTIMIZATION: Use fetchdf() instead of fetchall() + row-by-row loop
+                df = conn.execute(query).fetchdf()
+                if df.empty:
                     break
                 
-                # Convert to RAGDocuments
+                # Single timestamp for entire batch (not per-row datetime.now())
+                batch_timestamp = datetime.now().isoformat()
+                
+                # Process each text column using vectorized pandas operations
                 batch_docs = []
-                for row in rows:
-                    row_id = str(row[0]) if row[0] else f"row_{offset + len(batch_docs)}"
+                for col in text_columns:
+                    if col not in df.columns:
+                        continue
                     
-                    # Process each text column
-                    for i, col in enumerate(text_columns):
-                        text_value = row[i + 1]  # +1 because id_column is first
-                        
-                        # Skip empty/null values
-                        if not text_value or str(text_value).strip() == "":
-                            continue
-                        
-                        text_str = str(text_value).strip()
-                        
-                        # Skip very short text (likely not useful for RAG)
-                        if len(text_str) < self.config.min_text_length:
-                            continue
-                        
-                        doc_id = self._generate_doc_id(row_id, col, text_str)
-                        
+                    # Vectorized null/length filtering
+                    col_series = df[col].astype(str).str.strip()
+                    valid_mask = (
+                        df[col].notna() & 
+                        (col_series != '') & 
+                        (col_series != 'None') &
+                        (col_series != 'nan') &
+                        (col_series.str.len() >= self.config.min_text_length)
+                    )
+                    
+                    valid_df = df[valid_mask]
+                    if valid_df.empty:
+                        continue
+                    
+                    # Vectorized row ID generation
+                    row_ids = valid_df[id_column].astype(str).fillna(
+                        "row_" + pd.Series(range(offset, offset + len(valid_df))).astype(str).values
+                    )
+                    valid_texts = col_series[valid_mask]
+                    
+                    # Vectorized doc_id: row_id + column + content_hash (first 8 chars)
+                    content_hashes = valid_texts.apply(
+                        lambda x: hashlib.sha256(x.encode()).hexdigest()[:8]
+                    )
+                    doc_ids = row_ids + "_" + col + "_" + content_hashes
+                    
+                    # Build RAGDocuments from vectorized results
+                    for row_id, text, doc_id in zip(row_ids.values, valid_texts.values, doc_ids.values):
                         batch_docs.append(RAGDocument(
                             doc_id=doc_id,
-                            content=text_str,
+                            content=text,
                             metadata={
                                 "source_table": table_name,
                                 "source_column": col,
                                 "row_id": row_id,
-                                "extraction_time": datetime.now().isoformat(),
+                                "extraction_time": batch_timestamp,
                             },
                             source_row_id=row_id,
                             source_column=col,
                         ))
                 
-                processed += len(rows)
+                processed += len(df)
                 offset += batch_size
                 
                 if on_progress:
@@ -245,8 +264,8 @@ class FileRAGPipeline:
         """
         Apply parent-child chunking to documents.
         
-        Parent chunks: Larger context windows for retrieval results
-        Child chunks: Smaller, precise chunks for vector search
+        OPTIMIZED (Task 11): Batches documents for splitter calls instead of
+        calling split_documents([single_doc]) per document.
         
         Args:
             documents: Source documents to chunk
@@ -257,54 +276,74 @@ class FileRAGPipeline:
         parent_chunks = []
         child_chunks = []
         
-        for doc in documents:
-            # Create LangChain document for splitting
-            lc_doc = Document(
-                page_content=doc.content,
-                metadata=doc.metadata.copy(),
-            )
+        # OPTIMIZATION: Batch documents for splitter calls
+        # Convert all RAGDocuments to LangChain Documents once, then split in bulk
+        SPLIT_BATCH_SIZE = 200
+        
+        for batch_start in range(0, len(documents), SPLIT_BATCH_SIZE):
+            batch = documents[batch_start:batch_start + SPLIT_BATCH_SIZE]
             
-            # Split into parent chunks
-            parent_docs = self._parent_splitter.split_documents([lc_doc])
-            
-            for p_idx, parent_doc in enumerate(parent_docs):
-                parent_id = f"{doc.doc_id}_p{p_idx}"
-                
-                # Store parent chunk
-                parent_chunk = ChunkedDocument(
-                    chunk_id=parent_id,
-                    content=parent_doc.page_content,
-                    parent_id=parent_id,  # Parent is its own parent
-                    metadata={
-                        **parent_doc.metadata,
-                        "chunk_type": "parent",
-                        "parent_idx": p_idx,
-                        "original_doc_id": doc.doc_id,
-                    },
-                    is_parent=True,
+            # Build LangChain documents for this batch with tracking metadata
+            lc_docs = []
+            for doc in batch:
+                lc_doc = Document(
+                    page_content=doc.content,
+                    metadata={**doc.metadata, "_rag_doc_id": doc.doc_id},
                 )
-                parent_chunks.append(parent_chunk)
-                
-                # Split parent into child chunks
-                child_docs = self._child_splitter.split_documents([parent_doc])
-                
-                for c_idx, child_doc in enumerate(child_docs):
-                    child_id = self._generate_chunk_id(parent_id, c_idx)
+                lc_docs.append(lc_doc)
+            
+            # Batch split into parent chunks
+            parent_docs = self._parent_splitter.split_documents(lc_docs)
+            
+            # Group parent docs by their original RAG doc ID
+            parent_groups = {}
+            for parent_doc in parent_docs:
+                rag_doc_id = parent_doc.metadata.get("_rag_doc_id", "unknown")
+                if rag_doc_id not in parent_groups:
+                    parent_groups[rag_doc_id] = []
+                parent_groups[rag_doc_id].append(parent_doc)
+            
+            # Process parent chunks and create children
+            for rag_doc_id, parent_doc_list in parent_groups.items():
+                for p_idx, parent_doc in enumerate(parent_doc_list):
+                    parent_id = f"{rag_doc_id}_p{p_idx}"
                     
-                    child_chunk = ChunkedDocument(
-                        chunk_id=child_id,
-                        content=child_doc.page_content,
+                    # Clean up tracking metadata before storing
+                    clean_metadata = {k: v for k, v in parent_doc.metadata.items() if k != "_rag_doc_id"}
+                    
+                    parent_chunk = ChunkedDocument(
+                        chunk_id=parent_id,
+                        content=parent_doc.page_content,
                         parent_id=parent_id,
                         metadata={
-                            **child_doc.metadata,
-                            "chunk_type": "child",
-                            "child_idx": c_idx,
-                            "parent_id": parent_id,
-                            "original_doc_id": doc.doc_id,
+                            **clean_metadata,
+                            "chunk_type": "parent",
+                            "parent_idx": p_idx,
+                            "original_doc_id": rag_doc_id,
                         },
-                        is_parent=False,
+                        is_parent=True,
                     )
-                    child_chunks.append(child_chunk)
+                    parent_chunks.append(parent_chunk)
+                    
+                    # Split this parent into child chunks
+                    child_docs = self._child_splitter.split_documents([parent_doc])
+                    
+                    for c_idx, child_doc in enumerate(child_docs):
+                        child_id = self._generate_chunk_id(parent_id, c_idx)
+                        child_chunk = ChunkedDocument(
+                            chunk_id=child_id,
+                            content=child_doc.page_content,
+                            parent_id=parent_id,
+                            metadata={
+                                **{k: v for k, v in child_doc.metadata.items() if k != "_rag_doc_id"},
+                                "chunk_type": "child",
+                                "child_idx": c_idx,
+                                "parent_id": parent_id,
+                                "original_doc_id": rag_doc_id,
+                            },
+                            is_parent=False,
+                        )
+                        child_chunks.append(child_chunk)
         
         return parent_chunks, child_chunks
     

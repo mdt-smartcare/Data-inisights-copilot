@@ -158,6 +158,30 @@ def build_advanced_chroma_index(
     # Process in batches with progress bar
     num_batches = (len(remaining_docs) + batch_size - 1) // batch_size
     
+    # OPTIMIZATION: Create ONE Chroma vector_store instance and reuse for all batches.
+    # Previously, each batch created a new Chroma() wrapper — re-validating the
+    # connection and re-wrapping the embedding function on every iteration.
+    if collection is None:
+        # First batch bootstraps the collection
+        first_batch = remaining_docs[:batch_size]
+        Chroma.from_documents(
+            documents=first_batch,
+            embedding=embedding_function,
+            collection_name=collection_name,
+            persist_directory=chroma_path,
+            client_settings=client_settings
+        )
+        collection = client.get_collection(name=collection_name)
+        remaining_docs = remaining_docs[batch_size:]
+        progress.update(len(first_batch))
+    
+    # Single reusable Chroma wrapper for all subsequent batches
+    vector_store = Chroma(
+        client=client,
+        collection_name=collection_name,
+        embedding_function=embedding_function
+    )
+    
     with tqdm(total=len(remaining_docs), 
               desc="Building Index",
               initial=0,
@@ -168,25 +192,8 @@ def build_advanced_chroma_index(
             batch = remaining_docs[i:i+batch_size]
             batch_num = i // batch_size + 1
             
-            # Add batch to collection
-            if collection is None:
-                # First batch - create collection
-                Chroma.from_documents(
-                    documents=batch,
-                    embedding=embedding_function,
-                    collection_name=collection_name,
-                    persist_directory=chroma_path,
-                    client_settings=client_settings
-                )
-                collection = client.get_collection(name=collection_name)
-            else:
-                # Subsequent batches - add to existing collection
-                vector_store = Chroma(
-                    client=client,
-                    collection_name=collection_name,
-                    embedding_function=embedding_function
-                )
-                vector_store.add_documents(batch)
+            # Add batch using the reusable vector_store instance
+            vector_store.add_documents(batch)
             
             # Update progress
             progress.update(len(batch))

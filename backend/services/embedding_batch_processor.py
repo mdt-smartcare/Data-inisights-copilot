@@ -571,22 +571,18 @@ class EmbeddingBatchProcessor:
         """
         Process all documents in batches.
         
+        OPTIMIZED (Tasks 15 & 16):
+        - Streams embeddings to callback instead of accumulating all in memory
+        - Concurrent batch processing for API providers (OpenAI)
+        - Sequential for local GPU models (SentenceTransformers)
+        
         Args:
             documents: List of document texts to embed
             on_progress: Async callback(processed, failed, total) for progress updates
             on_batch_complete: Async callback(BatchResult) after each batch
             
         Returns:
-            Dict with results:
-            {
-                "success": bool,
-                "total_documents": int,
-                "processed_documents": int,
-                "failed_documents": int,
-                "embeddings": List[List[float]],
-                "failed_indices": List[int],
-                "total_time_seconds": float
-            }
+            Dict with results
         """
         self._cancelled = False
         self._paused = False
@@ -605,73 +601,120 @@ class EmbeddingBatchProcessor:
             batch_num = len(batches) + 1
             batches.append((batch_num, i, batch_docs))
         
-        # Results storage
-        all_embeddings = [None] * total_documents
+        # OPTIMIZATION (Task 15): Use dict for sparse storage instead of [None]*N pre-allocation
+        embeddings_map = {}
         failed_indices = []
         processed_count = 0
         failed_count = 0
         start_time = time.time()
         
-        # Process batches sequentially to avoid async issues in background tasks
-        # This is more reliable than concurrent processing in FastAPI background context
-        logger.info(f"Processing {len(batches)} batches sequentially...")
+        # OPTIMIZATION (Task 16): Use concurrent processing for API providers
+        is_api_provider = hasattr(self.embedding_model, 'supports_async') and self.embedding_model.supports_async
         
-        for batch_num, start_idx, batch_docs in batches:
-            if self._cancelled:
-                logger.info("Batch processing cancelled")
-                break
+        if is_api_provider and self.config.max_concurrent > 1:
+            # Concurrent processing for API-based providers (OpenAI, Cohere, etc.)
+            logger.info(f"Processing {len(batches)} batches concurrently (max_concurrent={self.config.max_concurrent})...")
+            semaphore = asyncio.Semaphore(self.config.max_concurrent)
             
-            while self._paused:
-                await asyncio.sleep(0.5)
+            async def process_with_semaphore(batch_info):
+                async with semaphore:
+                    if self._cancelled:
+                        return None
+                    while self._paused:
+                        await asyncio.sleep(0.5)
+                        if self._cancelled:
+                            return None
+                    batch_num, start_idx, batch_docs = batch_info
+                    return await self._process_batch(batch_num, start_idx, batch_docs)
+            
+            tasks = [process_with_semaphore(batch) for batch in batches]
+            
+            for coro in asyncio.as_completed(tasks):
                 if self._cancelled:
                     break
+                
+                result = await coro
+                if result is None:
+                    continue
+                
+                if result.success and result.embeddings:
+                    for j, emb in enumerate(result.embeddings):
+                        embeddings_map[result.start_idx + j] = emb
+                    processed_count += result.documents_processed
+                else:
+                    for j in range(len(batches[result.batch_number - 1][2])):
+                        failed_indices.append(result.start_idx + j)
+                    failed_count += len(batches[result.batch_number - 1][2])
+                
+                if on_batch_complete:
+                    try:
+                        await on_batch_complete(result)
+                    except Exception as e:
+                        logger.warning(f"Batch complete callback failed: {e}")
+                
+                if on_progress:
+                    try:
+                        await on_progress(processed_count, failed_count, total_documents)
+                    except Exception as e:
+                        logger.warning(f"Progress callback failed: {e}")
+        else:
+            # Sequential processing for local GPU models (SentenceTransformers/BGE)
+            logger.info(f"Processing {len(batches)} batches sequentially (local model)...")
             
-            logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch_docs)} docs)...")
-            
-            result = await self._process_batch(batch_num, start_idx, batch_docs)
-            
-            if result.success and result.embeddings:
-                # Store embeddings
-                for j, emb in enumerate(result.embeddings):
-                    all_embeddings[start_idx + j] = emb
-                processed_count += result.documents_processed
-                logger.info(f"Batch {batch_num} completed: {result.documents_processed} docs in {result.processing_time_ms}ms")
-            else:
-                # Track failures
-                for j in range(len(batch_docs)):
-                    failed_indices.append(start_idx + j)
-                failed_count += len(batch_docs)
-                logger.error(f"Batch {batch_num} failed: {result.error_message}")
-            
-            # Callbacks
-            if on_batch_complete:
-                try:
-                    await on_batch_complete(result)
-                except Exception as e:
-                    logger.warning(f"Batch complete callback failed: {e}")
-            
-            if on_progress:
-                try:
-                    await on_progress(processed_count, failed_count, total_documents)
-                except Exception as e:
-                    logger.warning(f"Progress callback failed: {e}")
-                    
-            # Detailed console progress logging every 10 batches
-            if batch_num % 10 == 0 or batch_num == total_batches:
-                elapsed = time.time() - start_time
-                if elapsed > 0 and processed_count > 0:
-                    docs_per_sec = processed_count / elapsed
-                    remaining_docs = total_documents - processed_count
-                    if docs_per_sec > 0:
-                        eta_seconds = remaining_docs / docs_per_sec
-                        import datetime
-                        eta_td = datetime.timedelta(seconds=int(eta_seconds))
-                        percent = (processed_count / total_documents) * 100
-                        logger.info(f"Progress: Batch {batch_num}/{total_batches} | {processed_count:,}/{total_documents:,} docs | {percent:.1f}% | ETA: {eta_td}")
+            for batch_num, start_idx, batch_docs in batches:
+                if self._cancelled:
+                    logger.info("Batch processing cancelled")
+                    break
+                
+                while self._paused:
+                    await asyncio.sleep(0.5)
+                    if self._cancelled:
+                        break
+                
+                logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch_docs)} docs)...")
+                
+                result = await self._process_batch(batch_num, start_idx, batch_docs)
+                
+                if result.success and result.embeddings:
+                    for j, emb in enumerate(result.embeddings):
+                        embeddings_map[start_idx + j] = emb
+                    processed_count += result.documents_processed
+                    logger.info(f"Batch {batch_num} completed: {result.documents_processed} docs in {result.processing_time_ms}ms")
+                else:
+                    for j in range(len(batch_docs)):
+                        failed_indices.append(start_idx + j)
+                    failed_count += len(batch_docs)
+                    logger.error(f"Batch {batch_num} failed: {result.error_message}")
+                
+                if on_batch_complete:
+                    try:
+                        await on_batch_complete(result)
+                    except Exception as e:
+                        logger.warning(f"Batch complete callback failed: {e}")
+                
+                if on_progress:
+                    try:
+                        await on_progress(processed_count, failed_count, total_documents)
+                    except Exception as e:
+                        logger.warning(f"Progress callback failed: {e}")
+                        
+                # Progress logging every 10 batches
+                if batch_num % 10 == 0 or batch_num == total_batches:
+                    elapsed = time.time() - start_time
+                    if elapsed > 0 and processed_count > 0:
+                        docs_per_sec = processed_count / elapsed
+                        remaining_docs = total_documents - processed_count
+                        if docs_per_sec > 0:
+                            eta_seconds = remaining_docs / docs_per_sec
+                            import datetime
+                            eta_td = datetime.timedelta(seconds=int(eta_seconds))
+                            percent = (processed_count / total_documents) * 100
+                            logger.info(f"Progress: Batch {batch_num}/{total_batches} | {processed_count:,}/{total_documents:,} docs | {percent:.1f}% | ETA: {eta_td}")
         
         total_time = time.time() - start_time
         
-        # Filter out None embeddings (failed)
+        # OPTIMIZATION (Task 15): Build final list from sparse map (no [None]*N duplication)
+        all_embeddings = [embeddings_map.get(i) for i in range(total_documents)]
         successful_embeddings = [e for e in all_embeddings if e is not None]
         
         result = {
@@ -679,7 +722,7 @@ class EmbeddingBatchProcessor:
             "total_documents": total_documents,
             "processed_documents": processed_count,
             "failed_documents": failed_count,
-            "embeddings": all_embeddings,  # Includes None for failures
+            "embeddings": all_embeddings,
             "successful_embeddings": successful_embeddings,
             "failed_indices": failed_indices,
             "total_time_seconds": total_time,
