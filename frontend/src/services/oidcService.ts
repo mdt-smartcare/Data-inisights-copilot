@@ -17,24 +17,109 @@ const userManager = new UserManager({
   silentRequestTimeoutInSeconds: 30,
 });
 
+// Key for signaling auth completion between tabs
+const AUTH_COMPLETE_KEY = 'oidc_auth_complete';
+const LOGIN_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout for login
+
 /**
  * OIDC Authentication Service
  * Provides methods for Keycloak OIDC authentication flow
  */
 export const oidcService = {
   /**
-   * Initiate login by redirecting to Keycloak login page
+   * Initiate login in a new browser tab
+   * Opens Keycloak login in a new tab with proper PKCE/state handling
+   * @returns OidcUser object after successful authentication
    */
-  login: async (): Promise<void> => {
-    await userManager.signinRedirect();
+  login: async (): Promise<OidcUser> => {
+    // Clear any stale auth completion signal
+    localStorage.removeItem(AUTH_COMPLETE_KEY);
+    
+    // Create signin request using the internal client (handles PKCE, state, nonce)
+    // Note: createSigninRequest is on OidcClient, accessed via _client
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = (userManager as any)._client;
+    const signinRequest = await client.createSigninRequest({});
+    
+    // Open in new tab
+    const authTab = window.open(signinRequest.url, '_blank');
+    
+    if (!authTab) {
+      throw new Error('Failed to open login tab. Please allow popups for this site.');
+    }
+
+    return new Promise((resolve, reject) => {
+      let checkInterval: ReturnType<typeof setInterval> | null = null;
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      
+      const cleanup = () => {
+        window.removeEventListener('storage', handleStorageChange);
+        if (checkInterval) clearInterval(checkInterval);
+        if (timeoutId) clearTimeout(timeoutId);
+      };
+
+      // Listen for auth completion via storage event
+      const handleStorageChange = async (event: StorageEvent) => {
+        if (event.key === AUTH_COMPLETE_KEY && event.newValue === 'true') {
+          cleanup();
+          localStorage.removeItem(AUTH_COMPLETE_KEY);
+          
+          // Get the user from storage and validate
+          const user = await userManager.getUser();
+          if (user && !user.expired) {
+            resolve(user);
+          } else {
+            reject(new Error('Authentication failed: No valid user found after login'));
+          }
+        }
+      };
+
+      window.addEventListener('storage', handleStorageChange);
+      
+      // Check periodically in case tab was closed
+      checkInterval = setInterval(async () => {
+        if (authTab.closed) {
+          cleanup();
+          // Check if auth completed before tab closed
+          const user = await userManager.getUser();
+          if (user && !user.expired) {
+            localStorage.removeItem(AUTH_COMPLETE_KEY);
+            resolve(user);
+          } else {
+            reject(new Error('Login cancelled: Tab was closed'));
+          }
+        }
+      }, 500);
+      
+      // Timeout to prevent hanging forever
+      timeoutId = setTimeout(() => {
+        cleanup();
+        try { authTab.close(); } catch { /* ignore */ }
+        reject(new Error('Login timed out. Please try again.'));
+      }, LOGIN_TIMEOUT_MS);
+    });
   },
 
   /**
-   * Handle callback from Keycloak after successful authentication
-   * @returns OidcUser object containing tokens and user info
+   * Handle callback from Keycloak in the new tab
+   * Processes the callback, stores tokens, signals main window, and closes tab
    */
-  handleCallback: async (): Promise<OidcUser> => {
-    return await userManager.signinRedirectCallback();
+  handleTabCallback: async (): Promise<void> => {
+    // Process the callback using the library (validates state, exchanges code)
+    await userManager.signinRedirectCallback();
+    
+    // Signal the main window that auth is complete
+    localStorage.setItem(AUTH_COMPLETE_KEY, 'true');
+    
+    // Close this tab
+    window.close();
+  },
+
+  /**
+   * Check if current window is a callback (has auth code in URL)
+   */
+  isTabCallback: (): boolean => {
+    return window.location.search.includes('code=') && window.location.search.includes('state=');
   },
 
   /**
