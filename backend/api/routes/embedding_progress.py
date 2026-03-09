@@ -748,15 +748,26 @@ async def _run_embedding_job(
         # Local GPU providers that benefit from larger batch sizes
         LOCAL_GPU_PROVIDERS = ("sentence-transformers", "huggingface", "bge-m3", "bge")
         
+        # Also check model name for local models (handles misconfigured provider settings)
+        LOCAL_MODEL_PATTERNS = ("bge-", "bge_", "sentence-transformers", "all-minilm", "e5-", "gte-")
+        model_name_lower = model_name.lower() if model_name else ""
+        is_local_model = (
+            provider_type in LOCAL_GPU_PROVIDERS or 
+            any(pattern in model_name_lower for pattern in LOCAL_MODEL_PATTERNS)
+        )
+        
+        if is_local_model and provider_type not in LOCAL_GPU_PROVIDERS:
+            logger.info(f"Detected local model '{model_name}' but provider is '{provider_type}'. Treating as local GPU model.")
+        
         if ui_batch_size is not None:
             batch_size = ui_batch_size
             # Override suboptimal batch sizes for GPU providers
-            if provider_type in LOCAL_GPU_PROVIDERS and batch_size < MIN_GPU_BATCH_SIZE:
+            if is_local_model and batch_size < MIN_GPU_BATCH_SIZE:
                 logger.info(f"MPS/CUDA OPTIMIZATION: UI batch_size={batch_size} is suboptimal for GPU. Overriding to {MIN_GPU_BATCH_SIZE} for ~2.5x speedup.")
                 batch_size = MIN_GPU_BATCH_SIZE
             else:
                 logger.info(f"Using UI-specified batch_size: {batch_size}")
-        elif provider_type == "openai":
+        elif provider_type == "openai" and not is_local_model:
             batch_size = emb_conf.get("batch_size", 500)
         else:
             # Default to optimal GPU batch size for local models
@@ -765,12 +776,12 @@ async def _run_embedding_job(
         if ui_max_concurrent is not None:
             max_concurrent = ui_max_concurrent
             logger.info(f"Using UI-specified max_concurrent: {max_concurrent}")
-        elif provider_type == "openai":
+        elif provider_type == "openai" and not is_local_model:
             max_concurrent = 20
         else:
             max_concurrent = min(4, max(1, multiprocessing.cpu_count() // 4))
         
-        logger.info(f"Embedding batch config: batch_size={batch_size}, max_concurrent={max_concurrent}, provider={provider_type}")
+        logger.info(f"Embedding batch config: batch_size={batch_size}, max_concurrent={max_concurrent}, provider={provider_type}, model={model_name}")
             
         total_docs = len(documents)
         import math
