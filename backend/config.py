@@ -153,6 +153,18 @@ class Settings(BaseSettings):
     rag_config_path: str = Field(default="./config/embedding_config.yaml", description="Path to RAG config YAML (fallback defaults)")
     
     # ============================================
+    # Celery Configuration (message queue infrastructure)
+    # ============================================
+    celery_broker_url: str = Field(
+        default="amqp://guest:guest@localhost:5672//",
+        description="RabbitMQ broker URL for Celery task queue"
+    )
+    celery_result_backend: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis URL for Celery task results"
+    )
+    
+    # ============================================
     # Testing Configuration
     # ============================================
     test_database_url: Optional[str] = Field(default=None)
