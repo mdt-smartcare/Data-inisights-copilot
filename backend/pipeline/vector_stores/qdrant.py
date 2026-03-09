@@ -7,22 +7,78 @@ from backend.pipeline.vector_stores.base import BaseVectorStore
 
 logger = get_logger(__name__)
 
+
+class VectorDimensionMismatchError(Exception):
+    """Raised when vector dimensions don't match the existing collection."""
+    pass
+
+
 class QdrantStore(BaseVectorStore):
-    def __init__(self, collection_name: str, url: Optional[str] = None):
+    def __init__(self, collection_name: str, url: Optional[str] = None, auto_recreate_on_dimension_mismatch: bool = True):
         self.collection_name = collection_name
         # Allow override via env for Celery/Docker
         self.url = url or os.getenv("QDRANT_URL", "http://localhost:6333")
         self.client = AsyncQdrantClient(url=self.url)
         self._collection_checked = False
+        self._validated_dimension: Optional[int] = None
+        self.auto_recreate_on_dimension_mismatch = auto_recreate_on_dimension_mismatch
+
+    async def _get_collection_dimension(self) -> Optional[int]:
+        """Get the vector dimension of an existing collection."""
+        try:
+            collection_info = await self.client.get_collection(self.collection_name)
+            vectors_config = collection_info.config.params.vectors
+            # Handle both single vector and named vectors config
+            if isinstance(vectors_config, models.VectorParams):
+                return vectors_config.size
+            elif isinstance(vectors_config, dict):
+                # Named vectors - get the default or first one
+                if "" in vectors_config:
+                    return vectors_config[""].size
+                elif vectors_config:
+                    return next(iter(vectors_config.values())).size
+            return None
+        except Exception as e:
+            logger.warning(f"Could not get collection dimension: {e}")
+            return None
 
     async def _ensure_collection(self, vector_size: int = 1024):
-        if self._collection_checked:
+        """Ensure collection exists with the correct vector dimension."""
+        # Skip if already validated with the same dimension
+        if self._collection_checked and self._validated_dimension == vector_size:
             return
             
         try:
             exists = await self.client.collection_exists(self.collection_name)
+            
+            if exists:
+                # Check if existing collection has matching dimension
+                existing_dim = await self._get_collection_dimension()
+                
+                if existing_dim is not None and existing_dim != vector_size:
+                    logger.warning(
+                        f"Vector dimension mismatch for collection '{self.collection_name}': "
+                        f"existing={existing_dim}, required={vector_size}"
+                    )
+                    
+                    if self.auto_recreate_on_dimension_mismatch:
+                        logger.info(
+                            f"Auto-recreating collection '{self.collection_name}' with new dimension {vector_size}. "
+                            f"Old dimension was {existing_dim}. All existing vectors will be deleted."
+                        )
+                        await self.client.delete_collection(self.collection_name)
+                        exists = False  # Will create below
+                    else:
+                        raise VectorDimensionMismatchError(
+                            f"Collection '{self.collection_name}' has dimension {existing_dim} "
+                            f"but embeddings have dimension {vector_size}. "
+                            f"Delete the collection or enable auto_recreate_on_dimension_mismatch."
+                        )
+                else:
+                    logger.debug(f"Collection '{self.collection_name}' exists with matching dimension {existing_dim}")
+            
             if not exists:
-                logger.info(f"Creating Qdrant collection {self.collection_name} (dim={vector_size})")
+                logger.info(f"Creating Qdrant collection '{self.collection_name}' (dim={vector_size})")
                 await self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
@@ -34,7 +90,12 @@ class QdrantStore(BaseVectorStore):
                         memmap_threshold=10000
                     )
                 )
+                
             self._collection_checked = True
+            self._validated_dimension = vector_size
+            
+        except VectorDimensionMismatchError:
+            raise
         except Exception as e:
             logger.error(f"Failed to ensure Qdrant collection: {e}")
             raise
