@@ -311,104 +311,120 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
             )}
 
             <div className="space-y-4 sm:space-y-6">
+                {/* Model Catalog Modal */}
+                {showModelCatalog && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                        <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                            <div className="flex items-center justify-between p-4 border-b border-gray-200">
+                                <h2 className="text-lg font-semibold text-gray-900">Model Catalog</h2>
+                                <button
+                                    onClick={() => setShowModelCatalog(false)}
+                                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            </div>
+                            <div className="flex-1 overflow-y-auto p-4">
+                                <ModelCatalog 
+                                    readOnly={readOnly} 
+                                    onModelActivated={() => {
+                                        loadModels();
+                                        setActivationMsg('✓ Model activated from catalog');
+                                        setTimeout(() => setActivationMsg(null), 4000);
+                                    }} 
+                                />
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Vector DB Naming Section - Outside accordion */}
+                <div className="p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
+                    <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-1">
+                        Vector Database Namespace
+                    </label>
+                    <p className="text-[10px] sm:text-xs text-gray-500 mb-2 sm:mb-3">
+                        A unique identifier for where your embeddings will be stored.
+                    </p>
+                    <div className="relative">
+                        <input
+                            type="text"
+                            value={localSettings.embedding.vectorDbName || ''}
+                            onChange={(e) => handleChange('embedding', 'vectorDbName', e.target.value)}
+                            disabled={readOnly}
+                            placeholder="e.g. my_dataset_data"
+                            className={`w-full rounded-md shadow-sm text-xs sm:text-sm p-2 border focus:ring-1 
+                                ${vectorDbValidation.checking ? 'border-gray-300' :
+                                    vectorDbValidation.valid ? 'border-green-300 focus:border-green-500 focus:ring-green-500' :
+                                        'border-red-300 focus:border-red-500 focus:ring-red-500'}`}
+                        />
+                        {vectorDbValidation.checking && (
+                            <div className="absolute right-3 top-2">
+                                <svg className="animate-spin h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            </div>
+                        )}
+                    </div>
+                    {!vectorDbValidation.checking && vectorDbValidation.message && (
+                        <p className={`mt-1 text-[10px] sm:text-xs ${vectorDbValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
+                            {vectorDbValidation.valid ? '✓ ' : '✗ '}{vectorDbValidation.message}
+                        </p>
+                    )}
+                </div>
+
                 {/* ============================================================ */}
                 {/* 1. Embedding Configuration                             */}
                 {/* ============================================================ */}
                 <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
                     {/* Accordion Header */}
-                    <button
-                        type="button"
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('embedding'); }}
-                        className="w-full p-3 sm:p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
-                    >
-                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                            <div className="p-1.5 sm:p-2 bg-indigo-100 rounded-full flex-shrink-0">
-                                <svg className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                                </svg>
-                            </div>
-                            <h3 className="text-base sm:text-lg font-medium text-gray-900">Embedding Strategy</h3>
-                            {activeEmbedding && (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-green-100 text-green-800">
-                                    Active: {activeEmbedding.display_name}
-                                </span>
-                            )}
-                        </div>
-                        <svg 
-                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('embedding') ? 'rotate-180' : ''}`} 
-                            fill="none" 
-                            stroke="currentColor" 
-                            viewBox="0 0 24 24"
+                    <div className="flex items-center justify-between p-3 sm:p-6">
+                        <button
+                            type="button"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('embedding'); }}
+                            className="flex-1 flex items-center justify-between hover:bg-gray-50 transition-colors -m-3 sm:-m-6 p-3 sm:p-6"
                         >
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                    </button>
+                            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                                <div className="p-1.5 sm:p-2 bg-indigo-100 rounded-full flex-shrink-0">
+                                    <svg className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                    </svg>
+                                </div>
+                                <h3 className="text-base sm:text-lg font-medium text-gray-900">Embedding Strategy</h3>
+                                {activeEmbedding && (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-green-100 text-green-800">
+                                        Active: {activeEmbedding.display_name}
+                                    </span>
+                                )}
+                            </div>
+                            <svg 
+                                className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('embedding') ? 'rotate-180' : ''}`} 
+                                fill="none" 
+                                stroke="currentColor" 
+                                viewBox="0 0 24 24"
+                            >
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+                        {/* Browse Catalog Button - beside header */}
+                        {!readOnly && (
+                            <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setShowModelCatalog(true); }}
+                                className="ml-3 px-3 py-1.5 text-xs sm:text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5"
+                            >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                                </svg>
+                                <span className="hidden sm:inline">Browse Catalog</span>
+                                <span className="sm:hidden">Catalog</span>
+                            </button>
+                        )}
+                    </div>
 
                     {/* Accordion Content */}
                     {isSectionOpen('embedding') && (
                         <div className="p-3 sm:p-6 border-t border-gray-100">
-
-                    {/* Model Catalog Modal */}
-                    {showModelCatalog && (
-                        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                            <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-                                <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                                    <h2 className="text-lg font-semibold text-gray-900">Model Catalog</h2>
-                                    <button
-                                        onClick={() => setShowModelCatalog(false)}
-                                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                                    >
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                    </button>
-                                </div>
-                                <div className="flex-1 overflow-y-auto p-4">
-                                    <ModelCatalog 
-                                        readOnly={readOnly} 
-                                        onModelActivated={() => {
-                                            loadModels();
-                                            setActivationMsg('✓ Model activated from catalog');
-                                            setTimeout(() => setActivationMsg(null), 4000);
-                                        }} 
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Vector DB Naming Section */}
-                    <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
-                        <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-1">
-                            Vector Database Namespace
-                        </label>
-                        <p className="text-[10px] sm:text-xs text-gray-500 mb-2 sm:mb-3">
-                            A unique identifier for where your embeddings will be stored.
-                        </p>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                value={localSettings.embedding.vectorDbName || ''}
-                                onChange={(e) => handleChange('embedding', 'vectorDbName', e.target.value)}
-                                disabled={readOnly}
-                                placeholder="e.g. my_dataset_data"
-                                className={`w-full rounded-md shadow-sm text-xs sm:text-sm p-2 border focus:ring-1 
-                                    ${vectorDbValidation.checking ? 'border-gray-300' :
-                                        vectorDbValidation.valid ? 'border-green-300 focus:border-green-500 focus:ring-green-500' :
-                                            'border-red-300 focus:border-red-500 focus:ring-red-500'}`}
-                            />
-                            {vectorDbValidation.checking && (
-                                <div className="absolute right-3 top-2">
-                                    <svg className="animate-spin h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                </div>
-                            )}
-                        </div>
-                        {!vectorDbValidation.checking && vectorDbValidation.message && (
-                            <p className={`mt-1 text-[10px] sm:text-xs ${vectorDbValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
-                                {vectorDbValidation.valid ? '✓ ' : '✗ '}{vectorDbValidation.message}
-                            </p>
-                        )}
-                    </div>
 
                     {loadingModels ? (
                         <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-400 p-3">
@@ -700,13 +716,16 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('chunking'); }}
                         className="w-full p-4 sm:p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
                     >
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                             <div className="p-2 bg-blue-100 rounded-full">
                                 <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                                 </svg>
                             </div>
                             <h3 className="text-lg font-medium text-gray-900">Chunking Strategy</h3>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-blue-100 text-blue-800">
+                                Parent: {localSettings.chunking.parentChunkSize} / Child: {localSettings.chunking.childChunkSize}
+                            </span>
                         </div>
                         <svg 
                             className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('chunking') ? 'rotate-180' : ''}`} 
@@ -812,13 +831,21 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                         onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('retrieval'); }}
                         className="w-full p-4 sm:p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
                     >
-                        <div className="flex items-center gap-3">
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                             <div className="p-2 bg-emerald-100 rounded-full">
                                 <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                                 </svg>
                             </div>
                             <h3 className="text-lg font-medium text-gray-900">Retrieval Parameters</h3>
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-emerald-100 text-emerald-800">
+                                Top-K: {localSettings.retriever.topKInitial} → {localSettings.retriever.topKFinal}
+                            </span>
+                            {localSettings.retriever.rerankEnabled && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-amber-100 text-amber-800">
+                                    Rerank: On
+                                </span>
+                            )}
                         </div>
                         <svg 
                             className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('retrieval') ? 'rotate-180' : ''}`} 
