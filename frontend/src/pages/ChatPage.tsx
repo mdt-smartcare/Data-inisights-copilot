@@ -22,11 +22,14 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   // Session ID for conversation continuity - can be reset via Clear Chat
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
-  const [suggestions, setSuggestions] = useState<string[]>([
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  // Default suggestions shown when no agent is selected
+  const DEFAULT_SUGGESTIONS = [
     "How many male patients are over the age of 50?",
     "Which patients have a family history of heart disease mentioned in their records?",
     "What is the average glucose level for patients who are described as 'smokers' in their clinical notes?"
-  ]);
+  ];
 
   // Agent selection state
   const [agents, setAgents] = useState<any[]>([]);
@@ -70,27 +73,47 @@ export default function ChatPage() {
       }
     };
     loadAgents();
+  }, []);
 
-    const loadSuggestions = async () => {
+  // Load agent-specific example questions when agent changes
+  useEffect(() => {
+    const loadAgentSuggestions = async () => {
+      if (!selectedAgentId) {
+        // No agent selected - show default suggestions
+        setSuggestions(DEFAULT_SUGGESTIONS);
+        return;
+      }
+
       try {
-        const config = await getActiveConfigMetadata();
-        // ... existing suggestion loading code ...
+        // Fetch agent-specific config including example questions
+        const config = await getActiveConfigMetadata(selectedAgentId);
+        
         if (config && config.example_questions) {
           try {
-            const parsed = JSON.parse(config.example_questions);
+            const parsed = typeof config.example_questions === 'string' 
+              ? JSON.parse(config.example_questions) 
+              : config.example_questions;
+            
             if (Array.isArray(parsed) && parsed.length > 0) {
               setSuggestions(parsed);
+              console.log(`Loaded ${parsed.length} example questions for agent ${selectedAgentId}`);
+              return;
             }
           } catch (e) {
             console.warn("Failed to parse example questions", e);
           }
         }
+        
+        // Fallback to defaults if no agent-specific questions
+        setSuggestions(DEFAULT_SUGGESTIONS);
       } catch (err) {
-        console.warn("Failed to load active config for suggestions", err);
+        console.warn("Failed to load agent config for suggestions", err);
+        setSuggestions(DEFAULT_SUGGESTIONS);
       }
     };
-    loadSuggestions();
-  }, []);
+    
+    loadAgentSuggestions();
+  }, [selectedAgentId]);
 
   // Check RAG availability when agent changes
   useEffect(() => {
