@@ -11,6 +11,9 @@ from fastapi import APIRouter, Depends
 
 from backend.models.schemas import User
 from backend.core.permissions import get_current_user
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
