@@ -14,12 +14,13 @@ Architecture:
 """
 
 import re
-import logging
 from typing import Dict, Optional, List, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
-logger = logging.getLogger(__name__)
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class QueryIntent(Enum):

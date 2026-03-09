@@ -19,7 +19,6 @@ import sqlite3
 import json
 import pickle
 import hashlib
-import logging
 from typing import List, Optional, Tuple, Iterator
 from pathlib import Path
 from contextlib import contextmanager
@@ -27,7 +26,9 @@ from contextlib import contextmanager
 from langchain_core.documents import Document
 from langchain_core.stores import BaseStore
 
-logger = logging.getLogger(__name__)
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class SQLiteDocStore(BaseStore[str, Document]):

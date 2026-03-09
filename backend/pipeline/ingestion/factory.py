@@ -9,10 +9,10 @@ the Open/Closed Principle.
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Type
 
+from backend.core.logging import get_logger
 from backend.pipeline.ingestion.extractors import (
     CSVExtractor,
     ExcelExtractor,
@@ -21,7 +21,7 @@ from backend.pipeline.ingestion.extractors import (
 )
 from backend.pipeline.ingestion.models import BaseExtractor
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class DocumentLoaderFactory:

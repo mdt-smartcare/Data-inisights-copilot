@@ -1,4 +1,3 @@
-import logging
 import os
 from tqdm import tqdm
 import json
@@ -6,8 +5,14 @@ from typing import List, Dict, Any
 import hashlib
 import yaml
 
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+
 def setup_logging(log_file="logs/pipeline.log"):
     """Setup logging configuration"""
+    import logging
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
     
     logging.basicConfig(
@@ -39,7 +44,7 @@ def save_checkpoint(data: Any, checkpoint_path: str):
         with open(checkpoint_path, 'w', encoding='utf-8') as f:
             f.write(str(data))
     
-    logging.info(f"Checkpoint saved: {checkpoint_path}")
+    logger.info(f"Checkpoint saved: {checkpoint_path}")
 
 def load_checkpoint(checkpoint_path: str) -> Any:
     """Load pipeline checkpoint"""
@@ -65,7 +70,7 @@ def validate_documents(documents: List[Dict]) -> List[Dict]:
             
         valid_documents.append(doc)
     
-    logging.info(f"Validated documents: {len(valid_documents)}/{len(documents)}")
+    logger.info(f"Validated documents: {len(valid_documents)}/{len(documents)}")
     return valid_documents
 
 def get_memory_usage():

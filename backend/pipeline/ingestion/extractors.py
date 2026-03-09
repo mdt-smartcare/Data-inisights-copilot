@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import csv
 import json
-import logging
 import os
 from typing import Any, Generator
 
+from backend.core.logging import get_logger
 from backend.pipeline.ingestion.models import BaseExtractor, Document
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------
