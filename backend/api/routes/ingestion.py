@@ -1464,7 +1464,7 @@ async def delete_rag_embeddings(
     Delete RAG embeddings for a table.
     
     Removes:
-    - ChromaDB collection with child embeddings
+    - Vector DB collection (Qdrant or ChromaDB) with child embeddings
     - SQLite docstore with parent documents
     - RAG configuration metadata
     """
@@ -1472,7 +1472,25 @@ async def delete_rag_embeddings(
     db_path = _get_user_duckdb_path(current_user.id)
     
     try:
-        # Delete ChromaDB collection
+        from backend.services.chroma_service import get_vector_store_type
+        import os
+        
+        collection_name = f"file_rag_{table_name}"
+        vector_store_type = get_vector_store_type()
+        
+        # Delete from vector store based on configured provider
+        if vector_store_type == 'qdrant':
+            # Delete Qdrant collection
+            try:
+                import requests
+                qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+                response = requests.delete(f"{qdrant_url}/collections/{collection_name}", timeout=10)
+                if response.status_code in [200, 404]:
+                    logger.info(f"Deleted Qdrant collection: {collection_name}")
+            except Exception as e:
+                logger.warning(f"Failed to delete Qdrant collection {collection_name}: {e}")
+        
+        # Always try to clean up ChromaDB as well (for migration scenarios)
         try:
             import chromadb
             from chromadb.config import Settings
@@ -1484,7 +1502,6 @@ async def delete_rag_embeddings(
                     settings=Settings(anonymized_telemetry=False),
                 )
                 
-                collection_name = f"file_rag_{table_name}"
                 try:
                     chroma_client.delete_collection(collection_name)
                     logger.info(f"Deleted ChromaDB collection: {collection_name}")
@@ -1514,7 +1531,8 @@ async def delete_rag_embeddings(
         
         return {
             "status": "success",
-            "message": f"RAG embeddings deleted for table '{table_name}'."
+            "message": f"RAG embeddings deleted for table '{table_name}'.",
+            "vector_store_type": vector_store_type
         }
         
     except Exception as e:
