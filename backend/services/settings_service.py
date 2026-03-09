@@ -84,12 +84,12 @@ class AuthSettings(BaseModel):
 
 class EmbeddingSettings(BaseModel):
     """Embedding model configuration settings."""
-    provider: Literal["bge-m3", "openai", "sentence-transformers", "cohere"] = "bge-m3"
-    model_name: str = "BAAI/bge-m3"
-    model_path: str = "./models/bge-m3"
+    provider: Literal["bge-m3", "openai", "sentence-transformers", "cohere"] = "sentence-transformers"
+    model_name: str = "BAAI/bge-base-en-v1.5"
+    model_path: str = "./models/bge-base-en-v1.5"
     batch_size: int = Field(default=128, ge=1, le=1024)
     max_concurrent: int = Field(default=5, ge=1, le=50)
-    dimensions: int = Field(default=1024, ge=64, le=4096)
+    dimensions: int = Field(default=768, ge=64, le=4096)
 
 
 class LLMSettings(BaseModel):

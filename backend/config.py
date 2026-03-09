@@ -261,13 +261,13 @@ def get_embedding_settings() -> dict:
         from backend.services.settings_service import get_settings_service
         return get_settings_service().get_category_settings_raw('embedding')
     except Exception:
-        # Fallback defaults
+        # Fallback defaults - bge-base-en-v1.5 is faster than bge-m3
         return {
-            'provider': 'bge-m3',
-            'model_name': 'BAAI/bge-m3',
-            'model_path': './models/bge-m3',
+            'provider': 'sentence-transformers',
+            'model_name': 'BAAI/bge-base-en-v1.5',
+            'model_path': './models/bge-base-en-v1.5',
             'batch_size': 128,
-            'dimensions': 1024
+            'dimensions': 768
         }
 
 
