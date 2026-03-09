@@ -288,7 +288,7 @@ class EmbeddingProcessorRegistry:
         """Unregister a processor."""
         with self._lock:
             if job_id in self._processors:
-                del self._processors
+                del self._processors[job_id]  # Fixed: delete specific entry, not entire dict
                 
     def get_processor(self, job_id: str) -> Optional[Any]:
         """Get an active processor by job_id."""
