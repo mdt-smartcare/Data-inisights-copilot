@@ -110,13 +110,17 @@ def build_advanced_vector_index(
     embedding_function,
     config: dict
 ):
+    """
+    Build vector index using VectorStoreFactory.
+    Supports Qdrant (primary) and ChromaDB (fallback).
+    """
     collection_name = config['vector_store']['collection_name']
     batch_size = config['embedding'].get('batch_size', 128)
     
     total_docs = len(child_docs)
     logger.info(f"Building Vector Index with {total_docs:,} documents.")
     
-    # Initialize VectorStore
+    # Initialize VectorStore using factory
     from backend.pipeline.vector_stores.factory import VectorStoreFactory
     from backend.services.settings_service import get_settings_service, SettingCategory
     
@@ -129,10 +133,12 @@ def build_advanced_vector_index(
         
     vector_store = VectorStoreFactory.get_provider(provider_type, collection_name=collection_name)
     
-    # Progress tracker doesn't need a specific chroma path anymore, put it in data dir
-    import os
-    os.makedirs("./data/indexes", exist_ok=True)
-    progress = ProgressTracker(total_docs, checkpoint_file=f"./data/indexes/.build_progress.json")
+    # Get storage path for docstore (always local)
+    storage_path = config['vector_store'].get('chroma_path', f"./data/indexes/{collection_name}")
+    os.makedirs(storage_path, exist_ok=True)
+    
+    # Progress tracker
+    progress = ProgressTracker(total_docs, checkpoint_file=f"{storage_path}/.build_progress.json")
     
     # Check if resuming
     start_idx = progress.processed_docs
@@ -146,6 +152,7 @@ def build_advanced_vector_index(
     print(" STARTING INDEX BUILD")
     print("="*80)
     print(f" Provider: {provider_type}")
+    print(f" Collection: {collection_name}")
     print(f" Total Documents: {total_docs:,}")
     print(f" Batch Size: {batch_size}")
     print(f" Starting Progress: {progress.get_percentage():.1f}%")
@@ -201,18 +208,35 @@ def build_advanced_vector_index(
                     f"ETA: {progress.get_eta()}"
                 )
     
-    # Save docstore
-    docstore_path = f"{chroma_path}/parent_docstore.pkl"
+    # Save docstore locally (used for parent-child retrieval)
+    docstore_path = f"{storage_path}/parent_docstore.pkl"
     with open(docstore_path, "wb") as f:
         pickle.dump(docstore, f)
     
-    logger.info(f"Chroma index built and parent docstore saved to '{docstore_path}'.")
+    logger.info(f"Vector index built with {provider_type}. Parent docstore saved to '{docstore_path}'.")
     
     # Print final summary
     progress.print_summary()
 
+
+# Legacy alias for backward compatibility
+def build_advanced_chroma_index(
+    child_docs: List[Document],
+    docstore: BaseStore,
+    embedding_function,
+    config: dict
+):
+    """
+    DEPRECATED: Use build_advanced_vector_index instead.
+    This function is kept for backward compatibility.
+    """
+    logger.warning("build_advanced_chroma_index is deprecated. Use build_advanced_vector_index instead.")
+    return build_advanced_vector_index(child_docs, docstore, embedding_function, config)
+
+
 if __name__ == "__main__":
     import sys
+    import logging
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
     from backend.services.embeddings import get_embedding_model
     from backend.pipeline.extract import create_data_extractor
@@ -229,7 +253,7 @@ if __name__ == "__main__":
     )
 
     print("\n" + "="*80)
-    print("FHIR RAG INDEX BUILDER")
+    print("RAG INDEX BUILDER")
     print("="*80)
     print(f" Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80 + "\n")
@@ -247,7 +271,7 @@ if __name__ == "__main__":
         config = load_config("config/embedding_config.yaml")
     
     print(" Step 1/4: Extracting data from database...")
-    extractor = create_data_extractor()  # Will load config from database
+    extractor = create_data_extractor()
     import asyncio
     table_data = asyncio.run(extractor.extract_all_tables())
     
@@ -258,10 +282,10 @@ if __name__ == "__main__":
     print(f"\n Step 3/4: Applying parent-child chunking...")
     child_docs, docstore = transformer.perform_parent_child_chunking(documents)
 
-    print(f"\n Step 4/4: Building Chroma index with {len(child_docs):,} documents...")
+    print(f"\n Step 4/4: Building vector index with {len(child_docs):,} documents...")
     embedding_function = get_embedding_model()
     
-    build_advanced_chroma_index(
+    build_advanced_vector_index(
         child_docs=child_docs,
         docstore=docstore,
         embedding_function=embedding_function,
@@ -271,6 +295,6 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print(" INDEX BUILD PROCESS COMPLETED SUCCESSFULLY!")
     print("="*80)
-    print(f"Index Location: {config.get('vector_store', {}).get('chroma_path', 'N/A')}")
+    print(f"Collection: {config.get('vector_store', {}).get('collection_name', 'N/A')}")
     print(f"Completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*80 + "\n")
