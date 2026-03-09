@@ -1,12 +1,12 @@
 """
-Vector store service for semantic search using ChromaDB.
+Vector store service for semantic search.
+Supports Qdrant (primary) and ChromaDB (fallback) via VectorStoreFactory.
 Provides retrieval capabilities for the RAG pipeline.
 """
 import sys
 import time
 import json
 from pathlib import Path
-from functools import lru_cache
 from typing import List, Optional, Dict, Any
 
 # Add parent directory to path to import from src
@@ -16,22 +16,20 @@ from backend.services.embeddings import get_embedding_model
 from backend.rag.retrieve import AdvancedRAGRetriever
 from langchain_core.documents import Document
 
-# Note: Tracing is handled by the parent LangChain callback handler
-# to ensure all RAG operations are grouped under a single trace.
-
 from backend.config import (
     get_settings, get_rag_settings, get_embedding_settings, 
     get_chunking_settings, get_vector_store_settings
 )
 from backend.core.logging import get_logger
 from backend.sqliteDb.db import get_db_service
+from backend.services.chroma_service import get_vector_store_type, VectorStoreManager
 
 settings = get_settings()
 logger = get_logger(__name__)
 
 
 class VectorStoreService:
-    """Service for managing vector store operations."""
+    """Service for managing vector store operations with Qdrant/ChromaDB support."""
     
     def __init__(self, agent_id: Optional[int] = None):
         """Initialize the vector store with advanced retrieval.
@@ -40,7 +38,8 @@ class VectorStoreService:
             agent_id: Optional agent ID to load specific configuration.
         """
         self.agent_id = agent_id
-        logger.info(f"Initializing vector store service (Agent: {agent_id if agent_id else 'Global'})")
+        self._vector_store_type = get_vector_store_type()
+        logger.info(f"Initializing vector store service (Agent: {agent_id if agent_id else 'Global'}, Provider: {self._vector_store_type})")
         
         # Build RAG config from database system_settings (primary source)
         self.rag_config = self._build_config_from_db()
@@ -55,10 +54,10 @@ class VectorStoreService:
 
         # Initialize Advanced RAG Retriever (handles Dense/Sparse/BM25)
         self.retriever = AdvancedRAGRetriever(config=self.rag_config)
-        self.vector_store = self.retriever.vector_store # Expose underlying store if needed
+        self.vector_store = self.retriever.vector_store
         self.reranker = self.retriever.reranker
 
-        logger.info("Vector store initialized successfully")
+        logger.info(f"Vector store initialized successfully with {self._vector_store_type}")
     
     def _build_config_from_db(self) -> Dict[str, Any]:
         """Build RAG configuration from database system_settings."""
@@ -89,7 +88,7 @@ class VectorStoreService:
                 },
             },
             'vector_store': {
-                'type': vector_store_settings.get('type', 'chroma'),
+                'type': self._vector_store_type,
                 'chroma_path': str((backend_root / "data" / "indexes" / default_collection).resolve()),
                 'collection_name': default_collection,
             },
@@ -105,7 +104,8 @@ class VectorStoreService:
             },
         }
         
-        logger.info(f"Built RAG config from system_settings: embedding={embedding_settings.get('model_name')}, "
+        logger.info(f"Built RAG config from system_settings: provider={self._vector_store_type}, "
+                   f"embedding={embedding_settings.get('model_name')}, "
                    f"top_k={rag_settings.get('top_k_final')}, collection={default_collection}")
         
         return config
@@ -134,10 +134,10 @@ class VectorStoreService:
                     if emb_conf.get('vectorDbName'):
                         vdb_name = emb_conf['vectorDbName']
                         backend_root = Path(__file__).parent.parent
-                        new_chroma_path = (backend_root / "data" / "indexes" / vdb_name).resolve()
-                        self.rag_config['vector_store']['chroma_path'] = str(new_chroma_path)
+                        new_storage_path = (backend_root / "data" / "indexes" / vdb_name).resolve()
+                        self.rag_config['vector_store']['chroma_path'] = str(new_storage_path)
                         self.rag_config['vector_store']['collection_name'] = vdb_name
-                        logger.info(f"Overrode vector store path to: {new_chroma_path}")
+                        logger.info(f"Overrode vector store collection to: {vdb_name}")
                         
                     logger.info(f"Applied embedding config overrides: {emb_conf}")
                 except Exception as e:
@@ -206,8 +206,6 @@ class VectorStoreService:
         try:
             start_time = time.time()
             
-            # Use AdvancedRAGRetriever
-            # The AdvancedRAGRetriever kwargs allow passing search parameters down
             docs = self.retriever._get_relevant_documents(query, run_manager=None, filter=filter, top_k=k)
             
             duration = time.time() - start_time
@@ -240,7 +238,6 @@ class VectorStoreService:
         try:
             start_time = time.time()
 
-            # Delegate entirely to the advanced retriever
             results = self.retriever.retrieve_and_rerank_with_scores(query, top_k=k)
 
             duration = time.time() - start_time
@@ -266,6 +263,16 @@ class VectorStoreService:
         except Exception as e:
             logger.error(f"Vector store health check failed: {e}")
             return False
+    
+    def get_vector_store_info(self) -> Dict[str, Any]:
+        """Get information about the current vector store configuration."""
+        return {
+            "provider": self._vector_store_type,
+            "collection_name": self.rag_config['vector_store']['collection_name'],
+            "agent_id": self.agent_id,
+            "embedding_model": self.rag_config['embedding']['model_name'],
+            "reranker_enabled": self.rag_config['retriever'].get('rerank_enabled', True),
+        }
 
 
 # Cache for vector store instances by agent_id
@@ -312,3 +319,6 @@ def clear_vector_store_cache(agent_id: Optional[int] = None):
     else:
         _vector_store_cache.clear()
         logger.info("Cleared all vector store caches")
+    
+    # Also clear the VectorStoreManager cache
+    VectorStoreManager.clear_cache()
