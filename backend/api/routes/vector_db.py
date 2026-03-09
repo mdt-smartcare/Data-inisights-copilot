@@ -11,10 +11,37 @@ from backend.services.chroma_service import (
     get_vector_store_type, VectorStoreManager
 )
 import os
+import sqlite3 as sqlite3_stdlib
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/vector-db", tags=["Vector Database"])
+
+
+# ============================================
+# Helper function to get parent docstore count
+# ============================================
+
+def get_parent_docstore_count(vector_db_name: str) -> int:
+    """
+    Get document count from the parent_docstore.db SQLite file.
+    This is the actual document count used for RAG retrieval.
+    """
+    indexes_base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../data/indexes"))
+    docstore_path = os.path.join(indexes_base_path, vector_db_name, "parent_docstore.db")
+    
+    if not os.path.exists(docstore_path):
+        return 0
+    
+    try:
+        conn = sqlite3_stdlib.connect(docstore_path)
+        cursor = conn.execute("SELECT COUNT(*) FROM documents")
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        logger.warning(f"Could not read parent_docstore.db for {vector_db_name}: {e}")
+        return 0
 
 
 # ============================================
@@ -189,7 +216,10 @@ async def get_vector_db_status(
         vector_count, vector_store_exists = get_vector_count_for_collection(vector_db_name)
         logger.debug(f"{vector_store_type.capitalize()} vector count for {vector_db_name}: {vector_count}")
 
-        # 3. Get schedule information
+        # 3. Get parent docstore count (actual documents for RAG)
+        parent_docstore_count = get_parent_docstore_count(vector_db_name)
+
+        # 4. Get schedule information
         schedule = scheduler_service.get_schedule(vector_db_name)
         schedule_info = None
         if schedule:
@@ -202,21 +232,26 @@ async def get_vector_db_status(
                 "last_run_status": schedule.get('last_run_status')
             }
 
-        # 4. Diagnostics & Monitoring
-        diagnostics = []
-        if vector_store_exists and document_count > 0 and vector_count == 0:
-            diagnostics.append({"level": "error", "message": f"{vector_store_type.capitalize()} collection exists but is empty despite indexed documents."})
-        elif vector_store_exists and vector_count > 0 and document_count == 0:
-            diagnostics.append({"level": "warning", "message": f"Vectors exist in {vector_store_type.capitalize()} but no documents found in SQLite index."})
+        # 5. Diagnostics & Monitoring
+        # Use parent_docstore_count as the primary document count indicator
+        effective_doc_count = parent_docstore_count if parent_docstore_count > 0 else document_count
         
-        if not vector_store_exists and document_count > 0:
-            diagnostics.append({"level": "error", "message": f"SQLite index exists but {vector_store_type.capitalize()} collection is missing."})
+        diagnostics = []
+        if vector_store_exists and effective_doc_count > 0 and vector_count == 0:
+            diagnostics.append({"level": "error", "message": f"{vector_store_type.capitalize()} collection exists but is empty despite indexed documents."})
+        elif vector_store_exists and vector_count > 0 and effective_doc_count == 0:
+            diagnostics.append({"level": "warning", "message": f"Vectors exist in {vector_store_type.capitalize()} but no documents found in docstore."})
+        
+        if not vector_store_exists and effective_doc_count > 0:
+            diagnostics.append({"level": "error", "message": f"Documents exist but {vector_store_type.capitalize()} collection is missing."})
 
         return {
             "name": vector_db_name,
-            "exists": document_count > 0 or vector_store_exists,
-            "total_documents_indexed": document_count,
+            "exists": effective_doc_count > 0 or vector_store_exists,
+            "total_documents_indexed": effective_doc_count,  # Use parent docstore count as primary
             "total_vectors": vector_count,
+            "parent_docstore_count": parent_docstore_count,
+            "document_index_count": document_count,  # Keep for debugging
             "last_updated_at": last_updated,
             "embedding_model": registry_metadata["embedding_model"],
             "llm": registry_metadata["llm"],
