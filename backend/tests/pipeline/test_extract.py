@@ -36,26 +36,30 @@ class TestDataExtractor:
     
     def test_init_loads_config(self, mock_config, mock_config_yaml):
         """Test that extractor loads configuration on init."""
-        with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
-            from backend.pipeline.extract import DataExtractor
-            
-            extractor = DataExtractor("config/test.yaml")
-            
-            assert extractor.config == mock_config
-            assert "audit_log" in extractor.excluded_tables
-    
-    def test_get_allowed_tables_excludes_configured_tables(self, mock_config_yaml):
-        """Test that excluded tables are filtered out."""
-        with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
-            with patch('backend.pipeline.extract.db_connector') as mock_db:
-                mock_db.get_all_tables.return_value = [
-                    "users", "orders", "audit_log", "products"
-                ]
-                
+        with patch("backend.services.config_service.get_config_service", side_effect=Exception("Force fallback")):
+            with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
                 from backend.pipeline.extract import DataExtractor
                 
                 extractor = DataExtractor("config/test.yaml")
-                allowed = extractor.get_allowed_tables()
+                
+                # The config is flattened in the current implementation
+                assert extractor.excluded_tables == set(mock_config["tables"]["exclude_tables"])
+                assert "audit_log" in extractor.excluded_tables
+    
+    def test_get_allowed_tables_excludes_configured_tables(self, mock_config_yaml):
+        """Test that excluded tables are filtered out."""
+        with patch("backend.services.config_service.get_config_service", side_effect=Exception("Force fallback")):
+            with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
+                with patch('backend.pipeline.extract.get_db_connector') as mock_get_connector:
+                    mock_db = mock_get_connector.return_value
+                    mock_db.get_all_tables.return_value = [
+                        "users", "orders", "audit_log", "products"
+                    ]
+                    
+                    from backend.pipeline.extract import DataExtractor
+                    
+                    extractor = DataExtractor("config/test.yaml")
+                    allowed = extractor.get_allowed_tables()
                 
                 assert "users" in allowed
                 assert "orders" in allowed
@@ -64,16 +68,18 @@ class TestDataExtractor:
     
     def test_get_safe_columns_excludes_sensitive(self, mock_config_yaml):
         """Test that sensitive columns are excluded."""
-        with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
-            with patch('backend.pipeline.extract.db_connector') as mock_db:
-                mock_db.execute_query.return_value = [
-                    ("id",), ("name",), ("email",), ("password",), ("secret",)
-                ]
-                
-                from backend.pipeline.extract import DataExtractor
-                
-                extractor = DataExtractor("config/test.yaml")
-                safe_cols = extractor.get_safe_columns("users")
+        with patch("backend.services.config_service.get_config_service", side_effect=Exception("Force fallback")):
+            with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
+                with patch('backend.pipeline.extract.get_db_connector') as mock_get_connector:
+                    mock_db = mock_get_connector.return_value
+                    mock_db.execute_query.return_value = [
+                        ("id",), ("name",), ("email",), ("password",), ("secret",)
+                    ]
+                    
+                    from backend.pipeline.extract import DataExtractor
+                    
+                    extractor = DataExtractor("config/test.yaml")
+                    safe_cols = extractor.get_safe_columns("users")
                 
                 assert "id" in safe_cols
                 assert "name" in safe_cols
@@ -84,7 +90,8 @@ class TestDataExtractor:
     def test_extract_all_tables_returns_dataframes(self, mock_config_yaml):
         """Test that extraction returns DataFrames for each table."""
         with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
-            with patch('backend.pipeline.extract.db_connector') as mock_db:
+            with patch('backend.pipeline.extract.get_db_connector') as mock_get_connector:
+                mock_db = mock_get_connector.return_value
                 mock_db.get_all_tables.return_value = ["users"]
                 mock_db.execute_query.side_effect = [
                     # First call: get columns
@@ -96,7 +103,13 @@ class TestDataExtractor:
                 from backend.pipeline.extract import DataExtractor
                 
                 extractor = DataExtractor("config/test.yaml")
-                table_data = extractor.extract_all_tables()
+                
+                import asyncio
+                # Use a small wrapper to run the async generator
+                async def run_test():
+                    return await extractor.extract_all_tables()
+                
+                table_data = asyncio.run(run_test())
                 
                 assert "users" in table_data
                 assert isinstance(table_data["users"], pd.DataFrame)
@@ -105,7 +118,8 @@ class TestDataExtractor:
     def test_extract_with_limit(self, mock_config_yaml):
         """Test that table limit is applied."""
         with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
-            with patch('backend.pipeline.extract.db_connector') as mock_db:
+            with patch('backend.pipeline.extract.get_db_connector') as mock_get_connector:
+                mock_db = mock_get_connector.return_value
                 mock_db.get_all_tables.return_value = ["users"]
                 mock_db.execute_query.side_effect = [
                     [("id",), ("name",)],
@@ -115,16 +129,23 @@ class TestDataExtractor:
                 from backend.pipeline.extract import DataExtractor
                 
                 extractor = DataExtractor("config/test.yaml")
-                _ = extractor.extract_all_tables(table_limit=10)
+                
+                import asyncio
+                async def run_test():
+                    return await extractor.extract_all_tables(table_limit=10)
+                
+                _ = asyncio.run(run_test())
                 
                 # Verify LIMIT was added to query
                 last_call = mock_db.execute_query.call_args_list[-1]
                 assert "LIMIT" in last_call[0][0]
+                assert "10" in last_call[0][0]
     
     def test_extract_handles_errors_gracefully(self, mock_config_yaml):
         """Test that extraction continues on error."""
         with patch("builtins.open", mock_open(read_data=mock_config_yaml)):
-            with patch('backend.pipeline.extract.db_connector') as mock_db:
+            with patch('backend.pipeline.extract.get_db_connector') as mock_get_connector:
+                mock_db = mock_get_connector.return_value
                 mock_db.get_all_tables.return_value = ["users", "orders"]
                 mock_db.execute_query.side_effect = [
                     # users columns
@@ -140,7 +161,12 @@ class TestDataExtractor:
                 from backend.pipeline.extract import DataExtractor
                 
                 extractor = DataExtractor("config/test.yaml")
-                table_data = extractor.extract_all_tables()
+                
+                import asyncio
+                async def run_test():
+                    return await extractor.extract_all_tables()
+                
+                table_data = asyncio.run(run_test())
                 
                 # Should have orders but not users
                 assert "orders" in table_data
@@ -157,14 +183,20 @@ class TestDataExtractor:
         config_yaml = yaml.dump(config_all_excluded)
         
         with patch("builtins.open", mock_open(read_data=config_yaml)):
-            with patch('backend.pipeline.extract.db_connector') as mock_db:
+            with patch('backend.pipeline.extract.get_db_connector') as mock_get_connector:
+                mock_db = mock_get_connector.return_value
                 mock_db.get_all_tables.return_value = ["users"]
                 mock_db.execute_query.return_value = [("id",), ("name",)]
                 
                 from backend.pipeline.extract import DataExtractor
                 
                 extractor = DataExtractor("config/test.yaml")
-                table_data = extractor.extract_all_tables()
+                
+                import asyncio
+                async def run_test():
+                    return await extractor.extract_all_tables()
+                
+                table_data = asyncio.run(run_test())
                 
                 assert "users" not in table_data
 
@@ -183,9 +215,10 @@ class TestCreateDataExtractor:
     
     def test_creates_extractor_with_custom_config(self, mock_config_yaml):
         """Test factory creates extractor with custom path."""
-        with patch("builtins.open", mock_open(read_data=mock_config_yaml)) as m:
-            from backend.pipeline.extract import create_data_extractor
-            
-            create_data_extractor("custom/path.yaml")
-            
-            m.assert_called_with("custom/path.yaml", "r")
+        with patch("backend.services.config_service.get_config_service", side_effect=Exception("Force fallback")):
+            with patch("builtins.open", mock_open(read_data=mock_config_yaml)) as m:
+                from backend.pipeline.extract import create_data_extractor
+                
+                create_data_extractor("custom/path.yaml")
+                
+                m.assert_called_with("custom/path.yaml", "r")

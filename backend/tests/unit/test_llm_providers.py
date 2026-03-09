@@ -6,6 +6,13 @@ Tests LLM provider abstraction, registry management, and provider switching.
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 import os
+import sys
+
+# Mock missing optional dependencies for environment-independent testing
+if 'langchain_anthropic' not in sys.modules:
+    sys.modules['langchain_anthropic'] = MagicMock()
+if 'langchain_ollama' not in sys.modules:
+    sys.modules['langchain_ollama'] = MagicMock()
 
 # Set test environment
 os.environ["OPENAI_API_KEY"] = "test-key-123"
@@ -46,7 +53,7 @@ class TestLLMProviderInterface:
 class TestOpenAIProvider:
     """Tests for OpenAI provider implementation."""
     
-    @patch('backend.services.llm_providers.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_openai_provider_initialization(self, mock_chat):
         """Test OpenAI provider initializes correctly."""
         from backend.services.llm_providers import OpenAIProvider
@@ -63,7 +70,7 @@ class TestOpenAIProvider:
         assert provider.provider_name == "openai"
         assert provider.model_name == "gpt-4o"
     
-    @patch('backend.services.llm_providers.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_openai_provider_get_config(self, mock_chat):
         """Test OpenAI provider config output."""
         from backend.services.llm_providers import OpenAIProvider
@@ -99,7 +106,7 @@ class TestOpenAIProvider:
             if original_key:
                 os.environ["OPENAI_API_KEY"] = original_key
     
-    @patch('backend.services.llm_providers.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_openai_available_models(self, mock_chat):
         """Test OpenAI provider has list of available models."""
         from backend.services.llm_providers import OpenAIProvider
@@ -116,7 +123,7 @@ class TestOpenAIProvider:
 class TestAnthropicProvider:
     """Tests for Anthropic provider implementation."""
     
-    @patch('backend.services.llm_providers.ChatAnthropic')
+    @patch('langchain_anthropic.ChatAnthropic')
     def test_anthropic_provider_initialization(self, mock_chat):
         """Test Anthropic provider initializes correctly."""
         from backend.services.llm_providers import AnthropicProvider
@@ -147,7 +154,7 @@ class TestAnthropicProvider:
 class TestOllamaProvider:
     """Tests for Ollama (local) provider implementation."""
     
-    @patch('backend.services.llm_providers.ChatOllama')
+    @patch('langchain_ollama.ChatOllama')
     def test_ollama_provider_initialization(self, mock_chat):
         """Test Ollama provider initializes correctly."""
         from backend.services.llm_providers import OllamaProvider
@@ -162,7 +169,7 @@ class TestOllamaProvider:
         assert provider.provider_name == "ollama"
         assert provider.model_name == "llama3.2"
     
-    @patch('backend.services.llm_providers.ChatOllama')
+    @patch('langchain_ollama.ChatOllama')
     def test_ollama_provider_config(self, mock_chat):
         """Test Ollama provider config includes base_url."""
         from backend.services.llm_providers import OllamaProvider
@@ -194,8 +201,8 @@ class TestOllamaProvider:
 class TestHuggingFaceProvider:
     """Tests for HuggingFace provider implementation."""
     
-    @patch('backend.services.llm_providers.ChatHuggingFace')
-    @patch('backend.services.llm_providers.HuggingFaceEndpoint')
+    @patch('langchain_huggingface.ChatHuggingFace')
+    @patch('langchain_huggingface.HuggingFaceEndpoint')
     def test_huggingface_api_mode(self, mock_endpoint, mock_chat):
         """Test HuggingFace provider in API mode."""
         from backend.services.llm_providers import HuggingFaceProvider
@@ -221,7 +228,7 @@ class TestHuggingFaceProvider:
 class TestCreateLLMProvider:
     """Tests for create_llm_provider factory function."""
     
-    @patch('backend.services.llm_providers.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_create_openai_provider(self, mock_chat):
         """Test factory creates OpenAI provider."""
         from backend.services.llm_providers import create_llm_provider
@@ -247,7 +254,7 @@ class TestCreateLLMProvider:
 class TestLLMRegistry:
     """Tests for LLM Registry singleton."""
     
-    @patch('backend.services.llm_registry.get_settings_service')
+    @patch('backend.services.settings_service.get_settings_service')
     @patch('backend.services.llm_registry.create_llm_provider')
     def test_registry_is_singleton(self, mock_create, mock_settings):
         """Test LLMRegistry is a singleton."""
@@ -288,7 +295,7 @@ class TestLLMRegistry:
             for field in required_fields:
                 assert field in provider_info, f"{provider_name} missing {field}"
     
-    @patch('backend.services.llm_registry.get_settings_service')
+    @patch('backend.services.settings_service.get_settings_service')
     @patch('backend.services.llm_registry.create_llm_provider')
     def test_registry_list_providers(self, mock_create, mock_settings):
         """Test listing available providers."""
@@ -318,7 +325,7 @@ class TestLLMRegistry:
 class TestProviderHealthCheck:
     """Tests for provider health check functionality."""
     
-    @patch('backend.services.llm_providers.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_health_check_success(self, mock_chat):
         """Test health check returns success on working provider."""
         from backend.services.llm_providers import OpenAIProvider
@@ -336,7 +343,7 @@ class TestProviderHealthCheck:
         assert result["provider"] == "openai"
         assert "latency_ms" in result
     
-    @patch('backend.services.llm_providers.ChatOpenAI')
+    @patch('langchain_openai.ChatOpenAI')
     def test_health_check_failure(self, mock_chat):
         """Test health check returns failure on error."""
         from backend.services.llm_providers import OpenAIProvider

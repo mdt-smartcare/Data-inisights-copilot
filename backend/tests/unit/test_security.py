@@ -1,208 +1,125 @@
 """
 Unit tests for backend/core/security.py
 
-Tests JWT token creation, decoding, and OIDC utilities.
+Tests OIDC/Keycloak token verification and claim extraction.
 """
 import pytest
-from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 import os
+from datetime import datetime
 
 # Set test environment before imports
 os.environ["SECRET_KEY"] = "test-secret-key-minimum-32-chars-long-for-jwt-signing"
-os.environ["ALGORITHM"] = "HS256"
-os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "30"
 
+from backend.core.security import extract_user_claims, OIDCUserClaims, clear_jwks_cache
 
-class TestJWTTokenCreation:
-    """Tests for JWT token creation."""
+class TestOIDCClaimExtraction:
+    """Tests for extract_user_claims function."""
     
-    def test_create_access_token_basic(self):
-        """Test basic token creation."""
-        from backend.core.security import create_access_token
+    def test_extract_basic_claims(self):
+        """Test extracting standard OIDC claims."""
+        payload = {
+            "sub": "user-123",
+            "email": "test@example.com",
+            "preferred_username": "testuser",
+            "name": "Test User",
+            "realm_access": {"roles": ["user", "admin"]}
+        }
         
-        data = {"sub": "testuser", "role": "admin"}
-        token = create_access_token(data)
+        claims = extract_user_claims(payload)
         
-        assert isinstance(token, str)
-        assert len(token) > 0
-        # JWT tokens have 3 parts separated by dots
-        assert len(token.split('.')) == 3
-    
-    def test_create_access_token_with_custom_expiry(self):
-        """Test token creation with custom expiration."""
-        from backend.core.security import create_access_token
-        
-        data = {"sub": "testuser"}
-        expires = timedelta(hours=2)
-        token = create_access_token(data, expires_delta=expires)
-        
-        assert isinstance(token, str)
-        assert len(token.split('.')) == 3
-    
-    def test_create_access_token_preserves_data(self):
-        """Test that token creation preserves payload data."""
-        from backend.core.security import create_access_token, decode_token
-        
-        data = {"sub": "testuser", "role": "editor", "custom_field": "value"}
-        token = create_access_token(data)
-        
-        decoded = decode_token(token)
-        assert decoded["sub"] == "testuser"
-        assert decoded["role"] == "editor"
-        assert decoded["custom_field"] == "value"
-    
-    def test_create_access_token_adds_metadata(self):
-        """Test that token includes exp, iat, and type fields."""
-        from backend.core.security import create_access_token, decode_token
-        
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
-        decoded = decode_token(token)
-        assert "exp" in decoded
-        assert "iat" in decoded
-        assert decoded["type"] == "access"
+        assert claims.sub == "user-123"
+        assert claims.email == "test@example.com"
+        assert claims.preferred_username == "testuser"
+        assert "admin" in claims.roles
+        assert "user" in claims.roles
 
+    def test_extract_nested_roles(self):
+        """Test extracting roles from nested resource_access claim."""
+        payload = {
+            "sub": "user-123",
+            "resource_access": {
+                "myapp": {
+                    "roles": ["editor"]
+                }
+            }
+        }
+        
+        claims = extract_user_claims(payload, role_claim="resource_access.myapp.roles")
+        assert claims.roles == ["editor"]
 
-class TestJWTTokenDecoding:
-    """Tests for JWT token decoding."""
+    def test_missing_sub_raises_error(self):
+        """Test that missing 'sub' claim raises ValueError."""
+        payload = {"email": "test@example.com"}
+        with pytest.raises(ValueError, match="missing 'sub' claim"):
+            extract_user_claims(payload)
+
+class TestJWKSCaching:
+    """Tests for JWKS cache logic."""
     
-    def test_decode_valid_token(self):
-        """Test decoding a valid token."""
-        from backend.core.security import create_access_token, decode_token
+    def test_clear_cache(self):
+        """Test that clear_jwks_cache works."""
+        from backend.core.security import _jwks_cache, JWKSCache
+        import backend.core.security
         
-        data = {"sub": "testuser", "role": "user"}
-        token = create_access_token(data)
+        backend.core.security._jwks_cache = JWKSCache(keys={}, fetched_at=0, ttl=3600)
+        assert backend.core.security._jwks_cache is not None
         
-        decoded = decode_token(token)
-        
-        assert decoded["sub"] == "testuser"
-        assert decoded["role"] == "user"
+        clear_jwks_cache()
+        assert backend.core.security._jwks_cache is None
+
+class TestTokenDecoding:
+    """Tests for decode_keycloak_token function (mocked)."""
     
-    def test_decode_invalid_token_raises(self):
-        """Test that invalid token raises HTTPException."""
-        from backend.core.security import decode_token
-        from fastapi import HTTPException
+    @pytest.mark.asyncio
+    async def test_decode_token_success(self):
+        """Test decoding token when signature is valid (mocked)."""
+        from backend.core.security import decode_keycloak_token
         
-        invalid_token = "invalid.token.string"
+        mock_payload = {"sub": "user-123", "iss": "http://keycloak/realm", "aud": "client-id"}
         
-        with pytest.raises(HTTPException) as exc_info:
-            decode_token(invalid_token)
-        
-        assert exc_info.value.status_code == 401
-    
-    def test_decode_tampered_token_raises(self):
-        """Test that tampered token raises HTTPException."""
-        from backend.core.security import create_access_token, decode_token
-        from fastapi import HTTPException
-        
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
-        # Tamper with the token
-        parts = token.split('.')
-        parts[1] = parts[1][:-5] + "XXXXX"  # Modify payload
-        tampered_token = '.'.join(parts)
-        
-        with pytest.raises(HTTPException) as exc_info:
-            decode_token(tampered_token)
-        
-        assert exc_info.value.status_code == 401
-    
-    def test_decode_expired_token_raises(self):
+        with patch("backend.core.security.jwt.get_unverified_header") as mock_header:
+            mock_header.return_value = {"kid": "key-1", "alg": "RS256"}
+            
+            with patch("backend.core.security.fetch_jwks", new_callable=AsyncMock) as mock_fetch:
+                mock_fetch.return_value = {"key-1": {"n": "...", "e": "..."}}
+                
+                with patch("backend.core.security.jwk.construct") as mock_construct:
+                    with patch("backend.core.security.jwt.decode") as mock_decode:
+                        mock_decode.return_value = mock_payload
+                        
+                        result = await decode_keycloak_token(
+                            token="fake.token.here",
+                            issuer_url="http://keycloak/realm",
+                            client_id="client-id"
+                        )
+                        
+                        assert result == mock_payload
+                        mock_decode.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_decode_token_expired_raises(self):
         """Test that expired token raises HTTPException."""
-        from backend.core.security import create_access_token, decode_token
+        from backend.core.security import decode_keycloak_token
         from fastapi import HTTPException
-        from datetime import timedelta
-        import time
+        from jose.exceptions import ExpiredSignatureError
         
-        # Create token that expires in 1 second
-        data = {"sub": "testuser"}
-        token = create_access_token(data, expires_delta=timedelta(seconds=1))
-        
-        # Wait for expiration
-        time.sleep(2)
-        
-        with pytest.raises(HTTPException) as exc_info:
-            decode_token(token)
-        
-        assert exc_info.value.status_code == 401
-    
-    def test_decode_wrong_type_token_raises(self):
-        """Test that token with wrong type raises HTTPException."""
-        from backend.core.security import decode_token
-        from backend.config import get_settings
-        from fastapi import HTTPException
-        from jose import jwt
-        from datetime import datetime, timedelta
-        
-        settings = get_settings()
-        
-        # Create token with wrong type
-        payload = {
-            "sub": "testuser",
-            "exp": datetime.utcnow() + timedelta(minutes=30),
-            "iat": datetime.utcnow(),
-            "type": "refresh"  # Wrong type
-        }
-        token = jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
-        
-        with pytest.raises(HTTPException) as exc_info:
-            decode_token(token)
-        
-        assert exc_info.value.status_code == 401
-
-
-class TestGetTokenUsername:
-    """Tests for get_token_username function."""
-    
-    def test_get_username_valid_token(self):
-        """Test extracting username from valid token."""
-        from backend.core.security import create_access_token, get_token_username
-        
-        data = {"sub": "testuser"}
-        token = create_access_token(data)
-        
-        username = get_token_username(token)
-        
-        assert username == "testuser"
-    
-    def test_get_username_no_sub_raises(self):
-        """Test that token without 'sub' claim raises HTTPException."""
-        from backend.core.security import get_token_username
-        from backend.config import get_settings
-        from fastapi import HTTPException
-        from jose import jwt
-        from datetime import datetime, timedelta
-        
-        settings = get_settings()
-        
-        # Create token without 'sub'
-        payload = {
-            "role": "admin",
-            "exp": datetime.utcnow() + timedelta(minutes=30),
-            "iat": datetime.utcnow(),
-            "type": "access"
-        }
-        token = jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
-        
-        with pytest.raises(HTTPException) as exc_info:
-            get_token_username(token)
-        
-        assert exc_info.value.status_code == 401
-        assert "Invalid token payload" in str(exc_info.value.detail)
-    
-    def test_get_username_invalid_token_raises(self):
-        """Test that invalid token raises HTTPException."""
-        from backend.core.security import get_token_username
-        from fastapi import HTTPException
-        
-        with pytest.raises(HTTPException) as exc_info:
-            get_token_username("invalid.token.here")
-        
-        assert exc_info.value.status_code == 401
-
+        with patch("backend.core.security.jwt.get_unverified_header") as mock_header:
+            mock_header.return_value = {"kid": "key-1"}
+            with patch("backend.core.security.fetch_jwks", new_callable=AsyncMock) as mock_fetch:
+                mock_fetch.return_value = {"key-1": {}}
+                with patch("backend.core.security.jwk.construct"):
+                    with patch("backend.core.security.jwt.decode") as mock_decode:
+                        mock_decode.side_effect = ExpiredSignatureError()
+                        
+                        with pytest.raises(HTTPException) as exc_info:
+                            await decode_keycloak_token(
+                                token="expired.token",
+                                issuer_url="http://keycloak/realm",
+                                client_id="client-id"
+                            )
+                        assert exc_info.value.status_code == 401
+                        assert "expired" in exc_info.value.detail.lower()
 
 class TestHTTPBearerScheme:
     """Tests for HTTP Bearer scheme configuration."""
@@ -210,5 +127,4 @@ class TestHTTPBearerScheme:
     def test_http_bearer_exists(self):
         """Test HTTP Bearer scheme is configured."""
         from backend.core.security import http_bearer
-        
         assert http_bearer is not None

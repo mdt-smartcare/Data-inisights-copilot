@@ -78,30 +78,39 @@ def client(mock_model_registry):
     from backend.app import app
     from backend.services.sql_service import get_sql_service
     from backend.services.model_registry_service import get_model_registry_service
-
+    from backend.core.permissions import get_current_user, require_admin, require_editor, require_user, require_super_admin
+    from backend.models.schemas import User
+    
     mock_sql = MagicMock()
     mock_sql.get_schema_info_for_connection.return_value = {"tables": [], "details": {}}
+    
+    mock_admin = User(
+        id=1,
+        username="admin",
+        email="admin@example.com",
+        role="admin",
+        external_id="admin-sub"
+    )
+    
     app.dependency_overrides[get_sql_service] = lambda: mock_sql
     app.dependency_overrides[get_model_registry_service] = lambda: mock_model_registry
+    app.dependency_overrides[get_current_user] = lambda: mock_admin
+    app.dependency_overrides[require_admin] = lambda: mock_admin
+    app.dependency_overrides[require_super_admin] = lambda: mock_admin
+    app.dependency_overrides[require_editor] = lambda: mock_admin
+    app.dependency_overrides[require_user] = lambda: mock_admin
 
     with TestClient(app) as tc:
         yield tc
 
     # Cleanup
-    app.dependency_overrides.pop(get_model_registry_service, None)
-    app.dependency_overrides.pop(get_sql_service, None)
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture(scope="module")
-def auth_headers(client):
-    """Get auth headers by logging in."""
-    response = client.post(
-        "/api/v1/auth/login",
-        json={"username": "admin", "password": "admin123"}
-    )
-    assert response.status_code == 200, f"Login failed: {response.text}"
-    token = response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+def auth_headers():
+    """Return dummy auth headers (actual auth is overridden)."""
+    return {"Authorization": "Bearer fake-token"}
 
 
 # ============================================================================

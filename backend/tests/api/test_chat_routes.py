@@ -55,7 +55,8 @@ class TestChatEndpoint:
                 role="user"
             )
             
-            _ = await chat(request, mock_user)
+            mock_request = MagicMock()
+            _ = await chat(request, mock_request, mock_user)
             mock_agent_service.process_query.assert_called_once()
     
     @pytest.mark.asyncio
@@ -78,7 +79,8 @@ class TestChatEndpoint:
                 role="user"
             )
             
-            await chat(request, mock_user)
+            mock_request = MagicMock()
+            await chat(request, mock_request, mock_user)
             # Verify process_query was called with a session_id
             call_args = mock_agent_service.process_query.call_args
             assert 'session_id' in call_args.kwargs or len(call_args.args) >= 3
@@ -103,7 +105,8 @@ class TestChatEndpoint:
                 role="user"
             )
             
-            await chat(request, mock_user)
+            mock_request = MagicMock()
+            await chat(request, mock_request, mock_user)
             call_args = mock_agent_service.process_query.call_args
             assert call_args.kwargs.get('session_id') == "existing-session-123"
 
@@ -129,8 +132,9 @@ class TestChatErrorHandling:
                 role="user"
             )
             
+            mock_request = MagicMock()
             with pytest.raises(HTTPException):
-                await chat(request, mock_user)
+                await chat(request, mock_request, mock_user)
 
 
 class TestChatImports:

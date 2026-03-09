@@ -139,7 +139,7 @@ class TestUpdateObservabilityConfigEndpoint:
         )
         
         assert result["success"] is True
-        mock_service.update_config.assert_called_once_with(updates)
+        mock_service.update_config.assert_called_once_with(updates, updated_by=mock_user.username)
     
     @pytest.mark.asyncio
     async def test_update_config_failure_raises_500(self):
