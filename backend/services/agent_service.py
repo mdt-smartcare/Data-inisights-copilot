@@ -57,6 +57,17 @@ class AgentService:
         
         logger.info(f"Data source type for agent: {self.data_source_type}")
         
+        # Fetch agent-specific system prompt from system_prompts table (NOT from agents table)
+        # The agents.system_prompt column is deprecated - prompts are stored in system_prompts with agent_id
+        if agent_id:
+            self.fixed_system_prompt = self.db_service.get_latest_active_prompt(agent_id=agent_id)
+            if self.fixed_system_prompt:
+                logger.info(f"Loaded agent-specific system prompt for agent_id={agent_id}")
+            else:
+                logger.warning(f"No active system prompt found for agent_id={agent_id}")
+        else:
+            self.fixed_system_prompt = None
+        
         # Initialize SQL service based on data source type
         if self.data_source_type == 'file':
             # Use FileSQLService (DuckDB) for Excel/CSV file-based agents
@@ -65,28 +76,58 @@ class AgentService:
                 try:
                     # Pass callbacks to FileSQLService for Langfuse tracing
                     callbacks = [langfuse_trace] if langfuse_trace else []
-                    self._file_sql_service = FileSQLService(user_id=user_id, callbacks=callbacks)
+                    
+                    # Extract allowed tables from active config to scope queries to this agent's data
+                    allowed_tables = None
+                    if active_config:
+                        # Try to get table name from ingestion_file_name (e.g., "WDF BP assessment data.xlsx" -> "wdf_bp_assessment_data")
+                        ingestion_file = active_config.get('ingestion_file_name')
+                        if ingestion_file:
+                            # Convert filename to table name (same logic as file upload)
+                            import re
+                            table_name = re.sub(r'\.[^.]+$', '', ingestion_file)  # Remove extension
+                            table_name = re.sub(r'[^a-zA-Z0-9_]', '_', table_name)  # Replace special chars
+                            table_name = table_name.lower().strip('_')
+                            table_name = re.sub(r'_+', '_', table_name)  # Collapse multiple underscores
+                            allowed_tables = [table_name]
+                            logger.info(f"File agent restricted to table: {table_name} (from {ingestion_file})")
+                        
+                        # Also check schema_selection if available
+                        if not allowed_tables:
+                            schema_sel = active_config.get('schema_selection')
+                            if schema_sel:
+                                try:
+                                    schema_data = json.loads(schema_sel) if isinstance(schema_sel, str) else schema_sel
+                                    if isinstance(schema_data, dict):
+                                        allowed_tables = list(schema_data.keys())
+                                    elif isinstance(schema_data, list):
+                                        allowed_tables = schema_data
+                                    if allowed_tables:
+                                        logger.info(f"File agent restricted to tables from schema_selection: {allowed_tables}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse schema_selection: {e}")
+                    
+                    self._file_sql_service = FileSQLService(
+                        user_id=user_id, 
+                        callbacks=callbacks,
+                        allowed_tables=allowed_tables
+                    )
                     # Wrap FileSQLService.query to return string like SQLService
                     self.sql_service = self._create_file_sql_wrapper(self._file_sql_service)
-                    self.fixed_system_prompt = agent_config.get('system_prompt') if agent_config else None
                     logger.info(f"Using FileSQLService (DuckDB) for user {user_id}")
                 except ValueError as e:
                     logger.warning(f"FileSQLService init failed: {e}. No uploaded files for user.")
                     self.sql_service = self._create_dummy_sql_service()
-                    self.fixed_system_prompt = agent_config.get('system_prompt') if agent_config else None
             else:
                 logger.warning("File-based agent requires user_id for FileSQLService")
                 self.sql_service = self._create_dummy_sql_service()
-                self.fixed_system_prompt = agent_config.get('system_prompt') if agent_config else None
         elif agent_config and agent_config.get('db_connection_uri'):
             # Use SQLService with dedicated database connection
             logger.info(f"Connecting to dedicated agent database: {agent_config['db_connection_uri']}")
             self.sql_service = SQLService(database_url=agent_config['db_connection_uri'])
-            self.fixed_system_prompt = agent_config.get('system_prompt')
         else:
             # Use default SQLService (PostgreSQL)
             self.sql_service = get_sql_service()
-            self.fixed_system_prompt = None
 
         # Don't load vector store on init - lazy load it when needed!
         self._vector_store = None
@@ -279,6 +320,122 @@ Use this to search unstructured text, notes, and semantic descriptions.
         if expired:
             logger.info(f"Cleaned up {len(expired)} expired sessions")
     
+    async def _rewrite_query_with_context(self, query: str, session_id: Optional[str]) -> str:
+        """
+        Rewrite a query to resolve pronouns and references using conversation history.
+        
+        Examples:
+        - "what is the patient's CVD risk?" + history about patient 49686742
+          -> "what is the CVD risk for patient 49686742?"
+        - "and what about the Cardiovascular Disease Risk?" + history about patient 49686742
+          -> "what is the Cardiovascular Disease Risk for patient 49686742?"
+        
+        Args:
+            query: The user's current query
+            session_id: Session ID to retrieve conversation history
+            
+        Returns:
+            Rewritten query with resolved references, or original query if no rewriting needed
+        """
+        if not session_id:
+            return query
+        
+        # Get conversation history
+        history = self.get_session_history(session_id)
+        if not history.messages or len(history.messages) < 2:
+            # No prior conversation to reference
+            return query
+        
+        # Check if query contains references that need resolution
+        # Include both explicit references AND conversational follow-up patterns
+        reference_patterns = [
+            # Explicit entity references
+            r'\b(the patient|this patient|that patient)\b',
+            r'\b(their|his|her|its)\b',
+            r'\b(them|him|her|it)\b',
+            r'\b(same|above|previous|mentioned)\b',
+            r"patient's\b",
+            # Conversational follow-up patterns (likely referring to previous context)
+            r'^and\s+(what|how|show|get|tell)',  # "and what about...", "and how about..."
+            r'^what about\b',  # "what about the..."
+            r'^how about\b',  # "how about..."
+            r'^also\s+(show|get|what|tell)',  # "also show me...", "also what is..."
+            r'^now\s+(show|get|what|tell)',  # "now show me...", "now what is..."
+            r'(for (the same|this|that))\b',  # "for the same patient"
+            r'^(show|get|tell|give)\s+me\s+(the|their|his|her)',  # "show me the...", "tell me their..."
+        ]
+        
+        needs_rewriting = any(re.search(pattern, query.lower()) for pattern in reference_patterns)
+        
+        if not needs_rewriting:
+            return query
+        
+        logger.info(f"Query appears to need context rewriting: '{query[:50]}...'")
+        
+        # Build conversation context from last few exchanges
+        recent_messages = history.messages[-6:]  # Last 3 exchanges (human + AI pairs)
+        context_parts = []
+        for msg in recent_messages:
+            role = "User" if msg.type == "human" else "Assistant"
+            # Truncate long messages
+            content = msg.content[:500] if len(msg.content) > 500 else msg.content
+            context_parts.append(f"{role}: {content}")
+        
+        conversation_context = "\n".join(context_parts)
+        
+        # Use LLM to rewrite the query
+        rewrite_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are a query rewriter. Your task is to rewrite the user's current query to make it self-contained by resolving any pronouns, references, or implicit context from the conversation history.
+
+RULES:
+1. If the query references "the patient", "their", "this patient", etc., replace with the specific patient ID from context
+2. If the query is a follow-up like "and what about X?" or "what about the Y?", make it explicit by adding the entity (e.g., patient ID) from the previous conversation
+3. Keep the rewritten query concise and natural
+4. If no rewriting is needed (query is already self-contained), return the original query exactly
+5. Only output the rewritten query, nothing else
+6. Preserve the intent and meaning of the original query
+
+Examples:
+- History mentions patient 49686742, Query: "what is the patient's CVD risk?" 
+  -> "what is the CVD risk for patient ID 49686742?"
+- History about patient 49686742 BP readings, Query: "and what about the Cardiovascular Disease Risk?"
+  -> "what is the Cardiovascular Disease Risk for patient ID 49686742?"
+- History mentions John Smith, Query: "show me their BP readings"
+  -> "show me BP readings for John Smith"
+- Query: "how many patients are there?" (no reference needed)
+  -> "how many patients are there?"
+"""),
+            ("user", """Conversation History:
+{context}
+
+Current Query: {query}
+
+Rewritten Query:""")
+        ])
+        
+        try:
+            chain = rewrite_prompt | self.llm
+            response = await chain.ainvoke({
+                "context": conversation_context,
+                "query": query
+            })
+            rewritten = response.content.strip()
+            
+            # Remove any quotes the LLM might add around the response
+            rewritten = rewritten.strip('"\'')
+            
+            # Validate the rewritten query isn't empty or too different
+            if rewritten and len(rewritten) > 5 and len(rewritten) < len(query) * 4:
+                logger.info(f"Query rewritten: '{query}' -> '{rewritten}'")
+                return rewritten
+            else:
+                logger.debug("Query rewriting returned invalid result, using original")
+                return query
+                
+        except Exception as e:
+            logger.warning(f"Query rewriting failed: {e}. Using original query.")
+            return query
+
     async def process_query(
         self,
         query: str,
@@ -305,6 +462,9 @@ Use this to search unstructured text, notes, and semantic descriptions.
         callbacks = [self.langfuse_trace] if self.langfuse_trace else []
         
         try:
+            # Rewrite query with context
+            query = await self._rewrite_query_with_context(query, session_id)
+            
             # =================================================================
             # STANDARD PATH: Use agent for all queries
             # =================================================================
@@ -514,6 +674,22 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 timestamp=start_time
             )
             
+            # ============================================================
+            # IMPORTANT: Save conversation to history for multi-turn support
+            # The agent_with_history path auto-saves, but direct Intent A/B/C
+            # routes need manual saving for query rewriting to work
+            # ============================================================
+            if session_id and classification.intent in ["A", "B", "C"]:
+                try:
+                    history = self.get_session_history(session_id)
+                    from langchain_core.messages import HumanMessage, AIMessage
+                    history.add_message(HumanMessage(content=query))
+                    # Save a clean version of the response (no JSON blocks)
+                    history.add_message(AIMessage(content=self._clean_answer(full_response)[:1000]))
+                    logger.debug(f"Saved conversation to history for session {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to save conversation history: {e}")
+            
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.info(f"✅ Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
             
@@ -720,8 +896,33 @@ Use this to search unstructured text, notes, and semantic descriptions.
                 self._service = service
                 # Provide cached_schema for compatibility with intent router
                 self.cached_schema = service.get_schema_for_prompt()
-                # Provide db attribute for hybrid queries (if needed)
-                self.db = None
+                # Create a db-like object that supports .run() for hybrid queries
+                self.db = self._create_db_runner(service)
+            
+            def _create_db_runner(self, service):
+                """Create a db runner object that mimics LangChain's SQLDatabase.run()."""
+                class DuckDBRunner:
+                    def __init__(self, file_service):
+                        self._service = file_service
+                    
+                    def run(self, sql: str) -> str:
+                        """Execute raw SQL and return results as string (like LangChain SQLDatabase)."""
+                        try:
+                            # _execute_sql returns tuple: (columns, rows, execution_time_ms)
+                            # where rows is a list of dicts
+                            columns, rows, exec_time = self._service._execute_sql(sql)
+                            
+                            if not rows:
+                                return "[]"
+                            
+                            # Return as list of tuples string representation
+                            # e.g., "[('value1',), ('value2',)]"
+                            tuple_rows = [tuple(row.values()) for row in rows]
+                            return str(tuple_rows)
+                        except Exception as e:
+                            return f"Error executing SQL: {e}"
+                
+                return DuckDBRunner(service)
             
             def query(self, question: str) -> str:
                 """Query wrapper that returns string like SQLService."""
@@ -750,19 +951,48 @@ Use this to search unstructured text, notes, and semantic descriptions.
 _agent_service: Optional[AgentService] = None
 
 # Cache for dedicated agent instances: {agent_id: AgentService}
+# IMPORTANT: Cache key is agent_id only. Each agent has isolated:
+#   - SQL service (either dedicated DB connection, or FileSQLService with allowed_tables)
+#   - Vector store (lazy-loaded with agent-specific collection)
+#   - System prompt
 _agent_cache: Dict[int, AgentService] = {}
 
 
+def clear_agent_cache(agent_id: Optional[int] = None):
+    """
+    Clear cached agent instances to force re-initialization.
+    
+    Use this when:
+    - Agent configuration changes
+    - Agent data source changes
+    - Security/access rules change
+    
+    Args:
+        agent_id: Specific agent to clear, or None to clear all
+    """
+    global _agent_cache, _agent_service
+    
+    if agent_id is not None:
+        if agent_id in _agent_cache:
+            del _agent_cache[agent_id]
+            logger.info(f"Cleared agent cache for agent_id={agent_id}")
+    else:
+        _agent_cache.clear()
+        _agent_service = None
+        logger.info("Cleared all agent caches")
+
+
 def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = None, langfuse_trace: Optional[Any] = None) -> AgentService:
-    """Get agent service instance.
+    """Get agent service instance with proper data isolation.
+    
+    SECURITY: Each agent is completely isolated:
+    - File agents: Can only access tables from their configured data file
+    - Database agents: Use their own db_connection_uri
+    - RAG: Uses agent-specific vector collection (vectorDbName)
     
     If agent_id is provided, checks specific user access and returns a dedicated instance.
     Dedicated instances are cached to reuse database connections.
     Otherwise returns the singleton default instance (legacy behavior).
-    
-    OPTIMIZATION (Task 13): Langfuse traces are request-specific, but the AgentService
-    itself is expensive to create (~300ms: LLM init, tool creation, agent executor).
-    We now cache the service and set the trace per-request instead of re-creating.
     """
     if agent_id:
         # Check cache first
@@ -770,6 +1000,7 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
             service = _agent_cache[agent_id]
             # Set request-scoped trace on cached instance
             service.langfuse_trace = langfuse_trace
+            logger.debug(f"Using cached AgentService for agent_id={agent_id}")
             return service
 
         db = get_db_service()
@@ -802,13 +1033,15 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
             else:
                 logger.warning(f"File-based agent {agent_id} has no created_by field, using requesting user's files")
 
-        # Create new instance (without trace — trace is set per-request)
+        # Create new instance with full isolation
+        logger.info(f"Creating new AgentService for agent_id={agent_id} with data isolation")
         service = AgentService(agent_config=agent_config, user_id=service_user_id, langfuse_trace=langfuse_trace)
         
-        # Always cache the service instance
+        # Cache the service instance
         _agent_cache[agent_id] = service
         return service
 
+    # Default/global agent (legacy behavior)
     global _agent_service
     if _agent_service is None:
         _agent_service = AgentService(langfuse_trace=langfuse_trace)
