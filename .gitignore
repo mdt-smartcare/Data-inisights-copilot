@@ -16,3 +16,4 @@ __pycache__/
 /data/duckdb_files
 /data/chroma_db
 backend/embedding_test_output.txt
+/models
