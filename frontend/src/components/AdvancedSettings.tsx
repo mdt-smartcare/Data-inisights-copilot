@@ -7,6 +7,8 @@ import {
 import type { ModelInfo } from '../services/api';
 import ModelCatalog from './ModelCatalog';
 
+export type AccordionSection = 'embedding' | 'llm' | 'chunking' | 'retrieval';
+
 interface AdvancedSettingsProps {
     settings: {
         embedding: {
@@ -34,10 +36,52 @@ interface AdvancedSettingsProps {
     onChange: (settings: any) => void;
     readOnly?: boolean;
     dataSourceName?: string;
+    /** If true, only one accordion section can be open at a time. Default: false (multiple can be open) */
+    singleAccordionMode?: boolean;
+    /** Sections to open by default. Default: ['embedding'] */
+    defaultOpenSections?: AccordionSection[];
 }
 
-const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange, readOnly = false, dataSourceName = '' }) => {
+const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ 
+    settings, 
+    onChange, 
+    readOnly = false, 
+    dataSourceName = '',
+    singleAccordionMode = true,
+    defaultOpenSections = []
+}) => {
     const [localSettings, setLocalSettings] = useState(settings);
+
+    // Accordion state - tracks which sections are open
+    const [openSections, setOpenSections] = useState<Set<AccordionSection>>(
+        new Set(defaultOpenSections)
+    );
+
+    // Toggle accordion section
+    const toggleSection = useCallback((section: AccordionSection) => {
+        setOpenSections(prev => {
+            const isCurrentlyOpen = prev.has(section);
+            
+            if (singleAccordionMode) {
+                // In single mode: if clicking the open section, close it; otherwise open clicked and close others
+                if (isCurrentlyOpen) {
+                    return new Set<AccordionSection>();
+                }
+                return new Set<AccordionSection>([section]);
+            } else {
+                // In multi mode: toggle the clicked section
+                const newSet = new Set(prev);
+                if (isCurrentlyOpen) {
+                    newSet.delete(section);
+                } else {
+                    newSet.add(section);
+                }
+                return newSet;
+            }
+        });
+    }, [singleAccordionMode]);
+
+    const isSectionOpen = (section: AccordionSection) => openSections.has(section);
 
     // Vector DB Name Validation State
     const [vectorDbValidation, setVectorDbValidation] = useState<{ valid: boolean; message: string; checking: boolean }>({
@@ -270,33 +314,39 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                 {/* ============================================================ */}
                 {/* 1. Embedding Configuration                             */}
                 {/* ============================================================ */}
-                <div className="bg-white p-3 sm:p-6 rounded-lg border border-gray-200 shadow-sm">
-                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 mb-3 sm:mb-4">
-                        <div className="p-1.5 sm:p-2 bg-indigo-100 rounded-full flex-shrink-0">
-                            <svg className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                            </svg>
-                        </div>
-                        <h3 className="text-base sm:text-lg font-medium text-gray-900">Embedding Strategy</h3>
-                        {activeEmbedding && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-green-100 text-green-800">
-                                Active: {activeEmbedding.display_name}
-                            </span>
-                        )}
-                        {/* Browse Catalog Button */}
-                        {!readOnly && (
-                            <button
-                                type="button"
-                                onClick={() => setShowModelCatalog(true)}
-                                className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 transition-colors"
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                    {/* Accordion Header */}
+                    <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('embedding'); }}
+                        className="w-full p-3 sm:p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                    >
+                        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                            <div className="p-1.5 sm:p-2 bg-indigo-100 rounded-full flex-shrink-0">
+                                <svg className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                                 </svg>
-                                Browse Catalog
-                            </button>
-                        )}
-                    </div>
+                            </div>
+                            <h3 className="text-base sm:text-lg font-medium text-gray-900">Embedding Strategy</h3>
+                            {activeEmbedding && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-green-100 text-green-800">
+                                    Active: {activeEmbedding.display_name}
+                                </span>
+                            )}
+                        </div>
+                        <svg 
+                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('embedding') ? 'rotate-180' : ''}`} 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+
+                    {/* Accordion Content */}
+                    {isSectionOpen('embedding') && (
+                        <div className="p-3 sm:p-6 border-t border-gray-100">
 
                     {/* Model Catalog Modal */}
                     {showModelCatalog && (
@@ -453,26 +503,46 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                             </div>
                         </div>
                     )}
+                        </div>
+                    )}
                 </div>
 
                 {/* ============================================================ */}
                 {/* 2. LLM Configuration                                   */}
                 {/* ============================================================ */}
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                    <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-purple-100 rounded-full">
-                            <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                            </svg>
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                    {/* Accordion Header */}
+                    <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('llm'); }}
+                        className="w-full p-4 sm:p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-purple-100 rounded-full">
+                                <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-lg font-medium text-gray-900">LLM Generation Parameters</h3>
+                            {activeLLM && (
+                                <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                    Active: {activeLLM.display_name}
+                                </span>
+                            )}
                         </div>
-                        <h3 className="text-lg font-medium text-gray-900">LLM Generation Parameters</h3>
-                        {activeLLM && (
-                            <span className="ml-auto inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                                Active: {activeLLM.display_name}
-                            </span>
-                        )}
-                    </div>
+                        <svg 
+                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('llm') ? 'rotate-180' : ''}`} 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
 
+                    {/* Accordion Content */}
+                    {isSectionOpen('llm') && (
+                        <div className="p-6 border-t border-gray-100">
                     {loadingModels ? (
                         <div className="text-sm text-gray-400 flex items-center gap-2 p-3">
                             <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -616,21 +686,41 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                             </div>
                         </div>
                     )}
+                        </div>
+                    )}
                 </div>
 
                 {/* ============================================================ */}
                 {/* 3. Chunking Configuration                              */}
                 {/* ============================================================ */}
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                    <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-blue-100 rounded-full">
-                            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                            </svg>
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                    {/* Accordion Header */}
+                    <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('chunking'); }}
+                        className="w-full p-4 sm:p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-blue-100 rounded-full">
+                                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-lg font-medium text-gray-900">Chunking Strategy</h3>
                         </div>
-                        <h3 className="text-lg font-medium text-gray-900">Chunking Strategy</h3>
-                    </div>
+                        <svg 
+                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('chunking') ? 'rotate-180' : ''}`} 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
 
+                    {/* Accordion Content */}
+                    {isSectionOpen('chunking') && (
+                        <div className="p-6 border-t border-gray-100">
                     <p className="text-xs text-gray-500 mb-5 leading-relaxed">
                         Data is split using a small-to-big retrieval strategy. Large <b>Parent Chunks</b> are returned to the LLM for full context, while small <b>Child Chunks</b> are used for precise semantic vector search.
                     </p>
@@ -708,21 +798,41 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                             </div>
                         </div>
                     </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* ============================================================ */}
                 {/* 4. Retrieval Configuration                             */}
                 {/* ============================================================ */}
-                <div className="bg-white p-6 rounded-lg border border-gray-200 shadow-sm">
-                    <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-emerald-100 rounded-full">
-                            <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
+                <div className="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+                    {/* Accordion Header */}
+                    <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); toggleSection('retrieval'); }}
+                        className="w-full p-4 sm:p-6 flex items-center justify-between hover:bg-gray-50 transition-colors"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-emerald-100 rounded-full">
+                                <svg className="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-lg font-medium text-gray-900">Retrieval Parameters</h3>
                         </div>
-                        <h3 className="text-lg font-medium text-gray-900">Retrieval Parameters</h3>
-                    </div>
+                        <svg 
+                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('retrieval') ? 'rotate-180' : ''}`} 
+                            fill="none" 
+                            stroke="currentColor" 
+                            viewBox="0 0 24 24"
+                        >
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
 
+                    {/* Accordion Content */}
+                    {isSectionOpen('retrieval') && (
+                        <div className="p-6 border-t border-gray-100">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         {/* Block 1: Multi-stage retrieval stats */}
                         <div className="space-y-6">
@@ -808,6 +918,8 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ settings, onChange,
                             </div>
                         </div>
                     </div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
