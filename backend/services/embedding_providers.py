@@ -746,7 +746,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
     Generic SentenceTransformer provider for any HuggingFace model.
     
     Supports models like:
-    - all-MiniLM-L6-v2 (384 dims, fast)
+    - BAAI/bge-m3 (1024 dims, multilingual, default)
     - all-mpnet-base-v2 (768 dims, balanced)
     - instructor-xl (768 dims, instruction-tuned)
     
@@ -755,7 +755,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
     
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = "BAAI/bge-m3",
         batch_size: int = 128,
         normalize: bool = True,
         models_dir: Optional[str] = None,

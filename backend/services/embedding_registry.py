@@ -53,7 +53,7 @@ class EmbeddingRegistry:
             "description": "Generic HuggingFace models (local)",
             "requires_api_key": False,
             "default_config": {
-                "model_name": "all-MiniLM-L6-v2",
+                "model_name": "BAAI/bge-m3",
                 "batch_size": 128
             }
         }
@@ -288,7 +288,7 @@ class EmbeddingProcessorRegistry:
         """Unregister a processor."""
         with self._lock:
             if job_id in self._processors:
-                del self._processors[job_id]
+                del self._processors
                 
     def get_processor(self, job_id: str) -> Optional[Any]:
         """Get an active processor by job_id."""
