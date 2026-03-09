@@ -16,7 +16,6 @@ Example:
 
 import asyncio
 import hashlib
-import logging
 import pandas as pd
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, AsyncIterator, Tuple
@@ -25,7 +24,9 @@ from datetime import datetime
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-logger = logging.getLogger(__name__)
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -173,22 +174,43 @@ class FileRAGPipeline:
             # Build column list for query
             columns_sql = ", ".join([id_column] + text_columns)
             
-            # Stream in batches using OFFSET/LIMIT
-            offset = 0
+            # Stream in batches using Keyset Pagination instead of OFFSET/LIMIT
+            last_cursor_val = None
             processed = 0
             
-            while offset < total_rows:
-                query = f"""
-                    SELECT {columns_sql}
-                    FROM {table_name}
-                    LIMIT {batch_size}
-                    OFFSET {offset}
-                """
+            while processed < total_rows:
+                if last_cursor_val is None:
+                    query = f"""
+                        SELECT {columns_sql}
+                        FROM {table_name}
+                        ORDER BY {id_column}
+                        LIMIT {batch_size}
+                    """
+                else:
+                    if isinstance(last_cursor_val, str):
+                        query = f"""
+                            SELECT {columns_sql}
+                            FROM {table_name}
+                            WHERE {id_column} > '{last_cursor_val}'
+                            ORDER BY {id_column}
+                            LIMIT {batch_size}
+                        """
+                    else:
+                        query = f"""
+                            SELECT {columns_sql}
+                            FROM {table_name}
+                            WHERE {id_column} > {last_cursor_val}
+                            ORDER BY {id_column}
+                            LIMIT {batch_size}
+                        """
                 
                 # OPTIMIZATION: Use fetchdf() instead of fetchall() + row-by-row loop
                 df = conn.execute(query).fetchdf()
                 if df.empty:
                     break
+                    
+                # Update cursor
+                last_cursor_val = df.iloc[-1][id_column]
                 
                 # Single timestamp for entire batch (not per-row datetime.now())
                 batch_timestamp = datetime.now().isoformat()
@@ -241,7 +263,6 @@ class FileRAGPipeline:
                         ))
                 
                 processed += len(df)
-                offset += batch_size
                 
                 if on_progress:
                     on_progress(processed, total_rows)
@@ -349,20 +370,22 @@ class FileRAGPipeline:
     
     async def embed_chunks(
         self,
+        table_name: str,
         chunks: List[ChunkedDocument],
         batch_size: int = 128,
         on_progress: Optional[callable] = None,
     ) -> List[Tuple[str, List[float]]]:
         """
-        Embed chunks using local BGE-M3 model.
+        Embed chunks using local BGE-M3 model or push to Celery.
         
         Args:
+            table_name: Table being processed
             chunks: Chunks to embed
             batch_size: Embedding batch size
             on_progress: Callback(processed, total)
             
         Returns:
-            List of (chunk_id, embedding_vector) tuples
+            List of (chunk_id, embedding_vector) tuples, or empty list if using Celery
         """
         if not chunks:
             return []
@@ -370,7 +393,37 @@ class FileRAGPipeline:
         results = []
         total = len(chunks)
         
-        logger.info(f"Embedding {total:,} chunks with BGE-M3...")
+        import os
+        use_celery = os.getenv('USE_CELERY_FOR_EMBEDDINGS', 'false').lower() == 'true'
+        
+        if use_celery:
+            from backend.pipeline.workers.embedding_worker import process_embedding_batch
+            import time
+            batch_run_id = f"job_{int(time.time()*100)}"
+            logger.info(f"Dispatching {total:,} chunks to Celery queue in batches of {batch_size}...")
+            
+            for i in range(0, total, batch_size):
+                batch = chunks[i:i + batch_size]
+                serialized = [
+                    {
+                        "chunk_id": c.chunk_id,
+                        "content": c.content,
+                        "parent_id": c.parent_id,
+                        "metadata": c.metadata,
+                        "is_parent": c.is_parent
+                    } for c in batch
+                ]
+                # Push array of dicts to Redis queue for Celery worker
+                process_embedding_batch.delay(batch_run_id, table_name, serialized)
+                
+                if on_progress:
+                    on_progress(min(i + batch_size, total), total)
+                await asyncio.sleep(0)
+            
+            logger.info("Successfully dispatched all chunk batches to Celery.")
+            return []  # Return empty so caller skips synchronous DB insertion
+            
+        logger.info(f"Embedding {total:,} chunks synchronously with BGE-M3...")
         
         for i in range(0, total, batch_size):
             batch = chunks[i:i + batch_size]
@@ -459,6 +512,7 @@ class FileRAGPipeline:
                 on_progress("embedding", 0, len(all_child_chunks), "Embedding child chunks...")
             
             embeddings = await self.embed_chunks(
+                table_name=table_name,
                 chunks=all_child_chunks,
                 on_progress=lambda curr, total: on_progress("embedding", curr, total, f"Embedded {curr:,}/{total:,} chunks") if on_progress else None,
             )
@@ -521,34 +575,36 @@ class FileRAGPipeline:
         docstore.mset(parent_data)
         logger.info(f"Stored {len(parent_data)} parent documents in {docstore_path}")
         
-        # Store child embeddings in ChromaDB
+        # Store child embeddings in Vector DB if not using Celery
+        if not embeddings:
+            logger.info("Skipping synchronous vector DB storage (using Celery or no vectors generated)")
+            return
+            
         try:
-            import chromadb
-            from chromadb.config import Settings
+            from backend.pipeline.vector_stores.factory import VectorStoreFactory
+            from backend.services.settings_service import get_settings_service, SettingCategory
             
-            chroma_path = user_dir / "chroma_db"
-            chroma_client = chromadb.PersistentClient(
-                path=str(chroma_path),
-                settings=Settings(anonymized_telemetry=False),
-            )
-            
-            collection_name = f"file_rag_{table_name}"
-            
-            # Delete existing collection if exists
+            # Get provider from settings
             try:
-                chroma_client.delete_collection(collection_name)
+                settings_service = get_settings_service()
+                vs_settings = settings_service.get_category_settings_raw(SettingCategory.VECTOR_STORE)
+                provider_type = vs_settings.get("type", "qdrant")
+            except Exception:
+                provider_type = "qdrant"
+                
+            collection_name = f"file_rag_{table_name}"
+            vector_store = VectorStoreFactory.get_provider(provider_type, collection_name=collection_name)
+            
+            # Delete existing collection if exists for a full refresh
+            try:
+                await vector_store.delete_collection()
             except Exception:
                 pass
-            
-            collection = chroma_client.create_collection(
-                name=collection_name,
-                metadata={"hnsw:space": "cosine"},
-            )
-            
+                
             # Build embedding lookup
             embedding_map = {chunk_id: emb for chunk_id, emb in embeddings}
             
-            # Batch insert to ChromaDB
+            # Upsert in batches
             batch_size = 1000
             for i in range(0, len(child_chunks), batch_size):
                 batch = child_chunks[i:i + batch_size]
@@ -558,17 +614,17 @@ class FileRAGPipeline:
                 metadatas = [c.metadata for c in batch]
                 embs = [embedding_map[c.chunk_id] for c in batch]
                 
-                collection.add(
+                await vector_store.upsert_batch(
                     ids=ids,
                     documents=documents,
-                    metadatas=metadatas,
                     embeddings=embs,
+                    metadatas=metadatas
                 )
             
-            logger.info(f"Stored {len(child_chunks)} child embeddings in ChromaDB collection: {collection_name}")
+            logger.info(f"Stored {len(child_chunks)} child embeddings in {provider_type} collection: {collection_name}")
             
-        except ImportError:
-            logger.warning("ChromaDB not installed, skipping vector storage")
+        except Exception as e:
+            logger.error(f"Failed to store vectors in DB: {e}", exc_info=True)
     
     async def semantic_search(
         self,

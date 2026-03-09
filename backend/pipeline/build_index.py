@@ -1,4 +1,3 @@
-import logging
 import pickle
 import os
 import time
@@ -7,11 +6,11 @@ from datetime import datetime, timedelta
 from typing import List, Dict
 from langchain_core.documents import Document
 from langchain_core.stores import BaseStore
-from langchain_chroma import Chroma
-import chromadb
 from tqdm import tqdm
 
-logger = logging.getLogger(__name__)
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 class ProgressTracker:
     """Track and display progress for index building with checkpoints."""
@@ -105,24 +104,35 @@ class ProgressTracker:
         if os.path.exists(self.checkpoint_file):
             os.remove(self.checkpoint_file)
 
-def build_advanced_chroma_index(
+def build_advanced_vector_index(
     child_docs: List[Document],
     docstore: BaseStore,
     embedding_function,
     config: dict
 ):
-    chroma_path = config['vector_store']['chroma_path']
     collection_name = config['vector_store']['collection_name']
     batch_size = config['embedding'].get('batch_size', 128)
     
     total_docs = len(child_docs)
-    logger.info(f"Building Chroma index at '{chroma_path}' with {total_docs:,} documents.")
+    logger.info(f"Building Vector Index with {total_docs:,} documents.")
     
-    # Create directory
-    os.makedirs(chroma_path, exist_ok=True)
+    # Initialize VectorStore
+    from backend.pipeline.vector_stores.factory import VectorStoreFactory
+    from backend.services.settings_service import get_settings_service, SettingCategory
     
-    # Initialize progress tracker
-    progress = ProgressTracker(total_docs, checkpoint_file=f"{chroma_path}/.build_progress.json")
+    try:
+        settings_service = get_settings_service()
+        vs_settings = settings_service.get_category_settings_raw(SettingCategory.VECTOR_STORE)
+        provider_type = vs_settings.get("type", "qdrant")
+    except Exception:
+        provider_type = "qdrant"
+        
+    vector_store = VectorStoreFactory.get_provider(provider_type, collection_name=collection_name)
+    
+    # Progress tracker doesn't need a specific chroma path anymore, put it in data dir
+    import os
+    os.makedirs("./data/indexes", exist_ok=True)
+    progress = ProgressTracker(total_docs, checkpoint_file=f"./data/indexes/.build_progress.json")
     
     # Check if resuming
     start_idx = progress.processed_docs
@@ -131,56 +141,20 @@ def build_advanced_chroma_index(
         remaining_docs = child_docs[start_idx:]
     else:
         remaining_docs = child_docs
-    
-    # Disable telemetry
-    client_settings = chromadb.Settings(anonymized_telemetry=False)
-    
-    # Initialize or load existing collection
-    client = chromadb.PersistentClient(path=chroma_path, settings=client_settings)
-    
-    try:
-        collection = client.get_collection(name=collection_name)
-        logger.info(f"Found existing collection with {collection.count()} documents")
-    except:
-        collection = None
-        logger.info("Creating new collection")
-    
-    # Print initial status
+        
     print("\n" + "="*80)
     print(" STARTING INDEX BUILD")
     print("="*80)
-    print(f" Output Path: {chroma_path}")
+    print(f" Provider: {provider_type}")
     print(f" Total Documents: {total_docs:,}")
     print(f" Batch Size: {batch_size}")
     print(f" Starting Progress: {progress.get_percentage():.1f}%")
     print("="*80 + "\n")
     
-    # Process in batches with progress bar
     num_batches = (len(remaining_docs) + batch_size - 1) // batch_size
     
-    # OPTIMIZATION: Create ONE Chroma vector_store instance and reuse for all batches.
-    # Previously, each batch created a new Chroma() wrapper — re-validating the
-    # connection and re-wrapping the embedding function on every iteration.
-    if collection is None:
-        # First batch bootstraps the collection
-        first_batch = remaining_docs[:batch_size]
-        Chroma.from_documents(
-            documents=first_batch,
-            embedding=embedding_function,
-            collection_name=collection_name,
-            persist_directory=chroma_path,
-            client_settings=client_settings
-        )
-        collection = client.get_collection(name=collection_name)
-        remaining_docs = remaining_docs[batch_size:]
-        progress.update(len(first_batch))
-    
-    # Single reusable Chroma wrapper for all subsequent batches
-    vector_store = Chroma(
-        client=client,
-        collection_name=collection_name,
-        embedding_function=embedding_function
-    )
+    import asyncio
+    import uuid
     
     with tqdm(total=len(remaining_docs), 
               desc="Building Index",
@@ -192,8 +166,20 @@ def build_advanced_chroma_index(
             batch = remaining_docs[i:i+batch_size]
             batch_num = i // batch_size + 1
             
-            # Add batch using the reusable vector_store instance
-            vector_store.add_documents(batch)
+            documents = [doc.page_content for doc in batch]
+            metadatas = [doc.metadata for doc in batch]
+            ids = [doc.metadata.get("_rag_doc_id", doc.metadata.get("doc_id", str(uuid.uuid4()))) for doc in batch]
+            
+            embeddings = embedding_function.embed_documents(documents)
+            
+            asyncio.run(
+                vector_store.upsert_batch(
+                    ids=ids,
+                    documents=documents,
+                    embeddings=embeddings,
+                    metadatas=metadatas
+                )
+            )
             
             # Update progress
             progress.update(len(batch))

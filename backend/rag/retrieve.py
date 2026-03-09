@@ -13,12 +13,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 import chromadb
 from langchain_core.retrievers import BaseRetriever
 from pydantic import Field, BaseModel
-import logging
 import pickle
 from dotenv import load_dotenv
-from sentence_transformers import CrossEncoder 
+from sentence_transformers import CrossEncoder
 
-logger = logging.getLogger(__name__)
+from backend.core.logging import get_logger
+
+logger = get_logger(__name__)
 load_dotenv()
 
 # =============================================================================
@@ -250,19 +251,29 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         # Expand the query with medical synonyms
         expanded_query = self._expand_query(query)
         
-        # Save original search kwargs to restore later
-        original_kwargs = self.child_chunk_retriever.search_kwargs.copy()
+        # --- 1. DENSE (small-to-big) RETRIEVAL WITH DYNAMIC SCORE PRUNING ---
+        dense_results = self.vector_store.similarity_search_with_score(expanded_query, k=50, filter=filter)
         
-        if filter:
-            # We must pass the Chromadb filter into the dense retriever search_kwargs
-            self.child_chunk_retriever.search_kwargs["filter"] = filter
-            logger.info(f"Applied metadata filter to dense retrieval: {filter}")
-
-        try:
-            # --- 1. DENSE (small-to-big) RETRIEVAL ---
-            child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=run_manager)
-        finally:
-            self.child_chunk_retriever.search_kwargs = original_kwargs
+        pruned_dense_docs = []
+        if dense_results:
+            scores = [s for _, s in dense_results]
+            cliff_idx = len(dense_results)
+            min_candidates = min(5, len(dense_results))
+            
+            for i in range(min_candidates, len(dense_results) - 1):
+                s1, s2 = scores[i-1], scores[i]
+                diff = abs(s1 - s2)
+                denom = max(abs(s1), abs(s2), 1e-5)
+                relative_drop = diff / denom
+                
+                if relative_drop > 0.15:  # 15% sudden drop in score
+                    cliff_idx = i
+                    logger.info(f"Dynamic Pruning: Found score cliff at index {cliff_idx}. Pruning {len(dense_results) - cliff_idx} candidates.")
+                    break
+                    
+            child_chunks = [doc for doc, _ in dense_results[:cliff_idx]]
+        else:
+            child_chunks = []
 
         # Get unique parent IDs from child chunks
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
@@ -298,13 +309,37 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
 
     def _load_vector_store(self):
         """Load the vector store from disk."""
-        client_settings = chromadb.Settings(anonymized_telemetry=False)
-        return Chroma(
-            persist_directory=self.config['vector_store']['chroma_path'],
-            embedding_function=self.embedding_function,
-            collection_name=self.config['vector_store']['collection_name'],
-            client_settings=client_settings
-        )
+        from backend.services.settings_service import get_settings_service, SettingCategory
+        try:
+            settings_service = get_settings_service()
+            vs_settings = settings_service.get_category_settings_raw(SettingCategory.VECTOR_STORE)
+            provider_type = vs_settings.get("type", "qdrant")
+        except Exception:
+            provider_type = "qdrant"
+
+        if provider_type == "qdrant":
+            from langchain_qdrant import QdrantVectorStore
+            from qdrant_client import QdrantClient
+            import os
+            qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+            collection_name = self.config['vector_store']['collection_name']
+            
+            client = QdrantClient(url=qdrant_url)
+            
+            # Avoid direct creation here if possible, but LangChain QdrantWrapper can do it setup
+            return QdrantVectorStore(
+                client=client,
+                collection_name=collection_name,
+                embedding=self.embedding_function
+            )
+        else:
+            client_settings = chromadb.Settings(anonymized_telemetry=False)
+            return Chroma(
+                persist_directory=self.config['vector_store']['chroma_path'],
+                embedding_function=self.embedding_function,
+                collection_name=self.config['vector_store']['collection_name'],
+                client_settings=client_settings
+            )
 
     def _load_docstore(self):
         """Load the parent document store from disk with module remapping."""
@@ -332,8 +367,22 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         k_final = top_k or self.config.get('retriever', {}).get('top_k_final', 5)
         expanded_query = self._expand_query(query)
         
-        # --- 1. DENSE (small-to-big) RETRIEVAL ---
-        child_chunks = self.child_chunk_retriever._get_relevant_documents(expanded_query, run_manager=None)
+        # --- 1. DENSE (small-to-big) RETRIEVAL WITH DYNAMIC SCORE PRUNING ---
+        dense_results = self.vector_store.similarity_search_with_score(expanded_query, k=50)
+        if dense_results:
+            scores = [s for _, s in dense_results]
+            cliff_idx = len(dense_results)
+            min_candidates = min(5, len(dense_results))
+            for i in range(min_candidates, len(dense_results) - 1):
+                diff = abs(scores[i-1] - scores[i])
+                denom = max(abs(scores[i-1]), abs(scores[i]), 1e-5)
+                if diff / denom > 0.15:
+                    cliff_idx = i
+                    break
+            child_chunks = [doc for doc, _ in dense_results[:cliff_idx]]
+        else:
+            child_chunks = []
+            
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
         dense_parent_docs = self.docstore.mget(parent_ids)
         dense_parent_docs = [doc for doc in dense_parent_docs if doc is not None]

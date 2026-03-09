@@ -268,13 +268,47 @@ class VectorStoreService:
             return False
 
 
-@lru_cache()
+# Cache for vector store instances by agent_id
+_vector_store_cache: Dict[Optional[int], VectorStoreService] = {}
+
+
 def get_vector_store(agent_id: Optional[int] = None) -> VectorStoreService:
     """
-    Get cached vector store service instance.
-    Cached by agent_id to support multi-tenant configurations while avoiding redundant loading.
+    Get cached vector store service instance with agent-specific isolation.
+    
+    SECURITY: Each agent has its own vector collection (vectorDbName).
+    Agent 1 cannot access Agent 2's RAG data.
+    
+    Args:
+        agent_id: Agent ID for isolation. None = global/default collection.
     
     Returns:
         Context-aware vector store service
     """
-    return VectorStoreService(agent_id=agent_id)
+    if agent_id not in _vector_store_cache:
+        logger.info(f"Creating new VectorStoreService for agent_id={agent_id}")
+        _vector_store_cache[agent_id] = VectorStoreService(agent_id=agent_id)
+    return _vector_store_cache[agent_id]
+
+
+def clear_vector_store_cache(agent_id: Optional[int] = None):
+    """
+    Clear cached vector store instances to force re-initialization.
+    
+    Use this when:
+    - Agent RAG configuration changes
+    - Vector DB is rebuilt
+    - Security/access rules change
+    
+    Args:
+        agent_id: Specific agent to clear, or None to clear all
+    """
+    global _vector_store_cache
+    
+    if agent_id is not None:
+        if agent_id in _vector_store_cache:
+            del _vector_store_cache[agent_id]
+            logger.info(f"Cleared vector store cache for agent_id={agent_id}")
+    else:
+        _vector_store_cache.clear()
+        logger.info("Cleared all vector store caches")
