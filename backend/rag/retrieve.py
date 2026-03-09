@@ -3,17 +3,15 @@ from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
 from collections import OrderedDict
 import hashlib
+import os
 from concurrent.futures import ThreadPoolExecutor
 from langchain_core.documents import Document
 from langchain_community.retrievers.bm25 import BM25Retriever
-from langchain_chroma import Chroma
 from backend.services.embeddings import get_embedding_model
 from backend.rag.pickle_utils import load_with_remapping
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-import chromadb
 from langchain_core.retrievers import BaseRetriever
 from pydantic import Field, BaseModel
-import pickle
 from dotenv import load_dotenv
 from sentence_transformers import CrossEncoder
 
@@ -94,8 +92,16 @@ def _rerank_with_cache(
     # Return top-k documents
     return [merged_docs[idx] for idx, _ in indexed_scores[:k_final]]
 
-# RELEVANT_TABLES removed for generic white-labeling
-# The system now indexes all documents found in the docstore.
+
+def _get_vector_store_type() -> str:
+    """Get configured vector store type from settings."""
+    try:
+        from backend.services.settings_service import get_settings_service, SettingCategory
+        settings_service = get_settings_service()
+        vs_settings = settings_service.get_category_settings_raw(SettingCategory.VECTOR_STORE)
+        return vs_settings.get("type", "qdrant").strip('"')
+    except Exception:
+        return "qdrant"
 
 
 class AdvancedRAGRetriever(BaseRetriever, BaseModel):
@@ -108,6 +114,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     sparse_retriever: Any = Field(default=None)
     reranker: Any = Field(default=None) 
     _bm25_initialized: bool = False  # Task 8: lazy BM25
+    _vector_store_type: str = "qdrant"
     
     # Synonyms now sourced from configuration or empty by default
     medical_synonyms: Dict[str, List[str]] = Field(default_factory=dict)
@@ -116,6 +123,10 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         """Initialize the hybrid retriever with both dense and sparse components."""
         super().__init__(**kwargs)
         self.config = config
+        
+        # Get vector store type from settings
+        self._vector_store_type = _get_vector_store_type()
+        logger.info(f"Initializing RAG Retriever with vector store type: {self._vector_store_type}")
         
         # Resolve paths in config to absolute paths
         self._resolve_config_paths()
@@ -148,15 +159,15 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         backend_root = Path(__file__).parent.parent
         
         # Resolve chroma_path
-        chroma_path = self.config['vector_store']['chroma_path']
-        if chroma_path.startswith('./'):
+        chroma_path = self.config['vector_store'].get('chroma_path', '')
+        if chroma_path and chroma_path.startswith('./'):
             resolved_path = (backend_root / chroma_path.lstrip('./')).resolve()
             self.config['vector_store']['chroma_path'] = str(resolved_path)
-            logger.info(f"Resolved chroma_path to: {resolved_path}")
+            logger.info(f"Resolved storage path to: {resolved_path}")
         
         # Resolve model_path
-        model_path = self.config['embedding']['model_path']
-        if model_path.startswith('./'):
+        model_path = self.config['embedding'].get('model_path', '')
+        if model_path and model_path.startswith('./'):
             resolved_path = (backend_root / model_path.lstrip('./')).resolve()
             self.config['embedding']['model_path'] = str(resolved_path)
             logger.info(f"Resolved model_path to: {resolved_path}")
@@ -308,38 +319,45 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         return final_docs
 
     def _load_vector_store(self):
-        """Load the vector store from disk."""
-        from backend.services.settings_service import get_settings_service, SettingCategory
-        try:
-            settings_service = get_settings_service()
-            vs_settings = settings_service.get_category_settings_raw(SettingCategory.VECTOR_STORE)
-            provider_type = vs_settings.get("type", "qdrant")
-        except Exception:
-            provider_type = "qdrant"
-
-        if provider_type == "qdrant":
-            from langchain_qdrant import QdrantVectorStore
-            from qdrant_client import QdrantClient
-            import os
-            qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
-            collection_name = self.config['vector_store']['collection_name']
-            
-            client = QdrantClient(url=qdrant_url)
-            
-            # Avoid direct creation here if possible, but LangChain QdrantWrapper can do it setup
-            return QdrantVectorStore(
-                client=client,
-                collection_name=collection_name,
-                embedding=self.embedding_function
-            )
-        else:
-            client_settings = chromadb.Settings(anonymized_telemetry=False)
-            return Chroma(
-                persist_directory=self.config['vector_store']['chroma_path'],
-                embedding_function=self.embedding_function,
-                collection_name=self.config['vector_store']['collection_name'],
-                client_settings=client_settings
-            )
+        """
+        Load the vector store using VectorStoreFactory pattern.
+        Supports Qdrant (primary) and ChromaDB (fallback).
+        """
+        collection_name = self.config['vector_store']['collection_name']
+        
+        if self._vector_store_type == "qdrant":
+            try:
+                from langchain_qdrant import QdrantVectorStore
+                from qdrant_client import QdrantClient
+                
+                qdrant_url = os.getenv("QDRANT_URL", "http://localhost:6333")
+                logger.info(f"Connecting to Qdrant at {qdrant_url} for collection: {collection_name}")
+                
+                client = QdrantClient(url=qdrant_url)
+                
+                return QdrantVectorStore(
+                    client=client,
+                    collection_name=collection_name,
+                    embedding=self.embedding_function
+                )
+            except Exception as e:
+                logger.warning(f"Failed to connect to Qdrant: {e}. Falling back to ChromaDB.")
+                self._vector_store_type = "chroma"
+        
+        # Fallback to ChromaDB
+        import chromadb
+        from langchain_chroma import Chroma
+        
+        chroma_path = self.config['vector_store'].get('chroma_path', './data/indexes/default')
+        logger.info(f"Using ChromaDB at {chroma_path} for collection: {collection_name}")
+        
+        client_settings = chromadb.Settings(anonymized_telemetry=False)
+        return Chroma(
+            persist_directory=chroma_path,
+            embedding_function=self.embedding_function,
+            collection_name=collection_name,
+            client_settings=client_settings
+        )
 
     def _load_docstore(self):
         """Load the parent document store from disk with module remapping."""
