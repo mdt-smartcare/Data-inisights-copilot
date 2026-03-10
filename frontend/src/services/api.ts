@@ -48,17 +48,12 @@ apiClient.interceptors.request.use(
 
     try {
       // Get current access token from OIDC service
+      // Note: getAccessToken() checks expiration and attempts renewal if needed
       const accessToken = await oidcService.getAccessToken();
 
       if (accessToken) {
         // Add Bearer token to all authenticated requests
         config.headers.Authorization = `Bearer ${accessToken}`;
-      } else {
-        // No token available, try silent renewal
-        const user = await oidcService.renewToken();
-        if (user?.access_token) {
-          config.headers.Authorization = `Bearer ${user.access_token}`;
-        }
       }
     } catch (error) {
       console.error('Error getting access token:', error);
@@ -93,11 +88,12 @@ apiClient.interceptors.response.use(
         return Promise.reject(error);
       }
 
-      // Check if token is actually expired before trying renewal
+      // Check if token is expired and we can try renewal
       const oidcUser = await oidcService.getUser();
       const config = error.config as AxiosRequestConfig & { _retry?: boolean };
 
-      if (oidcUser?.expired && config && !config._retry) {
+      // Only try renewal once, and only if we have a refresh token
+      if (oidcUser?.refresh_token && config && !config._retry) {
         config._retry = true; // Prevent infinite retry
         try {
           const user = await oidcService.renewToken();
@@ -106,13 +102,21 @@ apiClient.interceptors.response.use(
             config.headers.Authorization = `Bearer ${user.access_token}`;
             return apiClient.request(config);
           }
-        } catch (renewError) {
-          console.error('Token renewal failed:', renewError);
+        } catch {
+          // Renewal failed - redirect to login
+          console.error('Token renewal failed, redirecting to login');
+          await oidcService.removeUser();
+          window.location.href = '/login?error=TOKEN_EXPIRED';
+          return Promise.reject(error);
         }
       }
 
-      // Token valid but still 401 - let the page handle the error
-      // Don't auto-redirect; could be a permission issue
+      // No refresh token or still failing - redirect to login
+      if (!oidcUser || oidcUser.expired) {
+        await oidcService.removeUser();
+        window.location.href = '/login?error=TOKEN_EXPIRED';
+        return Promise.reject(error);
+      }
     }
     return Promise.reject(error);
   }

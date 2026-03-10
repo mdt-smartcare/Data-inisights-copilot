@@ -54,6 +54,7 @@ transformers==4.57.1
 tokenizers==0.22.1
 safetensors==0.6.2
 huggingface-hub==0.36.0
+qdrant_client==1.17.0
 
 # ============================================
 # Tracing & Monitoring

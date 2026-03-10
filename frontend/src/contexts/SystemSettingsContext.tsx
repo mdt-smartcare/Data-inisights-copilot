@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { getSystemSettings } from '../services/api';
+import { useAuth } from './AuthContext';
 
 /**
  * Advanced settings structure that matches the backend system settings.
@@ -104,6 +105,7 @@ const FALLBACK_EMBEDDING_JOB_SETTINGS: EmbeddingJobSettings = {
 const SystemSettingsContext = createContext<SystemSettingsContextType | null>(null);
 
 export function SystemSettingsProvider({ children }: { children: ReactNode }) {
+    const { isAuthenticated, isLoading: authLoading } = useAuth();
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(FALLBACK_SETTINGS);
     const [embeddingJobSettings, setEmbeddingJobSettings] = useState<EmbeddingJobSettings>(FALLBACK_EMBEDDING_JOB_SETTINGS);
     const [isLoading, setIsLoading] = useState(true);
@@ -201,10 +203,15 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
-    // Load settings on mount
+    // Load settings only when authenticated
     useEffect(() => {
-        refreshSettings();
-    }, [refreshSettings]);
+        if (!authLoading && isAuthenticated) {
+            refreshSettings();
+        } else if (!authLoading && !isAuthenticated) {
+            // Not authenticated - use fallback settings, stop loading
+            setIsLoading(false);
+        }
+    }, [refreshSettings, isAuthenticated, authLoading]);
 
     // Helper to get embedding modal defaults in the expected format
     const getEmbeddingModalDefaults = useCallback(() => {

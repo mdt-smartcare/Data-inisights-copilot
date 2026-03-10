@@ -56,10 +56,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const initAuth = async () => {
       try {
         const currentOidcUser = await oidcService.getUser();
-        if (currentOidcUser && !currentOidcUser.expired) {
-          setOidcUser(currentOidcUser);
-          const userProfile = await fetchUserProfile();
-          setUser(userProfile);
+        if (currentOidcUser) {
+          // Token exists - check if it's still valid
+          if (!currentOidcUser.expired) {
+            // Token is valid, use it
+            setOidcUser(currentOidcUser);
+            const userProfile = await fetchUserProfile();
+            setUser(userProfile);
+          } else if (currentOidcUser.refresh_token) {
+            // Access token expired but we have a refresh token - try to renew
+            console.log('Access token expired, attempting renewal...');
+            const renewedUser = await oidcService.renewToken();
+            if (renewedUser && !renewedUser.expired) {
+              setOidcUser(renewedUser);
+              const userProfile = await fetchUserProfile();
+              setUser(userProfile);
+            } else {
+              // Renewal failed, clear the stale token
+              console.log('Token renewal failed, clearing session');
+              await oidcService.removeUser();
+            }
+          } else {
+            // Token expired and no refresh token - clear it
+            console.log('Token expired with no refresh token, clearing session');
+            await oidcService.removeUser();
+          }
         }
       } catch (error) {
         console.error('Failed to restore OIDC session:', error);
@@ -75,8 +96,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     const handleUserLoaded = async (loadedUser: OidcUser) => {
       setOidcUser(loadedUser);
-      const userProfile = await fetchUserProfile();
-      setUser(userProfile);
+      // Only fetch profile on initial login, not on token renewal
+      // User profile doesn't change just because token was refreshed
+      setUser(currentUser => {
+        if (!currentUser) {
+          // No user yet - this is initial login, fetch profile
+          fetchUserProfile().then(profile => setUser(profile));
+        }
+        return currentUser;
+      });
     };
 
     const handleUserUnloaded = () => {
@@ -86,24 +114,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const handleSilentRenewError = (error: Error) => {
       console.error('Silent renew error:', error);
+      // If renewal fails due to iframe timeout, the token might still be usable
+      // Don't clear the session here - let the API interceptor handle 401s
+    };
+
+    const handleAccessTokenExpiring = () => {
+      console.log('Access token expiring soon, automatic renewal in progress...');
+    };
+
+    const handleAccessTokenExpired = async () => {
+      console.log('Access token expired');
+      // Token expired - automatic renewal should have kicked in
+      // If we get here, renewal may have failed
     };
 
     userManager.events.addUserLoaded(handleUserLoaded);
     userManager.events.addUserUnloaded(handleUserUnloaded);
     userManager.events.addSilentRenewError(handleSilentRenewError);
+    userManager.events.addAccessTokenExpiring(handleAccessTokenExpiring);
+    userManager.events.addAccessTokenExpired(handleAccessTokenExpired);
 
     return () => {
       userManager.events.removeUserLoaded(handleUserLoaded);
       userManager.events.removeUserUnloaded(handleUserUnloaded);
       userManager.events.removeSilentRenewError(handleSilentRenewError);
+      userManager.events.removeAccessTokenExpiring(handleAccessTokenExpiring);
+      userManager.events.removeAccessTokenExpired(handleAccessTokenExpired);
     };
   }, []);
 
   /**
-   * Initiate OIDC login flow - redirects to Keycloak
+   * Initiate OIDC login flow via new tab
+   * Opens Keycloak login in a new tab and updates state after success
    */
   const login = useCallback(async () => {
-    await oidcService.login();
+    const oidcUserResult = await oidcService.login();
+    setOidcUser(oidcUserResult);
+    const userProfile = await fetchUserProfile();
+    setUser(userProfile);
   }, []);
 
   /**
