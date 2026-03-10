@@ -104,6 +104,78 @@ def _get_vector_store_type() -> str:
         return "qdrant"
 
 
+def _convert_filter_to_qdrant(filter_dict: Optional[Dict[str, Any]], vector_store_type: str) -> Optional[Any]:
+    """
+    Convert MongoDB-style filter to Qdrant filter format.
+    
+    Args:
+        filter_dict: MongoDB-style filter, e.g., {"patient_id": {"$in": ["123", "456"]}}
+        vector_store_type: The type of vector store ("qdrant" or "chroma")
+    
+    Returns:
+        Qdrant Filter object for qdrant, or original dict for chroma
+    """
+    if filter_dict is None:
+        return None
+    
+    # For ChromaDB, return the filter as-is (it supports MongoDB-style syntax)
+    if vector_store_type != "qdrant":
+        return filter_dict
+    
+    # For Qdrant, convert MongoDB-style to Qdrant Filter format
+    try:
+        from qdrant_client import models
+        
+        conditions = []
+        
+        for field, condition in filter_dict.items():
+            if isinstance(condition, dict):
+                # Handle $in operator
+                if "$in" in condition:
+                    values = condition["$in"]
+                    # Filter out None values and convert to strings
+                    valid_values = [str(v) for v in values if v is not None and str(v).lower() != 'none']
+                    if valid_values:
+                        # Use MatchAny for $in operator
+                        conditions.append(
+                            models.FieldCondition(
+                                key=f"metadata.{field}",
+                                match=models.MatchAny(any=valid_values)
+                            )
+                        )
+                # Handle $eq operator
+                elif "$eq" in condition:
+                    value = condition["$eq"]
+                    if value is not None:
+                        conditions.append(
+                            models.FieldCondition(
+                                key=f"metadata.{field}",
+                                match=models.MatchValue(value=str(value))
+                            )
+                        )
+            else:
+                # Direct value comparison
+                if condition is not None:
+                    conditions.append(
+                        models.FieldCondition(
+                            key=f"metadata.{field}",
+                            match=models.MatchValue(value=str(condition))
+                        )
+                    )
+        
+        if not conditions:
+            return None
+        
+        return models.Filter(must=conditions)
+        
+    except ImportError:
+        logger.warning("qdrant_client not available, returning None filter")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to convert filter to Qdrant format: {e}")
+        return None
+
+
 class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     config: Dict = Field(default_factory=dict)
     embedding_function: Any = Field(default=None)
@@ -160,7 +232,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         
         # Resolve chroma_path
         chroma_path = self.config['vector_store'].get('chroma_path', '')
-        if chroma_path and chroma_path.startswith('./'):
+        if (chroma_path and chroma_path.startswith('./')):
             resolved_path = (backend_root / chroma_path.lstrip('./')).resolve()
             self.config['vector_store']['chroma_path'] = str(resolved_path)
             logger.info(f"Resolved storage path to: {resolved_path}")
@@ -263,9 +335,14 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         expanded_query = self._expand_query(query)
         
         # --- 1. DENSE (small-to-big) RETRIEVAL WITH DYNAMIC SCORE PRUNING ---
-        dense_results = self.vector_store.similarity_search_with_score(expanded_query, k=50, filter=filter)
+        try:
+            qdrant_filter = _convert_filter_to_qdrant(filter, self._vector_store_type)
+            dense_results = self.vector_store.similarity_search_with_score(expanded_query, k=50, filter=qdrant_filter)
+        except Exception as e:
+            logger.error(f"Dense retrieval failed: {e}. Continuing with sparse retrieval only.")
+            dense_results = []
         
-        pruned_dense_docs = []
+        child_chunks = []
         if dense_results:
             scores = [s for _, s in dense_results]
             cliff_idx = len(dense_results)
@@ -283,8 +360,6 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
                     break
                     
             child_chunks = [doc for doc, _ in dense_results[:cliff_idx]]
-        else:
-            child_chunks = []
 
         # Get unique parent IDs from child chunks
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
@@ -374,11 +449,19 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
             logger.error(f"Failed to load docstore: {e}", exc_info=True)
             raise
             
-    def retrieve_and_rerank_with_scores(self, query: str, top_k: Optional[int] = None) -> List[Tuple[Document, float]]:
+    def retrieve_and_rerank_with_scores(self, query: str, top_k: Optional[int] = None, filter: Optional[Dict[str, Any]] = None) -> List[Tuple[Document, float]]:
         """
         Special retrieval method for the Embedding Explorer.
         Returns documents AND their final reranker scores.
         Uses the same cache as _get_relevant_documents.
+        
+        Args:
+            query: Search query text
+            top_k: Number of results to return
+            filter: Optional metadata filter dict (MongoDB-style, converted for Qdrant)
+        
+        Returns:
+            List of (document, score) tuples
         """
         logger.info(f"Executing retrieve_and_rerank_with_scores for: {query}")
         
@@ -386,7 +469,17 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         expanded_query = self._expand_query(query)
         
         # --- 1. DENSE (small-to-big) RETRIEVAL WITH DYNAMIC SCORE PRUNING ---
-        dense_results = self.vector_store.similarity_search_with_score(expanded_query, k=50)
+        try:
+            dense_results = self.vector_store.similarity_search_with_score(
+                expanded_query, 
+                k=50, 
+                filter=_convert_filter_to_qdrant(filter, self._vector_store_type)
+            )
+        except Exception as e:
+            logger.error(f"Dense retrieval failed: {e}. Continuing with sparse retrieval only.")
+            dense_results = []
+        
+        child_chunks = []
         if dense_results:
             scores = [s for _, s in dense_results]
             cliff_idx = len(dense_results)
@@ -398,8 +491,6 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
                     cliff_idx = i
                     break
             child_chunks = [doc for doc, _ in dense_results[:cliff_idx]]
-        else:
-            child_chunks = []
             
         parent_ids = list(set([doc.metadata['doc_id'] for doc in child_chunks if 'doc_id' in doc.metadata]))
         dense_parent_docs = self.docstore.mget(parent_ids)
