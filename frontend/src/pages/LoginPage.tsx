@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, Navigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import Alert from '../components/Alert';
@@ -18,11 +18,12 @@ const ERROR_MESSAGES: Record<string, string> = {
  * Login Page Component
  * 
  * Features:
- * - Keycloak OIDC authentication via new tab
+ * - Keycloak OIDC authentication via redirect
  * - Automatic redirect if already authenticated
  * - Error display for failed login attempts
  */
 export default function LoginPage() {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { login, isAuthenticated, isLoading: authLoading, user } = useAuth();
   
@@ -41,15 +42,21 @@ export default function LoginPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Redirect if already authenticated (before any rendering)
-  if (!authLoading && isAuthenticated) {
-    const redirectPath = roleAtLeast(user?.role, 'admin') ? '/agents' : '/chat';
-    return <Navigate to={redirectPath} replace />;
-  }
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (!authLoading && isAuthenticated) {
+      // Redirect based on role - super_admin and admin go to config
+      if (roleAtLeast(user?.role, 'admin')) {
+        navigate('/config', { replace: true });
+      } else {
+        navigate('/chat', { replace: true });
+      }
+    }
+  }, [isAuthenticated, authLoading, navigate, user]);
 
   /**
    * Handle login button click
-   * Opens Keycloak login in a new tab
+   * Redirects to Keycloak login page
    */
   const handleLogin = async () => {
     setError('');
@@ -57,16 +64,10 @@ export default function LoginPage() {
 
     try {
       await login();
-      // Popup completed successfully, auth context will update and redirect will happen
+      // login() redirects to Keycloak, so this line won't be reached
     } catch (err) {
       console.error('Login error:', err);
-      // Handle popup closed by user
-      if (err instanceof Error && err.message.includes('closed')) {
-        setError('Login cancelled. Please try again.');
-      } else {
-        setError(err instanceof Error ? err.message : 'Failed to login');
-      }
-    } finally {
+      setError(err instanceof Error ? err.message : 'Failed to initiate login');
       setIsLoading(false);
     }
   };
@@ -116,7 +117,7 @@ export default function LoginPage() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Waiting for login...
+                  Redirecting to login...
                 </>
               ) : (
                 <>
@@ -131,7 +132,7 @@ export default function LoginPage() {
 
           <div className="text-center">
             <p className="text-xs text-gray-500">
-              A new tab will open for secure login
+              You will be redirected to the secure login page
             </p>
           </div>
         </div>
