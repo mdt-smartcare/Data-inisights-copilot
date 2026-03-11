@@ -1,54 +1,69 @@
 # Data Insights AI-Copilot
 
-Production-ready FastAPI backend service for the Data Insights AI-Copilot, providing intelligent data analysis through hybrid retrieval (SQL + Vector Search).
+<p align="center">
+  <img src="https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/React-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React" />
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/SQLite-07405E?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/OpenAI-412991?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI" />
+</p>
+
+A production-ready Enterprise RAG system featuring a FastAPI backend and React frontend. It provides intelligent clinical data analysis through Hybrid Retrieval, synthesizing both relational data (SQL Agent) and unstructured narratives (Vector Search).
 
 ---
 
-## 🏗️ Architecture
+## System Architecture
 
-```
+```text
 ┌─────────────────┐
 │  React Frontend │
 └────────┬────────┘
-         │ HTTP/REST
+         │ HTTP/REST (Port 8000)
          ▼
-┌─────────────────────────────────────────┐
-│         FastAPI Backend (Port 8000)      │
-│  ┌──────────────────────────────────┐   │
-│  │     Agent Service (RAG)          │   │
-│  │  ┌────────────┐  ┌────────────┐  │   │
-│  │  │ SQL Agent  │  │ RAG Search │  │   │
-│  │  └─────┬──────┘  └──────┬─────┘  │   │
-│  └────────┼─────────────────┼───────┘   │
-│           │                 │           │
-│  ┌────────▼─────────────────▼────────┐  │
-│  │   SQLite (Config, Users, Settings) │  │
-│  └───────────────────────────────────┘  │
-└───────────┼─────────────────┼──────────┘
-            │                 │
-    ┌───────▼───────┐   ┌────▼─────┐
-    │ Clinical DB   │   │ ChromaDB │
-    │ (PostgreSQL)  │   │ (Vectors)│
-    │ via db_conn   │   └──────────┘
-    └───────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    FastAPI Backend                          │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                Agent Service Pipeline                 │  │
+│  │                                                       │  │
+│  │ ┌──────────────┐     ┌───────────┐    ┌─────────────┐ │  │
+│  │ │ Intent Router├────►│ SQL Agent │    │ Vector RAG  │ │  │
+│  │ │  (A / B / C) │     └─────┬─────┘    └──────┬──────┘ │  │
+│  │ └──────────────┘           │                 │        │  │
+│  └────────────────────────────┼─────────────────┼────────┘  │
+│                               │                 │           │
+│  ┌────────────────────────────┼─────────────────┼────────┐  │
+│  │ SQLite (Internal Config)   │                 │        │  │
+│  │ Celery/Redis (Jobs)        │                 │        │  │
+│  │ APScheduler (Sync tasks)   │                 │        │  │
+│  └────────────────────────────┼─────────────────┼────────┘  │
+└───────────────────────────────┼─────────────────┼───────────┘
+                                │                 │
+                        ┌───────▼───────┐   ┌─────▼──────┐
+                        │ Clinical DB   │   │ Vector DB  │
+                        │ (PostgreSQL/  │   │ (Chroma/   │
+                        │ MySQL)        │   │ Qdrant)    │
+                        └───────────────┘   └────────────┘
 ```
 
+## Core Features
+
+- **Hybrid RAG Pipeline:** Combines traditional SQL queries (for structured clinical aggregations) with scalable Vector semantic search (for unstructured narrative notes). 
+- **Dynamic Intent Routing:** Automatically classifies user queries into Intent A (SQL), Intent B (Vector), or Intent C (Hybrid). 
+- **Automated RAG Evaluation:** Standalone testing module mapping metrics for Retrieval hit-rates, SQL DataFrame execution equivalence, RAGAS text metrics, and custom G-Eval Clinical safety guardrails.
+- **Enterprise Observability:** Fully instrumented with Langfuse tracing, token estimation, and process latency logging.
+- **Background Processing:** Celery + Redis message queues handle parsing and embedding large document workloads asynchronously without blocking the main API.
+- **Native Scheduling:** In-app APScheduler directly handles triggering cyclical vector updates and database synchronization tasks natively.
+- **Authentication:** Dual-mode authentication supporting local JWT tokens or full OpenID Connect (OIDC/Keycloak).
+- **Multi-tenant Data Connections:** Admin UI provisions dynamic DB connection strings per agent at runtime.
+- **Automatic Web Charts:** JSON-based UI rendering translates analytical outputs directly into dynamic graphical charts and visualizations within the chat.
+
 ---
 
-## 📋 Features
-
-- ✅ **RESTful API** - OpenAPI/Swagger documented endpoints
-- ✅ **JWT + OIDC Authentication** - Keycloak integration supported
-- ✅ **Hybrid RAG Pipeline** - SQL + Vector semantic search
-- ✅ **Automatic Chart Generation** - JSON-based visualizations
-- ✅ **Dynamic Configuration** - Runtime settings via database
-- ✅ **Multi-tenant Database Connections** - Configure via UI
-- ✅ **Health Monitoring** - Dependency health checks
-- ✅ **CORS Enabled** - Ready for React frontend
-
----
-
-## 📊 Latest Evaluation Results (March 11, 2026)
+## Latest Evaluation Results (March 11, 2026)
 
 Based on the standalone `eval/` framework running against the Golden Dataset:
 
@@ -62,15 +77,17 @@ Based on the standalone `eval/` framework running against the Golden Dataset:
   - **Total Latency:** `~501ms` 
   - **Response ROUGE-L:** `0.28`
 
-For full details on the testing methodology, see [eval/README.md](eval/README.md).
+For full details on the testing methodology, refer to the [eval/README.md](eval/README.md).
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### 1. Prerequisites
 
 - Python 3.9+
+- Node.js & npm (Frontend)
+- Redis Server (Required for Celery Background jobs)
 - OpenAI API Key
 - (Optional) Clinical database (PostgreSQL/MySQL) - configured via UI
 
@@ -82,23 +99,25 @@ cd backend
 # Copy environment template
 cp .env.example .env
 
-# Edit .env with your values
+# Edit .env with your specific values
 nano .env
 ```
 
 **Required environment variables:**
 ```bash
-# Only these are required in .env
+# Core parameters
 OPENAI_API_KEY=sk-your-actual-key-here
-SECRET_KEY=$(openssl rand -hex 32)  # Generate secure key
+SECRET_KEY=$(openssl rand -hex 32)
+CELERY_BROKER_URL=amqp://guest:guest@localhost:5672//
+CELERY_RESULT_BACKEND=redis://localhost:6379/0
 ```
 
 ### 3. Install Dependencies
 
 ```bash
-# Create virtual environment (recommended)
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
@@ -107,120 +126,118 @@ pip install -r requirements.txt
 ### 4. Initialize Database
 
 ```bash
-# Run migrations to create tables
+# Run migrations to create internal config tables
 for f in migrations/*.sql; do sqlite3 backend/sqliteDb/copilot.db < "$f"; done
 ```
 
-### 5. Run the Server
+### 5. Start the Services
 
+You must run the FastApi Backend, the Celery Queue, and the Frontend.
+
+**Terminal 1 (FastAPI Server):**
 ```bash
-# Development mode (with auto-reload)
 uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000
-
-# Production mode
-python -m backend.app
 ```
 
-### 6. Configure Database Connection
+**Terminal 2 (Celery Background Worker):**
+```bash
+python -m celery -A backend.services.celery_worker.celery_app worker --loglevel=info
+```
 
-1. Open http://localhost:3000 (frontend)
-2. Go to **Settings > Database Connections**
-3. Add your clinical database connection (PostgreSQL/MySQL)
-4. Create a **RAG Configuration** that uses the connection
-5. **Publish** the configuration
+**Terminal 3 (React Frontend):**
+```bash
+npm install
+npm run dev
+```
+
+### 6. Configure Runtime App Connections
+
+1. Open http://localhost:5173 (frontend base url).
+2. Navigate to **Settings > Database Connections**.
+3. Add your clinical database string (PostgreSQL/MySQL/SQLite).
+4. Create a **RAG Configuration** that binds the respective DB connection.
+5. Set Model rules and **Publish** the configuration to begin routing queries!
 
 ---
 
-## 🔧 Configuration Architecture
+## Configuration Architecture
 
 ### Infrastructure Settings (`.env`)
-Required for server startup - cannot be changed at runtime:
-- `OPENAI_API_KEY` - OpenAI API key
-- `SECRET_KEY` - JWT signing key
-- `OIDC_ISSUER_URL` - Keycloak URL (optional)
-- `CORS_ORIGINS` - Allowed origins
+These settings require a server restart:
+- `OPENAI_API_KEY` - OpenAI models authentication
+- `SECRET_KEY` - JWT local token signing key
+- `OIDC_ISSUER_URL` - Keycloak/OIDC upstream URL
+- `CELERY_BROKER_URL` - Redis Queue Configs
+- `LANGFUSE_PUBLIC_KEY` - APM & Telemetry Keys
 
-### Runtime Settings (Database)
-Configurable via frontend Settings page:
-- **LLM**: model, temperature, max_tokens
-- **Embedding**: provider, model, batch_size
-- **RAG**: top_k, hybrid_weights, reranking
-- **Chunking**: parent/child chunk sizes
-- **Data Privacy**: PII column exclusions
-- **Medical Context**: terminology mappings
-
-### Clinical Database Connections
-Managed via **Settings > Database Connections**:
-- Add PostgreSQL/MySQL connections
-- Assign to agents
-- No hardcoded database URLs
+### Runtime Settings (Configured via UI Database)
+Update on the fly without server restarts:
+- **LLM Settings:** Model Name, Temperature, Output limits
+- **Embedding:** Provider rules, Dense models
+- **Schedule Configs:** Document refresh intervals and Vector sync rules
+- **Clinical Data Policies:** Medical Terminology mapping, PII column exclusion logic
 
 ---
 
-## 📚 API Documentation
+## API Documentation
 
-Once running, visit:
+Once the backend is live, review endpoint documentation at:
 - **Swagger UI:** http://localhost:8000/api/v1/docs
 - **ReDoc:** http://localhost:8000/api/v1/redoc
 
-### Core Endpoints
+### Core Endpoints Overview
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/api/v1/auth/login` | Get JWT token |
-| `POST` | `/api/v1/chat` | Query the RAG chatbot |
-| `GET` | `/api/v1/settings` | Get all settings |
-| `PUT` | `/api/v1/settings/{category}` | Update settings |
-| `GET` | `/api/v1/health` | Health check |
+| `POST` | `/api/v1/auth/login` | Attain JWT token using basic auth |
+| `POST` | `/api/v1/chat` | Issue queries to the primary RAG Router |
+| `POST` | `/api/v1/ingest/upload` | Queue clinical files for Celery async embedding |
+| `GET`  | `/api/v1/settings` | Acquire currently active model settings |
+| `GET`  | `/api/v1/vector/status`| Poll for status of APScheduler sync jobs |
 
 ---
 
-## 🐳 Docker Deployment
+## Project Structure
+
+```
+.
+├── backend/
+│   ├── app.py                      # FastAPI entrypoint
+│   ├── config.py                   # Dotenv Environment configurations
+│   ├── .env                        # Local Environment Configs
+│   │
+│   ├── api/routes/                 # Core API boundaries (Chat, Auth, Settings)
+│   ├── services/
+│   │   ├── agent_service.py        # Central Chat Agent Router (A/B/C)
+│   │   ├── celery_worker.py        # Async Queue worker for Embeddings
+│   │   ├── sql_service.py          # Clinical DB text-to-sql translation
+│   │   └── vector_store.py         # Qdrant/ChromaDB execution logic
+│   │
+│   ├── sqliteDb/                   # Base Copilot System configs (users, rules)
+│   └── migrations/                 # Schema updates
+│
+├── frontend/                       # React / Vite / Tailwind App
+├── eval/                           # RAG Testing Framework (Ragas, Exten)
+│   ├── datasets/                   # Golden Q&A JSON tests
+│   ├── reports/                    # CI/CD HTML Dashboards
+│   └── sql_eval/                   # SQL Data Equivalence Evaluator
+│
+└── requirements.txt                # Dependency tree
+```
+
+## Docker Deployment
+
+To spin everything up (including Redis, Langfuse telemetry, and Backend API) quickly using Docker:
 
 ```bash
-# Set required environment variables
+# Setup secrets internally
 export OPENAI_API_KEY=sk-your-key
 export SECRET_KEY=$(openssl rand -hex 32)
+export DB_PASSWORD=admin-sec
 
-# Start services
+# Spin up entire mesh
 docker-compose up -d
 
-# View logs
+# Verify system health
 docker-compose logs -f backend
 ```
-
----
-
-## 📁 Project Structure
-
-```
-backend/
-├── app.py                    # FastAPI entrypoint
-├── config.py                 # Infrastructure settings (.env)
-├── .env.example              # Environment template
-│
-├── api/routes/               # API endpoints
-├── services/
-│   ├── settings_service.py   # Runtime config from DB
-│   ├── agent_service.py      # RAG orchestration
-│   ├── sql_service.py        # Clinical DB queries
-│   └── vector_store.py       # ChromaDB interface
-│
-├── sqliteDb/
-│   └── copilot.db            # Internal config database
-│
-└── migrations/               # SQL migrations
-```
-
----
-
-## 🔐 Authentication
-
-Supports two modes:
-
-1. **Local Auth** - Username/password with JWT tokens
-2. **OIDC/Keycloak** - Set `OIDC_ISSUER_URL` in `.env`
-
----
-
-**Built with:** FastAPI • LangChain • SQLite • ChromaDB • OpenAI
