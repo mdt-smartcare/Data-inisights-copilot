@@ -320,10 +320,10 @@ const UsersPage: React.FC = () => {
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="flex items-center">
                                                     <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold">
-                                                        {u.username.charAt(0).toUpperCase()}
+                                                        {(u.full_name || u.username).charAt(0).toUpperCase()}
                                                     </div>
                                                     <div className="ml-4">
-                                                        <div className="text-sm font-medium text-gray-900">{u.username}</div>
+                                                        <div className="text-sm font-medium text-gray-900">{u.full_name || u.username}</div>
                                                         <div className="text-sm text-gray-500">{u.email || 'No email'}</div>
                                                     </div>
                                                 </div>
@@ -403,7 +403,7 @@ const UsersPage: React.FC = () => {
                         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
                             <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6" style={{ maxWidth: '28rem' }}>
                                 <h3 className="text-lg font-semibold mb-2">Change Role</h3>
-                                <p className="text-gray-600 mb-4">Select a new role for <span className="font-medium">{roleChangeModal.user.username}</span></p>
+                                <p className="text-gray-600 mb-4">Select a new role for <span className="font-medium">{roleChangeModal.user.full_name || roleChangeModal.user.username}</span></p>
                                 <p className="text-sm text-gray-500 mb-4">Current role: <span className="font-medium text-blue-600">{getRoleDisplayName(roleChangeModal.user.role)}</span></p>
 
                                 <div className="space-y-2">
@@ -443,7 +443,7 @@ const UsersPage: React.FC = () => {
                     <ConfirmationModal
                         show={deactivateConfirm.show}
                         title="Deactivate User"
-                        message={deactivateConfirm.user ? `Are you sure you want to deactivate ${deactivateConfirm.user.username}? They will no longer be able to log in or access the system.` : CONFIRMATION_MESSAGES.DEACTIVATE_USER}
+                        message={deactivateConfirm.user ? `Are you sure you want to deactivate ${deactivateConfirm.user.full_name || deactivateConfirm.user.username}? They will no longer be able to log in or access the system.` : CONFIRMATION_MESSAGES.DEACTIVATE_USER}
                         confirmText="Deactivate"
                         onConfirm={confirmDeactivate}
                         onCancel={() => setDeactivateConfirm({ show: false, user: null })}
@@ -454,7 +454,7 @@ const UsersPage: React.FC = () => {
                     <ConfirmationModal
                         show={activateConfirm.show}
                         title="Activate User"
-                        message={activateConfirm.user ? `Are you sure you want to activate ${activateConfirm.user.username}? They will be able to log in again.` : 'Are you sure you want to activate this user?'}
+                        message={activateConfirm.user ? `Are you sure you want to activate ${activateConfirm.user.full_name || activateConfirm.user.username}? They will be able to log in again.` : 'Are you sure you want to activate this user?'}
                         confirmText="Activate"
                         onConfirm={confirmActivate}
                         onCancel={() => setActivateConfirm({ show: false, user: null })}
@@ -466,7 +466,7 @@ const UsersPage: React.FC = () => {
                         show={roleChangeConfirm.show}
                         title="Confirm Role Change"
                         message={roleChangeConfirm.user ? 
-                            `Are you sure you want to change ${roleChangeConfirm.user.username}'s role from "${getRoleDisplayName(roleChangeConfirm.user.role)}" to "${getRoleDisplayName(roleChangeConfirm.newRole)}"?${roleChangeConfirm.user.role === 'admin' && roleChangeConfirm.newRole === 'user' ? '\n\nThis will also revoke their admin access to all agents they manage.' : ''}` 
+                            `Are you sure you want to change ${roleChangeConfirm.user.full_name || roleChangeConfirm.user.username}'s role from "${getRoleDisplayName(roleChangeConfirm.user.role)}" to "${getRoleDisplayName(roleChangeConfirm.newRole)}"?${roleChangeConfirm.user.role === 'admin' && roleChangeConfirm.newRole === 'user' ? '\n\nThis will also revoke their admin access to all agents they manage.' : ''}` 
                             : 'Are you sure you want to change this user\'s role?'}
                         confirmText="Change Role"
                         onConfirm={confirmRoleChange}
@@ -488,7 +488,7 @@ const UsersPage: React.FC = () => {
                                         </div>
                                         <div>
                                             <h3 className="text-lg font-semibold text-gray-900">Manage Agent Access</h3>
-                                            <p className="text-sm text-gray-500">Configure agents for <span className="font-medium text-indigo-600">{agentModalUser.username}</span></p>
+                                            <p className="text-sm text-gray-500">Configure agents for <span className="font-medium text-indigo-600">{agentModalUser.full_name || agentModalUser.username}</span></p>
                                         </div>
                                     </div>
                                     <button
