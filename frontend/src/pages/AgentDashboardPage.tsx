@@ -418,6 +418,13 @@ const AgentDashboardPage: React.FC = () => {
                             </div>
                         ) : dashboardTab === 'users' ? (
                             <UsersTab agentId={agent.id} agentName={agent.name} />
+                        ) : dashboardTab === 'specs' ? (
+                            <SettingsTab
+                                activeConfig={null}
+                                agent={agent}
+                                canEdit={canEdit}
+                                onAgentUpdate={reloadAgent}
+                            />
                         ) : (
                             <div className="min-h-[400px] flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border-2 border-dashed border-gray-200 shadow-sm">
                                 <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
