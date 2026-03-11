@@ -1,0 +1,27 @@
+# ============================================================
+# RAG Evaluation Framework — Dependencies
+# Run: pip install -r eval/requirements-eval.txt
+# Conda env: fhir_rag_env
+# ============================================================
+
+# Core eval framework
+ragas>=0.2.0
+
+# HuggingFace Datasets (required by ragas)
+datasets>=2.14.0
+
+# Text quality metrics
+rouge-score>=0.1.2
+nltk>=3.8.1
+
+# Report generation
+jinja2>=3.1.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Utilities
+tabulate>=0.9.0
+rich>=13.0.0
+
+# Already in backend requirements, but listed for completeness:
+# pandas, numpy, openai, langchain-openai, python-dotenv
