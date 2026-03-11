@@ -1,42 +1,60 @@
-FROM python:3.10.19-slim
+# ── Build stage (install deps in a clean layer) ──────────────────────────────
+FROM python:3.10.19-slim AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    git \
-    curl \
-    libpq-dev \
-    build-essential \
+# System libs needed to compile native wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ git curl libpq-dev build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements file from root
 COPY requirements.txt .
-
-# Install Python dependencies from fhir_rag_env
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code
+# ── Production stage ─────────────────────────────────────────────────────────
+FROM python:3.10.19-slim
+
+WORKDIR /app
+
+# Runtime-only system deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl libpq5 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed packages from builder
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy backend source
 COPY backend/ ./backend/
 
-# Create necessary directories
+# Create runtime directories
 RUN mkdir -p /app/backend/logs \
-    /app/backend/data/indexes
+    /app/backend/data/indexes \
+    /app/backend/sqliteDb \
+    /app/backend/models
 
-# Set environment variables
+# Non-root user for security
+RUN adduser --disabled-password --gecos '' appuser && \
+    chown -R appuser:appuser /app
+USER appuser
+
+# Environment
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-# Expose port
 EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Run the application
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+# Production: Gunicorn with Uvicorn workers (4 workers, scalable)
+CMD ["gunicorn", "backend.app:app", \
+    "--worker-class", "uvicorn.workers.UvicornWorker", \
+    "--workers", "4", \
+    "--bind", "0.0.0.0:8000", \
+    "--timeout", "120", \
+    "--graceful-timeout", "30", \
+    "--access-logfile", "-"]

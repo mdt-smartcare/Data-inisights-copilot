@@ -1,75 +1,40 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-.venv
-*.egg-info/
-dist/
-build/
+# Git
+.git
+.gitignore
 
-# Node
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-frontend/dist/
-frontend/build/
+# Dependencies
+node_modules
+frontend/node_modules
+backend/venv
+backend/__pycache__
+**/__pycache__
+**/*.pyc
 
-# IDEs
-.vscode/
-.idea/
+# Build artifacts
+frontend/dist
+*.egg-info
+
+# IDE / OS
+.vscode
+.idea
 *.swp
 *.swo
-*~
-
-# Git
-.git/
-.gitignore
-.gitattributes
+.DS_Store
+Thumbs.db
 
 # Docker
 Dockerfile*
 docker-compose*.yml
 .dockerignore
 
-# OS
-.DS_Store
-Thumbs.db
+# Docs & misc
+*.md
+LICENSE
+wiki/
+.gemini/
 
-# Logs
-*.log
-logs/
-backend/logs/
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Testing
-.pytest_cache/
+# Test & CI
+.pytest_cache
 .coverage
 htmlcov/
-.tox/
-
-# Data (exclude large data files)
-backend/data/indexes/*/
-*.db
-*.sqlite
-*.csv
-
-# Documentation
-*.md
-docs/
-README*
-!requirements*.txt
-
-# Backup
-backup_*
-*.bak
+.github/
