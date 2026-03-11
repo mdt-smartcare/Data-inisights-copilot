@@ -6,7 +6,6 @@ import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
 import FileUploadSource from '../components/FileUploadSource';
-import FileColumnSelector from '../components/FileColumnSelector';
 import { DocumentPreview } from '../components/config/DocumentPreview';
 import PromptEditor from '../components/PromptEditor';
 import PromptHistory from '../components/PromptHistory';
@@ -79,7 +78,6 @@ const ConfigPage: React.FC = () => {
     // Data source type: 'database' or 'file'
     const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
     const [fileUploadResult, setFileUploadResult] = useState<IngestionResponse | null>(null);
-    const [selectedFileColumns, setSelectedFileColumns] = useState<string[]>([]);
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
@@ -404,10 +402,6 @@ const ConfigPage: React.FC = () => {
             setError("Please select at least one table/column.");
             return;
         }
-        if (currentStep === 2 && dataSourceType === 'file' && selectedFileColumns.length === 0) {
-            setError("Please select at least one column.");
-            return;
-        }
         setError(null);
         if (currentStep < 6) setCurrentStep(currentStep + 1);
     };
@@ -418,10 +412,6 @@ const ConfigPage: React.FC = () => {
 
     const handleFileExtractionComplete = (result: IngestionResponse) => {
         setFileUploadResult(result);
-        // Default: select all columns
-        if (result.columns) {
-            setSelectedFileColumns(result.columns);
-        }
     };
 
     const handleStartNew = async () => {
@@ -432,7 +422,6 @@ const ConfigPage: React.FC = () => {
         setDraftPrompt('');
         setDataSourceType('database');
         setFileUploadResult(null);
-        setSelectedFileColumns([]);
         setCurrentStep(1);
 
         // Re-fetch backend defaults
@@ -1398,7 +1387,7 @@ const ConfigPage: React.FC = () => {
                                         {dataSourceType === 'file' && (
                                             <>
                                                 <p className="text-gray-500 text-sm mb-4">
-                                                    Upload a CSV or Excel file to extract and select columns from.
+                                                    Upload a PDF, CSV, Excel, or JSON file to extract data from.
                                                 </p>
                                                 <FileUploadSource
                                                     onExtractionComplete={handleFileExtractionComplete}
@@ -1425,31 +1414,12 @@ const ConfigPage: React.FC = () => {
                                 )}
 
                                 {currentStep === 2 && dataSourceType === 'file' && fileUploadResult && (
-                                    <div className="max-w-4xl mx-auto space-y-6">
-                                        <h2 className="text-xl font-semibold mb-1">Select Columns</h2>
-                                        <p className="text-gray-500 text-sm mb-4">
-                                            Choose which columns from <strong>{fileUploadResult.file_name}</strong> to include for embedding and analysis.
-                                        </p>
-
-                                        <FileColumnSelector
-                                            columns={fileUploadResult.columns}
-                                            columnDetails={fileUploadResult.column_details}
-                                            onSelectionChange={setSelectedFileColumns}
-                                            readOnly={!canEdit}
-                                        />
-
-                                        {/* Data preview of selected columns */}
-                                        {fileUploadResult.documents && fileUploadResult.documents.length > 0 && (
-                                            <div className="mt-6">
-                                                <DocumentPreview
-                                                    documents={fileUploadResult.documents}
-                                                    fileName={fileUploadResult.file_name}
-                                                    fileType={fileUploadResult.file_type}
-                                                    totalDocuments={fileUploadResult.total_documents}
-                                                />
-                                            </div>
-                                        )}
-                                    </div>
+                                    <DocumentPreview
+                                        documents={fileUploadResult.documents}
+                                        fileName={fileUploadResult.file_name}
+                                        fileType={fileUploadResult.file_type}
+                                        totalDocuments={fileUploadResult.total_documents}
+                                    />
                                 )}
 
                                 {currentStep === 3 && (

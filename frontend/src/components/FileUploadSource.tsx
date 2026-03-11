@@ -2,14 +2,16 @@ import React, { useState, useCallback, useRef } from 'react';
 import { uploadForIngestion, handleApiError } from '../services/api';
 import type { IngestionResponse } from '../services/api';
 
-const ACCEPTED_EXTENSIONS = '.csv,.xlsx';
+const ACCEPTED_EXTENSIONS = '.pdf,.csv,.xlsx,.json';
 const FILE_TYPE_COLORS: Record<string, string> = {
+    pdf: 'bg-red-100 text-red-700',
     csv: 'bg-green-100 text-green-700',
     xlsx: 'bg-blue-100 text-blue-700',
+    json: 'bg-amber-100 text-amber-700',
 };
 
 interface FileUploadSourceProps {
-    /** Called when upload completes — parent receives the full result */
+    /** Called when extraction completes — parent receives the full result */
     onExtractionComplete: (result: IngestionResponse) => void;
     /** If true, prevent interaction */
     disabled?: boolean;
@@ -17,10 +19,8 @@ interface FileUploadSourceProps {
 
 /**
  * File upload data source component for the agent config wizard.
- * Provides drag-and-drop / click-to-browse upload of .csv/.xlsx
- * and shows a success summary when extraction completes.
- *
- * Column selection happens in the next wizard step (Step 2).
+ * Provides drag-and-drop / click-to-browse upload of .pdf/.csv/.xlsx/.json
+ * and shows extraction results.
  */
 const FileUploadSource: React.FC<FileUploadSourceProps> = ({
     onExtractionComplete,
@@ -30,12 +30,14 @@ const FileUploadSource: React.FC<FileUploadSourceProps> = ({
     const [isUploading, setIsUploading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [result, setResult] = useState<IngestionResponse | null>(null);
+    const [expandedDoc, setExpandedDoc] = useState<number | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const handleFile = useCallback(async (file: File) => {
         setError(null);
         setResult(null);
         setIsUploading(true);
+        setExpandedDoc(null);
 
         try {
             const response = await uploadForIngestion(file);
@@ -110,7 +112,7 @@ const FileUploadSource: React.FC<FileUploadSourceProps> = ({
                             <p className="text-sm font-medium text-gray-700">
                                 Drag & drop a file here, or <span className="text-blue-600 underline">browse</span>
                             </p>
-                            <p className="text-xs text-gray-400 mt-1">.csv, .xlsx</p>
+                            <p className="text-xs text-gray-400 mt-1">.pdf, .csv, .xlsx, .json</p>
                         </div>
                     </div>
                 )}
@@ -132,24 +134,76 @@ const FileUploadSource: React.FC<FileUploadSourceProps> = ({
                 </div>
             )}
 
-            {/* Upload Success Summary */}
+            {/* Results */}
             {result && (
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-2">
-                        <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${typeColor(result.file_type)}`}>
-                            {result.file_type.toUpperCase()}
+                <div className="space-y-3">
+                    {/* Summary */}
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <svg className="w-5 h-5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${typeColor(result.file_type)}`}>
+                                {result.file_type.toUpperCase()}
+                            </span>
+                            <span className="text-sm font-medium text-gray-900">{result.file_name}</span>
+                        </div>
+                        <span className="ml-auto text-sm text-gray-600">
+                            <strong className="text-gray-900">{result.total_documents}</strong> document{result.total_documents !== 1 ? 's' : ''} extracted
                         </span>
-                        <span className="text-sm font-medium text-gray-900">{result.file_name}</span>
                     </div>
-                    <span className="ml-auto text-sm text-gray-600">
-                        <strong className="text-gray-900">{result.total_documents.toLocaleString()}</strong> document{result.total_documents !== 1 ? 's' : ''} extracted
-                        {result.columns && (
-                            <span className="text-gray-400 ml-2">• {result.columns.length} column{result.columns.length !== 1 ? 's' : ''} detected</span>
-                        )}
-                    </span>
+
+                    {/* Document Preview (collapsible, max 5 shown) */}
+                    <details className="group">
+                        <summary className="cursor-pointer text-sm font-medium text-blue-600 hover:text-blue-800 select-none">
+                            Preview extracted documents ({Math.min(result.documents.length, 5)} of {result.total_documents})
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                            {result.documents.slice(0, 5).map((doc, idx) => (
+                                <div
+                                    key={idx}
+                                    className="bg-white rounded-lg border border-gray-200 overflow-hidden"
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={() => setExpandedDoc(expandedDoc === idx ? null : idx)}
+                                        className="w-full flex items-center justify-between px-3 py-2 text-left"
+                                    >
+                                        <div className="flex items-center gap-2 min-w-0">
+                                            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-gray-100 text-gray-600 flex items-center justify-center text-xs font-semibold">
+                                                {idx + 1}
+                                            </span>
+                                            <span className="text-sm text-gray-700 truncate">
+                                                {doc.page_content.slice(0, 100)}{doc.page_content.length > 100 ? '…' : ''}
+                                            </span>
+                                        </div>
+                                        <svg
+                                            className={`w-4 h-4 text-gray-400 flex-shrink-0 ml-2 transition-transform ${expandedDoc === idx ? 'rotate-180' : ''}`}
+                                            fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                        >
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                    </button>
+
+                                    {expandedDoc === idx && (
+                                        <div className="px-3 pb-3 border-t border-gray-100">
+                                            <pre className="mt-2 text-xs text-gray-800 whitespace-pre-wrap bg-gray-50 rounded p-2 max-h-40 overflow-y-auto font-mono">
+                                                {doc.page_content}
+                                            </pre>
+                                            <div className="mt-2 flex flex-wrap gap-1">
+                                                {Object.entries(doc.metadata).map(([key, value]) => (
+                                                    <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-xs text-gray-600">
+                                                        <span className="font-medium text-gray-800">{key}:</span>
+                                                        {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </details>
                 </div>
             )}
         </div>

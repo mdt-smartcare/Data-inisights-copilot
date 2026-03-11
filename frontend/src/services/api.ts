@@ -565,13 +565,6 @@ export interface IngestionResponse {
   file_type: string;
   total_documents: number;
   documents: ExtractedDocument[];
-  table_name?: string;
-  columns?: string[];
-  column_details?: Array<{ name: string; type: string }>;
-  row_count?: number;
-  processing_mode?: string;
-  message?: string;
-  selectedColumns?: string[];  // Added by frontend after user column selection
 }
 
 /**
@@ -701,7 +694,7 @@ export const getModelCatalog = async (options?: {
   const params: Record<string, any> = {};
   if (options?.category) params.category = options.category;
   if (options?.localOnly) params.local_only = options.localOnly;
-
+  
   const response = await apiClient.get('/api/v1/settings/embedding/catalog', { params });
   return response.data;
 };
@@ -1096,21 +1089,21 @@ export interface UnifiedQueryResult {
   query_type: string;  // 'sql', 'rag', 'hybrid', 'sql_fallback'
   intent: string;
   confidence: number;
-
+  
   // Final answer
   final_answer?: string;
-
+  
   // SQL results
   sql_answer?: string;
   sql_query?: string;
   sql_rows?: Record<string, any>[];
   sql_execution_ms?: number;
-
+  
   // RAG results
   rag_answer?: string;
   rag_documents?: Array<{ content: string; metadata: Record<string, any> }>;
   rag_sources?: string[];
-
+  
   // Metadata
   routing_reason?: string;
   error?: string;
@@ -1129,7 +1122,7 @@ export interface RoutingPreview {
 export interface AgenticHybridResult {
   status: string;
   question: string;
-
+  
   // Workflow stages
   stage_1_rag: {
     query: string;
@@ -1147,16 +1140,16 @@ export interface AgenticHybridResult {
     prompt_context: string;
     model_used: string;
   };
-
+  
   // Final answer
   final_answer: string;
-
+  
   // Performance metrics
   total_time_ms: number;
   rag_time_ms: number;
   sql_time_ms: number;
   synthesis_time_ms: number;
-
+  
   error?: string;
 }
 

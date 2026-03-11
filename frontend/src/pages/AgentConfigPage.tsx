@@ -72,7 +72,6 @@ const AgentConfigPage: React.FC = () => {
     const [dataDictionary, setDataDictionary] = useState('');
     const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
     const [fileUploadResult, setFileUploadResult] = useState<IngestionResponse | null>(null);
-    const [selectedFileColumns, setSelectedFileColumns] = useState<string[]>([]);
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
@@ -255,10 +254,6 @@ const AgentConfigPage: React.FC = () => {
         }
         if (currentStep === 2 && dataSourceType === 'database' && Object.keys(selectedSchema).length === 0) {
             setError("Please select at least one table/column.");
-            return;
-        }
-        if (currentStep === 2 && dataSourceType === 'file' && selectedFileColumns.length === 0) {
-            setError("Please select at least one column.");
             return;
         }
         setError(null);
@@ -464,14 +459,14 @@ const AgentConfigPage: React.FC = () => {
                         </div>
 
                         {/* Step Indicators - Scrollable on mobile with auto-scroll */}
-                        <div
+                        <div 
                             ref={stepsContainerRef}
                             className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 scrollbar-hide"
                         >
                             <div className="flex justify-between relative min-w-[500px] sm:min-w-0">
                                 {steps.map((step, index) => (
-                                    <div
-                                        key={step.id}
+                                    <div 
+                                        key={step.id} 
                                         ref={(el) => { stepRefs.current[index] = el; }}
                                         className="flex flex-col items-center z-10"
                                     >
@@ -517,7 +512,6 @@ const AgentConfigPage: React.FC = () => {
                                     setConnectionId={setConnectionId}
                                     setConnectionName={setConnectionName}
                                     setFileUploadResult={setFileUploadResult}
-                                    onFileColumnsInit={setSelectedFileColumns}
                                 />
                             )}
 
@@ -528,8 +522,6 @@ const AgentConfigPage: React.FC = () => {
                                     setSelectedSchema={setSelectedSchema}
                                     fileUploadResult={fileUploadResult}
                                     reasoning={reasoning}
-                                    onFileColumnsChange={setSelectedFileColumns}
-                                    selectedFileColumns={selectedFileColumns}
                                 />
                             )}
 
