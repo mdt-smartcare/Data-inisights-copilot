@@ -1,0 +1,6 @@
+{
+  "sql_accuracy": 0.8,
+  "queries_evaluated": 10,
+  "equivalent_count": 8,
+  "failed_count": 2
+}

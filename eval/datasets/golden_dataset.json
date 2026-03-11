@@ -1,0 +1,795 @@
+{
+    "version": "1.0",
+    "description": "Golden dataset for Data Insights Copilot RAG evaluation. Contains queries for SQL (Intent A), Vector RAG (Intent B), and Hybrid (Intent C) evaluation paths.",
+    "created": "2026-03-11",
+    "entries": [
+        {
+            "id": "sql_001",
+            "intent": "A",
+            "query": "How many patients are registered in the system?",
+            "expected_answer_contains": [
+                "total",
+                "patients",
+                "registered"
+            ],
+            "expected_answer_type": "numeric",
+            "ground_truth_hint": "A number representing total patient count",
+            "relevant_doc_ids": [],
+            "tags": [
+                "count",
+                "demographics"
+            ]
+        },
+        {
+            "id": "sql_002",
+            "intent": "A",
+            "query": "What is the distribution of patients by gender?",
+            "expected_answer_contains": [
+                "male",
+                "female",
+                "gender",
+                "distribution"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Breakdown of patient count by gender (male/female/other)",
+            "relevant_doc_ids": [],
+            "tags": [
+                "distribution",
+                "gender",
+                "demographics"
+            ]
+        },
+        {
+            "id": "sql_003",
+            "intent": "A",
+            "query": "How many patients were screened for hypertension last month?",
+            "expected_answer_contains": [
+                "screened",
+                "hypertension",
+                "patients"
+            ],
+            "expected_answer_type": "numeric",
+            "ground_truth_hint": "Count of patients screened for hypertension in the past month",
+            "relevant_doc_ids": [],
+            "tags": [
+                "count",
+                "hypertension",
+                "screening"
+            ]
+        },
+        {
+            "id": "sql_004",
+            "intent": "A",
+            "query": "What percentage of diagnosed hypertension patients are on treatment?",
+            "expected_answer_contains": [
+                "percent",
+                "treatment",
+                "hypertension"
+            ],
+            "expected_answer_type": "percentage",
+            "ground_truth_hint": "Percentage (0-100%) of hypertension patients currently on treatment",
+            "relevant_doc_ids": [],
+            "tags": [
+                "rate",
+                "treatment",
+                "care_cascade"
+            ]
+        },
+        {
+            "id": "sql_005",
+            "intent": "A",
+            "query": "Show the NCD care cascade for diabetes",
+            "expected_answer_contains": [
+                "screened",
+                "diagnosed",
+                "treated",
+                "controlled",
+                "diabetes"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Care cascade funnel: screened → diagnosed → on treatment → controlled",
+            "relevant_doc_ids": [],
+            "tags": [
+                "cascade",
+                "diabetes",
+                "ncd"
+            ]
+        },
+        {
+            "id": "sql_006",
+            "intent": "A",
+            "query": "What is the average BMI of patients by age group?",
+            "expected_answer_contains": [
+                "bmi",
+                "average",
+                "age"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Average BMI broken down by age group (18-30, 31-45, 46-60, 60+)",
+            "relevant_doc_ids": [],
+            "tags": [
+                "average",
+                "bmi",
+                "age_group"
+            ]
+        },
+        {
+            "id": "sql_007",
+            "intent": "A",
+            "query": "How many patients have controlled blood pressure?",
+            "expected_answer_contains": [
+                "controlled",
+                "blood pressure",
+                "patients"
+            ],
+            "expected_answer_type": "numeric",
+            "ground_truth_hint": "Count of patients whose BP readings are within controlled range (<140/90)",
+            "relevant_doc_ids": [],
+            "tags": [
+                "count",
+                "hypertension",
+                "control"
+            ]
+        },
+        {
+            "id": "sql_008",
+            "intent": "A",
+            "query": "Show breakdown of patients by district or region",
+            "expected_answer_contains": [
+                "district",
+                "region",
+                "patients",
+                "breakdown"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Patient counts grouped by geographic region/district",
+            "relevant_doc_ids": [],
+            "tags": [
+                "distribution",
+                "geography",
+                "region"
+            ]
+        },
+        {
+            "id": "sql_009",
+            "intent": "A",
+            "query": "What is the monthly trend of new patient registrations this year?",
+            "expected_answer_contains": [
+                "monthly",
+                "trend",
+                "registrations"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Month-over-month count of new patient registrations",
+            "relevant_doc_ids": [],
+            "tags": [
+                "trend",
+                "monthly",
+                "registration"
+            ]
+        },
+        {
+            "id": "sql_010",
+            "intent": "A",
+            "query": "What percentage of screened patients were diagnosed with diabetes?",
+            "expected_answer_contains": [
+                "percent",
+                "screened",
+                "diagnosed",
+                "diabetes"
+            ],
+            "expected_answer_type": "percentage",
+            "ground_truth_hint": "Diagnosis rate for diabetes from total screened population",
+            "relevant_doc_ids": [],
+            "tags": [
+                "rate",
+                "diabetes",
+                "diagnosis"
+            ]
+        },
+        {
+            "id": "sql_011",
+            "intent": "A",
+            "query": "How many patients are lost to follow-up in the last 6 months?",
+            "expected_answer_contains": [
+                "lost",
+                "follow-up",
+                "patients"
+            ],
+            "expected_answer_type": "numeric",
+            "ground_truth_hint": "Count of patients who missed >2 follow-up visits in last 180 days",
+            "relevant_doc_ids": [],
+            "tags": [
+                "follow_up",
+                "retention",
+                "count"
+            ]
+        },
+        {
+            "id": "sql_012",
+            "intent": "A",
+            "query": "What is the top 5 upazila by patient count?",
+            "expected_answer_contains": [
+                "upazila",
+                "top",
+                "patients"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Top 5 geographic units (upazila) ranked by patient count",
+            "relevant_doc_ids": [],
+            "tags": [
+                "ranking",
+                "geography",
+                "top"
+            ]
+        },
+        {
+            "id": "sql_013",
+            "intent": "A",
+            "query": "Compare male vs female hypertension control rates",
+            "expected_answer_contains": [
+                "male",
+                "female",
+                "control rate",
+                "hypertension"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Table showing control rate for male vs female hypertension patients",
+            "relevant_doc_ids": [],
+            "tags": [
+                "comparison",
+                "gender",
+                "hypertension"
+            ]
+        },
+        {
+            "id": "sql_014",
+            "intent": "A",
+            "query": "What is the average age of newly registered patients this quarter?",
+            "expected_answer_contains": [
+                "average",
+                "age",
+                "registered"
+            ],
+            "expected_answer_type": "numeric",
+            "ground_truth_hint": "Mean age (years) of patients registered in the current quarter",
+            "relevant_doc_ids": [],
+            "tags": [
+                "average",
+                "age",
+                "demographics"
+            ]
+        },
+        {
+            "id": "sql_015",
+            "intent": "A",
+            "query": "Show the screening coverage rate by health facility",
+            "expected_answer_contains": [
+                "coverage",
+                "screening",
+                "facility"
+            ],
+            "expected_answer_type": "tabular",
+            "ground_truth_hint": "Per-facility screening coverage rate (screened / target population) %",
+            "relevant_doc_ids": [],
+            "tags": [
+                "coverage",
+                "rate",
+                "facility"
+            ]
+        },
+        {
+            "id": "rag_001",
+            "intent": "B",
+            "query": "Tell me about the clinical notes for patient P001",
+            "expected_answer_contains": [
+                "patient",
+                "clinical",
+                "notes",
+                "P001"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Summary of clinical observations, history, or diagnoses for patient P001",
+            "relevant_doc_ids": [
+                "patient_P001_note_1",
+                "patient_P001_note_2"
+            ],
+            "tags": [
+                "patient_notes",
+                "clinical",
+                "narrative"
+            ]
+        },
+        {
+            "id": "rag_002",
+            "intent": "B",
+            "query": "What are the doctor's observations about patient P010's cardiovascular risk?",
+            "expected_answer_contains": [
+                "cardiovascular",
+                "risk",
+                "patient",
+                "observation"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Clinical narrative about patient P010's CVD risk factors from doctor notes",
+            "relevant_doc_ids": [
+                "patient_P010_note_1"
+            ],
+            "tags": [
+                "cvd",
+                "risk",
+                "clinical_notes"
+            ]
+        },
+        {
+            "id": "rag_003",
+            "intent": "B",
+            "query": "Find patient records mentioning insulin resistance",
+            "expected_answer_contains": [
+                "insulin",
+                "resistance",
+                "patient"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Excerpts from patient notes where insulin resistance is mentioned",
+            "relevant_doc_ids": [
+                "patient_P023_note_1",
+                "patient_P045_note_2"
+            ],
+            "tags": [
+                "diabetes",
+                "insulin",
+                "semantic_search"
+            ]
+        },
+        {
+            "id": "rag_004",
+            "intent": "B",
+            "query": "What does the medical history say about patient P007?",
+            "expected_answer_contains": [
+                "patient",
+                "P007",
+                "history",
+                "medical"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Patient P007's documented medical history from clinical documents",
+            "relevant_doc_ids": [
+                "patient_P007_history_1"
+            ],
+            "tags": [
+                "medical_history",
+                "patient_specific"
+            ]
+        },
+        {
+            "id": "rag_005",
+            "intent": "B",
+            "query": "Find clinical notes mentioning hypertensive crisis",
+            "expected_answer_contains": [
+                "hypertensive",
+                "crisis",
+                "notes"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Clinical documents containing references to hypertensive crisis events",
+            "relevant_doc_ids": [
+                "patient_P033_note_1",
+                "patient_P092_note_1"
+            ],
+            "tags": [
+                "hypertension",
+                "crisis",
+                "semantic_search"
+            ]
+        },
+        {
+            "id": "rag_006",
+            "intent": "B",
+            "query": "Show me clinical summaries of patients with diabetic nephropathy",
+            "expected_answer_contains": [
+                "diabetic",
+                "nephropathy",
+                "clinical",
+                "summary"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Clinical summaries referencing diabetic nephropathy complications",
+            "relevant_doc_ids": [
+                "patient_P055_note_1",
+                "patient_P066_note_1"
+            ],
+            "tags": [
+                "diabetes",
+                "complication",
+                "clinical_summary"
+            ]
+        },
+        {
+            "id": "rag_007",
+            "intent": "B",
+            "query": "What medications are mentioned in the patient notes for P005?",
+            "expected_answer_contains": [
+                "medication",
+                "patient",
+                "P005"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Medications listed in clinical notes for patient P005",
+            "relevant_doc_ids": [
+                "patient_P005_note_1",
+                "patient_P005_note_3"
+            ],
+            "tags": [
+                "medication",
+                "patient_specific"
+            ]
+        },
+        {
+            "id": "rag_008",
+            "intent": "B",
+            "query": "Find documents describing lifestyle interventions prescribed to patients",
+            "expected_answer_contains": [
+                "lifestyle",
+                "intervention",
+                "patient"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Clinical notes describing diet, exercise, or lifestyle changes prescribed",
+            "relevant_doc_ids": [
+                "patient_P011_note_2",
+                "patient_P039_note_1"
+            ],
+            "tags": [
+                "lifestyle",
+                "intervention",
+                "semantic_search"
+            ]
+        },
+        {
+            "id": "rag_009",
+            "intent": "B",
+            "query": "Patient summary for P020",
+            "expected_answer_contains": [
+                "patient",
+                "P020",
+                "summary"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Comprehensive patient summary including diagnoses and treatment plan for P020",
+            "relevant_doc_ids": [
+                "patient_P020_summary_1"
+            ],
+            "tags": [
+                "summary",
+                "patient_specific"
+            ]
+        },
+        {
+            "id": "rag_010",
+            "intent": "B",
+            "query": "What complications are documented in the notes for patient P015?",
+            "expected_answer_contains": [
+                "complications",
+                "patient",
+                "P015",
+                "documented"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Documented comorbidities and complications from patient P015's notes",
+            "relevant_doc_ids": [
+                "patient_P015_note_1",
+                "patient_P015_note_2"
+            ],
+            "tags": [
+                "complications",
+                "comorbidity",
+                "patient_specific"
+            ]
+        },
+        {
+            "id": "rag_011",
+            "intent": "B",
+            "query": "Find all clinical notes mentioning uncontrolled blood pressure",
+            "expected_answer_contains": [
+                "uncontrolled",
+                "blood pressure",
+                "notes"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Clinical documents where uncontrolled/high blood pressure is recorded",
+            "relevant_doc_ids": [
+                "patient_P041_note_1",
+                "patient_P052_note_1"
+            ],
+            "tags": [
+                "hypertension",
+                "blood_pressure",
+                "semantic_search"
+            ]
+        },
+        {
+            "id": "rag_012",
+            "intent": "B",
+            "query": "What is the clinical history of patient P025?",
+            "expected_answer_contains": [
+                "clinical",
+                "history",
+                "P025"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Timeline of clinical events and treatment history for patient P025",
+            "relevant_doc_ids": [
+                "patient_P025_history_1"
+            ],
+            "tags": [
+                "history",
+                "patient_specific"
+            ]
+        },
+        {
+            "id": "rag_013",
+            "intent": "B",
+            "query": "Find notes about patients prescribed Metformin",
+            "expected_answer_contains": [
+                "metformin",
+                "prescribed",
+                "patient"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Patient notes where Metformin is mentioned as a prescribed medication",
+            "relevant_doc_ids": [
+                "patient_P017_note_1",
+                "patient_P037_note_2"
+            ],
+            "tags": [
+                "medication",
+                "metformin",
+                "diabetes"
+            ]
+        },
+        {
+            "id": "rag_014",
+            "intent": "B",
+            "query": "Show clinical narratives about gestational diabetes cases",
+            "expected_answer_contains": [
+                "gestational",
+                "diabetes",
+                "clinical"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Clinical notes referencing gestational diabetes diagnoses or management",
+            "relevant_doc_ids": [
+                "patient_P071_note_1"
+            ],
+            "tags": [
+                "diabetes",
+                "gestational",
+                "women_health"
+            ]
+        },
+        {
+            "id": "rag_015",
+            "intent": "B",
+            "query": "What does patient P003's chart say about their recent visit?",
+            "expected_answer_contains": [
+                "patient",
+                "P003",
+                "recent",
+                "visit"
+            ],
+            "expected_answer_type": "narrative",
+            "ground_truth_hint": "Most recent clinical visit notes for patient P003",
+            "relevant_doc_ids": [
+                "patient_P003_note_latest"
+            ],
+            "tags": [
+                "recent_visit",
+                "patient_specific"
+            ]
+        },
+        {
+            "id": "hybrid_001",
+            "intent": "C",
+            "query": "Summarize the clinical notes for patients whose latest systolic BP is above 160",
+            "expected_answer_contains": [
+                "notes",
+                "BP",
+                "systolic",
+                "above 160"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Summary of clinical notes for patients with systolic BP > 160 (SQL filter + vector search)",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT DISTINCT patient_id FROM blood_pressure_readings WHERE systolic > 160",
+            "tags": [
+                "hybrid",
+                "hypertension",
+                "clinical_notes"
+            ]
+        },
+        {
+            "id": "hybrid_002",
+            "intent": "C",
+            "query": "What do the doctor notes say about patients with HbA1c > 8.0 (uncontrolled diabetes)?",
+            "expected_answer_contains": [
+                "HbA1c",
+                "uncontrolled",
+                "diabetes",
+                "notes"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Doctor notes for patients whose HbA1c levels exceed 8.0",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT DISTINCT patient_id FROM lab_results WHERE test_name='HbA1c' AND value > 8.0",
+            "tags": [
+                "hybrid",
+                "diabetes",
+                "lab_results"
+            ]
+        },
+        {
+            "id": "hybrid_003",
+            "intent": "C",
+            "query": "Show me narrative summaries for elderly patients (age > 65) with hypertension",
+            "expected_answer_contains": [
+                "elderly",
+                "hypertension",
+                "summary",
+                "age"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Clinical summaries for patients aged over 65 with hypertension diagnosis",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT DISTINCT patient_id FROM patients WHERE age > 65 AND conditions LIKE '%hypertension%'",
+            "tags": [
+                "hybrid",
+                "elderly",
+                "hypertension"
+            ]
+        },
+        {
+            "id": "hybrid_004",
+            "intent": "C",
+            "query": "Find clinical notes for patients who missed more than 3 follow-up visits",
+            "expected_answer_contains": [
+                "missed",
+                "follow-up",
+                "clinical",
+                "notes"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Clinical notes for patients with poor adherence (>3 missed follow-ups)",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT patient_id FROM visits WHERE status='missed' GROUP BY patient_id HAVING COUNT(*) > 3",
+            "tags": [
+                "hybrid",
+                "adherence",
+                "follow_up"
+            ]
+        },
+        {
+            "id": "hybrid_005",
+            "intent": "C",
+            "query": "Summarize notes for female patients screened but not yet diagnosed with diabetes",
+            "expected_answer_contains": [
+                "female",
+                "screened",
+                "not diagnosed",
+                "diabetes"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Notes for females in the 'screened but undiagnosed' stage of the diabetes care cascade",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT patient_id FROM patients WHERE gender='female' AND diabetes_screening_status='screened' AND diabetes_diagnosis_status IS NULL",
+            "tags": [
+                "hybrid",
+                "diabetes",
+                "gender",
+                "care_cascade"
+            ]
+        },
+        {
+            "id": "hybrid_006",
+            "intent": "C",
+            "query": "What do notes say about patients with BMI over 30 who are uncontrolled hypertensives?",
+            "expected_answer_contains": [
+                "BMI",
+                "30",
+                "uncontrolled",
+                "hypertension",
+                "notes"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Clinical notes for obese (BMI>30), uncontrolled hypertension patients",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT patient_id FROM patients WHERE bmi > 30 AND bp_status='uncontrolled'",
+            "tags": [
+                "hybrid",
+                "bmi",
+                "obesity",
+                "hypertension"
+            ]
+        },
+        {
+            "id": "hybrid_007",
+            "intent": "C",
+            "query": "Find narrative records for patients on insulin who were admitted in the last 3 months",
+            "expected_answer_contains": [
+                "insulin",
+                "admitted",
+                "narrative",
+                "3 months"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Clinical narratives for patients on insulin therapy with hospital admissions in last 90 days",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT DISTINCT patient_id FROM admissions WHERE admission_date >= NOW() - INTERVAL '90 days'",
+            "tags": [
+                "hybrid",
+                "insulin",
+                "hospitalization"
+            ]
+        },
+        {
+            "id": "hybrid_008",
+            "intent": "C",
+            "query": "Summarize the visit notes for newly registered patients (in last 30 days) with hypertension",
+            "expected_answer_contains": [
+                "newly registered",
+                "hypertension",
+                "notes",
+                "30 days"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Visit notes for patients registered in past 30 days who have hypertension",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT patient_id FROM patients WHERE registration_date >= NOW() - INTERVAL '30 days' AND conditions LIKE '%hypertension%'",
+            "tags": [
+                "hybrid",
+                "new_registrations",
+                "hypertension"
+            ]
+        },
+        {
+            "id": "hybrid_009",
+            "intent": "C",
+            "query": "What do clinical notes say about patients with glucose readings above 200 mg/dl?",
+            "expected_answer_contains": [
+                "glucose",
+                "200",
+                "clinical",
+                "notes"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Clinical narratives for patients with hyperglycemia (glucose > 200 mg/dl)",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT DISTINCT patient_id FROM lab_results WHERE test_name='glucose' AND value > 200",
+            "tags": [
+                "hybrid",
+                "diabetes",
+                "hyperglycemia"
+            ]
+        },
+        {
+            "id": "hybrid_010",
+            "intent": "C",
+            "query": "Show clinical narratives for the top 10 highest-risk patients based on risk score",
+            "expected_answer_contains": [
+                "high-risk",
+                "risk score",
+                "narrative",
+                "top 10"
+            ],
+            "expected_answer_type": "hybrid",
+            "ground_truth_hint": "Clinical notes for the 10 patients with the highest calculated risk scores",
+            "relevant_doc_ids": [],
+            "sql_filter_hint": "SELECT patient_id FROM risk_assessments ORDER BY risk_score DESC LIMIT 10",
+            "tags": [
+                "hybrid",
+                "risk",
+                "ranking"
+            ]
+        }
+    ]
+}
