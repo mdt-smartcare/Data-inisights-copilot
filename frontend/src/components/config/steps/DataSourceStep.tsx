@@ -12,6 +12,7 @@ interface DataSourceStepProps {
     setConnectionId: (id: number | null) => void;
     setConnectionName: (name: string) => void;
     setFileUploadResult: (result: IngestionResponse | null) => void;
+    onFileColumnsInit?: (columns: string[]) => void;
 }
 
 export const DataSourceStep: React.FC<DataSourceStepProps> = ({
@@ -20,13 +21,18 @@ export const DataSourceStep: React.FC<DataSourceStepProps> = ({
     connectionId,
     setConnectionId,
     setConnectionName,
-    setFileUploadResult
+    setFileUploadResult,
+    onFileColumnsInit
 }) => {
     const { user } = useAuth();
     const canEdit = canEditPrompt(user);
 
     const handleFileExtractionComplete = (result: IngestionResponse) => {
         setFileUploadResult(result);
+        // Default: select all columns
+        if (result.columns && onFileColumnsInit) {
+            onFileColumnsInit(result.columns);
+        }
     };
 
     return (
@@ -90,7 +96,7 @@ export const DataSourceStep: React.FC<DataSourceStepProps> = ({
             {dataSourceType === 'file' && (
                 <>
                     <p className="text-gray-500 text-xs sm:text-sm mb-3 sm:mb-4">
-                        Upload a PDF, CSV, Excel, or JSON file to extract data from.
+                        Upload a CSV or Excel file to extract and select columns from.
                     </p>
                     <FileUploadSource
                         onExtractionComplete={handleFileExtractionComplete}

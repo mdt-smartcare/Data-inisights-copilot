@@ -298,6 +298,41 @@ async def _run_embedding_job(
         table_data = None
         child_chunks = None
         
+        # Parse schema selection/column selection early
+        schema_snapshot_raw = config.get('schema_selection', '{}')
+        selected_columns = None
+        try:
+            if schema_snapshot_raw is None:
+                schema_snapshot_raw = '{}'
+            # Handle potential double-encoding from earlier versions
+            if isinstance(schema_snapshot_raw, str) and schema_snapshot_raw.startswith('"') and schema_snapshot_raw.endswith('"'):
+                try:
+                    schema_snapshot_raw = json.loads(schema_snapshot_raw)
+                except json.JSONDecodeError:
+                    pass
+            schema_selection = json.loads(schema_snapshot_raw)
+            if isinstance(schema_selection, str):
+                schema_selection = json.loads(schema_selection)
+            
+            if data_source_type == 'file':
+                # For file sources, schema_selection is a list of selected columns
+                if isinstance(schema_selection, list):
+                    selected_columns = schema_selection
+                    logger.info(f"Using selected columns for file embedding: {selected_columns}")
+            else:
+                # For database sources, schema_selection is a dict or list for tables
+                if isinstance(schema_selection, dict):
+                    target_tables = list(schema_selection.keys())
+                elif isinstance(schema_selection, list):
+                    target_tables = schema_selection
+                else:
+                    target_tables = []
+        except Exception as e:
+            logger.error(f"Failed to parse schema_selection: {e}. Raw was: {schema_snapshot_raw}")
+            if data_source_type != 'file':
+                target_tables = []
+            parse_error = str(e)
+        
         # =================================================================
         # BUILD CONFIG FROM UI INPUTS
         # =================================================================
@@ -423,6 +458,10 @@ async def _run_embedding_job(
                             # Create document content from row data
                             row_dict = {columns[i]: row[i] for i in range(len(columns)) if row[i] is not None}
                             
+                            # Filter columns if selection is provided
+                            if selected_columns:
+                                row_dict = {k: v for k, v in row_dict.items() if k in selected_columns}
+                            
                             # Format as readable text for embedding
                             content_parts = []
                             for col, val in row_dict.items():
@@ -488,32 +527,9 @@ async def _run_embedding_job(
                 if not database_uri:
                     raise ValueError(f"Connection {connection_id} has no URI configured")
                     
-                schema_snapshot_raw = config.get('schema_selection', '{}')
-                try:
-                    if schema_snapshot_raw is None:
-                        schema_snapshot_raw = '{}'
-                    if isinstance(schema_snapshot_raw, str) and schema_snapshot_raw.startswith('"') and schema_snapshot_raw.endswith('"'):
-                        try:
-                            schema_snapshot_raw = json.loads(schema_snapshot_raw)
-                        except json.JSONDecodeError:
-                            pass
-                    schema_selection = json.loads(schema_snapshot_raw)
-                    if isinstance(schema_selection, str):
-                        schema_selection = json.loads(schema_selection)
-                    if isinstance(schema_selection, dict):
-                        target_tables = list(schema_selection.keys())
-                    elif isinstance(schema_selection, list):
-                        target_tables = schema_selection
-                    else:
-                        target_tables = []
-                except Exception as e:
-                    logger.error(f"Failed to parse schema_selection: {e}. Raw was: {schema_snapshot_raw}")
-                    target_tables = []
-                    parse_error = str(e)
-                    
-                if not target_tables:
+                if not 'target_tables' in locals() or not target_tables:
                     err_msg = parse_error if 'parse_error' in locals() else 'None'
-                    raise ValueError(f"Schema parsing failed. Error: {err_msg}")
+                    raise ValueError(f"Schema parsing failed or no tables selected. Error: {err_msg}")
 
                 from backend.pipeline.extract import DataExtractor
                 from backend.config import get_settings

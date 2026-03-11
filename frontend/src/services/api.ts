@@ -170,7 +170,8 @@ export const publishSystemPrompt = async (
   dataSourceType: string = 'database',
   ingestionDocuments?: string,
   ingestionFileName?: string,
-  ingestionFileType?: string
+  ingestionFileType?: string,
+  selectedFileColumns?: string[]
 ): Promise<{ status: string; version: number }> => {
   // We need to fetch the user_id from the token or some auth context.
   // For now, let's decode the token or just send a dummy ID if the backend parses the token.
@@ -188,11 +189,16 @@ export const publishSystemPrompt = async (
     }
   }
 
+  // For file sources, the schema_selection is actually the selected columns
+  const finalSchemaSelection = dataSourceType === 'file' && selectedFileColumns
+    ? JSON.stringify(selectedFileColumns)
+    : (window as any).__config_schema ? JSON.stringify((window as any).__config_schema) : null;
+
   const response = await apiClient.post('/api/v1/config/publish', {
     prompt_text: promptText,
     user_id: userId,
     connection_id: (window as any).__config_connectionId,
-    schema_selection: (window as any).__config_schema ? JSON.stringify((window as any).__config_schema) : null,
+    schema_selection: finalSchemaSelection,
     data_dictionary: (window as any).__config_dictionary,
     reasoning: reasoning ? JSON.stringify(reasoning) : null,
     example_questions: exampleQuestions ? JSON.stringify(exampleQuestions) : null,
@@ -345,12 +351,12 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
 }> => {
   const now = Date.now();
   const cached = vectorDbStatusCache.get(vectorDbName);
-  
+
   // Return cached promise if still valid (within TTL)
   if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
     return cached.promise;
   }
-  
+
   // Create new request and cache it
   const promise = apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`)
     .then(response => response.data)
@@ -363,7 +369,7 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
         }
       }, 100);
     });
-  
+
   vectorDbStatusCache.set(vectorDbName, { promise, timestamp: now });
   return promise;
 };
@@ -600,6 +606,13 @@ export interface IngestionResponse {
   file_type: string;
   total_documents: number;
   documents: ExtractedDocument[];
+  table_name?: string;
+  columns?: string[];
+  column_details?: Array<{ name: string; type: string }>;
+  row_count?: number;
+  processing_mode?: string;
+  message?: string;
+  selectedColumns?: string[];  // Added by frontend after user column selection
 }
 
 /**
@@ -729,7 +742,7 @@ export const getModelCatalog = async (options?: {
   const params: Record<string, any> = {};
   if (options?.category) params.category = options.category;
   if (options?.localOnly) params.local_only = options.localOnly;
-  
+
   const response = await apiClient.get('/api/v1/settings/embedding/catalog', { params });
   return response.data;
 };
@@ -817,12 +830,12 @@ const vectorDbScheduleCache: Map<string, { promise: Promise<any>; timestamp: num
 export const getVectorDbSchedule = async (vectorDbName: string): Promise<VectorDbSchedule> => {
   const now = Date.now();
   const cached = vectorDbScheduleCache.get(vectorDbName);
-  
+
   // Return cached promise if still valid (within 1s TTL)
   if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
     return cached.promise;
   }
-  
+
   // Create new request and cache it
   const promise = apiClient.get(`/api/v1/vector-db/schedule/${vectorDbName}`)
     .then(response => response.data)
@@ -834,7 +847,7 @@ export const getVectorDbSchedule = async (vectorDbName: string): Promise<VectorD
         }
       }, 100);
     });
-  
+
   vectorDbScheduleCache.set(vectorDbName, { promise, timestamp: now });
   return promise;
 };
@@ -1149,21 +1162,21 @@ export interface UnifiedQueryResult {
   query_type: string;  // 'sql', 'rag', 'hybrid', 'sql_fallback'
   intent: string;
   confidence: number;
-  
+
   // Final answer
   final_answer?: string;
-  
+
   // SQL results
   sql_answer?: string;
   sql_query?: string;
   sql_rows?: Record<string, any>[];
   sql_execution_ms?: number;
-  
+
   // RAG results
   rag_answer?: string;
   rag_documents?: Array<{ content: string; metadata: Record<string, any> }>;
   rag_sources?: string[];
-  
+
   // Metadata
   routing_reason?: string;
   error?: string;
@@ -1182,7 +1195,7 @@ export interface RoutingPreview {
 export interface AgenticHybridResult {
   status: string;
   question: string;
-  
+
   // Workflow stages
   stage_1_rag: {
     query: string;
@@ -1200,16 +1213,16 @@ export interface AgenticHybridResult {
     prompt_context: string;
     model_used: string;
   };
-  
+
   // Final answer
   final_answer: string;
-  
+
   // Performance metrics
   total_time_ms: number;
   rag_time_ms: number;
   sql_time_ms: number;
   synthesis_time_ms: number;
-  
+
   error?: string;
 }
 
