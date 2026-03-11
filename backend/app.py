@@ -17,6 +17,7 @@ from backend.core.logging import setup_logging, get_logger
 from backend.api.routes import auth, chat, feedback, health, config, data, audit, users
 from backend.api.routes import embedding_progress, notifications, settings as settings_routes, observability
 from backend.api.websocket import embedding_progress as embedding_ws
+from backend.api.websocket import notifications as notifications_ws
 from backend.services.embeddings import preload_embedding_model
 from backend.services.scheduler_service import get_scheduler_service
 
@@ -190,6 +191,7 @@ app.include_router(schema_drift.router, prefix=settings.api_v1_prefix)
 
 # WebSocket routes (no prefix for WebSocket endpoints)
 app.include_router(embedding_ws.router)
+app.include_router(notifications_ws.router)
 
 
 @app.get("/")

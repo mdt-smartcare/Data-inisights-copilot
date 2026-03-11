@@ -16,6 +16,7 @@ import NotificationsPage from './pages/NotificationsPage';
 import DataManagementPage from './pages/DataManagementPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { NotificationsProvider } from './contexts/NotificationsContext';
 import type { UserRole } from './types';
 import { roleAtLeast } from './utils/permissions';
 
@@ -77,7 +78,7 @@ function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   if (allowedRoles && user?.role) {
     // Find the minimum required role (lowest in hierarchy = most restrictive)
     // If user's role is at least as privileged as any allowed role, grant access
-    const hasAccess = allowedRoles.some(allowedRole => 
+    const hasAccess = allowedRoles.some(allowedRole =>
       roleAtLeast(user.role, allowedRole)
     );
     if (!hasAccess) {
@@ -94,89 +95,91 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <SystemSettingsProvider>
-          <ToastProvider>
-            <BrowserRouter>
-              <Routes>
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/register" element={<RegisterPage />} />
-                <Route path="/callback" element={<CallbackPage />} />
-                <Route path="/" element={<DefaultRedirect />} />
-                <Route
-                  path="/chat"
-                  element={
-                    <ProtectedRoute>
-                      <ChatPage />
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Agent routes */}
-                <Route
-                  path="/agents"
-                  element={
-                    <ProtectedRoute allowedRoles={['admin']}>
-                      <AgentsPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/agents/:id"
-                  element={
-                    <ProtectedRoute allowedRoles={['admin']}>
-                      <AgentDashboardPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/agents/:id/config"
-                  element={
-                    <ProtectedRoute allowedRoles={['admin']}>
-                      <AgentConfigPage />
-                    </ProtectedRoute>
-                  }
-                />
-                {/* Backward compatibility redirect */}
-                <Route
-                  path="/config"
-                  element={<Navigate to="/agents" replace />}
-                />
-                <Route path="/about" element={<AboutPage />} />
-                <Route
-                  path="/users"
-                  element={
-                    <ProtectedRoute allowedRoles={['admin']}>
-                      <UsersPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/audit"
-                  element={
-                    <ProtectedRoute allowedRoles={['admin']}>
-                      <AuditLogsPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/notifications"
-                  element={
-                    <ProtectedRoute>
-                      <NotificationsPage />
-                    </ProtectedRoute>
-                  }
-                />
-                <Route
-                  path="/data-management"
-                  element={
-                    <ProtectedRoute allowedRoles={['admin']}>
-                      <DataManagementPage />
-                    </ProtectedRoute>
-                  }
-                />
+          <NotificationsProvider>
+            <ToastProvider>
+              <BrowserRouter>
+                <Routes>
+                  <Route path="/login" element={<LoginPage />} />
+                  <Route path="/register" element={<RegisterPage />} />
+                  <Route path="/callback" element={<CallbackPage />} />
+                  <Route path="/" element={<DefaultRedirect />} />
+                  <Route
+                    path="/chat"
+                    element={
+                      <ProtectedRoute>
+                        <ChatPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  {/* Agent routes */}
+                  <Route
+                    path="/agents"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <AgentsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/agents/:id"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <AgentDashboardPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/agents/:id/config"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <AgentConfigPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  {/* Backward compatibility redirect */}
+                  <Route
+                    path="/config"
+                    element={<Navigate to="/agents" replace />}
+                  />
+                  <Route path="/about" element={<AboutPage />} />
+                  <Route
+                    path="/users"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <UsersPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/audit"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <AuditLogsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/notifications"
+                    element={
+                      <ProtectedRoute>
+                        <NotificationsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/data-management"
+                    element={
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <DataManagementPage />
+                      </ProtectedRoute>
+                    }
+                  />
 
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </BrowserRouter>
-          </ToastProvider>
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+              </BrowserRouter>
+            </ToastProvider>
+          </NotificationsProvider>
         </SystemSettingsProvider>
       </AuthProvider>
     </QueryClientProvider>

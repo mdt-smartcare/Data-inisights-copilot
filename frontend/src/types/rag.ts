@@ -211,3 +211,53 @@ export interface WebSocketJobFinishedMessage {
 }
 
 export type WebSocketMessage = WebSocketProgressMessage | WebSocketJobFinishedMessage;
+
+// ============================================
+// Notification WebSocket Message Types
+// ============================================
+
+export interface WebSocketNewNotificationMessage {
+    event: 'new_notification';
+    timestamp: string;
+    notification: Notification;
+}
+
+export interface WebSocketNotificationReadMessage {
+    event: 'notification_read';
+    timestamp: string;
+    notification_id: number;
+}
+
+export interface WebSocketNotificationDismissedMessage {
+    event: 'notification_dismissed';
+    timestamp: string;
+    notification_id: number;
+}
+
+export interface WebSocketAllReadMessage {
+    event: 'all_read';
+    timestamp: string;
+}
+
+export interface WebSocketConnectedMessage {
+    event: 'connected';
+    timestamp: string;
+}
+
+export interface WebSocketHeartbeatMessage {
+    event: 'heartbeat';
+    timestamp: string;
+}
+
+export interface WebSocketPongMessage {
+    event: 'pong';
+}
+
+export type WebSocketNotificationMessage =
+    | WebSocketNewNotificationMessage
+    | WebSocketNotificationReadMessage
+    | WebSocketNotificationDismissedMessage
+    | WebSocketAllReadMessage
+    | WebSocketConnectedMessage
+    | WebSocketHeartbeatMessage
+    | WebSocketPongMessage;

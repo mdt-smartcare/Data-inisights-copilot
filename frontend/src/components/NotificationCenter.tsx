@@ -1,16 +1,13 @@
 /**
  * NotificationCenter component - Bell icon dropdown with notification list.
+ * 
+ * Uses NotificationsContext for real-time notification delivery via WebSocket.
+ * Shows only unread notifications in the dropdown.
  */
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Notification } from '../types/rag';
-import {
-    getNotifications,
-    getUnreadNotificationCount,
-    markNotificationAsRead,
-    markAllNotificationsAsRead,
-    dismissNotification
-} from '../services/api';
+import { useNotificationsContext } from '../contexts/NotificationsContext';
 import './NotificationCenter.css';
 
 interface NotificationCenterProps {
@@ -39,28 +36,19 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     onNotificationClick,
 }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const [notifications, setNotifications] = useState<Notification[]>([]);
-    const [unreadCount, setUnreadCount] = useState(0);
-    const [loading, setLoading] = useState(false);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const navigate = useNavigate();
 
-    // Fetch notifications and unread count
-    const fetchNotifications = useCallback(async () => {
-        try {
-            setLoading(true);
-            const [notifs, count] = await Promise.all([
-                getNotifications({ limit: 20 }),
-                getUnreadNotificationCount(),
-            ]);
-            setNotifications(notifs);
-            setUnreadCount(count.count);
-        } catch (e) {
-            console.error('Failed to fetch notifications:', e);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+    // Use the notifications context - WebSocket connection lives at app level
+    const {
+        notifications,
+        unreadCount,
+        isLoading,
+        isConnected,
+        markAsRead,
+        markAllAsRead,
+        dismiss
+    } = useNotificationsContext();
 
     // Handle click outside to close dropdown
     useEffect(() => {
@@ -79,22 +67,11 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
         };
     }, [isOpen]);
 
-    // Fetch on mount and periodically
-    useEffect(() => {
-        fetchNotifications();
-        const interval = setInterval(fetchNotifications, 30000); // Poll every 30s
-        return () => clearInterval(interval);
-    }, [fetchNotifications]);
-
     // Handle notification click
     const handleNotificationClick = async (notification: Notification) => {
         if (notification.status === 'unread') {
             try {
-                await markNotificationAsRead(notification.id);
-                setNotifications(prev =>
-                    prev.map(n => n.id === notification.id ? { ...n, status: 'read' } : n)
-                );
-                setUnreadCount(prev => Math.max(0, prev - 1));
+                await markAsRead(notification.id);
             } catch (e) {
                 console.error('Failed to mark notification as read:', e);
             }
@@ -111,9 +88,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     // Mark all as read
     const handleMarkAllRead = async () => {
         try {
-            await markAllNotificationsAsRead();
-            setNotifications(prev => prev.map(n => ({ ...n, status: 'read' })));
-            setUnreadCount(0);
+            await markAllAsRead();
         } catch (e) {
             console.error('Failed to mark all as read:', e);
         }
@@ -123,13 +98,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
     const handleDismiss = async (e: React.MouseEvent, notificationId: number) => {
         e.stopPropagation();
         try {
-            await dismissNotification(notificationId);
-            setNotifications(prev => prev.filter(n => n.id !== notificationId));
-            // Update unread count if dismissed notification was unread
-            const dismissed = notifications.find(n => n.id === notificationId);
-            if (dismissed?.status === 'unread') {
-                setUnreadCount(prev => Math.max(0, prev - 1));
-            }
+            await dismiss(notificationId);
         } catch (e) {
             console.error('Failed to dismiss notification:', e);
         }
@@ -174,6 +143,13 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                         {unreadCount > 99 ? '99+' : unreadCount}
                     </span>
                 )}
+                {/* Connection indicator (optional - subtle dot) */}
+                {isConnected && (
+                    <span 
+                        className="notification-center__connected-indicator"
+                        title="Real-time updates enabled"
+                    />
+                )}
             </button>
 
             {/* Dropdown */}
@@ -194,18 +170,18 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
 
                     {/* Notification list */}
                     <div className="notification-center__list">
-                        {loading && notifications.length === 0 ? (
+                        {isLoading && notifications.length === 0 ? (
                             <div className="notification-center__loading">Loading...</div>
                         ) : notifications.length === 0 ? (
                             <div className="notification-center__empty">
-                                <div className="notification-center__empty-text">No notifications</div>
+                                <div className="notification-center__empty-icon">✓</div>
+                                <div className="notification-center__empty-text">All caught up!</div>
                             </div>
                         ) : (
                             notifications.map(notification => (
                                 <div
                                     key={notification.id}
-                                    className={`notification-center__item ${notification.status === 'unread' ? 'notification-center__item--unread' : ''
-                                        }`}
+                                    className="notification-center__item notification-center__item--unread"
                                     onClick={() => handleNotificationClick(notification)}
                                 >
                                     <div
@@ -242,13 +218,11 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
                     </div>
 
                     {/* Footer */}
-                    {notifications.length > 0 && (
-                        <div className="notification-center__footer">
-                            <Link to="/notifications" className="notification-center__view-all" onClick={() => setIsOpen(false)}>
-                                View all notifications
-                            </Link>
-                        </div>
-                    )}
+                    <div className="notification-center__footer">
+                        <Link to="/notifications" className="notification-center__view-all" onClick={() => setIsOpen(false)}>
+                            View all notifications
+                        </Link>
+                    </div>
                 </div>
             )}
         </div>

@@ -3,15 +3,18 @@ WebSocket endpoint for real-time embedding progress updates.
 """
 import asyncio
 import json
-from typing import Dict, Set
+from typing import Dict, Set, Optional
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
-from jose import JWTError, jwt
+from typing import Optional
 
 from backend.config import get_settings
 from backend.services.embedding_job_service import get_embedding_job_service
 from backend.core.logging import get_logger
+from backend.core.security import decode_keycloak_token
+from backend.sqliteDb.db import get_db_service
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -69,15 +72,76 @@ class ProgressConnectionManager:
 # Global connection manager
 manager = ProgressConnectionManager()
 
+# Heartbeat interval for ETA refresh (seconds)
+HEARTBEAT_INTERVAL = 15.0
+# Check interval (how often to poll job state)
+CHECK_INTERVAL = 1.0
 
-def verify_token(token: str) -> bool:
-    """Verify JWT token for WebSocket authentication."""
+
+@dataclass
+class ProgressState:
+    """Tracks the last sent progress state for deduplication."""
+    processed_documents: int = 0
+    failed_documents: int = 0
+    status: str = ""
+    phase: str = ""
+    errors_count: int = 0
+    
+    def has_meaningful_change(self, progress) -> bool:
+        """Check if progress has meaningful changes worth sending."""
+        status_str = progress.status.value if hasattr(progress.status, 'value') else progress.status
+        return (
+            self.processed_documents != progress.processed_documents or
+            self.failed_documents != progress.failed_documents or
+            self.status != status_str or
+            self.phase != progress.phase or
+            self.errors_count != progress.errors_count
+        )
+    
+    def update_from(self, progress) -> None:
+        """Update state from progress object."""
+        self.processed_documents = progress.processed_documents
+        self.failed_documents = progress.failed_documents
+        self.status = progress.status.value if hasattr(progress.status, 'value') else progress.status
+        self.phase = progress.phase
+        self.errors_count = progress.errors_count
+
+
+async def verify_token(token: str) -> Optional[dict]:
+    """
+    Verify Keycloak JWT token for WebSocket authentication.
+    
+    Returns:
+        Decoded token payload if valid, None otherwise.
+    """
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
-        username = payload.get("sub")
-        return username is not None
-    except JWTError:
-        return False
+        # Use Keycloak token verification
+        if settings.oidc_issuer_url and settings.oidc_client_id:
+            payload = await decode_keycloak_token(
+                token=token,
+                issuer_url=settings.oidc_issuer_url,
+                client_id=settings.oidc_client_id
+            )
+            # Extract user info from Keycloak token
+            username = payload.get("preferred_username") or payload.get("email")
+            external_id = payload.get("sub")
+            if not external_id:
+                return None
+            
+            # Look up database user ID from external_id (Keycloak sub)
+            db_service = get_db_service()
+            user_data = db_service.get_user_by_external_id(external_id)
+            if not user_data:
+                logger.warning(f"No database user found for external_id {external_id}")
+                return None
+            
+            return {"username": username, "user_id": user_data['id'], "external_id": external_id}
+        else:
+            logger.warning("OIDC not configured, WebSocket auth not available")
+            return None
+    except Exception as e:
+        logger.debug(f"Token verification failed: {e}")
+        return None
 
 
 @router.websocket("/ws/embedding-progress/{job_id}")
@@ -116,8 +180,13 @@ async def embedding_progress_websocket(
         }
     """
     # Verify authentication
-    if not token or not verify_token(token):
+    if not token:
         await websocket.close(code=4001, reason="Authentication required")
+        return
+    
+    token_data = await verify_token(token)
+    if not token_data:
+        await websocket.close(code=4001, reason="Invalid token")
         return
     
     job_service = get_embedding_job_service()
@@ -134,14 +203,22 @@ async def embedding_progress_websocket(
         # Send initial progress immediately
         await send_progress_update(websocket, job_id, job_service)
         
+        # Track last sent state for deduplication
+        last_state = ProgressState()
+        initial_progress = job_service.get_job_progress(job_id)
+        if initial_progress:
+            last_state.update_from(initial_progress)
+        
+        last_heartbeat = asyncio.get_event_loop().time()
+        
         # Keep connection alive and send updates
         while True:
             try:
                 # Wait for client messages (ping/pong or close)
-                # Use a shorter timeout to send progress updates regularly
+                # Use short timeout for responsive change detection
                 message = await asyncio.wait_for(
                     websocket.receive_text(),
-                    timeout=2.0  # Send updates every 2 seconds
+                    timeout=CHECK_INTERVAL
                 )
                 
                 # Handle client commands
@@ -153,7 +230,7 @@ async def embedding_progress_websocket(
                     pass
                     
             except asyncio.TimeoutError:
-                # Timeout means no client message - send progress update
+                # Timeout means no client message - check for updates
                 progress = job_service.get_job_progress(job_id)
                 
                 if not progress:
@@ -164,7 +241,22 @@ async def embedding_progress_websocket(
                     })
                     break
                 
-                await send_progress_update(websocket, job_id, job_service)
+                current_time = asyncio.get_event_loop().time()
+                time_since_heartbeat = current_time - last_heartbeat
+                
+                # Send update if: meaningful change OR heartbeat interval reached
+                has_change = last_state.has_meaningful_change(progress)
+                needs_heartbeat = time_since_heartbeat >= HEARTBEAT_INTERVAL
+                
+                if has_change or needs_heartbeat:
+                    await send_progress_update(websocket, job_id, job_service)
+                    last_state.update_from(progress)
+                    last_heartbeat = current_time
+                    
+                    if has_change:
+                        logger.debug(f"Job {job_id}: Sent update (change detected)")
+                    else:
+                        logger.debug(f"Job {job_id}: Sent heartbeat (ETA refresh)")
                 
                 # Check if job is complete
                 if progress.status in ["COMPLETED", "FAILED", "CANCELLED"]:

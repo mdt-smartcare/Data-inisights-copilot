@@ -66,6 +66,34 @@ async def get_unread_count(
     return {"count": count}
 
 
+@router.get("/count", response_model=Dict[str, int])
+async def get_notification_count(
+    status_filter: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
+    notification_service: NotificationService = Depends(get_notification_service)
+):
+    """
+    Get total count of notifications for the current user.
+    
+    Useful for pagination to calculate total pages.
+    
+    Args:
+        status_filter: Optional filter by status (unread, read, dismissed)
+    """
+    status_enum = None
+    if status_filter:
+        try:
+            status_enum = NotificationStatus(status_filter)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid status: {status_filter}. Must be one of: unread, read, dismissed"
+            )
+    
+    count = notification_service.get_notification_count(current_user.id, status_enum)
+    return {"count": count}
+
+
 @router.get("/{notification_id}", response_model=Notification)
 async def get_notification(
     notification_id: int,
@@ -106,6 +134,9 @@ async def mark_as_read(
             detail="Notification not found or not owned by user"
         )
     
+    # Broadcast to other tabs via WebSocket
+    await notification_service.broadcast_notification_read(notification_id, current_user.id)
+    
     return {"success": True}
 
 
@@ -116,6 +147,10 @@ async def mark_all_as_read(
 ):
     """Mark all user's notifications as read."""
     count = notification_service.mark_all_as_read(current_user.id)
+    
+    # Broadcast to other tabs via WebSocket
+    await notification_service.broadcast_all_read(current_user.id)
+    
     return {"success": True, "marked_count": count}
 
 
@@ -133,6 +168,9 @@ async def dismiss_notification(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Notification not found or not owned by user"
         )
+    
+    # Broadcast to other tabs via WebSocket
+    await notification_service.broadcast_notification_dismissed(notification_id, current_user.id)
     
     return {"success": True}
 

@@ -5,6 +5,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { EmbeddingJobProgress, EmbeddingJobStatus, WebSocketProgressMessage } from '../types/rag';
 import { getEmbeddingProgress, cancelEmbeddingJob } from '../services/api';
+import { oidcService } from '../services/oidcService';
 import './EmbeddingProgress.css';
 
 interface EmbeddingProgressProps {
@@ -56,6 +57,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     const [isCancelling, setIsCancelling] = useState(false);
     const wsRef = useRef<WebSocket | null>(null);
     const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const completedRef = useRef(false); // Guard against multiple onComplete calls
 
     // Memoize the handlers to prevent dependency churn
     const onCompleteRef = useRef(onComplete);
@@ -67,6 +69,13 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
         onErrorRef.current = onError;
         onCancelRef.current = onCancel;
     }, [onComplete, onError, onCancel]);
+
+    // Safe wrapper that only calls onComplete once
+    const triggerComplete = useCallback((success: boolean) => {
+        if (completedRef.current) return;
+        completedRef.current = true;
+        onCompleteRef.current?.(success);
+    }, []);
 
     const isFinalState = (status: EmbeddingJobStatus) =>
         ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status);
@@ -95,11 +104,11 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     }, []);
 
     // Connect to WebSocket
-    const connectWebSocket = useCallback(() => {
+    const connectWebSocket = useCallback(async (): Promise<boolean> => {
         // If we already have a final state, don't connect
         if (progress && isFinalState(progress.status)) return false;
 
-        const token = localStorage.getItem('auth_token');
+        const token = await oidcService.getAccessToken();
         if (!token) {
             console.warn('No auth token for WebSocket, falling back to polling');
             return false;
@@ -142,7 +151,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                     } else if (data.event === 'job_finished') {
                         const finished = data as any;
                         if (finished.status === 'COMPLETED') {
-                            onCompleteRef.current?.(true);
+                            triggerComplete(true);
                             ws.close();
                         } else if (finished.status === 'FAILED') {
                             onErrorRef.current?.('Job failed');
@@ -169,7 +178,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             console.error('WebSocket connection failed:', e);
             return false;
         }
-    }, [jobId, progress?.status, stopPolling]); // Depend on status to prevent reconnecting if done
+    }, [jobId, progress?.status, stopPolling, triggerComplete]); // Depend on status to prevent reconnecting if done
 
     // Polling fallback
     const startPolling = useCallback(() => {
@@ -185,7 +194,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
                 if (data.status === 'COMPLETED') {
                     stopPolling();
-                    onCompleteRef.current?.(true);
+                    triggerComplete(true);
                 } else if (data.status === 'FAILED') {
                     stopPolling();
                     onErrorRef.current?.(data.recent_errors?.[0] || 'Job failed');
@@ -206,7 +215,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
         poll(); // Initial fetch
         pollingRef.current = setInterval(poll, 2000);
-    }, [jobId, progress?.status, stopPolling]);
+    }, [jobId, progress?.status, stopPolling, triggerComplete]);
 
     // Handle cancel
     const handleCancel = async () => {
@@ -234,10 +243,13 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             return;
         }
 
-        const wsConnected = connectWebSocket();
-        if (!wsConnected) {
-            startPolling();
-        }
+        // Async connection with polling fallback
+        (async () => {
+            const wsConnected = await connectWebSocket();
+            if (!wsConnected) {
+                startPolling();
+            }
+        })();
 
         return () => {
             if (wsRef.current) {
@@ -397,7 +409,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                 <div className="embedding-progress__complete mt-4 pb-2">
                     <div className="mb-4">Embedding generation completed successfully!</div>
                     <button
-                        onClick={() => onCompleteRef.current?.(true)}
+                        onClick={() => triggerComplete(true)}
                         className="px-6 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700 transition-colors shadow-sm w-full md:w-auto"
                     >
                         Finish & Close

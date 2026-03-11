@@ -331,16 +331,23 @@ async def get_schedule(
     """
     Get schedule configuration for a Vector Database.
     Requires Admin role or above.
+    Returns null schedule if none exists (no 404).
     """
     schedule = scheduler_service.get_schedule(vector_db_name)
     
     if not schedule:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No schedule found for vector DB: {vector_db_name}"
-        )
+        # Return empty schedule object instead of 404
+        return {
+            "vector_db_name": vector_db_name,
+            "schedule": None,
+            "enabled": False,
+            "exists": False
+        }
     
-    return schedule
+    return {
+        **schedule,
+        "exists": True
+    }
 
 
 @router.delete("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])

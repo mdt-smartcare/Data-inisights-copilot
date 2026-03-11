@@ -325,6 +325,10 @@ export const getAllAgents = async (): Promise<Agent[]> => {
 // DATA SETUP & CONNECTION API (Phase 6 & 7)
 // ============================================================================
 
+// Cache for in-flight status requests to deduplicate concurrent calls
+const vectorDbStatusCache: Map<string, { promise: Promise<any>; timestamp: number }> = new Map();
+const CACHE_TTL_MS = 1000; // 1 second deduplication window
+
 export const getVectorDbStatus = async (vectorDbName: string): Promise<{
   name: string;
   exists: boolean;
@@ -339,8 +343,29 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
   diagnostics: Array<{ level: string; message: string }>;
   schedule: any;
 }> => {
-  const response = await apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`);
-  return response.data;
+  const now = Date.now();
+  const cached = vectorDbStatusCache.get(vectorDbName);
+  
+  // Return cached promise if still valid (within TTL)
+  if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+    return cached.promise;
+  }
+  
+  // Create new request and cache it
+  const promise = apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`)
+    .then(response => response.data)
+    .finally(() => {
+      // Clean up cache entry after request completes + small buffer
+      setTimeout(() => {
+        const entry = vectorDbStatusCache.get(vectorDbName);
+        if (entry && entry.promise === promise) {
+          vectorDbStatusCache.delete(vectorDbName);
+        }
+      }, 100);
+    });
+  
+  vectorDbStatusCache.set(vectorDbName, { promise, timestamp: now });
+  return promise;
 };
 
 export const getUserProfile = async (): Promise<User> => {
@@ -475,6 +500,16 @@ export const getNotifications = async (params?: {
  */
 export const getUnreadNotificationCount = async (): Promise<{ count: number }> => {
   const response = await apiClient.get('/api/v1/notifications/unread-count');
+  return response.data;
+};
+
+/**
+ * Get total count of notifications (for pagination).
+ */
+export const getNotificationCount = async (params?: {
+  status_filter?: string;
+}): Promise<{ count: number }> => {
+  const response = await apiClient.get('/api/v1/notifications/count', { params });
   return response.data;
 };
 
@@ -749,6 +784,8 @@ export interface VectorDbSchedule {
   last_run_at?: string;
   last_run_status?: 'success' | 'failed' | 'running';
   last_run_job_id?: string;
+  exists?: boolean; // false when no schedule is configured
+  schedule?: any;   // null when no schedule is configured
 }
 
 export interface ScheduleCreateRequest {
@@ -774,9 +811,32 @@ export const createVectorDbSchedule = async (
 /**
  * Get schedule configuration for a Vector Database.
  */
+// Cache for in-flight schedule requests to deduplicate concurrent calls
+const vectorDbScheduleCache: Map<string, { promise: Promise<any>; timestamp: number }> = new Map();
+
 export const getVectorDbSchedule = async (vectorDbName: string): Promise<VectorDbSchedule> => {
-  const response = await apiClient.get(`/api/v1/vector-db/schedule/${vectorDbName}`);
-  return response.data;
+  const now = Date.now();
+  const cached = vectorDbScheduleCache.get(vectorDbName);
+  
+  // Return cached promise if still valid (within 1s TTL)
+  if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+    return cached.promise;
+  }
+  
+  // Create new request and cache it
+  const promise = apiClient.get(`/api/v1/vector-db/schedule/${vectorDbName}`)
+    .then(response => response.data)
+    .finally(() => {
+      setTimeout(() => {
+        const entry = vectorDbScheduleCache.get(vectorDbName);
+        if (entry && entry.promise === promise) {
+          vectorDbScheduleCache.delete(vectorDbName);
+        }
+      }, 100);
+    });
+  
+  vectorDbScheduleCache.set(vectorDbName, { promise, timestamp: now });
+  return promise;
 };
 
 /**

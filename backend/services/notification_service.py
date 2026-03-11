@@ -172,10 +172,42 @@ class NotificationService:
                 self._log_delivery(notification_id, channel, "failed", str(e))
     
     async def _deliver_in_app(self, notification: Notification, user_id: int) -> None:
-        """Deliver notification via in-app channel."""
-        # In-app delivery is primarily handled by WebSocket
-        # The notification record is already in DB, clients will poll or receive via WS
-        logger.debug(f"In-app notification ready for user {user_id}")
+        """Deliver notification via in-app channel using WebSocket."""
+        try:
+            # Import here to avoid circular imports
+            from backend.api.websocket.notifications import get_notification_ws_manager
+            
+            # Convert notification to dict for WebSocket transmission
+            notification_data = {
+                "id": notification.id,
+                "user_id": notification.user_id,
+                "type": notification.type.value if hasattr(notification.type, 'value') else notification.type,
+                "priority": notification.priority.value if hasattr(notification.priority, 'value') else notification.priority,
+                "title": notification.title,
+                "message": notification.message,
+                "action_url": notification.action_url,
+                "action_label": notification.action_label,
+                "status": notification.status.value if hasattr(notification.status, 'value') else notification.status,
+                "related_entity_type": notification.related_entity_type,
+                "related_entity_id": notification.related_entity_id,
+                "channels": notification.channels,
+                "read_at": notification.read_at.isoformat() if notification.read_at else None,
+                "created_at": notification.created_at.isoformat() if notification.created_at else None
+            }
+            
+            # Push via WebSocket
+            ws_manager = get_notification_ws_manager()
+            sent_count = await ws_manager.send_to_user(str(user_id), notification_data)
+            
+            if sent_count > 0:
+                logger.debug(f"In-app notification pushed to {sent_count} connections for user {user_id}")
+            else:
+                logger.debug(f"In-app notification ready for user {user_id} (no active WebSocket connections)")
+                
+        except Exception as e:
+            # Don't fail the notification creation if WebSocket push fails
+            # The notification is still in DB and will be fetched on next poll
+            logger.warning(f"Failed to push notification via WebSocket: {e}")
     
     async def _deliver_email(
         self,
@@ -358,6 +390,28 @@ class NotificationService:
         finally:
             conn.close()
     
+    def get_notification_count(
+        self, 
+        user_id: int, 
+        status: Optional[NotificationStatus] = None
+    ) -> int:
+        """Get total count of notifications for a user, optionally filtered by status."""
+        conn = self.db.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            query = "SELECT COUNT(*) as count FROM notifications WHERE user_id = ?"
+            params = [user_id]
+            
+            if status:
+                query += " AND status = ?"
+                params.append(status.value)
+            
+            cursor.execute(query, params)
+            return cursor.fetchone()['count']
+        finally:
+            conn.close()
+    
     def mark_as_read(self, notification_id: int, user_id: int) -> bool:
         """Mark a notification as read."""
         conn = self.db.get_connection()
@@ -518,6 +572,41 @@ class NotificationService:
             return False
         finally:
             conn.close()
+    
+    async def broadcast_notification_read(self, notification_id: int, user_id: int) -> None:
+        """Broadcast notification_read event to all user's WebSocket connections."""
+        try:
+            from backend.api.websocket.notifications import get_notification_ws_manager
+            ws_manager = get_notification_ws_manager()
+            await ws_manager.broadcast_to_user(
+                str(user_id), 
+                "notification_read", 
+                {"notification_id": notification_id}
+            )
+        except Exception as e:
+            logger.debug(f"Failed to broadcast notification_read: {e}")
+    
+    async def broadcast_all_read(self, user_id: int) -> None:
+        """Broadcast all_read event to all user's WebSocket connections."""
+        try:
+            from backend.api.websocket.notifications import get_notification_ws_manager
+            ws_manager = get_notification_ws_manager()
+            await ws_manager.broadcast_to_user(str(user_id), "all_read")
+        except Exception as e:
+            logger.debug(f"Failed to broadcast all_read: {e}")
+    
+    async def broadcast_notification_dismissed(self, notification_id: int, user_id: int) -> None:
+        """Broadcast notification_dismissed event to all user's WebSocket connections."""
+        try:
+            from backend.api.websocket.notifications import get_notification_ws_manager
+            ws_manager = get_notification_ws_manager()
+            await ws_manager.broadcast_to_user(
+                str(user_id), 
+                "notification_dismissed", 
+                {"notification_id": notification_id}
+            )
+        except Exception as e:
+            logger.debug(f"Failed to broadcast notification_dismissed: {e}")
 
 
 # Singleton instance

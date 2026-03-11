@@ -56,6 +56,14 @@ const ScheduleSelector: React.FC<ScheduleSelectorProps> = ({
 
         try {
             const data = await getVectorDbSchedule(vectorDbName);
+            
+            // Check if schedule exists (new API returns exists: false instead of 404)
+            if (!data || data.exists === false || !data.schedule_type) {
+                setSchedule(null);
+                onScheduleChange?.(null);
+                return;
+            }
+            
             setSchedule(data);
             setEnabled(data.enabled);
             setScheduleType(data.schedule_type);
@@ -72,7 +80,7 @@ const ScheduleSelector: React.FC<ScheduleSelectorProps> = ({
             }
             onScheduleChange?.(data);
         } catch (err: any) {
-            // 404 means no schedule exists yet, which is fine
+            // 404 means no schedule exists yet, which is fine (legacy fallback)
             if (err.response?.status !== 404) {
                 setError(handleApiError(err));
             }
