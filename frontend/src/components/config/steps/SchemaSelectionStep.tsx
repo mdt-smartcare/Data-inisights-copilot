@@ -1,5 +1,6 @@
 import React from 'react';
 import SchemaSelector from '../../SchemaSelector';
+import FileColumnSelector from '../../FileColumnSelector';
 import { DocumentPreview } from '../DocumentPreview';
 import type { IngestionResponse } from '../../../services/api';
 import { canEditPrompt } from '../../../utils/permissions';
@@ -11,6 +12,8 @@ interface SchemaSelectionStepProps {
     setSelectedSchema: (schema: Record<string, string[]>) => void;
     fileUploadResult: IngestionResponse | null;
     reasoning: Record<string, string>;
+    onFileColumnsChange?: (columns: string[]) => void;
+    selectedFileColumns?: string[];
 }
 
 export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
@@ -18,7 +21,9 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     connectionId,
     setSelectedSchema,
     fileUploadResult,
-    reasoning
+    reasoning,
+    onFileColumnsChange,
+    selectedFileColumns = []
 }) => {
     const { user } = useAuth();
     const canEdit = canEditPrompt(user);
@@ -41,13 +46,34 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     }
 
     if (dataSourceType === 'file' && fileUploadResult) {
+        const hasSelection = selectedFileColumns.length > 0;
+
         return (
-            <DocumentPreview
-                documents={fileUploadResult.documents}
-                fileName={fileUploadResult.file_name}
-                fileType={fileUploadResult.file_type}
-                totalDocuments={fileUploadResult.total_documents}
-            />
+            <div className="w-full max-w-4xl mx-auto space-y-6">
+                <h2 className="text-lg sm:text-xl font-semibold mb-1">Select Columns</h2>
+                <p className="text-gray-500 text-xs sm:text-sm mb-4">
+                    Choose which columns from <strong>{fileUploadResult.file_name}</strong> to include for embedding and analysis.
+                </p>
+
+                <FileColumnSelector
+                    columns={fileUploadResult.columns}
+                    columnDetails={fileUploadResult.column_details}
+                    onSelectionChange={onFileColumnsChange || (() => { })}
+                    readOnly={!canEdit}
+                />
+
+                {/* Data preview — only shown after columns are selected */}
+                {hasSelection && fileUploadResult.documents && fileUploadResult.documents.length > 0 && (
+                    <div className="mt-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <DocumentPreview
+                            documents={fileUploadResult.documents}
+                            fileName={fileUploadResult.file_name}
+                            fileType={fileUploadResult.file_type}
+                            totalDocuments={fileUploadResult.total_documents}
+                        />
+                    </div>
+                )}
+            </div>
         );
     }
 
@@ -61,3 +87,4 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
 };
 
 export default SchemaSelectionStep;
+

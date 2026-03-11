@@ -275,6 +275,7 @@ class IngestionResponse(BaseModel):
     documents: List[ExtractedDocument]
     table_name: Optional[str] = None
     columns: Optional[List[str]] = None
+    column_details: Optional[List[Dict[str, str]]] = None  # [{name, type}]
     row_count: Optional[int] = None
     processing_mode: Optional[str] = None  # 'sync' or 'background'
     message: Optional[str] = None
@@ -348,6 +349,7 @@ async def upload_and_extract(
 
     table_name = None
     columns = None
+    column_details = None
     row_count = None
     processing_mode = None
     message = None
@@ -415,6 +417,20 @@ async def upload_and_extract(
                         "SELECT columns, row_count FROM _file_metadata WHERE table_name = ?",
                         [table_name]
                     ).fetchone()
+                    
+                    # Get column type info via DESCRIBE
+                    column_details = None
+                    try:
+                        type_info = conn.execute(
+                            f"DESCRIBE SELECT * FROM {table_name}"
+                        ).fetchall()
+                        column_details = [
+                            {"name": row[0], "type": row[1]}
+                            for row in type_info
+                        ]
+                    except Exception as desc_err:
+                        logger.warning(f"Could not DESCRIBE table {table_name}: {desc_err}")
+                    
                     conn.close()
                     
                     if meta:
@@ -468,6 +484,7 @@ async def upload_and_extract(
             documents=documents,
             table_name=table_name,
             columns=columns,
+            column_details=column_details,
             row_count=row_count,
             processing_mode=processing_mode,
             message=message,
