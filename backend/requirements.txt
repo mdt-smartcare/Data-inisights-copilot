@@ -22,6 +22,7 @@ passlib==1.7.4
 sqlalchemy==2.0.29
 psycopg2-binary==2.9.11
 duckdb==1.2.1
+pymysql==1.1.2
 
 # ============================================
 # LangChain & LLM
