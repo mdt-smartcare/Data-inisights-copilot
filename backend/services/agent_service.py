@@ -982,7 +982,7 @@ def clear_agent_cache(agent_id: Optional[int] = None):
         logger.info("Cleared all agent caches")
 
 
-def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = None, langfuse_trace: Optional[Any] = None) -> AgentService:
+def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = None, langfuse_trace: Optional[Any] = None, is_super_admin: bool = False) -> AgentService:
     """Get agent service instance with proper data isolation.
     
     SECURITY: Each agent is completely isolated:
@@ -993,6 +993,12 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
     If agent_id is provided, checks specific user access and returns a dedicated instance.
     Dedicated instances are cached to reuse database connections.
     Otherwise returns the singleton default instance (legacy behavior).
+    
+    Args:
+        agent_id: Optional agent ID for per-agent isolation
+        user_id: User ID for access control and file-based agents
+        langfuse_trace: Optional Langfuse trace for observability
+        is_super_admin: If True, skips access check (super_admin has access to all agents)
     """
     if agent_id:
         # Check cache first
@@ -1009,8 +1015,9 @@ def get_agent_service(agent_id: Optional[int] = None, user_id: Optional[int] = N
         if not agent_config:
              raise ValueError(f"Agent {agent_id} not found")
 
-        # Verify access if user_id is provided (skip for internal system calls if user_id is None)
-        if user_id:
+        # Verify access unless user is super_admin (who has access to all agents)
+        # Skip access check if user_id is None (internal system calls)
+        if user_id and not is_super_admin:
             has_access = db.check_user_access(user_id, agent_id)
             if not has_access:
                 logger.warning(f"Access denied for user {user_id} to agent {agent_id}")

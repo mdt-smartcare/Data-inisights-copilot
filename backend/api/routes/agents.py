@@ -14,14 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 # --- Helper Functions ---
-def resolve_user_id(db, current_user: User) -> Optional[int]:
-    """Resolve the user ID from current_user, falling back to database lookup."""
-    if current_user.id:
-        return current_user.id
-    user_record = db.get_user_by_username(current_user.username)
-    return user_record['id'] if user_record else None
-
-
 def check_agent_admin_access(db, agent_id: int, current_user: User) -> bool:
     """
     Check if current user has admin access to a specific agent.
@@ -31,7 +23,7 @@ def check_agent_admin_access(db, agent_id: int, current_user: User) -> bool:
     if current_user.role == Role.SUPER_ADMIN.value:
         return True
     
-    user_id = resolve_user_id(db, current_user)
+    user_id = current_user.id
     if not user_id:
         return False
     
@@ -77,7 +69,7 @@ async def list_agents(current_user: User = Depends(require_user)):
     """
     db = get_db_service()
     try:
-        user_id = resolve_user_id(db, current_user)
+        user_id = current_user.id
         if not user_id:
             return []
 
@@ -121,7 +113,7 @@ async def create_agent(agent: AgentCreate, current_user: User = Depends(require_
     """
     db = get_db_service()
     try:
-        user_id = resolve_user_id(db, current_user)
+        user_id = current_user.id
 
         new_agent = db.create_agent(
             name=agent.name,
@@ -325,7 +317,7 @@ async def assign_user(agent_id: int, assignment: AgentAssignment, current_user: 
             detail="Cannot grant configure access to user-role users. Only admin-role users can have configure access."
         )
     
-    granter_id = resolve_user_id(db, current_user)
+    granter_id = current_user.id
 
     success = db.assign_user_to_agent(
         agent_id=agent_id,
@@ -461,7 +453,7 @@ async def bulk_assign_agents(assignment: BulkAgentAssignment, current_user: User
             detail="Cannot grant configure access to user-role users. Only admin-role users can have configure access."
         )
     
-    granter_id = resolve_user_id(db, current_user)
+    granter_id = current_user.id
 
     assigned = []
     failed = []
@@ -703,7 +695,7 @@ async def list_agents_requiring_reindex(current_user: User = Depends(require_adm
             return {"agents": all_requiring_reindex}
         
         # For admin, filter to only agents they have access to
-        user_id = resolve_user_id(db, current_user)
+        user_id = current_user.id
         user_agents = db.get_agents_for_admin(user_id) if user_id else []
         user_agent_ids = {a['id'] for a in user_agents if a.get('user_role') == 'admin'}
         

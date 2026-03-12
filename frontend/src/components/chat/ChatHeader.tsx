@@ -176,12 +176,12 @@ export default function ChatHeader({
               >
                 {/* User Avatar */}
                 <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-semibold text-xs sm:text-sm shadow-sm flex-shrink-0">
-                  {user.username.charAt(0).toUpperCase()}
+                  {(user.full_name || user.username).charAt(0).toUpperCase()}
                 </div>
 
                 {/* User Info - hidden on mobile */}
                 <div className="text-left hidden md:block">
-                  <div className="text-sm font-medium text-gray-900 truncate max-w-[120px]">{user.username}</div>
+                  <div className="text-sm font-medium text-gray-900 truncate max-w-[120px]">{user.full_name || user.username}</div>
                   <div className="text-xs text-gray-500">{getRoleDisplayName(user.role)}</div>
                 </div>
 
@@ -211,10 +211,10 @@ export default function ChatHeader({
                       {/* User Profile Section */}
                       <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
                         <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-semibold text-2xl shadow-md flex-shrink-0">
-                          {user.username.charAt(0).toUpperCase()}
+                          {(user.full_name || user.username).charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-lg font-semibold text-gray-900 truncate">{user.username}</div>
+                          <div className="text-lg font-semibold text-gray-900 truncate">{user.full_name || user.username}</div>
                           {user.email && (
                             <div className="text-sm text-gray-500 truncate mt-0.5">{user.email}</div>
                           )}
@@ -285,10 +285,10 @@ export default function ChatHeader({
                     <div className="px-4 py-4 border-b border-gray-100">
                       <div className="flex items-center gap-4">
                         <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-semibold text-xl shadow-md flex-shrink-0">
-                          {user.username.charAt(0).toUpperCase()}
+                          {(user.full_name || user.username).charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-base font-semibold text-gray-900 truncate">{user.username}</div>
+                          <div className="text-base font-semibold text-gray-900 truncate">{user.full_name || user.username}</div>
                           {user.email && (
                             <div className="text-sm text-gray-500 truncate mt-0.5">{user.email}</div>
                           )}

@@ -94,30 +94,8 @@ class DatabaseService:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row  # Enable column access by name
         return conn
-    
-    def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        """Retrieve user information by username.
-        
-        Args:
-            username: Username to search for
-            
-        Returns:
-            Dictionary with user data, or None if not found
-        """
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute(
-            "SELECT id, username, email, full_name, role, is_active, external_id FROM users WHERE username = ?",
-            (username,)
-        )
-        row = cursor.fetchone()
-        conn.close()
-        
-        if row:
-            return dict(row)
-        return None
-    
+
+
     def get_user_by_external_id(self, external_id: str) -> Optional[Dict[str, Any]]:
         """Retrieve user information by OIDC external ID (Keycloak sub claim).
         
@@ -1154,7 +1132,7 @@ def get_db_service() -> DatabaseService:
         @router.post("/endpoint")
         async def endpoint(db: DatabaseService = Depends(get_db_service)):
             # Use db service here
-            user = db.get_user_by_username("username")
+            user = db.get_user_by_external_id("some_external_id")
     
     Returns:
         DatabaseService: The global database service instance

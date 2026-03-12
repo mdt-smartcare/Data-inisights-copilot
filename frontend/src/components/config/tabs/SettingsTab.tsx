@@ -9,7 +9,7 @@ import ConfirmationModal from '../../ConfirmationModal';
 import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
 
 interface SettingsTabProps {
-    activeConfig: ActiveConfig;
+    activeConfig?: ActiveConfig | null;
     agent?: Agent;
     canEdit?: boolean;
     onAgentUpdate?: () => void;
@@ -44,10 +44,10 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
         }
     };
 
-    const llmConf = parseConfig(activeConfig.llm_config);
-    const embConf = parseConfig(activeConfig.embedding_config);
-    const chunkConf = parseConfig(activeConfig.chunking_config);
-    const retConf = parseConfig(activeConfig.retriever_config);
+    const llmConf = activeConfig ? parseConfig(activeConfig.llm_config) : {};
+    const embConf = activeConfig ? parseConfig(activeConfig.embedding_config) : {};
+    const chunkConf = activeConfig ? parseConfig(activeConfig.chunking_config) : {};
+    const retConf = activeConfig ? parseConfig(activeConfig.retriever_config) : {};
 
     const handleStartEdit = () => {
         setEditName(agent?.name || '');
@@ -208,6 +208,8 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                 </div>
             )}
 
+            {/* Config Specs - Only show when activeConfig exists */}
+            {activeConfig && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* LLM Specs */}
                 <div className="bg-white p-8 rounded-2xl border border-gray-200 shadow-sm transition-all hover:shadow-md">
@@ -306,6 +308,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                     </div>
                 </div>
             </div>
+            )}
 
             {/* Danger Zone - Delete Agent */}
             {agent && canEdit && (

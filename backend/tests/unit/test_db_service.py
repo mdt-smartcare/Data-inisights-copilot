@@ -212,29 +212,6 @@ class TestOIDCUserManagement:
         assert retrieved['username'] == "getbyid"
 
 
-class TestUserRetrieval:
-    """Tests for user retrieval."""
-    
-    def test_get_user_by_username_exists(self, db_service):
-        """Test retrieving existing user."""
-        db_service.upsert_oidc_user(
-            external_id="findme-sub",
-            username="findme",
-            email="find@test.com"
-        )
-        
-        user = db_service.get_user_by_username("findme")
-        
-        assert user is not None
-        assert user['username'] == "findme"
-    
-    def test_get_user_by_username_not_found(self, db_service):
-        """Test retrieving non-existent user returns None."""
-        user = db_service.get_user_by_username("nonexistent")
-        
-        assert user is None
-
-
 class TestDatabaseConnections:
     """Tests for database connection management."""
     

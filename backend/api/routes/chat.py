@@ -49,12 +49,8 @@ async def chat(
         f"Chat request from user={user_id}, session={session_id}, query_length={len(request.query)}",
         extra={"user_id": user_id, "session_id": session_id}
     )
-    
-    # Get user ID for agent service
-    from backend.sqliteDb.db import get_db_service
-    db = get_db_service()
-    user_record = db.get_user_by_username(current_user.username)
-    user_int_id = user_record['id'] if user_record else None
+
+    user_int_id = current_user.id
     
     # Create a single trace_id that will group all LLM calls for this request
     trace_id = str(uuid.uuid4())
@@ -84,10 +80,14 @@ async def chat(
     try:
         # Get the appropriate agent service
         # This will handle access control and dedicated agent configurations
+        # Super admins have access to all agents - pass is_super_admin flag to skip access check
+        is_super_admin = current_user.role == 'super_admin'
+        
         agent_service = get_agent_service(
             agent_id=request.agent_id,
             user_id=user_int_id,
-            langfuse_trace=langfuse_handler
+            langfuse_trace=langfuse_handler,
+            is_super_admin=is_super_admin
         )
         
         # Process the query
