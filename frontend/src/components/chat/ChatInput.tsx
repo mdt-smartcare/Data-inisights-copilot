@@ -3,7 +3,9 @@ import QueryModeSelector, { type QueryMode } from '../QueryModeSelector';
 
 interface ChatInputProps {
   onSendMessage: (message: string, mode: QueryMode) => void;
+  onCancel?: () => void;
   isDisabled?: boolean;
+  isCancellable?: boolean;
   placeholder?: string;
   maxLength?: number;
   sqlAvailable?: boolean;
@@ -14,7 +16,9 @@ interface ChatInputProps {
 
 export default function ChatInput({
   onSendMessage,
+  onCancel,
   isDisabled = false,
+  isCancellable = false,
   placeholder = 'Type your message...',
   maxLength = 2000,
   sqlAvailable = true,
@@ -89,27 +93,45 @@ export default function ChatInput({
                 target.style.height = target.scrollHeight + 'px';
               }}
             />
-            <button
-              type="submit"
-              disabled={isDisabled || !input.trim() || isOverLimit}
-              className="bg-blue-600 hover:bg-blue-700 hover:scale-105 disabled:bg-gray-300 disabled:hover:scale-100 disabled:cursor-not-allowed text-white font-medium px-4 py-2 text-sm rounded-lg transition-all duration-200 h-10 flex items-center gap-1.5 shadow-sm hover:shadow-md"
-              title={isDisabled ? 'Please wait...' : 'Send message (Enter)'}
-            >
-              <svg
-                className="w-4 h-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+            {isCancellable ? (
+              <button
+                type="button"
+                onClick={onCancel}
+                className="bg-red-500 hover:bg-red-600 hover:scale-105 text-white font-medium px-4 py-2 text-sm rounded-lg transition-all duration-200 h-10 flex items-center gap-1.5 shadow-sm hover:shadow-md"
+                title="Stop generating"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-                />
-              </svg>
-              Send
-            </button>
+                <svg
+                  className="w-4 h-4"
+                  fill="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <rect x="6" y="6" width="12" height="12" rx="1" />
+                </svg>
+                Stop
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={isDisabled || !input.trim() || isOverLimit}
+                className="bg-blue-600 hover:bg-blue-700 hover:scale-105 disabled:bg-gray-300 disabled:hover:scale-100 disabled:cursor-not-allowed text-white font-medium px-4 py-2 text-sm rounded-lg transition-all duration-200 h-10 flex items-center gap-1.5 shadow-sm hover:shadow-md"
+                title={isDisabled ? 'Please wait...' : 'Send message (Enter)'}
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
+                  />
+                </svg>
+                Send
+              </button>
+            )}
           </div>
 
           <div className="flex justify-between items-center text-[10px] text-gray-500 px-1">

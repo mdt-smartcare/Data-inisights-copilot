@@ -143,10 +143,14 @@ export const chatService = {
       return getMockResponse(request.query);
     }
 
-    // Pass everything, including agent_id
+    // Extract signal from request (don't send to backend)
+    const { signal, ...requestData } = request;
+
+    // Pass everything except signal, including agent_id
     const response = await apiClient.post<ChatResponse>(
       API_ENDPOINTS.CHAT,
-      request
+      requestData,
+      { signal }  // Pass signal to axios config
     );
     return response.data;
   },

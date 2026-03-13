@@ -105,6 +105,7 @@ class ChatResponse(BaseModel):
     embedding_info: Optional[EmbeddingInfo] = Field(default=None, description="Embedding analysis")
     trace_id: str = Field(..., description="Langfuse trace ID for debugging")
     session_id: Optional[str] = Field(default=None, description="Session ID for conversation tracking")
+    agent_id: Optional[int] = Field(default=None, description="Agent ID that generated this response")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
     
     model_config = ConfigDict(json_schema_extra={

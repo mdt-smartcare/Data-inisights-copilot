@@ -97,6 +97,12 @@ async def chat(
             session_id=session_id
         )
         
+        # Add agent_id to the result dict for frontend validation
+        if isinstance(result, dict):
+            result['agent_id'] = request.agent_id
+        else:
+            result.agent_id = request.agent_id
+        
         logger.info(f"Chat request completed: trace_id={trace_id}")
         
         # Flush to ensure trace is sent

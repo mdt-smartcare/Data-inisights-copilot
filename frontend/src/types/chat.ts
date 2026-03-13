@@ -100,6 +100,7 @@ export interface ChatRequest {
   query: string;              // User's question or prompt
   session_id?: string;        // Optional session ID for conversation tracking
   agent_id?: number;          // Optional target agent ID
+  signal?: AbortSignal;       // Optional signal for request cancellation
 }
 
 /**
@@ -114,6 +115,7 @@ export interface ChatResponse {
   chart_data?: ChartData;              // Optional chart visualization
   conversation_id: string;             // Conversation thread ID
   session_id?: string;                 // Session ID for conversation tracking
+  agent_id?: number;                   // Agent ID that generated this response
   timestamp: string;                   // Response generation timestamp
   trace_id?: string;                   // Optional trace ID for debugging
   processing_time?: number;            // Optional processing time in ms

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { chatService } from '../services/chatService';
@@ -23,6 +23,11 @@ export default function ChatPage() {
   // Session ID for conversation continuity - can be reset via Clear Chat
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
   const [suggestions, setSuggestions] = useState<string[]>([]);
+
+  // AbortController for canceling in-flight requests
+  const abortControllerRef = useRef<AbortController | null>(null);
+  // Track which agent we sent the request to
+  const requestAgentIdRef = useRef<number | undefined>(undefined);
 
   // Default suggestions shown when no agent is selected
   const DEFAULT_SUGGESTIONS = [
@@ -115,6 +120,28 @@ export default function ChatPage() {
     loadAgentSuggestions();
   }, [selectedAgentId]);
 
+  // Reset session and abort requests when agent changes (Approach 1 & 3)
+  useEffect(() => {
+    if (selectedAgentId !== undefined) {
+      // Agent selected or changed
+      
+      // 1. Abort any in-flight request from previous agent (Approach 3)
+      if (abortControllerRef.current) {
+        console.log('Aborting previous request due to agent switch');
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+      
+      // 2. Reset session ID for new agent (Approach 1)
+      console.log(`Agent ${selectedAgentId} selected - creating new session`);
+      setSessionId(crypto.randomUUID());
+      
+      // 3. Optional: Clear messages for clean slate
+      // Uncomment if you want messages to clear on agent switch
+      // setMessages([]);
+    }
+  }, [selectedAgentId]);
+
   // Check RAG availability when agent changes
   useEffect(() => {
     const checkRagAvailability = async () => {
@@ -143,9 +170,33 @@ export default function ChatPage() {
   }, [selectedAgentId, agents]);
 
   const chatMutation = useMutation({
-    mutationFn: (data: { query: string; session_id: string; query_mode?: QueryMode }) => 
-      chatService.sendMessage({ ...data, agent_id: selectedAgentId }),
+    mutationFn: (data: { query: string; session_id: string; query_mode?: QueryMode; signal: AbortSignal }) => {
+      // Store which agent this request is for
+      requestAgentIdRef.current = selectedAgentId;
+      
+      return chatService.sendMessage({ 
+        ...data, 
+        agent_id: selectedAgentId,
+        signal: data.signal
+      });
+    },
     onSuccess: (data) => {
+      // Validate: Only process response if it matches current agent
+      if (data.agent_id !== undefined && data.agent_id !== selectedAgentId) {
+        console.warn(
+          `Discarding response from agent ${data.agent_id} - current agent is ${selectedAgentId}`
+        );
+        return;  // Ignore mismatched response
+      }
+
+      // Validate: Check if this response is for the request we sent
+      if (requestAgentIdRef.current !== undefined && requestAgentIdRef.current !== selectedAgentId) {
+        console.warn(
+          `Discarding response for agent ${requestAgentIdRef.current} - current agent is ${selectedAgentId}`
+        );
+        return;  // Ignore stale response
+      }
+
       const assistantMessage: Message = {
         id: Date.now().toString(),
         role: 'assistant',
@@ -161,8 +212,17 @@ export default function ChatPage() {
         agenticHybridResult: data.agentic_hybrid_result as AgenticHybridResult,
       };
       setMessages((prev) => [...prev, assistantMessage]);
+      
+      // Clear abort controller after successful response
+      abortControllerRef.current = null;
     },
-    onError: (error) => {
+    onError: (error: any) => {
+      // Don't show error if request was aborted
+      if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+        console.log('Request cancelled - no error shown');
+        return;
+      }
+      
       console.error('Chat error:', error);
       const errorMessage: Message = {
         id: Date.now().toString(),
@@ -171,10 +231,17 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
+      
+      // Clear abort controller on error
+      abortControllerRef.current = null;
     },
   });
 
   const handleSendMessage = (content: string, queryMode: QueryMode = 'auto') => {
+    // Create new AbortController for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -188,12 +255,27 @@ export default function ChatPage() {
       query: content,
       session_id: sessionId,
       query_mode: queryMode,
+      signal: abortController.signal
     });
   };
 
   const handleClearChat = () => {
+    // Abort any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
     setMessages([]);
     setSessionId(crypto.randomUUID()); // Generate new session for fresh start
+  };
+
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      console.log('User manually stopped generation');
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
   };
 
   const handleFeedback = (messageId: string, rating: 'positive' | 'negative') => {
@@ -354,7 +436,9 @@ export default function ChatPage() {
 
           <ChatInput
             onSendMessage={handleSendMessage}
+            onCancel={handleStopGeneration}
             isDisabled={!canChat || chatMutation.isPending}
+            isCancellable={chatMutation.isPending}
             placeholder={canChat ? "Type your message..." : "Read-only access"}
             maxLength={2000}
             sqlAvailable={true}
