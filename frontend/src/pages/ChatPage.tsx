@@ -16,7 +16,7 @@ import { APP_CONFIG } from '../config';
 
 export default function ChatPage() {
   const { user } = useAuth();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canChat = canExecuteQuery(user);
 
   const [messages, setMessages] = useState<Message[]>([]);
@@ -79,6 +79,15 @@ export default function ChatPage() {
     };
     loadAgents();
   }, []);
+
+  // Update URL query string when agent changes
+  useEffect(() => {
+    if (selectedAgentId !== undefined) {
+      setSearchParams({ agent: selectedAgentId.toString() });
+    } else {
+      setSearchParams({});
+    }
+  }, [selectedAgentId, setSearchParams]);
 
   // Load agent-specific example questions when agent changes
   useEffect(() => {
