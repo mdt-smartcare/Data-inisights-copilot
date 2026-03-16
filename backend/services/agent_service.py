@@ -513,7 +513,16 @@ Rewritten Query:""")
             intermediate_steps = []
             
             # Step 2: Route Based on Intent
-            if classification.intent == "A":
+            # Override intent to fallback if confidence is low
+            confidence = getattr(classification, 'confidence_score', 1.0)
+            original_intent = classification.intent
+            final_intent = classification.intent
+            
+            if confidence < 0.85 and original_intent in ["A", "B", "C"]:
+                logger.warning(f"Low confidence ({confidence}) for intent {original_intent}, falling back to Hybrid Agent for trace_id={trace_id}")
+                final_intent = "Fallback"
+                
+            if final_intent == "A":
                 # Strict SQL Route
                 logger.info(f"Routing intent A (SQL Only) for trace_id={trace_id}")
                 # Check if client disconnected before SQL query
@@ -522,7 +531,7 @@ Rewritten Query:""")
                 full_response = self.sql_service.query(query)
                 intermediate_steps.append((type('obj', (object,), {'tool': 'sql_query_tool', 'tool_input': query}), full_response))
 
-            elif classification.intent == "B":
+            elif final_intent == "B":
                 # Strict Vector Route
                 logger.info(f"Routing intent B (Vector Only) for trace_id={trace_id}")
                 # Check if client disconnected before RAG search
@@ -543,7 +552,7 @@ Rewritten Query:""")
                 response = await chain.ainvoke({"system_prompt": active_prompt, "context": context, "query": query})
                 full_response = response.content
 
-            elif classification.intent == "C" and classification.sql_filter:
+            elif final_intent == "C" and classification.sql_filter:
                 # Hybrid Route (C)
                 logger.info(f"Routing intent C (Hybrid) for trace_id={trace_id}. Executing SQL filter: {classification.sql_filter}")
                 # Check if client disconnected before hybrid processing
@@ -604,8 +613,8 @@ Rewritten Query:""")
                         logger.error(f"Hybrid SQL filtering failed: {e}")
                         full_response = "An error occurred while evaluating the numerical filter against the structured database."
             else:
-                # Fallback Route
-                logger.warning(f"Routing Intent {classification.intent} fallback triggered for trace_id={trace_id}")
+                # Fallback Route (including low-confidence overrides)
+                logger.warning(f"Routing Intent {original_intent} (final={final_intent}) fallback triggered for trace_id={trace_id} with confidence={confidence}")
                 # Check if client disconnected before agent executor
                 await check_cancelled(request)
                 result = await self.agent_with_history.ainvoke(
@@ -744,7 +753,11 @@ Rewritten Query:""")
                             "sql_used": sql_used,
                             "chart_generated": chart_data is not None,
                             "tools_used": [step.tool for step in reasoning_steps],
-                            "user_id": user_id
+                            "user_id": user_id,
+                            "predicted_intent": original_intent,
+                            "confidence_score": confidence,
+                            "final_route": final_intent,
+                            "low_confidence_routing": confidence < 0.85
                         }
                     )
                 except Exception as e:
