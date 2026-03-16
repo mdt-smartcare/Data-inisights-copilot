@@ -245,14 +245,14 @@ class SQLService:
             # Solution: First get table names via a lightweight query, then use include_tables
             # to limit reflection to only those tables (avoids domain inspection).
             
-            from sqlalchemy import create_engine, text
+            from backend.core.db_pool import get_cached_engine
+            from sqlalchemy import text
             
-            # Create engine for lightweight table discovery
-            engine = create_engine(
+            # Extract engine using connection pooling wrapper
+            engine = get_cached_engine(
                 self._database_url,
-                pool_size=20, 
-                max_overflow=50, 
-                pool_timeout=60
+                pool_size=5, 
+                max_overflow=10
             )
             
             all_table_names = []
@@ -316,7 +316,7 @@ class SQLService:
                     except Exception as e2:
                         logger.warning(f"pg_class fallback also failed: {e2}")
             
-            engine.dispose()
+            # engine.dispose() # DO NOT DISPOSE cached engine
             
             logger.info(f"Discovered {len(all_table_names)} tables/views total")
             
@@ -352,7 +352,7 @@ class SQLService:
                 logger.info(f"Using schema: {detected_schema}")
             
             # Use our custom CachedSQLDatabase wrapper
-            self.db = CachedSQLDatabase.from_uri(self._database_url, **db_kwargs)
+            self.db = CachedSQLDatabase(engine=engine, **db_kwargs)
             logger.info("Database connection established with view support and Redis caching")
             
             self._cache_schema()
@@ -962,14 +962,14 @@ Response:"""
             table_names: Optional list of tables to inspect. If None, fetches all.
         """
         try:
-            from sqlalchemy import create_engine, text
+            from backend.core.db_pool import get_cached_engine
+            from sqlalchemy import text
             
-            # Create engine for lightweight table discovery (avoids pg_collation issue)
-            engine = create_engine(
+            # Extract engine using connection pooling wrapper
+            engine = get_cached_engine(
                 uri,
-                pool_size=20, 
-                max_overflow=50, 
-                pool_timeout=60
+                pool_size=5, 
+                max_overflow=10
             )
             
             all_table_names = []
@@ -1044,7 +1044,7 @@ Response:"""
                     logger.warning(f"Could not get columns for table {table}: {e}")
                     schema_info[table] = []
             
-            engine.dispose()
+            # engine.dispose() # DO NOT DISPOSE CACHED ENGINE
             return {"tables": target_tables, "details": schema_info}
             
         except Exception as e:

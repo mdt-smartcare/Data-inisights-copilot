@@ -17,7 +17,8 @@ from typing import Dict, List, Iterator, Tuple, Optional, AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-from sqlalchemy import create_engine, text
+from backend.core.db_pool import get_cached_engine
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from backend.core.logging import get_logger
@@ -131,11 +132,10 @@ class DatabaseConnector:
                 )
             
             logger.info("Connecting to database...")
-            self.engine = create_engine(
+            self.engine = get_cached_engine(
                 uri, 
-                pool_size=20, 
-                max_overflow=50, 
-                pool_timeout=60
+                pool_size=5, 
+                max_overflow=10
             )
             self.connection = self.engine.connect()
             self.connection.execute(text("SELECT 1"))
@@ -152,8 +152,8 @@ class DatabaseConnector:
         """Close database connection."""
         if self.connection:
             self.connection.close()
-        if self.engine:
-            self.engine.dispose()
+        # if self.engine:
+        #     self.engine.dispose() # DO NOT DISPOSE CACHED ENGINE
         self.is_connected = False
         logger.info("Database connection closed.")
 
