@@ -19,7 +19,7 @@ from backend.api.routes import embedding_progress, notifications, settings as se
 from backend.api.websocket import embedding_progress as embedding_ws
 from backend.api.websocket import notifications as notifications_ws
 from backend.services.embeddings import preload_embedding_model
-from backend.services.scheduler_service import get_scheduler_service
+from backend.services.embeddings import preload_embedding_model
 
 # Conditional Langfuse import
 try:
@@ -71,11 +71,7 @@ async def lifespan(app: FastAPI):
         if settings.enable_langfuse and not LANGFUSE_AVAILABLE:
             logger.warning("Langfuse is enabled in settings, but the 'langfuse' package is not installed.")
 
-    # Start the scheduler service for vector DB sync jobs
-    scheduler_service = get_scheduler_service()
-    scheduler_service.start()
-    logger.info("Scheduler service started")
-    
+
     logger.info(f"Debug mode: {settings.debug}")
     logger.info(f"API prefix: {settings.api_v1_prefix}")
     
@@ -86,8 +82,7 @@ async def lifespan(app: FastAPI):
     if app.state.langfuse_client:
         app.state.langfuse_client.flush()
         logger.info("Langfuse client flushed.")
-    scheduler_service.shutdown()
-    logger.info("Scheduler service stopped")
+        logger.info("Langfuse client flushed.")
 
 
 # Create FastAPI application
