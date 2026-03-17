@@ -21,6 +21,7 @@ import {
     dismissNotification as dismissNotificationApi
 } from '../services/api';
 import { oidcService } from '../services/oidcService';
+import { API_BASE_URL } from '../config';
 
 interface UseNotificationsOptions {
     /** Only fetch unread notifications (for dropdown). Default: true */
@@ -205,10 +206,10 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
             return false;
         }
 
-        // Use same-origin WebSocket connection (proxied by NGINX in production)
+        // Connect directly to backend WebSocket endpoint
         // Token in query string is acceptable for WebSocket (not logged in browser history)
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/notifications?token=${encodeURIComponent(token)}`;
+        const wsBaseUrl = API_BASE_URL.replace(/^http/, 'ws');
+        const wsUrl = `${wsBaseUrl}/api/v1/ws/notifications?token=${encodeURIComponent(token)}`;
 
         try {
             const ws = new WebSocket(wsUrl);

@@ -34,13 +34,5 @@ export default defineConfig({
         enabled: false // Disable in dev to avoid workbox warnings
       }
     })
-  ],
-  server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:8000',
-        changeOrigin: true,
-      }
-    }
-  }
+  ]
 })
