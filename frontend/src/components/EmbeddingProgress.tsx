@@ -114,7 +114,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             return false;
         }
 
-        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/embedding-progress/${jobId}?token=${token}`;
+        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1/ws/embedding-progress/${jobId}?token=${token}`;
 
         try {
             const ws = new WebSocket(wsUrl);

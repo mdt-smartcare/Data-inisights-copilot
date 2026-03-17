@@ -748,7 +748,7 @@ describe('EmbeddingProgress - WebSocket', () => {
         });
 
         expect(mockWebSocketInstance).not.toBeNull();
-        expect(mockWebSocketInstance?.url).toContain('/ws/embedding-progress/job-123');
+        expect(mockWebSocketInstance?.url).toContain('/api/v1/ws/embedding-progress/job-123');
         expect(mockWebSocketInstance?.url).toContain('token=test-token');
     });
 });

@@ -205,10 +205,10 @@ export function useNotifications(options: UseNotificationsOptions = {}): UseNoti
             return false;
         }
 
-        // Use Vite proxy in dev, direct connection in production
+        // Use same-origin WebSocket connection (proxied by NGINX in production)
         // Token in query string is acceptable for WebSocket (not logged in browser history)
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/ws/notifications?token=${encodeURIComponent(token)}`;
+        const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/notifications?token=${encodeURIComponent(token)}`;
 
         try {
             const ws = new WebSocket(wsUrl);
