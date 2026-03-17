@@ -189,9 +189,9 @@ app.include_router(ingestion.router, prefix=settings.api_v1_prefix)
 from backend.api.routes import schema_drift
 app.include_router(schema_drift.router, prefix=settings.api_v1_prefix)
 
-# WebSocket routes (no prefix for WebSocket endpoints)
-app.include_router(embedding_ws.router)
-app.include_router(notifications_ws.router)
+# WebSocket routes
+app.include_router(embedding_ws.router, prefix=f"{settings.api_v1_prefix}/ws")
+app.include_router(notifications_ws.router, prefix=f"{settings.api_v1_prefix}/ws")
 
 
 @app.get("/")

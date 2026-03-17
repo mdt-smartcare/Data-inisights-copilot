@@ -144,7 +144,7 @@ async def verify_token(token: str) -> Optional[dict]:
         return None
 
 
-@router.websocket("/ws/embedding-progress/{job_id}")
+@router.websocket("/embedding-progress/{job_id}")
 async def embedding_progress_websocket(
     websocket: WebSocket,
     job_id: str,

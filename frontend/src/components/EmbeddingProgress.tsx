@@ -6,6 +6,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { EmbeddingJobProgress, EmbeddingJobStatus, WebSocketProgressMessage } from '../types/rag';
 import { getEmbeddingProgress, cancelEmbeddingJob } from '../services/api';
 import { oidcService } from '../services/oidcService';
+import { API_BASE_URL } from '../config';
 import './EmbeddingProgress.css';
 
 interface EmbeddingProgressProps {
@@ -114,7 +115,9 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             return false;
         }
 
-        const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/embedding-progress/${jobId}?token=${token}`;
+        // Connect directly to backend WebSocket endpoint
+        const wsBaseUrl = API_BASE_URL.replace(/^http/, 'ws');
+        const wsUrl = `${wsBaseUrl}/api/v1/ws/embedding-progress/${jobId}?token=${token}`;
 
         try {
             const ws = new WebSocket(wsUrl);

@@ -163,6 +163,7 @@ async def verify_token(token: str) -> Optional[dict]:
     try:
         # Use Keycloak token verification
         if settings.oidc_issuer_url and settings.oidc_client_id:
+            logger.debug("WebSocket: Verifying token with Keycloak")
             payload = await decode_keycloak_token(
                 token=token,
                 issuer_url=settings.oidc_issuer_url,
@@ -172,27 +173,28 @@ async def verify_token(token: str) -> Optional[dict]:
             username = payload.get("preferred_username") or payload.get("email")
             external_id = payload.get("sub")  # Keycloak uses 'sub' for user ID
             if not external_id:
+                logger.warning("WebSocket: Token missing 'sub' claim")
                 return None
             
             # Look up database user ID from external_id (Keycloak sub)
             db_service = get_db_service()
             user_data = db_service.get_user_by_external_id(external_id)
             if not user_data:
-                logger.warning(f"No database user found for external_id {external_id}")
+                logger.warning(f"WebSocket: No database user found for external_id {external_id} (username: {username})")
                 return None
             
             # Return database user ID (what notifications use)
             return {"username": username, "user_id": user_data['id'], "external_id": external_id}
         else:
             # Fallback: no OIDC configured, reject
-            logger.warning("OIDC not configured, WebSocket auth not available")
+            logger.warning("WebSocket: OIDC not configured, authentication not available")
             return None
     except Exception as e:
-        logger.debug(f"Token verification failed: {e}")
+        logger.warning(f"WebSocket: Token verification failed - {type(e).__name__}: {str(e)}")
         return None
 
 
-@router.websocket("/ws/notifications")
+@router.websocket("/notifications")
 async def notifications_websocket(
     websocket: WebSocket,
     token: str = Query(None)
@@ -222,13 +224,18 @@ async def notifications_websocket(
     Messages to Send:
         - ping: Keep-alive ping {"action": "ping"}
     """
+    client_host = websocket.client.host if websocket.client else "unknown"
+    logger.info(f"WebSocket connection attempt from {client_host}")
+    
     # Verify authentication before accepting connection
     if not token:
+        logger.warning(f"WebSocket connection rejected from {client_host}: No token provided")
         await websocket.close(code=4001, reason="Authentication required")
         return
     
     token_data = await verify_token(token)
     if not token_data:
+        logger.warning(f"WebSocket connection rejected from {client_host}: Invalid token")
         await websocket.close(code=4001, reason="Invalid token")
         return
     
