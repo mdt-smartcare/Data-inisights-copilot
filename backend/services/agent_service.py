@@ -447,7 +447,8 @@ Rewritten Query:""")
         query: str,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
-        request: Optional["Request"] = None
+        request: Optional["Request"] = None,
+        trace_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process a user query through the RAG pipeline with conversation memory.
@@ -457,16 +458,21 @@ Rewritten Query:""")
             user_id: Optional user identifier
             session_id: Session ID for conversation tracking (enables multi-turn)
             request: Optional FastAPI Request for cancellation detection
+            trace_id: Optional trace ID from chat route (ensures consistent Langfuse tracing)
         
         Returns:
             Dictionary containing answer, charts, suggestions, and metadata
         """
-        trace_id = str(uuid.uuid4())
+        # Use provided trace_id or generate a new one
+        if trace_id is None:
+            trace_id = uuid.uuid4().hex  # 32 hex chars for Langfuse compatibility
+            logger.info(f"Generated new trace_id: {trace_id}")
+        
         start_time = datetime.now(timezone.utc)
         
         logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
         
-        # Use the handler passed during initialization
+        # Use the handler passed during initialization - it manages the trace
         callbacks = [self.langfuse_trace] if self.langfuse_trace else []
         
         # Initialize followup_task for cleanup in exception handlers
@@ -713,22 +719,6 @@ Rewritten Query:""")
                 session_id=session_id,
                 timestamp=start_time
             )
-            
-            # ============================================================
-            # IMPORTANT: Save conversation to history for multi-turn support
-            # The agent_with_history path auto-saves, but direct Intent A/B/C
-            # routes need manual saving for query rewriting to work
-            # ============================================================
-            if session_id and classification.intent in ["A", "B", "C"]:
-                try:
-                    history = self.get_session_history(session_id)
-                    from langchain_core.messages import HumanMessage, AIMessage
-                    history.add_message(HumanMessage(content=query))
-                    # Save a clean version of the response (no JSON blocks)
-                    history.add_message(AIMessage(content=self._clean_answer(full_response)[:1000]))
-                    logger.debug(f"Saved conversation to history for session {session_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to save conversation history: {e}")
             
             duration = (datetime.now(timezone.utc) - start_time).total_seconds()
             logger.info(f"✅ Query processed successfully (trace_id={trace_id}, duration={duration:.2f}s)")
