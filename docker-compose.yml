@@ -1,6 +1,29 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database (for internal app config, users, settings)
+  postgres:
+    image: postgres:15-alpine
+    container_name: data_insights_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-copilot}
+      POSTGRES_USER: ${POSTGRES_USER:-copilot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-copilot_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_copilot_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-copilot_user} -d ${POSTGRES_DB:-copilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - copilot_network
+    restart: unless-stopped
+
   # Backend Service
   backend:
     build:
@@ -8,8 +31,12 @@ services:
       dockerfile: Dockerfile.backend
     container_name: data_insights_backend
     environment:
-      # Internal SQLite database path (for app config, users, settings)
-      SQLITE_DB_PATH: ./sqliteDb/copilot.db
+      # PostgreSQL Database (for app config, users, settings)
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-copilot}
+      POSTGRES_USER: ${POSTGRES_USER:-copilot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-copilot_password}
       
       # Server Configuration
       HOST: 0.0.0.0
@@ -48,7 +75,6 @@ services:
       - ./backend/models:/app/backend/models
       - ./backend/data:/app/backend/data
       - ./backend/logs:/app/backend/logs
-      - ./backend/sqliteDb:/app/backend/sqliteDb
     ports:
       - "8000:8000"
     healthcheck:
@@ -58,6 +84,8 @@ services:
       retries: 3
       start_period: 40s
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
@@ -143,8 +171,12 @@ services:
     container_name: data_insights_embedding_worker
     command: celery -A backend.pipeline.workers.embedding_worker.celery_app worker --loglevel=info --concurrency=2
     environment:
-      # Use the same env vars as backend
-      SQLITE_DB_PATH: ./sqliteDb/copilot.db
+      # PostgreSQL Database (for app config, users, settings)
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-copilot}
+      POSTGRES_USER: ${POSTGRES_USER:-copilot_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-copilot_password}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/0
@@ -155,8 +187,9 @@ services:
       - ./backend/models:/app/backend/models
       - ./backend/data:/app/backend/data
       - ./backend/logs:/app/backend/logs
-      - ./backend/sqliteDb:/app/backend/sqliteDb
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
@@ -188,6 +221,7 @@ services:
     restart: unless-stopped
 
 volumes:
+  postgres_copilot_data:
   rabbitmq_data:
   redis_data:
   qdrant_data:

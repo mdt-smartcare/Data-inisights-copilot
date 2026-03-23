@@ -3,7 +3,7 @@ Configuration management using Pydantic Settings.
 
 This module handles INFRASTRUCTURE/ENVIRONMENT settings only:
 - Secrets (API keys)
-- Internal database path (SQLite for app config)
+- Internal database configuration (PostgreSQL for app config)
 - OIDC/Auth provider configuration
 - Server binding (host, port, CORS)
 
@@ -45,16 +45,35 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(..., description="OpenAI API key")
     
     # ============================================
-    # Internal App Database (SQLite - for config storage)
+    # Internal App Database (PostgreSQL - for config storage)
     # ============================================
     # This is the internal database for storing users, settings, prompts, etc.
     # NOT the clinical data database (that comes from db_connections table)
-    # NOTE: Physical folder path kept as './sqliteDb/' for backward compatibility
-    # even though Python module is at backend.database
-    sqlite_db_path: str = Field(
-        default="./sqliteDb/copilot.db",
-        description="Path to internal SQLite database for app configuration"
+    postgres_host: str = Field(
+        default="localhost",
+        description="PostgreSQL host for internal app database"
     )
+    postgres_port: int = Field(
+        default=5432,
+        description="PostgreSQL port"
+    )
+    postgres_db: str = Field(
+        default="copilot",
+        description="PostgreSQL database name"
+    )
+    postgres_user: str = Field(
+        default="copilot_user",
+        description="PostgreSQL username"
+    )
+    postgres_password: str = Field(
+        default="copilot_password",
+        description="PostgreSQL password"
+    )
+    
+    @property
+    def postgres_uri(self) -> str:
+        """Construct PostgreSQL connection URI."""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
     
     # ============================================
     # Security Configuration (secrets/infrastructure)

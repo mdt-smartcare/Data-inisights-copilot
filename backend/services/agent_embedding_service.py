@@ -66,7 +66,7 @@ class AgentEmbeddingService:
             SELECT provider, model_name, model_path, dimension, batch_size, 
                    collection_name, last_embedded_at, document_count, requires_reindex
             FROM agent_embedding_configs
-            WHERE agent_id = ?
+            WHERE agent_id = %s
             """,
             (agent_id,),
             fetch_one=True
@@ -90,7 +90,7 @@ class AgentEmbeddingService:
         agent = db.execute_query(
             """
             SELECT embedding_model, embedding_dimension, embedding_provider
-            FROM agents WHERE id = ?
+            FROM agents WHERE id = %s
             """,
             (agent_id,),
             fetch_one=True
@@ -152,7 +152,7 @@ class AgentEmbeddingService:
             INSERT INTO agent_embedding_configs 
                 (agent_id, provider, model_name, model_path, dimension, batch_size, 
                  collection_name, requires_reindex, updated_at, updated_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s)
             ON CONFLICT(agent_id) DO UPDATE SET
                 provider = excluded.provider,
                 model_name = excluded.model_name,
@@ -172,8 +172,8 @@ class AgentEmbeddingService:
         db.execute_query(
             """
             UPDATE agents 
-            SET embedding_model = ?, embedding_dimension = ?, embedding_provider = ?
-            WHERE id = ?
+            SET embedding_model = %s, embedding_dimension = %s, embedding_provider = %s
+            WHERE id = %s
             """,
             (model_name, dimension, provider, agent_id)
         )
@@ -185,7 +185,7 @@ class AgentEmbeddingService:
                 INSERT INTO agent_embedding_history
                     (agent_id, previous_provider, previous_model, previous_dimension,
                      new_provider, new_model, new_dimension, change_reason, changed_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     agent_id,
@@ -261,9 +261,9 @@ class AgentEmbeddingService:
             UPDATE agent_embedding_configs
             SET requires_reindex = 0,
                 last_embedded_at = CURRENT_TIMESTAMP,
-                document_count = ?,
+                document_count = %s,
                 updated_at = CURRENT_TIMESTAMP
-            WHERE agent_id = ?
+            WHERE agent_id = %s
             """,
             (document_count, agent_id)
         )
@@ -273,8 +273,8 @@ class AgentEmbeddingService:
             db.execute_query(
                 """
                 UPDATE agent_embedding_history
-                SET reindex_triggered = 1, reindex_job_id = ?
-                WHERE agent_id = ? AND reindex_job_id IS NULL
+                SET reindex_triggered = 1, reindex_job_id = %s
+                WHERE agent_id = %s AND reindex_job_id IS NULL
                 ORDER BY changed_at DESC LIMIT 1
                 """,
                 (job_id, agent_id)
@@ -310,9 +310,9 @@ class AgentEmbeddingService:
                    change_reason, changed_by, changed_at,
                    reindex_triggered, reindex_job_id
             FROM agent_embedding_history
-            WHERE agent_id = ?
+            WHERE agent_id = %s
             ORDER BY changed_at DESC
-            LIMIT ?
+            LIMIT %s
             """,
             (agent_id, limit),
             fetch_all=True

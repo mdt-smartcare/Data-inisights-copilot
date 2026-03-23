@@ -116,7 +116,7 @@ class NotificationService:
                 INSERT INTO notifications 
                 (user_id, type, priority, title, message, action_url, action_label,
                  related_entity_type, related_entity_id, channels, status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 user_id,
                 notification_type.value if isinstance(notification_type, NotificationType) else notification_type,
@@ -248,7 +248,7 @@ class NotificationService:
             cursor.execute("""
                 INSERT INTO notification_delivery_log 
                 (notification_id, channel, status, error_message)
-                VALUES (?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s)
             """, (notification_id, channel, status, error_message))
             
             conn.commit()
@@ -315,7 +315,7 @@ class NotificationService:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT * FROM notifications WHERE id = ?", (notification_id,))
+            cursor.execute("SELECT * FROM notifications WHERE id = %s", (notification_id,))
             row = cursor.fetchone()
             
             if not row:
@@ -358,14 +358,14 @@ class NotificationService:
         cursor = conn.cursor()
         
         try:
-            query = "SELECT id FROM notifications WHERE user_id = ?"
+            query = "SELECT id FROM notifications WHERE user_id = %s"
             params = [user_id]
             
             if status:
-                query += " AND status = ?"
+                query += " AND status = %s"
                 params.append(status.value)
             
-            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
             
             cursor.execute(query, params)
@@ -383,7 +383,7 @@ class NotificationService:
         
         try:
             cursor.execute(
-                "SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND status = ?",
+                "SELECT COUNT(*) as count FROM notifications WHERE user_id = %s AND status = %s",
                 (user_id, NotificationStatus.UNREAD.value)
             )
             return cursor.fetchone()['count']
@@ -400,11 +400,11 @@ class NotificationService:
         cursor = conn.cursor()
         
         try:
-            query = "SELECT COUNT(*) as count FROM notifications WHERE user_id = ?"
+            query = "SELECT COUNT(*) as count FROM notifications WHERE user_id = %s"
             params = [user_id]
             
             if status:
-                query += " AND status = ?"
+                query += " AND status = %s"
                 params.append(status.value)
             
             cursor.execute(query, params)
@@ -420,8 +420,8 @@ class NotificationService:
         try:
             cursor.execute("""
                 UPDATE notifications 
-                SET status = ?, read_at = ?
-                WHERE id = ? AND user_id = ?
+                SET status = %s, read_at = %s
+                WHERE id = %s AND user_id = %s
             """, (
                 NotificationStatus.READ.value,
                 datetime.now(timezone.utc).isoformat(),
@@ -445,8 +445,8 @@ class NotificationService:
         try:
             cursor.execute("""
                 UPDATE notifications 
-                SET status = ?, read_at = ?
-                WHERE user_id = ? AND status = ?
+                SET status = %s, read_at = %s
+                WHERE user_id = %s AND status = %s
             """, (
                 NotificationStatus.READ.value,
                 datetime.now(timezone.utc).isoformat(),
@@ -467,8 +467,8 @@ class NotificationService:
         try:
             cursor.execute("""
                 UPDATE notifications 
-                SET status = ?, dismissed_at = ?
-                WHERE id = ? AND user_id = ?
+                SET status = %s, dismissed_at = %s
+                WHERE id = %s AND user_id = %s
             """, (
                 NotificationStatus.DISMISSED.value,
                 datetime.now(timezone.utc).isoformat(),
@@ -488,7 +488,7 @@ class NotificationService:
         
         try:
             cursor.execute(
-                "SELECT * FROM notification_preferences WHERE user_id = ?",
+                "SELECT * FROM notification_preferences WHERE user_id = %s",
                 (user_id,)
             )
             row = cursor.fetchone()
@@ -529,7 +529,7 @@ class NotificationService:
         try:
             # Check if preferences exist
             cursor.execute(
-                "SELECT id FROM notification_preferences WHERE user_id = ?",
+                "SELECT id FROM notification_preferences WHERE user_id = %s",
                 (user_id,)
             )
             exists = cursor.fetchone() is not None
@@ -545,11 +545,11 @@ class NotificationService:
             
             if exists:
                 # Update
-                fields = [f"{k} = ?" for k in preferences.keys()]
+                fields = [f"{k} = %s" for k in preferences.keys()]
                 values = list(preferences.values()) + [datetime.now(timezone.utc).isoformat(), user_id]
                 
                 cursor.execute(
-                    f"UPDATE notification_preferences SET {', '.join(fields)}, updated_at = ? WHERE user_id = ?",
+                    f"UPDATE notification_preferences SET {', '.join(fields)}, updated_at = %s WHERE user_id = %s",
                     values
                 )
             else:

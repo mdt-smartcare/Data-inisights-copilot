@@ -115,7 +115,7 @@ async def get_user(
     cursor.execute("""
         SELECT id, username, email, full_name, role, is_active, created_at 
         FROM users 
-        WHERE id = ?
+        WHERE id = %s
     """, (user_id,))
     
     row = cursor.fetchone()
@@ -146,7 +146,7 @@ async def update_user(
     cursor = conn.cursor()
     
     # Get target user
-    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
     row = cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
@@ -173,18 +173,18 @@ async def update_user(
     params = []
     
     if request.email is not None:
-        updates.append("email = ?")
+        updates.append("email = %s")
         params.append(request.email)
     
     if request.full_name is not None:
-        updates.append("full_name = ?")
+        updates.append("full_name = %s")
         params.append(request.full_name)
     
     if request.role is not None:
         # Validate role using centralized role config
         if not is_valid_role(request.role):
             raise HTTPException(status_code=400, detail=f"Invalid role. Must be one of: {get_all_roles()}")
-        updates.append("role = ?")
+        updates.append("role = %s")
         params.append(request.role)
         
         # Clean up per-agent roles when demoting from admin to user
@@ -192,19 +192,19 @@ async def update_user(
         if existing_user['role'] == Role.ADMIN.value and request.role == Role.USER.value:
             cursor.execute("""
                 UPDATE user_agents SET role = 'user' 
-                WHERE user_id = ? AND role = 'admin'
+                WHERE user_id = %s AND role = 'admin'
             """, (user_id,))
             logger.info(f"Downgraded per-agent roles for user {user_id} (demoted from admin to user)")
     
     if request.is_active is not None:
-        updates.append("is_active = ?")
+        updates.append("is_active = %s")
         params.append(1 if request.is_active else 0)
     
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     
     params.append(user_id)
-    query = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+    query = f"UPDATE users SET {', '.join(updates)} WHERE id = %s"
     cursor.execute(query, params)
     conn.commit()
     
@@ -244,7 +244,7 @@ async def deactivate_user(
     cursor = conn.cursor()
     
     # Get user to deactivate
-    cursor.execute("SELECT username, role FROM users WHERE id = ?", (user_id,))
+    cursor.execute("SELECT username, role FROM users WHERE id = %s", (user_id,))
     row = cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
@@ -263,7 +263,7 @@ async def deactivate_user(
         )
     
     # Soft delete (deactivate)
-    cursor.execute("UPDATE users SET is_active = 0 WHERE id = ?", (user_id,))
+    cursor.execute("UPDATE users SET is_active = 0 WHERE id = %s", (user_id,))
     conn.commit()
     
     # Log audit event
@@ -296,7 +296,7 @@ async def activate_user(
     cursor = conn.cursor()
     
     # Get user to activate
-    cursor.execute("SELECT username, is_active FROM users WHERE id = ?", (user_id,))
+    cursor.execute("SELECT username, is_active FROM users WHERE id = %s", (user_id,))
     row = cursor.fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
@@ -307,7 +307,7 @@ async def activate_user(
         return {"status": "success", "message": f"User '{username}' is already active"}
     
     # Activate user
-    cursor.execute("UPDATE users SET is_active = 1 WHERE id = ?", (user_id,))
+    cursor.execute("UPDATE users SET is_active = 1 WHERE id = %s", (user_id,))
     conn.commit()
     
     # Log audit event
@@ -342,7 +342,7 @@ async def get_user_agents(
     # Get user to validate they exist
     conn = db_service.get_connection()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, username, role FROM users WHERE id = ?", (user_id,))
+    cursor.execute("SELECT id, username, role FROM users WHERE id = %s", (user_id,))
     row = cursor.fetchone()
     conn.close()
     

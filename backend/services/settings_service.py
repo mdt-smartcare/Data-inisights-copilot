@@ -477,7 +477,7 @@ class SettingsService:
                 cursor.execute("""
                     SELECT id, value, value_type
                     FROM system_settings
-                    WHERE category = ? AND key = ?
+                    WHERE category = %s AND key = %s
                 """, (category, key))
                 row = cursor.fetchone()
                 
@@ -493,14 +493,14 @@ class SettingsService:
                     cursor.execute("""
                         INSERT INTO settings_history 
                         (setting_id, category, key, previous_value, new_value, changed_by, change_reason)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """, (setting_id, category, key, old_value, new_value, updated_by, change_reason))
                     
                     # Update setting
                     cursor.execute("""
                         UPDATE system_settings
-                        SET value = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = ?
-                        WHERE id = ?
+                        SET value = %s, version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s
+                        WHERE id = %s
                     """, (new_value, updated_by, setting_id))
                     
                     logger.info(f"Setting updated: {category}.{key} by {updated_by}")
@@ -573,9 +573,9 @@ class SettingsService:
                     SELECT id, setting_id, category, key, previous_value, new_value, 
                            changed_by, change_reason, changed_at
                     FROM settings_history
-                    WHERE category = ?
+                    WHERE category = %s
                     ORDER BY changed_at DESC
-                    LIMIT ?
+                    LIMIT %s
                 """, (category, limit))
             else:
                 cursor.execute("""
@@ -583,7 +583,7 @@ class SettingsService:
                            changed_by, change_reason, changed_at
                     FROM settings_history
                     ORDER BY changed_at DESC
-                    LIMIT ?
+                    LIMIT %s
                 """, (limit,))
             
             rows = cursor.fetchall()
@@ -618,7 +618,7 @@ class SettingsService:
             cursor.execute("""
                 SELECT setting_id, category, key, previous_value
                 FROM settings_history
-                WHERE id = ?
+                WHERE id = %s
             """, (history_id,))
             row = cursor.fetchone()
             
@@ -632,7 +632,7 @@ class SettingsService:
             
             # Get current value for history
             cursor.execute("""
-                SELECT value FROM system_settings WHERE id = ?
+                SELECT value FROM system_settings WHERE id = %s
             """, (setting_id,))
             current_row = cursor.fetchone()
             current_value = current_row['value'] if current_row else None
@@ -641,15 +641,15 @@ class SettingsService:
             cursor.execute("""
                 INSERT INTO settings_history 
                 (setting_id, category, key, previous_value, new_value, changed_by, change_reason)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (setting_id, category, key, current_value, previous_value, 
                   rolled_back_by, f"Rollback from history #{history_id}"))
             
             # Update the setting
             cursor.execute("""
                 UPDATE system_settings
-                SET value = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = ?
-                WHERE id = ?
+                SET value = %s, version = version + 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s
+                WHERE id = %s
             """, (previous_value, rolled_back_by, setting_id))
             
             conn.commit()

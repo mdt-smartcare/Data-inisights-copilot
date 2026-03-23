@@ -111,7 +111,7 @@ async def get_drift_status(
         cursor.execute('''
             SELECT schema_snapshot_at, data_source_id
             FROM vector_db_registry
-            WHERE name = ?
+            WHERE name = %s
         ''', (vector_db_name,))
         row = cursor.fetchone()
         conn.close()
@@ -289,9 +289,9 @@ async def get_drift_history(
                        details, detected_at, resolved_at, resolved_by,
                        acknowledged_at, acknowledged_by
                 FROM schema_drift_logs
-                WHERE vector_db_name = ?
+                WHERE vector_db_name = %s
                 ORDER BY detected_at DESC
-                LIMIT ?
+                LIMIT %s
             ''', (vector_db_name, limit))
         else:
             cursor.execute('''
@@ -299,9 +299,9 @@ async def get_drift_history(
                        details, detected_at, resolved_at, resolved_by,
                        acknowledged_at, acknowledged_by
                 FROM schema_drift_logs
-                WHERE vector_db_name = ? AND resolved_at IS NULL
+                WHERE vector_db_name = %s AND resolved_at IS NULL
                 ORDER BY detected_at DESC
-                LIMIT ?
+                LIMIT %s
             ''', (vector_db_name, limit))
         
         rows = cursor.fetchall()
@@ -345,7 +345,7 @@ def _create_drift_notification(user_id: int, vector_db_name: str, count: int, se
         
         cursor.execute('''
             INSERT INTO notifications (user_id, type, priority, title, message, action_url, action_label)
-            VALUES (?, 'schema_drift', ?, ?, ?, ?, ?)
+            VALUES (%s, 'schema_drift', %s, %s, %s, %s, %s)
         ''', (
             user_id,
             priority,

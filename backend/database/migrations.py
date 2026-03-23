@@ -3,10 +3,12 @@ Database migration runner for executing SQL migration files.
 Tracks which migrations have been applied to avoid duplicate execution.
 """
 import os
-import sqlite3
+import psycopg2
+import psycopg2.extras
 from pathlib import Path
 from typing import List, Tuple
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +21,15 @@ class MigrationRunner:
     Naming convention: 001_description.sql, 002_description.sql, etc.
     """
     
-    def __init__(self, db_path: str, migrations_dir: str = None):
+    def __init__(self, postgres_uri: str, migrations_dir: str = None):
         """
         Initialize the migration runner.
         
         Args:
-            db_path: Path to the SQLite database file
+            postgres_uri: PostgreSQL connection URI
             migrations_dir: Path to the migrations directory
         """
-        self.db_path = db_path
+        self.postgres_uri = postgres_uri
         
         # Default migrations directory is at project root
         if migrations_dir is None:
@@ -36,18 +38,18 @@ class MigrationRunner:
         else:
             self.migrations_dir = Path(migrations_dir)
             
-    def get_connection(self) -> sqlite3.Connection:
-        """Get database connection."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+    def get_connection(self) -> psycopg2.extensions.connection:
+        """Get PostgreSQL database connection with dict cursor."""
+        conn = psycopg2.connect(self.postgres_uri)
+        conn.cursor_factory = psycopg2.extras.RealDictCursor
         return conn
     
-    def _ensure_migrations_table(self, conn: sqlite3.Connection) -> None:
+    def _ensure_migrations_table(self, conn: psycopg2.extensions.connection) -> None:
         """Create the migrations tracking table if it doesn't exist."""
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS _migrations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 filename TEXT NOT NULL UNIQUE,
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 checksum TEXT
@@ -55,7 +57,7 @@ class MigrationRunner:
         """)
         conn.commit()
     
-    def _get_applied_migrations(self, conn: sqlite3.Connection) -> List[str]:
+    def _get_applied_migrations(self, conn: psycopg2.extensions.connection) -> List[str]:
         """Get list of already applied migration filenames."""
         cursor = conn.cursor()
         cursor.execute("SELECT filename FROM _migrations ORDER BY filename")
@@ -86,7 +88,7 @@ class MigrationRunner:
         import hashlib
         return hashlib.sha256(content.encode()).hexdigest()[:16]
     
-    def _apply_migration(self, conn: sqlite3.Connection, migration_file: Path) -> None:
+    def _apply_migration(self, conn: psycopg2.extensions.connection, migration_file: Path) -> None:
         """Apply a single migration file.
         
         Handles common idempotency issues like:
@@ -99,31 +101,59 @@ class MigrationRunner:
         cursor = conn.cursor()
         
         try:
-            # Execute all statements in the migration
-            cursor.executescript(content)
+            # PostgreSQL doesn't support executescript, so we split and execute individually
+            # Split by semicolon but be careful with semicolons inside strings
+            statements = self._split_sql_statements(content)
+            
+            for statement in statements:
+                statement = statement.strip()
+                if statement:  # Skip empty statements
+                    cursor.execute(statement)
             
             # Record the migration
             checksum = self._calculate_checksum(content)
             cursor.execute(
-                "INSERT INTO _migrations (filename, checksum) VALUES (?, ?)",
+                "INSERT INTO _migrations (filename, checksum) VALUES (%s, %s)",
                 (migration_file.name, checksum)
             )
             
             conn.commit()
             logger.info(f"Successfully applied migration: {migration_file.name}")
             
-        except sqlite3.OperationalError as e:
+        except psycopg2.errors.DuplicateColumn as e:
+            # Column already exists - mark as applied
+            logger.info(f"Migration {migration_file.name} skipped (column already exists): {e}")
+            conn.rollback()
+            cursor = conn.cursor()
+            checksum = self._calculate_checksum(content)
+            cursor.execute(
+                "INSERT INTO _migrations (filename, checksum) VALUES (%s, %s)",
+                (migration_file.name, checksum)
+            )
+            conn.commit()
+                
+        except psycopg2.errors.DuplicateTable as e:
+            # Table already exists - mark as applied
+            logger.info(f"Migration {migration_file.name} skipped (table already exists): {e}")
+            conn.rollback()
+            cursor = conn.cursor()
+            checksum = self._calculate_checksum(content)
+            cursor.execute(
+                "INSERT INTO _migrations (filename, checksum) VALUES (%s, %s)",
+                (migration_file.name, checksum)
+            )
+            conn.commit()
+                
+        except (psycopg2.OperationalError, psycopg2.DatabaseError) as e:
             error_msg = str(e).lower()
-            # Handle idempotent cases - mark migration as applied even if it "failed"
-            # because the schema already has the changes (from _init_database or previous partial run)
-            if 'duplicate column name' in error_msg or 'already exists' in error_msg:
+            # Handle other idempotent cases
+            if 'already exists' in error_msg:
                 logger.info(f"Migration {migration_file.name} skipped (schema already up-to-date): {e}")
-                # Still record the migration as applied
                 conn.rollback()
                 cursor = conn.cursor()
                 checksum = self._calculate_checksum(content)
                 cursor.execute(
-                    "INSERT INTO _migrations (filename, checksum) VALUES (?, ?)",
+                    "INSERT INTO _migrations (filename, checksum) VALUES (%s, %s)",
                     (migration_file.name, checksum)
                 )
                 conn.commit()
@@ -132,10 +162,30 @@ class MigrationRunner:
                 logger.error(f"Failed to apply migration {migration_file.name}: {e}")
                 raise
                 
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             conn.rollback()
             logger.error(f"Failed to apply migration {migration_file.name}: {e}")
             raise
+    
+    def _split_sql_statements(self, content: str) -> List[str]:
+        """Split SQL content into individual statements.
+        
+        Simple approach: split by semicolon not inside quotes.
+        Note: This is a basic implementation. For complex SQL with
+        dollar-quoted strings or functions, may need more sophisticated parsing.
+        """
+        # Remove comments
+        lines = []
+        for line in content.split('\n'):
+            # Remove SQL comments (-- style)
+            if '--' in line:
+                line = line[:line.index('--')]
+            lines.append(line)
+        content = '\n'.join(lines)
+        
+        # Simple split by semicolon (good enough for most migrations)
+        statements = content.split(';')
+        return [s.strip() for s in statements if s.strip()]
     
     def run_pending_migrations(self) -> List[str]:
         """

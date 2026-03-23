@@ -131,7 +131,7 @@ class AuditService:
             INSERT INTO audit_logs 
             (actor_id, actor_username, actor_role, action, resource_type, 
              resource_id, resource_name, details, ip_address, user_agent)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (actor_id, actor_username, actor_role, action.value if isinstance(action, AuditAction) else action, 
               resource_type, resource_id, resource_name, details_json, ip_address, user_agent))
         
@@ -173,26 +173,26 @@ class AuditService:
         params = []
         
         if actor_username:
-            query += " AND actor_username = ?"
+            query += " AND actor_username = %s"
             params.append(actor_username)
         
         if action:
-            query += " AND action LIKE ?"
+            query += " AND action LIKE %s"
             params.append(f"{action}%")
         
         if resource_type:
-            query += " AND resource_type = ?"
+            query += " AND resource_type = %s"
             params.append(resource_type)
         
         if start_date:
-            query += " AND timestamp >= ?"
+            query += " AND timestamp >= %s"
             params.append(start_date)
         
         if end_date:
-            query += " AND timestamp <= ?"
+            query += " AND timestamp <= %s"
             params.append(end_date)
         
-        query += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY timestamp DESC LIMIT %s OFFSET ?"
         params.extend([limit, offset])
         
         cursor.execute(query, params)
@@ -225,15 +225,15 @@ class AuditService:
         params = []
         
         if actor_username:
-            query += " AND actor_username = ?"
+            query += " AND actor_username = %s"
             params.append(actor_username)
         
         if action:
-            query += " AND action LIKE ?"
+            query += " AND action LIKE %s"
             params.append(f"{action}%")
         
         if resource_type:
-            query += " AND resource_type = ?"
+            query += " AND resource_type = %s"
             params.append(resource_type)
         
         cursor.execute(query, params)

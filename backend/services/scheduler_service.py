@@ -322,8 +322,8 @@ class SchedulerService:
         try:
             cursor.execute('''
                 UPDATE vector_db_schedules 
-                SET next_run_at = ?, updated_at = ?
-                WHERE vector_db_name = ?
+                SET next_run_at = %s, updated_at = %s
+                WHERE vector_db_name = %s
             ''', (next_run.isoformat(), datetime.now(timezone.utc).isoformat(), vector_db_name))
             conn.commit()
         finally:
@@ -343,18 +343,18 @@ class SchedulerService:
                 now_str = datetime.now(timezone.utc).isoformat()
                 cursor.execute('''
                     UPDATE vector_db_schedules 
-                    SET last_run_status = ?, updated_at = ?
-                    WHERE vector_db_name = ?
+                    SET last_run_status = %s, updated_at = %s
+                    WHERE vector_db_name = %s
                 ''', (status.value, now_str, vector_db_name))
             else:
                 now_str = datetime.now(timezone.utc).isoformat()
                 cursor.execute('''
                     UPDATE vector_db_schedules 
-                    SET last_run_at = ?,
-                        last_run_status = ?,
-                        last_run_job_id = ?,
-                        updated_at = ?
-                    WHERE vector_db_name = ?
+                    SET last_run_at = %s,
+                        last_run_status = %s,
+                        last_run_job_id = %s,
+                        updated_at = %s
+                    WHERE vector_db_name = %s
                 ''', (now_str, status.value, job_id, now_str, vector_db_name))
             conn.commit()
         finally:
@@ -396,7 +396,7 @@ class SchedulerService:
                 INSERT INTO vector_db_schedules 
                     (vector_db_name, enabled, schedule_type, schedule_hour, 
                      schedule_minute, schedule_day_of_week, schedule_cron, created_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(vector_db_name) DO UPDATE SET
                     enabled = excluded.enabled,
                     schedule_type = excluded.schedule_type,
@@ -436,7 +436,7 @@ class SchedulerService:
         
         try:
             cursor.execute('''
-                SELECT * FROM vector_db_schedules WHERE vector_db_name = ?
+                SELECT * FROM vector_db_schedules WHERE vector_db_name = %s
             ''', (vector_db_name,))
             row = cursor.fetchone()
             
@@ -477,7 +477,7 @@ class SchedulerService:
             
             # Remove from database
             cursor.execute('''
-                DELETE FROM vector_db_schedules WHERE vector_db_name = ?
+                DELETE FROM vector_db_schedules WHERE vector_db_name = %s
             ''', (vector_db_name,))
             conn.commit()
             

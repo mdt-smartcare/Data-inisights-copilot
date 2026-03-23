@@ -329,7 +329,7 @@ class ModelRegistryService:
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT 1 FROM embedding_models WHERE model_name = ?", (model_name,))
+            cursor.execute("SELECT 1 FROM embedding_models WHERE model_name = %s", (model_name,))
             return cursor.fetchone() is not None
         finally:
             conn.close()
@@ -371,13 +371,13 @@ class ModelRegistryService:
             cursor.execute(
                 """INSERT INTO embedding_models
                    (provider, model_name, display_name, dimensions, max_tokens, is_custom, is_active, updated_by)
-                   VALUES (?, ?, ?, ?, ?, 0, 0, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, 0, 0, %s)""",
                 (data.provider, data.model_name, data.display_name,
                  data.dimensions, data.max_tokens, created_by),
             )
             conn.commit()
             new_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM embedding_models WHERE id = ?", (new_id,))
+            cursor.execute("SELECT * FROM embedding_models WHERE id = %s", (new_id,))
             result = dict(cursor.fetchone())
             
             # Add catalog metadata
@@ -459,13 +459,13 @@ class ModelRegistryService:
             cursor.execute(
                 """INSERT INTO embedding_models
                    (provider, model_name, display_name, dimensions, max_tokens, is_custom, is_active, updated_by)
-                   VALUES (?, ?, ?, ?, ?, 1, 0, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, 1, 0, %s)""",
                 (data.provider, data.model_name, data.display_name,
                  data.dimensions, data.max_tokens, created_by),
             )
             conn.commit()
             new_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM embedding_models WHERE id = ?", (new_id,))
+            cursor.execute("SELECT * FROM embedding_models WHERE id = %s", (new_id,))
             return dict(cursor.fetchone())
         except Exception as e:
             conn.rollback()
@@ -507,7 +507,7 @@ class ModelRegistryService:
             previous_dimensions = dict(current_active)["dimensions"] if current_active else None
 
             # Verify target model exists
-            cursor.execute("SELECT * FROM embedding_models WHERE id = ?", (model_id,))
+            cursor.execute("SELECT * FROM embedding_models WHERE id = %s", (model_id,))
             model = cursor.fetchone()
             if not model:
                 raise ValueError(f"Embedding model with id={model_id} not found")
@@ -531,7 +531,7 @@ class ModelRegistryService:
             # Deactivate all, activate target
             cursor.execute("UPDATE embedding_models SET is_active = 0, updated_at = CURRENT_TIMESTAMP")
             cursor.execute(
-                "UPDATE embedding_models SET is_active = 1, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?",
+                "UPDATE embedding_models SET is_active = 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                 (updated_by, model_id),
             )
             conn.commit()
@@ -545,7 +545,7 @@ class ModelRegistryService:
             logger.info(f"Embedding model {model_id} ({model_dict['model_name']}) activated by {updated_by}")
             
             # Refresh model data
-            cursor.execute("SELECT * FROM embedding_models WHERE id = ?", (model_id,))
+            cursor.execute("SELECT * FROM embedding_models WHERE id = %s", (model_id,))
             final_model = dict(cursor.fetchone())
             
             return ModelActivationResult(
@@ -588,8 +588,8 @@ class ModelRegistryService:
             for key, value in settings_updates:
                 cursor.execute("""
                     UPDATE system_settings 
-                    SET value = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ?
-                    WHERE category = 'embedding' AND key = ?
+                    SET value = %s, updated_at = CURRENT_TIMESTAMP, updated_by = %s
+                    WHERE category = 'embedding' AND key = %s
                 """, (value, updated_by, key))
             
             conn.commit()
@@ -675,13 +675,13 @@ class ModelRegistryService:
                 """INSERT INTO llm_models
                    (provider, model_name, display_name, context_length, max_output_tokens,
                     parameters, is_custom, is_active, updated_by)
-                   VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, 1, 0, %s)""",
                 (data.provider, data.model_name, data.display_name,
                  data.context_length, data.max_output_tokens, params_json, created_by),
             )
             conn.commit()
             new_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM llm_models WHERE id = ?", (new_id,))
+            cursor.execute("SELECT * FROM llm_models WHERE id = %s", (new_id,))
             return dict(cursor.fetchone())
         except Exception as e:
             conn.rollback()
@@ -701,7 +701,7 @@ class ModelRegistryService:
             cursor = conn.cursor()
 
             # Verify model exists
-            cursor.execute("SELECT * FROM llm_models WHERE id = ?", (model_id,))
+            cursor.execute("SELECT * FROM llm_models WHERE id = %s", (model_id,))
             model = cursor.fetchone()
             if not model:
                 raise ValueError(f"LLM model with id={model_id} not found")
@@ -712,7 +712,7 @@ class ModelRegistryService:
             if active_emb:
                 cursor.execute(
                     """SELECT 1 FROM embedding_llm_compatibility
-                       WHERE embedding_model_id = ? AND llm_model_id = ?""",
+                       WHERE embedding_model_id = %s AND llm_model_id = %s""",
                     (active_emb["id"], model_id),
                 )
                 if not cursor.fetchone():
@@ -724,7 +724,7 @@ class ModelRegistryService:
             # Deactivate all, activate target
             cursor.execute("UPDATE llm_models SET is_active = 0, updated_at = CURRENT_TIMESTAMP")
             cursor.execute(
-                "UPDATE llm_models SET is_active = 1, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?",
+                "UPDATE llm_models SET is_active = 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                 (updated_by, model_id),
             )
             conn.commit()
@@ -733,7 +733,7 @@ class ModelRegistryService:
             self._save_version_snapshot("llm", updated_by, conn)
 
             logger.info(f"LLM model {model_id} activated by {updated_by}")
-            cursor.execute("SELECT * FROM llm_models WHERE id = ?", (model_id,))
+            cursor.execute("SELECT * FROM llm_models WHERE id = %s", (model_id,))
             return dict(cursor.fetchone())
         except Exception as e:
             conn.rollback()
@@ -783,7 +783,7 @@ class ModelRegistryService:
                 SELECT l.*
                 FROM llm_models l
                 JOIN embedding_llm_compatibility c ON l.id = c.llm_model_id
-                WHERE c.embedding_model_id = ?
+                WHERE c.embedding_model_id = %s
                 ORDER BY l.is_active DESC, l.provider, l.model_name
             """, (embedding_model_id,))
             return [dict(r) for r in cursor.fetchall()]
@@ -797,16 +797,16 @@ class ModelRegistryService:
             cursor = conn.cursor()
 
             # Verify both models exist
-            cursor.execute("SELECT id FROM embedding_models WHERE id = ?", (data.embedding_model_id,))
+            cursor.execute("SELECT id FROM embedding_models WHERE id = %s", (data.embedding_model_id,))
             if not cursor.fetchone():
                 raise ValueError(f"Embedding model {data.embedding_model_id} not found")
-            cursor.execute("SELECT id FROM llm_models WHERE id = ?", (data.llm_model_id,))
+            cursor.execute("SELECT id FROM llm_models WHERE id = %s", (data.llm_model_id,))
             if not cursor.fetchone():
                 raise ValueError(f"LLM model {data.llm_model_id} not found")
 
             cursor.execute(
                 """INSERT INTO embedding_llm_compatibility (embedding_model_id, llm_model_id)
-                   VALUES (?, ?)""",
+                   VALUES (%s, %s)""",
                 (data.embedding_model_id, data.llm_model_id),
             )
             conn.commit()
@@ -826,7 +826,7 @@ class ModelRegistryService:
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM embedding_llm_compatibility WHERE id = ?", (mapping_id,))
+            cursor.execute("DELETE FROM embedding_llm_compatibility WHERE id = %s", (mapping_id,))
             conn.commit()
             return cursor.rowcount > 0
         finally:
@@ -846,7 +846,7 @@ class ModelRegistryService:
 
             # Get next version number
             cursor.execute(
-                "SELECT COALESCE(MAX(version), 0) FROM model_config_versions WHERE config_type = ?",
+                "SELECT COALESCE(MAX(version), 0) FROM model_config_versions WHERE config_type = %s",
                 (config_type,),
             )
             next_version = cursor.fetchone()[0] + 1
@@ -866,7 +866,7 @@ class ModelRegistryService:
                 compat = [dict(r) for r in cursor.fetchall()]
                 snapshot = json.dumps({"embedding_models": emb, "llm_models": llm, "compatibility": compat})
                 cursor.execute(
-                    "INSERT INTO model_config_versions (config_type, config_snapshot, version, updated_by) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO model_config_versions (config_type, config_snapshot, version, updated_by) VALUES (%s, %s, %s, %s)",
                     (config_type, snapshot, next_version, updated_by),
                 )
                 conn.commit()
@@ -876,7 +876,7 @@ class ModelRegistryService:
             snapshot = json.dumps(rows)
 
             cursor.execute(
-                "INSERT INTO model_config_versions (config_type, config_snapshot, version, updated_by) VALUES (?, ?, ?, ?)",
+                "INSERT INTO model_config_versions (config_type, config_snapshot, version, updated_by) VALUES (%s, %s, %s, %s)",
                 (config_type, snapshot, next_version, updated_by),
             )
             conn.commit()
@@ -893,7 +893,7 @@ class ModelRegistryService:
             cursor = conn.cursor()
             if config_type:
                 cursor.execute(
-                    "SELECT id, config_type, version, updated_by, updated_at FROM model_config_versions WHERE config_type = ? ORDER BY version DESC LIMIT ?",
+                    "SELECT id, config_type, version, updated_by, updated_at FROM model_config_versions WHERE config_type = %s ORDER BY version DESC LIMIT ?",
                     (config_type, limit),
                 )
             else:
@@ -910,7 +910,7 @@ class ModelRegistryService:
         conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM model_config_versions WHERE id = ?", (version_id,))
+            cursor.execute("SELECT * FROM model_config_versions WHERE id = %s", (version_id,))
             row = cursor.fetchone()
             if row:
                 result = dict(row)
@@ -939,24 +939,24 @@ class ModelRegistryService:
             if config_type == "embedding" and isinstance(snapshot, list):
                 for model in snapshot:
                     cursor.execute(
-                        "UPDATE embedding_models SET is_active = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?",
+                        "UPDATE embedding_models SET is_active = %s, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                         (model.get("is_active", 0), updated_by, model["id"]),
                     )
             elif config_type == "llm" and isinstance(snapshot, list):
                 for model in snapshot:
                     cursor.execute(
-                        "UPDATE llm_models SET is_active = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?",
+                        "UPDATE llm_models SET is_active = %s, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                         (model.get("is_active", 0), updated_by, model["id"]),
                     )
             elif config_type == "full" and isinstance(snapshot, dict):
                 for model in snapshot.get("embedding_models", []):
                     cursor.execute(
-                        "UPDATE embedding_models SET is_active = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?",
+                        "UPDATE embedding_models SET is_active = %s, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                         (model.get("is_active", 0), updated_by, model["id"]),
                     )
                 for model in snapshot.get("llm_models", []):
                     cursor.execute(
-                        "UPDATE llm_models SET is_active = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?",
+                        "UPDATE llm_models SET is_active = %s, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                         (model.get("is_active", 0), updated_by, model["id"]),
                     )
             else:

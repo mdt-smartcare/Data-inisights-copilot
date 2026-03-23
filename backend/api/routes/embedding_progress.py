@@ -615,7 +615,7 @@ async def _run_embedding_job(
             cursor_reg = conn_reg.cursor()
             cursor_reg.execute('''
                 INSERT INTO vector_db_registry (name, data_source_id, created_by, embedding_model, llm)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
                 ON CONFLICT(name) DO UPDATE SET
                     data_source_id=excluded.data_source_id,
                     embedding_model=excluded.embedding_model,
@@ -633,7 +633,7 @@ async def _run_embedding_job(
         cursor = conn.cursor()
         
         if not incremental:
-            cursor.execute("DELETE FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
+            cursor.execute("DELETE FROM document_index WHERE vector_db_name = %s", (vector_db_name,))
             conn.commit()
             try:
                 from backend.services.settings_service import get_settings_service, SettingCategory
@@ -653,7 +653,7 @@ async def _run_embedding_job(
             stale_source_ids = []
             logger.info(f"Rebuild mode: Wiped existing database indexing for {vector_db_name}")
         else:
-            cursor.execute("SELECT source_id, checksum FROM document_index WHERE vector_db_name = ?", (vector_db_name,))
+            cursor.execute("SELECT source_id, checksum FROM document_index WHERE vector_db_name = %s", (vector_db_name,))
             existing_docs = {row['source_id']: row['checksum'] for row in cursor.fetchall()}
             
             logger.info(f"Checking for deltas among {len(documents)} documents...")
@@ -974,7 +974,7 @@ async def _run_embedding_job(
             if 'checksum' in metadata and 'source_id' in metadata:
                 cursor.execute('''
                     INSERT INTO document_index (vector_db_name, source_id, checksum)
-                    VALUES (?, ?, ?)
+                    VALUES (%s, %s, %s)
                     ON CONFLICT(vector_db_name, source_id) DO UPDATE SET
                         checksum=excluded.checksum,
                         updated_at=CURRENT_TIMESTAMP
@@ -985,7 +985,7 @@ async def _run_embedding_job(
             cursor.execute(f'''
                 UPDATE vector_db_registry 
                 SET {"last_incremental_run" if incremental else "last_full_run"} = CURRENT_TIMESTAMP
-                WHERE name = ?
+                WHERE name = %s
             ''', (vector_db_name,))
             conn.commit()
         except Exception as e:

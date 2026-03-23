@@ -143,7 +143,7 @@ class TestCreateJob:
         # Verify in database
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT total_batches FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT total_batches FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -161,7 +161,7 @@ class TestCreateJob:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT config_metadata FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT config_metadata FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -187,7 +187,7 @@ class TestJobStateTransitions:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT status, started_at FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT status, started_at FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -204,7 +204,7 @@ class TestJobStateTransitions:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -219,7 +219,7 @@ class TestJobStateTransitions:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -234,7 +234,7 @@ class TestJobStateTransitions:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -253,7 +253,7 @@ class TestCompleteJob:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT status, completed_at FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT status, completed_at FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -267,7 +267,7 @@ class TestCompleteJob:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT embedding_version_id FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT embedding_version_id FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -286,7 +286,7 @@ class TestFailJob:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT status, error_message FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT status, error_message FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -306,7 +306,7 @@ class TestFailJob:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT error_details FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT error_details FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -329,7 +329,7 @@ class TestCancelJob:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT status FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         
@@ -379,7 +379,7 @@ class TestUpdateProgress:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT processed_documents, current_batch, failed_documents, progress_percentage 
-            FROM embedding_jobs WHERE job_id = ?
+            FROM embedding_jobs WHERE job_id = %s
         """, (job_id,))
         row = cursor.fetchone()
         conn.close()
@@ -402,7 +402,7 @@ class TestUpdateProgress:
         
         conn = mock_db_service.get_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT phase FROM embedding_jobs WHERE job_id = ?", (job_id,))
+        cursor.execute("SELECT phase FROM embedding_jobs WHERE job_id = %s", (job_id,))
         row = cursor.fetchone()
         conn.close()
         

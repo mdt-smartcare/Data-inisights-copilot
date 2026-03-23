@@ -144,7 +144,7 @@ class AuthorizationService:
                 INSERT INTO rag_audit_log 
                 (action, performed_by, performed_by_email, performed_by_role, 
                  ip_address, user_agent, success, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 RAGAuditAction.UNAUTHORIZED_ACCESS.value,
                 user.id,
@@ -210,7 +210,7 @@ class AuthorizationService:
                 INSERT INTO rag_audit_log 
                 (config_id, action, performed_by, performed_by_email, performed_by_role, 
                  ip_address, user_agent, changes, reason, success, error_message)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 config_id,
                 action.value if isinstance(action, RAGAuditAction) else action,
@@ -268,18 +268,18 @@ class AuthorizationService:
         params = []
         
         if config_id is not None:
-            query += " AND config_id = ?"
+            query += " AND config_id = %s"
             params.append(config_id)
         
         if action:
-            query += " AND action = ?"
+            query += " AND action = %s"
             params.append(action)
         
         if user_id is not None:
-            query += " AND performed_by = ?"
+            query += " AND performed_by = %s"
             params.append(user_id)
         
-        query += " ORDER BY performed_at DESC LIMIT ? OFFSET ?"
+        query += " ORDER BY performed_at DESC LIMIT %s OFFSET ?"
         params.extend([limit, offset])
         
         cursor.execute(query, params)

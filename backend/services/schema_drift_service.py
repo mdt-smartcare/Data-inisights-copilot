@@ -141,8 +141,8 @@ class SchemaDriftDetector:
             
             cursor.execute('''
                 UPDATE vector_db_registry 
-                SET schema_snapshot = ?, schema_snapshot_at = CURRENT_TIMESTAMP
-                WHERE name = ?
+                SET schema_snapshot = %s, schema_snapshot_at = CURRENT_TIMESTAMP
+                WHERE name = %s
             ''', (json.dumps(snapshot), vector_db_name))
             
             conn.commit()
@@ -164,7 +164,7 @@ class SchemaDriftDetector:
             cursor.execute('''
                 SELECT schema_snapshot, schema_snapshot_at
                 FROM vector_db_registry
-                WHERE name = ?
+                WHERE name = %s
             ''', (vector_db_name,))
             
             row = cursor.fetchone()
@@ -342,7 +342,7 @@ class SchemaDriftDetector:
             cursor.execute('''
                 INSERT INTO schema_drift_logs 
                 (vector_db_name, drift_type, severity, entity_name, details)
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s)
             ''', (
                 vector_db_name,
                 drift.drift_type.value,
@@ -371,7 +371,7 @@ class SchemaDriftDetector:
                 SELECT id, vector_db_name, drift_type, severity, entity_name, 
                        details, detected_at, acknowledged_at, acknowledged_by
                 FROM schema_drift_logs
-                WHERE vector_db_name = ? AND resolved_at IS NULL
+                WHERE vector_db_name = %s AND resolved_at IS NULL
                 ORDER BY 
                     CASE severity 
                         WHEN 'critical' THEN 1 
@@ -398,8 +398,8 @@ class SchemaDriftDetector:
             
             cursor.execute('''
                 UPDATE schema_drift_logs
-                SET acknowledged_at = CURRENT_TIMESTAMP, acknowledged_by = ?
-                WHERE id = ?
+                SET acknowledged_at = CURRENT_TIMESTAMP, acknowledged_by = %s
+                WHERE id = %s
             ''', (acknowledged_by, drift_id))
             
             conn.commit()
@@ -418,8 +418,8 @@ class SchemaDriftDetector:
             
             cursor.execute('''
                 UPDATE schema_drift_logs
-                SET resolved_at = CURRENT_TIMESTAMP, resolved_by = ?
-                WHERE id = ?
+                SET resolved_at = CURRENT_TIMESTAMP, resolved_by = %s
+                WHERE id = %s
             ''', (resolved_by, drift_id))
             
             conn.commit()
@@ -438,8 +438,8 @@ class SchemaDriftDetector:
             
             cursor.execute('''
                 UPDATE schema_drift_logs
-                SET resolved_at = CURRENT_TIMESTAMP, resolved_by = ?
-                WHERE vector_db_name = ? AND resolved_at IS NULL
+                SET resolved_at = CURRENT_TIMESTAMP, resolved_by = %s
+                WHERE vector_db_name = %s AND resolved_at IS NULL
             ''', (resolved_by, vector_db_name))
             
             count = cursor.rowcount

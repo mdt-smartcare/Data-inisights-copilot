@@ -75,7 +75,7 @@ class EmbeddingJobService:
                 INSERT INTO embedding_jobs 
                 (job_id, config_id, status, phase, total_documents, total_batches, 
                  batch_size, started_by, config_metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 job_id, config_id, EmbeddingJobStatus.QUEUED.value,
                 "Job queued for processing", total_documents, total_batches,
@@ -130,7 +130,7 @@ class EmbeddingJobService:
         try:
             # Get total documents and embedding start time for speed calculation
             cursor.execute(
-                "SELECT total_documents, started_at, embedding_started_at FROM embedding_jobs WHERE job_id = ?",
+                "SELECT total_documents, started_at, embedding_started_at FROM embedding_jobs WHERE job_id = %s",
                 (job_id,)
             )
             row = cursor.fetchone()
@@ -167,29 +167,29 @@ class EmbeddingJobService:
             
             # Build update query
             update_fields = [
-                "processed_documents = ?",
-                "current_batch = ?",
-                "failed_documents = ?",
-                "progress_percentage = ?"
+                "processed_documents = %s",
+                "current_batch = %s",
+                "failed_documents = %s",
+                "progress_percentage = %s"
             ]
             params = [processed_documents, current_batch, failed_documents, progress_percentage]
             
             if docs_per_second is not None:
-                update_fields.append("documents_per_second = ?")
+                update_fields.append("documents_per_second = %s")
                 params.append(docs_per_second)
             
             if estimated_completion:
-                update_fields.append("estimated_completion_at = ?")
+                update_fields.append("estimated_completion_at = %s")
                 params.append(estimated_completion)
             
             if phase:
-                update_fields.append("phase = ?")
+                update_fields.append("phase = %s")
                 params.append(phase)
             
             params.append(job_id)
             
             cursor.execute(
-                f"UPDATE embedding_jobs SET {', '.join(update_fields)} WHERE job_id = ?",
+                f"UPDATE embedding_jobs SET {', '.join(update_fields)} WHERE job_id = %s",
                 params
             )
             
@@ -306,7 +306,7 @@ class EmbeddingJobService:
         try:
             # Check current status
             cursor.execute(
-                "SELECT status FROM embedding_jobs WHERE job_id = ?",
+                "SELECT status FROM embedding_jobs WHERE job_id = %s",
                 (job_id,)
             )
             row = cursor.fetchone()
@@ -327,8 +327,8 @@ class EmbeddingJobService:
             # Cancel the job
             cursor.execute("""
                 UPDATE embedding_jobs 
-                SET status = ?, phase = ?, completed_at = ?, cancelled_by = ?
-                WHERE job_id = ?
+                SET status = %s, phase = %s, completed_at = %s, cancelled_by = %s
+                WHERE job_id = %s
             """, (
                 EmbeddingJobStatus.CANCELLED.value,
                 "Cancelled by user",
@@ -360,7 +360,7 @@ class EmbeddingJobService:
         
         try:
             cursor.execute(
-                "SELECT status FROM embedding_jobs WHERE job_id = ?",
+                "SELECT status FROM embedding_jobs WHERE job_id = %s",
                 (job_id,)
             )
             row = cursor.fetchone()
@@ -380,7 +380,7 @@ class EmbeddingJobService:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("SELECT config_metadata FROM embedding_jobs WHERE job_id = ?", (job_id,))
+            cursor.execute("SELECT config_metadata FROM embedding_jobs WHERE job_id = %s", (job_id,))
             row = cursor.fetchone()
             if not row or not row['config_metadata']:
                 return None
@@ -406,7 +406,7 @@ class EmbeddingJobService:
         
         try:
             cursor.execute("""
-                SELECT * FROM embedding_jobs WHERE job_id = ?
+                SELECT * FROM embedding_jobs WHERE job_id = %s
             """, (job_id,))
             
             row = cursor.fetchone()
@@ -437,7 +437,7 @@ class EmbeddingJobService:
             recent_errors = []
             cursor.execute("""
                 SELECT event_data FROM embedding_job_events 
-                WHERE job_id = (SELECT id FROM embedding_jobs WHERE job_id = ?)
+                WHERE job_id = (SELECT id FROM embedding_jobs WHERE job_id = %s)
                 AND event_type = 'error'
                 ORDER BY timestamp DESC LIMIT 5
             """, (job_id,))
@@ -529,18 +529,18 @@ class EmbeddingJobService:
             params = []
             
             if user_id is not None:
-                query += " AND started_by = ?"
+                query += " AND started_by = %s"
                 params.append(user_id)
             
             if config_id is not None:
-                query += " AND config_id = ?"
+                query += " AND config_id = %s"
                 params.append(config_id)
             
             if status:
-                query += " AND status = ?"
+                query += " AND status = %s"
                 params.append(status.value)
             
-            query += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            query += " ORDER BY created_at DESC LIMIT %s OFFSET ?"
             params.extend([limit, offset])
             
             cursor.execute(query, params)
@@ -564,11 +564,11 @@ class EmbeddingJobService:
             if 'status' in kwargs and isinstance(kwargs['status'], EmbeddingJobStatus):
                 kwargs['status'] = kwargs['status'].value
             
-            fields = [f"{k} = ?" for k in kwargs.keys()]
+            fields = [f"{k} = %s" for k in kwargs.keys()]
             values = list(kwargs.values()) + [job_id]
             
             cursor.execute(
-                f"UPDATE embedding_jobs SET {', '.join(fields)} WHERE job_id = ?",
+                f"UPDATE embedding_jobs SET {', '.join(fields)} WHERE job_id = %s",
                 values
             )
             conn.commit()
@@ -585,7 +585,7 @@ class EmbeddingJobService:
         
         try:
             # Get internal job ID
-            cursor.execute("SELECT id FROM embedding_jobs WHERE job_id = ?", (job_id,))
+            cursor.execute("SELECT id FROM embedding_jobs WHERE job_id = %s", (job_id,))
             row = cursor.fetchone()
             if not row:
                 return
@@ -595,7 +595,7 @@ class EmbeddingJobService:
             
             cursor.execute("""
                 INSERT INTO embedding_job_events (job_id, event_type, event_data)
-                VALUES (?, ?, ?)
+                VALUES (%s, %s, %s)
             """, (internal_id, event_type, event_json))
             
             conn.commit()
