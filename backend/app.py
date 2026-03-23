@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # Load environment variables manually for libraries that rely on os.environ (like OpenAI)
-load_dotenv(Path(__file__).parent / ".env")
+load_dotenv(Path(__file__).parent / ".env", override=True)
 
 from backend.config import get_settings
 from backend.core.logging import setup_logging, get_logger
