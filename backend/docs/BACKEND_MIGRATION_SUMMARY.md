@@ -311,13 +311,10 @@ open htmlcov/index.html
 1. **Hardcoded Users:** Currently using dictionary in `config.py`
    - **Next Step:** Migrate to PostgreSQL users table
 
-2. **CSV Feedback:** Still writing to `feedback_log.csv`
-   - **Next Step:** Create feedback table in PostgreSQL
-
-3. **No Rate Limiting:** Currently unlimited requests
+2. **No Rate Limiting:** Currently unlimited requests
    - **Next Step:** Add slowapi middleware
 
-4. **Single-process:** Not optimized for scale yet
+3. **Single-process:** Not optimized for scale yet
    - **Next Step:** Add Redis caching + gunicorn workers
 
 ### Security Recommendations
