@@ -296,7 +296,7 @@ async def create_or_update_schedule(
                 detail=f"Invalid schedule_type. Must be one of: {[t.value for t in ScheduleType]}"
             )
         
-        schedule = scheduler_service.create_schedule(
+        schedule = schedule_manager.create_schedule(
             vector_db_name=vector_db_name,
             schedule_type=schedule_type,
             hour=request.hour,
