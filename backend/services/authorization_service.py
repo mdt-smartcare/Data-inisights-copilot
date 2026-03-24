@@ -279,7 +279,7 @@ class AuthorizationService:
             query += " AND performed_by = %s"
             params.append(user_id)
         
-        query += " ORDER BY performed_at DESC LIMIT %s OFFSET ?"
+        query += " ORDER BY performed_at DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
         
         cursor.execute(query, params)

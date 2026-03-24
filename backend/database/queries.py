@@ -299,7 +299,7 @@ class PromptConfigQueries:
     
     GET_BY_ID = """
         SELECT 
-            pc.id,
+            pc.prompt_id,
             pc.prompt_id,
             pc.connection_id,
             pc.schema_selection,
@@ -323,7 +323,7 @@ class PromptConfigQueries:
         FROM prompt_configs pc
         JOIN system_prompts sp ON pc.prompt_id = sp.id
         LEFT JOIN db_connections dc ON pc.connection_id = dc.id
-        WHERE pc.id = %s
+        WHERE pc.prompt_id = %s
     """
     # Parameters: (config_id,)
     
@@ -416,7 +416,7 @@ class PromptConfigQueries:
     
     GET_ALL_FOR_AGENT = """
         SELECT 
-            sp.id AS prompt_id,
+            sp.id,
             sp.prompt_text, 
             sp.version, 
             sp.is_active, 
@@ -424,7 +424,7 @@ class PromptConfigQueries:
             sp.created_by,
             sp.agent_id,
             u.username as created_by_username,
-            pc.id AS config_id,
+            pc.prompt_id AS config_id,
             pc.schema_selection,
             pc.connection_id,
             pc.data_dictionary,
@@ -448,7 +448,7 @@ class PromptConfigQueries:
     
     GET_ALL_GLOBAL = """
         SELECT 
-            sp.id AS prompt_id,
+            sp.id,
             sp.prompt_text, 
             sp.version, 
             sp.is_active, 
@@ -456,7 +456,7 @@ class PromptConfigQueries:
             sp.created_by,
             sp.agent_id,
             u.username as created_by_username,
-            pc.id AS config_id,
+            pc.prompt_id AS config_id,
             pc.schema_selection,
             pc.connection_id,
             pc.data_dictionary,

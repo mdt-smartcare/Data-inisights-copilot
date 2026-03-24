@@ -579,8 +579,9 @@ class ConfigService:
                     data_source_id = str(connection_id) if data_source_type == 'database' else (ingestion_file_name or "unknown")
                     try:
                         self.db_service.register_vector_db(vector_db_name, data_source_id, user_id)
-                    except ValueError:
+                    except (ValueError, Exception) as e:
                         # Already exists, which is fine if they are republishing with the same name
+                        logger.debug(f"Vector DB registration skipped: {e}")
                         pass
             except Exception as e:
                 logger.warning(f"Failed to register vector DB from config: {e}")

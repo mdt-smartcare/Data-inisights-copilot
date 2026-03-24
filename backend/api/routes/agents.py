@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -42,7 +43,7 @@ class AgentResponse(BaseModel):
     description: Optional[str] = None
     type: str
     db_connection_uri: Optional[str] = None
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
     user_role: Optional[str] = None # Role of the current user for this agent
 
 class AgentCreate(BaseModel):
@@ -401,7 +402,7 @@ class AgentEmbeddingConfigResponse(BaseModel):
     dimension: int
     batch_size: int
     collection_name: str
-    last_embedded_at: Optional[str] = None
+    last_embedded_at: Optional[datetime] = None
     document_count: int = 0
     requires_reindex: bool = False
 
@@ -423,7 +424,7 @@ class AgentEmbeddingHistoryResponse(BaseModel):
     new_dimension: int
     change_reason: Optional[str]
     changed_by: Optional[str]
-    changed_at: str
+    changed_at: datetime
     reindex_triggered: bool
     reindex_job_id: Optional[str]
 

@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional, Dict
+from datetime import datetime
 
 class PromptGenerationRequest(BaseModel):
     data_dictionary: str
@@ -43,7 +44,7 @@ class PromptResponse(BaseModel):
 
     is_active: int
     agent_id: Optional[int] = None
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
     created_by_username: Optional[str] = None
     
     # Metadata fields

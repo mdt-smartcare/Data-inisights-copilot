@@ -66,8 +66,8 @@ class AuditService:
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS audit_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 actor_id INTEGER,
                 actor_username TEXT,
                 actor_role TEXT,
@@ -192,7 +192,7 @@ class AuditService:
             query += " AND timestamp <= %s"
             params.append(end_date)
         
-        query += " ORDER BY timestamp DESC LIMIT %s OFFSET ?"
+        query += " ORDER BY timestamp DESC LIMIT %s OFFSET %s"
         params.extend([limit, offset])
         
         cursor.execute(query, params)

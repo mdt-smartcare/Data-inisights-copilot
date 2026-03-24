@@ -544,8 +544,11 @@ async def publish_prompt(
         
         return result
     except Exception as e:
-        logger.error(f"Error publishing prompt: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to publish prompt: {str(e)}")
+        logger.error(f"Error publishing prompt: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+            detail=f"Failed to publish prompt: {str(e)}"
+        )
 
 @router.get("/history", response_model=List[PromptResponse])
 async def get_prompt_history(

@@ -217,6 +217,41 @@ class BaseRepository:
             cursor.close()
             conn.close()
     
+    def parse_datetime(self, value) -> Optional[Any]:
+        """
+        Parse datetime from database - handles both datetime objects (PostgreSQL) and strings (SQLite).
+        
+        PostgreSQL returns datetime objects directly, while SQLite returns strings.
+        This helper ensures consistent datetime handling across both databases.
+        
+        Args:
+            value: datetime object, string, or None
+            
+        Returns:
+            datetime object with timezone info, or None
+        """
+        from datetime import datetime, timezone
+        
+        if not value:
+            return None
+        
+        # Already a datetime object (PostgreSQL)
+        if isinstance(value, datetime):
+            # Ensure it has timezone info
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
+            return value
+        
+        # String (SQLite or serialized)
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except Exception as e:
+                logger.warning(f"Failed to parse datetime string '{value}': {e}")
+                return None
+        
+        return None
+    
     def build_in_clause_placeholders(self, count: int) -> str:
         """
         Build placeholders for IN clause queries.

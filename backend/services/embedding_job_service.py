@@ -76,14 +76,16 @@ class EmbeddingJobService:
                 (job_id, config_id, status, phase, total_documents, total_batches, 
                  batch_size, started_by, config_metadata)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING job_id, status
             """, (
                 job_id, config_id, EmbeddingJobStatus.QUEUED.value,
                 "Job queued for processing", total_documents, total_batches,
                 batch_size, user.id, config_metadata
             ))
             
+            result = cursor.fetchone()
             conn.commit()
-            logger.info(f"Created embedding job {job_id} for config {config_id}")
+            logger.info(f"Created embedding job {result['job_id']} with status {result['status']}")
             
             return job_id
             
@@ -154,14 +156,15 @@ class EmbeddingJobService:
             
             if embedding_start:
                 try:
-                    start_time = datetime.fromisoformat(embedding_start.replace('Z', '+00:00'))
-                    elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
-                    if elapsed > 0 and processed_documents > 0:
-                        docs_per_second = processed_documents / elapsed
-                        remaining_docs = total_documents - total_handled
-                        if docs_per_second > 0:
-                            remaining_seconds = remaining_docs / docs_per_second
-                            estimated_completion = (datetime.now(timezone.utc) + timedelta(seconds=remaining_seconds)).isoformat()
+                    start_time = self.db.parse_datetime(embedding_start)
+                    if start_time:
+                        elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+                        if elapsed > 0 and processed_documents > 0:
+                            docs_per_second = processed_documents / elapsed
+                            remaining_docs = total_documents - total_handled
+                            if docs_per_second > 0:
+                                remaining_seconds = remaining_docs / docs_per_second
+                                estimated_completion = (datetime.now(timezone.utc) + timedelta(seconds=remaining_seconds)).isoformat()
                 except Exception as e:
                     logger.debug(f"Error calculating ETA: {e}")
             
@@ -410,7 +413,9 @@ class EmbeddingJobService:
             """, (job_id,))
             
             row = cursor.fetchone()
+            logger.info(f"Query for job_id={job_id}, row result: {row}")
             if not row:
+                logger.warning(f"Job {job_id} not found in database")
                 return None
             
             job = dict(row)
@@ -419,18 +424,22 @@ class EmbeddingJobService:
             elapsed_seconds = None
             if job.get('started_at'):
                 try:
-                    start_time = datetime.fromisoformat(job['started_at'].replace('Z', '+00:00'))
-                    elapsed_seconds = int((datetime.now(timezone.utc) - start_time).total_seconds())
-                except:
+                    start_time = self.db.parse_datetime(job['started_at'])
+                    if start_time:
+                        elapsed_seconds = int((datetime.now(timezone.utc) - start_time).total_seconds())
+                except Exception as e:
+                    logger.warning(f"Failed to calculate elapsed time: {e}")
                     pass
             
             # Calculate ETA in seconds
             eta_seconds = None
             if job.get('estimated_completion_at'):
                 try:
-                    eta_time = datetime.fromisoformat(job['estimated_completion_at'].replace('Z', '+00:00'))
-                    eta_seconds = max(0, int((eta_time - datetime.now(timezone.utc)).total_seconds()))
-                except:
+                    eta_time = self.db.parse_datetime(job['estimated_completion_at'])
+                    if eta_time:
+                        eta_seconds = max(0, int((eta_time - datetime.now(timezone.utc)).total_seconds()))
+                except Exception as e:
+                    logger.warning(f"Failed to calculate ETA: {e}")
                     pass
             
             # Get recent errors
@@ -463,8 +472,8 @@ class EmbeddingJobService:
                 elapsed_seconds=elapsed_seconds,
                 errors_count=job.get('failed_documents', 0),
                 recent_errors=recent_errors,
-                started_at=datetime.fromisoformat(job['started_at']) if job.get('started_at') else None,
-                completed_at=datetime.fromisoformat(job['completed_at']) if job.get('completed_at') else None
+                started_at=self.db.parse_datetime(job.get('started_at')),
+                completed_at=self.db.parse_datetime(job.get('completed_at'))
             )
             
         except Exception as e:
@@ -540,7 +549,7 @@ class EmbeddingJobService:
                 query += " AND status = %s"
                 params.append(status.value)
             
-            query += " ORDER BY created_at DESC LIMIT %s OFFSET ?"
+            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
             
             cursor.execute(query, params)

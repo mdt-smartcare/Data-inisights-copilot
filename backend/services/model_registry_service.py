@@ -893,12 +893,12 @@ class ModelRegistryService:
             cursor = conn.cursor()
             if config_type:
                 cursor.execute(
-                    "SELECT id, config_type, version, updated_by, updated_at FROM model_config_versions WHERE config_type = %s ORDER BY version DESC LIMIT ?",
+                    "SELECT id, config_type, version, updated_by, updated_at FROM model_config_versions WHERE config_type = %s ORDER BY version DESC LIMIT %s",
                     (config_type, limit),
                 )
             else:
                 cursor.execute(
-                    "SELECT id, config_type, version, updated_by, updated_at FROM model_config_versions ORDER BY updated_at DESC LIMIT ?",
+                    "SELECT id, config_type, version, updated_by, updated_at FROM model_config_versions ORDER BY updated_at DESC LIMIT %s",
                     (limit,),
                 )
             return [dict(r) for r in cursor.fetchall()]

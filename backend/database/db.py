@@ -373,8 +373,10 @@ class DatabaseService(BaseRepository):
             # 1. Get the current max version number
             cursor.execute(PromptQueries.GET_MAX_VERSION)
             result = cursor.fetchone()
-            current_max = result[0] if result and result[0] is not None else 0
+            # RealDictCursor returns dict, access by column name
+            current_max = result['max'] if result and result.get('max') is not None else 0
             new_version = current_max + 1
+            logger.info(f"Publishing prompt version {new_version} for agent_id={agent_id}")
 
             # 2. Deactivate all existing prompts for this agent (or global if None)
             if agent_id:
@@ -383,13 +385,20 @@ class DatabaseService(BaseRepository):
                 cursor.execute(PromptQueries.DEACTIVATE_ACTIVE_GLOBAL)
 
             # 3. Insert the new prompt into system_prompts
+            logger.info(f"Inserting prompt: version={new_version}, user={user_id}, agent={agent_id}")
             cursor.execute(PromptQueries.INSERT_PROMPT, (
                 prompt_text, new_version, 1, user_id, agent_id
             ))
             
-            prompt_id = cursor.fetchone()['id']
+            result = cursor.fetchone()
+            logger.info(f"INSERT RETURNING result: {result}")
+            if not result:
+                raise ValueError("INSERT RETURNING returned no data")
+            prompt_id = result['id']
+            logger.info(f"Created prompt with id={prompt_id}")
 
             # 4. Insert configuration metadata into prompt_configs
+            logger.info(f"Inserting config for prompt_id={prompt_id}")
             cursor.execute(PromptConfigQueries.INSERT_CONFIG, (
                 prompt_id, connection_id, schema_selection,
                 data_dictionary, reasoning, example_questions,
@@ -398,6 +407,7 @@ class DatabaseService(BaseRepository):
                 embedding_config, retriever_config,
                 chunking_config, llm_config
             ))
+            logger.info(f"Config inserted successfully, rowcount={cursor.rowcount}")
             
             # Return full object matched to UI expectations
             return {

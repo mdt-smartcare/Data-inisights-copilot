@@ -277,7 +277,11 @@ async def _run_embedding_job(
             job_service.update_progress(job_id, processed_documents=0, current_batch=0, 
                                         phase=f"Resuming from {resume_phase.value} phase...")
         
-        if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+        job_progress = job_service.get_job_progress(job_id)
+        if not job_progress:
+            logger.error(f"Job {job_id} not found in database, cannot proceed")
+            return
+        if job_progress.status == EmbeddingJobStatus.CANCELLED:
             logger.info(f"Job {job_id} cancelled before starting.")
             return
         
@@ -554,7 +558,8 @@ async def _run_embedding_job(
 
                 table_data = await extractor.extract_all_tables(on_progress=extractor_progress)
                 
-                if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+                job_progress = job_service.get_job_progress(job_id)
+                if not job_progress or job_progress.status == EmbeddingJobStatus.CANCELLED:
                     logger.info(f"Job {job_id} cancelled after extraction.")
                     return
                 
@@ -593,7 +598,8 @@ async def _run_embedding_job(
                 check_cancellation=lambda: job_service.is_job_cancelled(job_id)
             )
             
-            if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+            job_progress = job_service.get_job_progress(job_id)
+            if not job_progress or job_progress.status == EmbeddingJobStatus.CANCELLED:
                 logger.info(f"Job {job_id} cancelled after transformation.")
                 return
             
@@ -732,7 +738,8 @@ async def _run_embedding_job(
                 check_cancellation=lambda: job_service.is_job_cancelled(job_id)
             )
             
-            if job_service.get_job_progress(job_id).status == EmbeddingJobStatus.CANCELLED:
+            job_progress = job_service.get_job_progress(job_id)
+            if not job_progress or job_progress.status == EmbeddingJobStatus.CANCELLED:
                 logger.info(f"Job {job_id} cancelled after chunking.")
                 return
             

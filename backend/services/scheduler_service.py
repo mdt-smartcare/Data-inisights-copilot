@@ -90,7 +90,7 @@ class SchedulerService:
         try:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS vector_db_schedules (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id SERIAL PRIMARY KEY,
                     vector_db_name TEXT NOT NULL UNIQUE,
                     enabled INTEGER DEFAULT 0,
                     schedule_type TEXT DEFAULT 'daily',

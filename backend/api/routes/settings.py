@@ -2,6 +2,7 @@
 Settings API Routes - CRUD endpoints for system configuration.
 Provides REST API for managing all configurable system settings.
 """
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Body
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional, Literal
@@ -39,7 +40,7 @@ class SettingHistoryResponse(BaseModel):
     new_value: str
     changed_by: Optional[str]
     change_reason: Optional[str]
-    changed_at: str
+    changed_at: datetime
 
 
 class RollbackRequest(BaseModel):

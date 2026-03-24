@@ -11,6 +11,7 @@ Access levels:
 - Super Admin: Can edit/deactivate admins and users, promote to any role
 - Admin: Can only assign agents to users (via agents API), cannot edit/deactivate
 """
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -23,6 +24,7 @@ from backend.services.audit_service import get_audit_service, AuditAction
 
 logger = get_logger(__name__)
 
+# --- Helper Functions ---
 router = APIRouter(prefix="/users", tags=["User Management"])
 
 
@@ -42,7 +44,7 @@ class UserResponse(BaseModel):
     full_name: Optional[str] = None
     role: str
     is_active: bool = True
-    created_at: Optional[str] = None
+    created_at: Optional[datetime] = None
     external_id: Optional[str] = Field(None, description="OIDC subject claim from IdP")
 
 

@@ -337,8 +337,8 @@ class NotificationService:
                 related_entity_type=data.get('related_entity_type'),
                 related_entity_id=data.get('related_entity_id'),
                 channels=data['channels'],
-                read_at=datetime.fromisoformat(data['read_at']) if data.get('read_at') else None,
-                created_at=datetime.fromisoformat(data['created_at'])
+                read_at=self.db.parse_datetime(data.get('read_at')),
+                created_at=self.db.parse_datetime(data['created_at'])
             )
         except Exception as e:
             logger.error(f"Failed to get notification: {e}")

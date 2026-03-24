@@ -323,7 +323,6 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
     id SERIAL PRIMARY KEY,
     job_id TEXT UNIQUE NOT NULL,
     config_id INTEGER,
-    embedding_version_id INTEGER,
     status TEXT NOT NULL DEFAULT 'QUEUED',
     phase TEXT,
     total_documents INTEGER NOT NULL,
@@ -349,8 +348,7 @@ CREATE TABLE IF NOT EXISTS embedding_jobs (
     retry_count INTEGER DEFAULT 0,
     max_retries INTEGER DEFAULT 3,
     config_metadata TEXT,
-    FOREIGN KEY (config_id) REFERENCES rag_configurations(id) ON DELETE SET NULL,
-    FOREIGN KEY (embedding_version_id) REFERENCES embedding_versions(id) ON DELETE SET NULL,
+    FOREIGN KEY (config_id) REFERENCES system_prompts(id) ON DELETE SET NULL,
     FOREIGN KEY (started_by) REFERENCES users(id),
     FOREIGN KEY (cancelled_by) REFERENCES users(id)
 );

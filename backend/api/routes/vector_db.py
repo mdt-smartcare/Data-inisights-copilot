@@ -1,3 +1,4 @@
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Dict, Any, Optional, List
 from pydantic import BaseModel, Field
@@ -156,9 +157,9 @@ class ScheduleResponse(BaseModel):
     schedule_minute: int
     schedule_day_of_week: Optional[int] = None
     schedule_cron: Optional[str] = None
-    next_run_at: Optional[str] = None
+    next_run_at: Optional[datetime] = None
     countdown_seconds: Optional[int] = None
-    last_run_at: Optional[str] = None
+    last_run_at: Optional[datetime] = None
     last_run_status: Optional[str] = None
     last_run_job_id: Optional[str] = None
 
