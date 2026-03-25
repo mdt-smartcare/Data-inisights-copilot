@@ -4,19 +4,47 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ChartRenderer from './ChartRenderer';
 import { useState } from 'react';
+import { chatService } from '../../services/chatService';
 
 interface AssistantMessageProps {
   message: Message;
   onSuggestedQuestionClick?: (question: string) => void;
   onFeedback?: (messageId: string, rating: 'positive' | 'negative') => void;
+  /** The original user query that prompted this response */
+  userQuery?: string;
 }
 
-export default function AssistantMessage({ message, onSuggestedQuestionClick, onFeedback }: AssistantMessageProps) {
+export default function AssistantMessage({ message, onSuggestedQuestionClick, onFeedback, userQuery }: AssistantMessageProps) {
   const [feedback, setFeedback] = useState<'positive' | 'negative' | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleFeedback = (rating: 'positive' | 'negative') => {
+  const handleFeedback = async (rating: 'positive' | 'negative') => {
+    if (isSubmitting || feedback !== null) return;
+    
+    setIsSubmitting(true);
     setFeedback(rating);
+    
+    // Call parent callback
     onFeedback?.(message.id, rating);
+    
+    // Send feedback to Langfuse via backend API
+    if (message.traceId) {
+      try {
+        await chatService.submitFeedback({
+          trace_id: message.traceId,
+          query: userQuery || message.content,
+          rating: rating === 'positive' ? 1 : -1,
+        });
+        console.log(`Feedback submitted to Langfuse: trace_id=${message.traceId}, rating=${rating}`);
+      } catch (error) {
+        console.error('Failed to submit feedback to Langfuse:', error);
+        // Don't revert UI state - feedback is still shown locally
+      }
+    } else {
+      console.warn('No trace_id available for feedback submission');
+    }
+    
+    setIsSubmitting(false);
   };
 
   return (
@@ -146,7 +174,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => handleFeedback('positive')}
-                disabled={feedback !== null}
+                disabled={feedback !== null || isSubmitting}
                 className={`p-1.5 rounded transition-all ${feedback === 'positive'
                   ? 'bg-green-100 text-green-600'
                   : 'hover:bg-gray-100 text-gray-400 hover:text-green-600'
@@ -159,7 +187,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               </button>
               <button
                 onClick={() => handleFeedback('negative')}
-                disabled={feedback !== null}
+                disabled={feedback !== null || isSubmitting}
                 className={`p-1.5 rounded transition-all ${feedback === 'negative'
                   ? 'bg-red-100 text-red-600'
                   : 'hover:bg-gray-100 text-gray-400 hover:text-red-600'
@@ -172,7 +200,9 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               </button>
             </div>
             {feedback && (
-              <span className="text-[10px] text-gray-500 italic">Thank you for your feedback!</span>
+              <span className="text-[10px] text-gray-500 italic">
+                {isSubmitting ? 'Submitting...' : 'Thank you for your feedback!'}
+              </span>
             )}
           </div>
         </div>

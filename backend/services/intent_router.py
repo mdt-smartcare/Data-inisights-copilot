@@ -29,6 +29,10 @@ class IntentClassification(BaseModel):
         description="For Intent C ONLY, a PostgreSQL query to extract the relevant IDs (e.g., patient_id). Return None for Intent A or B.",
         default=None
     )
+    confidence_score: float = Field(
+        description="Confidence score for the selected intent, between 0.0 and 1.0.",
+        default=1.0
+    )
 
 
 class IntentClassifier:
@@ -93,6 +97,8 @@ CRITICAL RULES:
    - "What did the doctor write about patient X?"
 
 For Intent C, you must ALSO provide a valid PostgreSQL query in 'sql_filter' that returns a single column of 'patient_id' satisfying the numerical condition.
+
+Provide a `confidence_score` between 0.0 and 1.0 representing your certainty in this classification. If the query is ambiguous or could require multiple tools, lower the confidence score.
 """),
             ("user", "Query: {query}\n\nSchema Context (if needed for Intent C):\n{schema}")
         ])
@@ -124,7 +130,7 @@ For Intent C, you must ALSO provide a valid PostgreSQL query in 'sql_filter' tha
         
         if any(keyword in query_lower for keyword in sql_keywords):
             logger.info(f"Pre-classified as Intent A (SQL) based on keywords")
-            result = IntentClassification(intent="A", sql_filter=None)
+            result = IntentClassification(intent="A", sql_filter=None, confidence_score=1.0)
             _CLASSIFICATION_CACHE[cache_key] = (result, now)
             return result
         
@@ -138,14 +144,14 @@ For Intent C, you must ALSO provide a valid PostgreSQL query in 'sql_filter' tha
         
         if any(keyword in query_lower for keyword in vector_keywords):
             logger.info(f"Pre-classified as Intent B (Vector) based on keywords")
-            result = IntentClassification(intent="B", sql_filter=None)
+            result = IntentClassification(intent="B", sql_filter=None, confidence_score=1.0)
             _CLASSIFICATION_CACHE[cache_key] = (result, now)
             return result
         
         try:
             chain = self.prompt | self.structured_llm
             result = chain.invoke({"query": query, "schema": schema_context})
-            logger.info(f"Classification result: Intent={result.intent}, SQL Filter={result.sql_filter}")
+            logger.info(f"Classification result: Intent={result.intent}, SQL Filter={result.sql_filter}, Confidence={result.confidence_score}")
             
             # Cache the LLM result
             _CLASSIFICATION_CACHE[cache_key] = (result, now)
@@ -157,5 +163,5 @@ For Intent C, you must ALSO provide a valid PostgreSQL query in 'sql_filter' tha
             return result
         except Exception as e:
             logger.error(f"Failed to classify intent: {e}")
-            # Fallback to SQL for most analytical queries
-            return IntentClassification(intent="A", sql_filter=None)
+            # Fallback to SQL for most analytical queries with low confidence
+            return IntentClassification(intent="A", sql_filter=None, confidence_score=0.5)

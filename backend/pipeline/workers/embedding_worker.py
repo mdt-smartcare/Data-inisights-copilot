@@ -7,6 +7,10 @@ from typing import List, Dict, Any, Union
 from backend.core.logging import get_logger
 from backend.pipeline.file_rag_pipeline import ChunkedDocument
 
+# For the Celery Beat Dispatcher
+from datetime import datetime, timezone
+import asyncio
+
 logger = get_logger(__name__)
 
 # =============================================================================
@@ -52,6 +56,13 @@ celery_app.conf.update(
     # Retry settings
     task_default_retry_delay=30,  # 30 seconds between retries
     task_reject_on_worker_lost=True,  # Requeue tasks if worker dies
+    # Celery Beat Configuration
+    beat_schedule={
+        'dispatch-vector-db-syncs-every-minute': {
+            'task': 'backend.pipeline.workers.embedding_worker.dispatch_vector_db_syncs',
+            'schedule': 60.0,  # Run every 60 seconds
+        },
+    }
 )
 
 # Global embedding provider instance (lazy loaded)
@@ -162,8 +173,180 @@ def process_embedding_batch(self, batch_run_id: str, table_name: str, serialized
         logger.error(f"Error processing embedding batch: {exc}")
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
-        # Retry with exponential backoff
         raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+
+
+# =============================================================================
+# Background Scheduling (Celery Beat Dispatcher & Sync task)
+# =============================================================================
+
+@celery_app.task(bind=True)
+def dispatch_vector_db_syncs(self):
+    """
+    Runs every minute via Celery Beat.
+    Checks sqlite database for any schedules where `next_run_at <= NOW()`.
+    Pushes those jobs into `execute_vector_db_sync` and calculates their next runtime.
+    """
+    logger.info("Celery Beat Tick: Dispatching Vector DB Syncs...")
+    from backend.services.schedule_manager import get_schedule_manager
+    from backend.sqliteDb.db import get_db_service
+    
+    manager = get_schedule_manager()
+    db = get_db_service()
+    conn = db.get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        cursor.execute('''
+            SELECT vector_db_name, schedule_cron
+            FROM vector_db_schedules
+            WHERE enabled = 1 AND next_run_at <= ?
+        ''', (now_iso,))
+        
+        due_jobs = cursor.fetchall()
+        
+        for row in due_jobs:
+            db_name = row['vector_db_name']
+            cron_str = row['schedule_cron']
+            
+            logger.info(f"Targeting '{db_name}' sync for background execution.")
+            
+            # 1. Update status to QUEUED
+            manager.update_run_status(db_name, status=manager.ScheduleStatus.QUEUED)
+            
+            # 2. Push to queue
+            celery_app.send_task(
+                'backend.pipeline.workers.embedding_worker.execute_vector_db_sync',
+                args=[db_name, False],
+                queue='embedding_tasks'
+            )
+            
+            # 3. Calculate next run and update it
+            # We fetch from DB again via manager, or just compute directly
+            # For simplicity let's read the latest schedule from manager DB state and compute
+            schedule_info = manager.get_schedule(db_name)
+            if schedule_info:
+                # Get standard cron
+                computed_cron = manager._get_cron_string(
+                    manager.ScheduleType(schedule_info['schedule_type']),
+                    schedule_info['schedule_hour'],
+                    schedule_info['schedule_minute'],
+                    schedule_info['schedule_day_of_week'],
+                    schedule_info.get('schedule_cron')
+                )
+                
+                next_run = manager.calculate_next_run(computed_cron)
+                if next_run:
+                    manager.update_next_run_time(db_name, next_run)
+                    logger.info(f"Updated next_run_at for '{db_name}' to {next_run.isoformat()}")
+
+    except Exception as e:
+        logger.error(f"Error dispatching syncs: {e}")
+    finally:
+        conn.close()
+
+
+@celery_app.task(bind=True, max_retries=1)
+def execute_vector_db_sync(self, vector_db_name: str, is_manual: bool = False):
+    """
+    The actual syncing task, executing the embedding progress ingestion.
+    Replaces `SchedulerService._execute_sync_job`.
+    """
+    job_source = "manual" if is_manual else "scheduled"
+    logger.info(f"Executing {job_source} sync for vector DB: {vector_db_name}")
+    
+    from backend.services.schedule_manager import get_schedule_manager
+    manager = get_schedule_manager()
+    db = manager.db
+    
+    manager.update_run_status(vector_db_name, manager.ScheduleStatus.RUNNING)
+    
+    try:
+        conn = db.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT sp.id as prompt_id, pc.embedding_config 
+            FROM system_prompts sp
+            JOIN prompt_configs pc ON sp.id = pc.prompt_id
+            WHERE sp.is_active = 1
+            ORDER BY sp.id DESC
+        ''')
+        rows = cursor.fetchall()
+        conn.close()
+        
+        config_id = None
+        for row in rows:
+            try:
+                import json
+                emb_conf = json.loads(row['embedding_config'] or '{}')
+                if emb_conf.get('vectorDbName') == vector_db_name:
+                    config_id = row['prompt_id']
+                    break
+            except Exception:
+                continue
+        
+        if not config_id:
+            raise ValueError(f"No active configuration found for vector DB: {vector_db_name}")
+            
+        from backend.services.embedding_job_service import get_embedding_job_service
+        from backend.models.schemas import User
+        
+        job_service = get_embedding_job_service()
+        
+        # System user
+        system_user = User(
+            id=0,
+            username="scheduler",
+            email="scheduler@system",
+            role="super_admin",
+            is_active=True
+        )
+        
+        job_id = job_service.create_job(
+            config_id=config_id,
+            total_documents=100,
+            user=system_user,
+            batch_size=50,
+            max_concurrent=5
+        )
+        
+        from backend.api.routes.embedding_progress import _run_embedding_job
+        
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        loop.run_until_complete(
+            _run_embedding_job(
+                job_id=job_id,
+                config_id=config_id,
+                user_id=0,
+                incremental=True
+            )
+        )
+        
+        manager.update_run_status(vector_db_name, manager.ScheduleStatus.SUCCESS, job_id=job_id)
+        logger.info(f"{job_source.capitalize()} sync completed for {vector_db_name}, job_id={job_id}")
+        
+        # INVALIDATE SQL CACHE ON SUCCESSFUL SYNC
+        try:
+            from backend.services.sql_service import invalidate_sql_cache
+            invalidate_sql_cache()
+            logger.info("Invalidated SQL query cache following database sync.")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate SQL cache after sync: {e}")
+            
+        
+    except Exception as e:
+        logger.error(f"Scheduled sync failed for {vector_db_name}: {e}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        manager.update_run_status(vector_db_name, manager.ScheduleStatus.FAILED)
+
 
 if __name__ == '__main__':
     celery_app.start()

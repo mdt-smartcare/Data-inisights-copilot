@@ -7,8 +7,16 @@ WORKDIR /app
 COPY frontend/package*.json ./
 RUN npm ci --prefer-offline
 
-# Copy source and build
+# Copy frontend source first
 COPY frontend/ .
+
+# Copy shared constants to the correct relative path
+# errorCodes.ts imports from '../../../shared/constants.json' which resolves to /app/shared from /app/src/constants/
+# But since frontend/ is copied to /app/, we need shared/ at /shared/ (one level up from /app)
+# Alternative: copy shared into the frontend structure at the expected path
+RUN mkdir -p /shared
+COPY shared/ /shared/
+
 RUN npm run build
 
 # ── Production stage (Nginx) ────────────────────────────────────────────────

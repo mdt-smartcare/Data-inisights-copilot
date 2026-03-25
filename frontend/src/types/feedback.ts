@@ -10,8 +10,29 @@
  * Sent to backend when user provides feedback on a chat response
  */
 export interface FeedbackRequest {
-  conversation_id: string;    // ID of the conversation thread
-  message_id: string;         // ID of the specific message being rated
-  rating: number;             // User rating (e.g., 1-5 stars or thumbs up/down)
-  comment?: string;           // Optional text feedback from user
+  trace_id: string;              // Langfuse trace ID from chat response
+  query: string;                 // Original user query
+  selected_suggestion?: string;  // Optional suggestion that was selected
+  rating: number;                // User rating: 1 for thumbs up, -1 for thumbs down, 0 for neutral
+  comment?: string;              // Optional text feedback from user
+}
+
+/**
+ * Feedback response from backend
+ */
+export interface FeedbackResponse {
+  status: string;
+  message: string;
+  feedback_id?: string;
+}
+
+/**
+ * Legacy interface for backward compatibility
+ * @deprecated Use FeedbackRequest instead
+ */
+export interface LegacyFeedbackRequest {
+  conversation_id: string;
+  message_id: string;
+  rating: number;
+  comment?: string;
 }

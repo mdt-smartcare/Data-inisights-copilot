@@ -430,9 +430,8 @@ After each response, the agent provides 3 suggested follow-up questions.
 3. Click Send to ask it
 
 **To provide feedback:**
-1. Select a suggestion row
-2. Click **👍 Mark as Good** or **👎 Mark as Bad**
-3. Feedback is logged to `feedback_log.csv`
+1. Click the thumbs up/down icons next to the response
+
 
 #### 5. Embedding Explorer (Advanced)
 
@@ -815,19 +814,6 @@ grep ERROR logs/backend.log
 
 # View last 50 lines
 tail -50 logs/backend.log
-```
-
-### View Feedback Data
-
-```bash
-# View all feedback
-cat feedback_log.csv
-
-# Count positive feedback
-grep ",1$" feedback_log.csv | wc -l
-
-# Recent feedback
-tail -20 feedback_log.csv
 ```
 
 ### Monitor Database

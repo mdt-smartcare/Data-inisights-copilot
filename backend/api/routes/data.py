@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List, Dict, Any
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import inspect
+from backend.core.db_pool import get_cached_engine
 
 from backend.database.db import get_db_service, DatabaseService
 from backend.models.data import DbConnectionCreate, DbConnectionResponse
@@ -224,8 +225,8 @@ def _get_schema_for_uri(uri: str) -> Dict[str, Any]:
     from sqlalchemy import text
     
     try:
-        # Create a temporary engine to query the database
-        engine = create_engine(
+        # Get cached engine to query the database
+        engine = get_cached_engine(
             uri,
             pool_size=5,
             max_overflow=10,
@@ -391,8 +392,7 @@ def _get_schema_for_uri(uri: str) -> Dict[str, Any]:
                     logger.warning(f"Fallback schema fetch failed: {fallback_error}")
                     raise ValueError(f"Unsupported database type: {dialect_name}")
         
-        # Dispose engine to clean up connections
-        engine.dispose()
+        # engine.dispose()  # DO NOT DISPOSE CACHED ENGINE
         
         logger.info(f"Successfully fetched schema: {len(table_names)} tables")
         return {"tables": table_names, "details": schema_info}

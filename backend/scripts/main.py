@@ -51,7 +51,6 @@ class Config:
     DB_URI: str = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/your_database")
     EMBEDDING_MODEL_PATH: str = "./models/bge-m3"
     LLM_MODEL: str = "gpt-4o"
-    FEEDBACK_LOG_FILE: str = "feedback_log.csv"
     
     # Authentication configuration
     USERS: Dict[str, str] = {

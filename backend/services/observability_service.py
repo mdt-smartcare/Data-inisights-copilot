@@ -141,18 +141,26 @@ class LangfuseClient:
     async def get_model_usage(self, 
                               from_timestamp: Optional[datetime] = None,
                               to_timestamp: Optional[datetime] = None) -> List[Dict[str, Any]]:
-        """Fetch model usage statistics by paginating through observations."""
+        """Fetch model usage statistics from Langfuse observations."""
         if not self.enabled:
             return []
+        
+        # Get actual model names from settings for display
+        from backend.config import get_llm_settings, get_embedding_settings
+        llm_settings = get_llm_settings()
+        embedding_settings = get_embedding_settings()
+        
+        llm_model = llm_settings.get('model_name', 'gpt-4o')
+        embedding_model = embedding_settings.get('model_name', 'BAAI/bge-base-en-v1.5')
             
         try:
-            logger.debug(f"Fetching model usage from Langfuse")
+            logger.debug("Fetching model usage from Langfuse")
             
-            # Paginate to get all observations (Langfuse limits to 100 per request)
+            # Paginate to get all observations
             all_observations = []
             offset = 0
             page_size = 100
-            max_pages = 10  # Safety limit: max 1000 observations
+            max_pages = 10
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 for _ in range(max_pages):
@@ -163,30 +171,51 @@ class LangfuseClient:
                     )
                     
                     if response.status_code != 200:
-                        logger.error(f"Langfuse observations API returned {response.status_code}: {response.text[:500]}")
+                        logger.error(f"Langfuse observations API returned {response.status_code}")
                         break
                         
                     data = response.json()
                     page_data = data.get("data", [])
                     all_observations.extend(page_data)
                     
-                    # Check if we got all data
                     if len(page_data) < page_size:
                         break
                     offset += page_size
                 
-            logger.debug(f"Got {len(all_observations)} total observations for model usage")
-                
-            # Aggregate by model, filtering by timestamp and type client-side
-            model_stats = {}
-            generation_count = 0
+            logger.debug(f"Got {len(all_observations)} total observations")
+            
+            # Aggregate actual data from observations
+            llm_stats = {
+                "model": llm_model,
+                "type": "LLM",
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "total_cost": 0.0,
+                "avg_latency_ms": 0,
+                "input_price_per_1m": 0.0,
+                "output_price_per_1m": 0.0,
+                "latencies": []
+            }
+            
+            embedding_stats = {
+                "model": embedding_model,
+                "type": "Embedding", 
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "total_cost": 0.0,
+                "avg_latency_ms": 0,
+                "input_price_per_1m": 0.0,
+                "output_price_per_1m": 0.0,
+                "latencies": []
+            }
+            
             for obs in all_observations:
-                # Only process GENERATION type
-                if obs.get("type") != "GENERATION":
-                    continue
+                obs_type = obs.get("type")
                 
-                generation_count += 1
-                    
                 # Filter by timestamp if provided
                 if from_timestamp:
                     obs_time = obs.get("startTime")
@@ -198,50 +227,83 @@ class LangfuseClient:
                         except (ValueError, AttributeError):
                             pass
                 
-                # Get model name from metadata if not in model field
-                model = obs.get("model")
-                if not model:
-                    metadata = obs.get("metadata") or {}
-                    model = metadata.get("ls_model_name") or "unknown"
-                    
-                if model not in model_stats:
-                    model_stats[model] = {
-                        "model": model,
-                        "calls": 0,
-                        "input_tokens": 0,
-                        "output_tokens": 0,
-                        "total_tokens": 0,
-                        "total_cost": 0.0,
-                        "avg_latency_ms": 0,
-                        "latencies": []
-                    }
+                # Get token usage from observation
+                usage = obs.get("usage") or obs.get("usageDetails") or {}
+                input_tokens = usage.get("input", 0) or usage.get("promptTokens", 0) or 0
+                output_tokens = usage.get("output", 0) or usage.get("completionTokens", 0) or 0
+                total_tokens = usage.get("total", 0) or usage.get("totalTokens", 0) or (input_tokens + output_tokens)
                 
-                stats = model_stats[model]
-                stats["calls"] += 1
-                
-                # Token usage - handle both old and new format
-                usage = obs.get("usageDetails") or obs.get("usage") or {}
-                stats["input_tokens"] += usage.get("input", 0) or 0
-                stats["output_tokens"] += usage.get("output", 0) or 0
-                stats["total_tokens"] += usage.get("total", 0) or 0
-                
-                # Cost (Langfuse calculates this)
+                # Get cost from observation
+                cost = 0.0
                 cost_details = obs.get("costDetails") or {}
-                stats["total_cost"] += cost_details.get("total", 0) or 0
+                if cost_details:
+                    cost = cost_details.get("total", 0) or 0
                 
-                # Latency (in seconds, convert to ms)
+                # Calculate latency
+                latency_ms = 0
                 if obs.get("latency"):
-                    stats["latencies"].append(obs["latency"] * 1000)
-            
-            logger.info(f"Found {generation_count} GENERATION observations, {len(model_stats)} unique models")
+                    latency_ms = obs["latency"] * 1000  # Convert seconds to ms
+                else:
+                    start_time = obs.get("startTime")
+                    end_time = obs.get("endTime")
+                    if start_time and end_time:
+                        try:
+                            start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                            end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+                            latency_ms = (end_dt - start_dt).total_seconds() * 1000
+                        except (ValueError, AttributeError):
+                            pass
+                
+                # Categorize observation
+                obs_model = (obs.get("model") or "").lower()
+                
+                if obs_type == "GENERATION":
+                    # Extract pricing info (convert from per-token to per-1M tokens)
+                    input_price = obs.get("inputPrice", 0) or 0
+                    output_price = obs.get("outputPrice", 0) or 0
+                    
+                    if "embed" in obs_model or "bge" in obs_model:
+                        embedding_stats["calls"] += 1
+                        embedding_stats["input_tokens"] += input_tokens
+                        embedding_stats["total_tokens"] += total_tokens
+                        embedding_stats["total_cost"] += cost
+                        if input_price > 0:
+                            embedding_stats["input_price_per_1m"] = input_price * 1_000_000
+                    else:
+                        llm_stats["calls"] += 1
+                        llm_stats["input_tokens"] += input_tokens
+                        llm_stats["output_tokens"] += output_tokens
+                        llm_stats["total_tokens"] += total_tokens
+                        llm_stats["total_cost"] += cost
+                        if input_price > 0:
+                            llm_stats["input_price_per_1m"] = input_price * 1_000_000
+                        if output_price > 0:
+                            llm_stats["output_price_per_1m"] = output_price * 1_000_000
+                        if latency_ms > 0:
+                            llm_stats["latencies"].append(latency_ms)
+                            
+                elif obs_type == "SPAN":
+                    # SPANs are our query traces - count as LLM operations
+                    llm_stats["calls"] += 1
+                    if latency_ms > 0:
+                        llm_stats["latencies"].append(latency_ms)
             
             # Calculate average latencies
-            for model, stats in model_stats.items():
-                if stats["latencies"]:
-                    stats["avg_latency_ms"] = sum(stats["latencies"]) / len(stats["latencies"])
-                del stats["latencies"]  # Remove raw data
-                
-            return list(model_stats.values())
+            if llm_stats["latencies"]:
+                llm_stats["avg_latency_ms"] = sum(llm_stats["latencies"]) / len(llm_stats["latencies"])
+            del llm_stats["latencies"]
+            del embedding_stats["latencies"]
+            
+            # Build result - only include models with actual calls
+            model_stats = []
+            if llm_stats["calls"] > 0:
+                model_stats.append(llm_stats)
+            if embedding_stats["calls"] > 0:
+                model_stats.append(embedding_stats)
+            
+            logger.info(f"Model usage: {llm_stats['calls']} LLM calls, {embedding_stats['calls']} embedding calls")
+            
+            return model_stats
             
         except Exception as e:
             logger.error(f"Failed to fetch model usage from Langfuse: {e}")
@@ -450,28 +512,63 @@ class ObservabilityService:
             
         return stats
 
-    async def get_recent_traces(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """Get recent traces for display in UI."""
+    async def get_recent_traces(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """Get recent traces with user query and final output for display in UI."""
         if not self.langfuse_client.enabled:
             return []
             
         try:
-            data = await self.langfuse_client.get_traces(limit=limit)
+            # Fetch parent traces (these contain the user's original query)
+            traces_data = await self.langfuse_client.get_traces(limit=limit)
             traces = []
-            for trace in data.get("data", []):
+            
+            for trace in traces_data.get("data", []):
+                # Extract user query from trace input (can be string directly)
+                user_query = ""
+                raw_input = trace.get("input")
+                if isinstance(raw_input, str):
+                    user_query = raw_input[:200]
+                elif isinstance(raw_input, dict):
+                    user_query = str(raw_input.get("query", raw_input.get("question", raw_input.get("content", ""))))[:200]
+                
+                # Extract final answer from trace output (usually {"answer": "..."})
+                final_answer = ""
+                raw_output = trace.get("output")
+                if isinstance(raw_output, dict):
+                    final_answer = str(raw_output.get("answer", raw_output.get("content", "")))[:200]
+                elif isinstance(raw_output, str):
+                    final_answer = raw_output[:200]
+                
+                # Get metadata (already a dict from API)
+                metadata = trace.get("metadata") or {}
+                
+                # Get latency directly from trace
+                latency = trace.get("latency", 0) or 0
+                
+                # Get cost directly from trace
+                total_cost = trace.get("totalCost", 0) or 0
+                
+                # Skip traces without user query (system traces)
+                if not user_query:
+                    continue
+                
                 traces.append({
                     "id": trace.get("id"),
-                    "name": trace.get("name"),
+                    "trace_id": trace.get("id"),
+                    "name": trace.get("name", "Query"),
+                    "model": "gpt-3.5-turbo",  # Default, actual model is in observations
                     "timestamp": trace.get("timestamp"),
-                    "latency": trace.get("latency"),
-                    "input_tokens": trace.get("usage", {}).get("input", 0),
-                    "output_tokens": trace.get("usage", {}).get("output", 0),
-                    "total_cost": trace.get("totalCost", 0),
-                    "status": trace.get("status"),
-                    "user_id": trace.get("userId"),
-                    "session_id": trace.get("sessionId"),
-                    "metadata": trace.get("metadata")
+                    "latency": latency,
+                    "user_query": user_query,
+                    "final_answer": final_answer,
+                    "input_tokens": 0,  # Not available at trace level
+                    "output_tokens": 0,
+                    "total_cost": total_cost,
+                    "user_id": metadata.get("user_id"),
+                    "session_id": metadata.get("session_id"),
+                    "status": "success" if metadata.get("success", True) else "error",
                 })
+            
             return traces
         except Exception as e:
             logger.error(f"Failed to get recent traces: {e}")

@@ -19,5 +19,4 @@ __pycache__/
 .DS_Store
 
 # Runtime data and logs
-feedback_log.csv
 *.log

@@ -586,6 +586,11 @@ export const getUsageStats = async (period: string = '24h') => {
   return response.data;
 };
 
+export const getRecentTraces = async (limit: number = 10) => {
+  const response = await apiClient.get(`/api/v1/observability/traces?limit=${limit}`);
+  return response.data;
+};
+
 export const testLogEmission = async (level: string, message: string) => {
   const response = await apiClient.post(`/api/v1/observability/test-log?level=${level}&message=${encodeURIComponent(message)}`);
   return response.data;
@@ -796,7 +801,6 @@ export interface VectorDbSchedule {
   countdown_seconds?: number;
   last_run_at?: string;
   last_run_status?: 'success' | 'failed' | 'running';
-  last_run_job_id?: string;
   exists?: boolean; // false when no schedule is configured
   schedule?: any;   // null when no schedule is configured
 }

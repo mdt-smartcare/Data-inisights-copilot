@@ -147,7 +147,7 @@ class Settings(BaseSettings):
     # ============================================
     langfuse_public_key: Optional[str] = Field(default=None)
     langfuse_secret_key: Optional[str] = Field(default=None)
-    langfuse_host: str = Field(default="https://cloud.langfuse.com", validation_alias="langfuse_base_url")
+    langfuse_host: str = Field(default="https://cloud.langfuse.com", validation_alias="LANGFUSE_BASE_URL")
     enable_langfuse: bool = Field(default=False)
     
     # ============================================

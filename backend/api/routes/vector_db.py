@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 from backend.database.db import get_db_service, DatabaseService
 from backend.core.permissions import require_admin, User
 from backend.core.logging import get_logger
-from backend.services.scheduler_service import (
-    get_scheduler_service, SchedulerService, ScheduleType
+from backend.services.schedule_manager import (
+    get_schedule_manager, ScheduleManager, ScheduleType, ScheduleStatus
 )
 from backend.services.chroma_service import (
     get_vector_store_type, VectorStoreManager
@@ -172,7 +172,7 @@ class ScheduleResponse(BaseModel):
 async def get_vector_db_status(
     vector_db_name: str,
     db_service: DatabaseService = Depends(get_db_service),
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     Get detailed statistics for a Vector Database including index count, vectors, and schedule info.
@@ -221,7 +221,7 @@ async def get_vector_db_status(
         parent_docstore_count = get_parent_docstore_count(vector_db_name)
 
         # 4. Get schedule information
-        schedule = scheduler_service.get_schedule(vector_db_name)
+        schedule = schedule_manager.get_schedule(vector_db_name)
         schedule_info = None
         if schedule:
             schedule_info = {
@@ -281,7 +281,7 @@ async def create_or_update_schedule(
     vector_db_name: str,
     request: ScheduleCreateRequest,
     current_user: User = Depends(require_admin),
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     Create or update a sync schedule for a Vector Database.
@@ -297,7 +297,7 @@ async def create_or_update_schedule(
                 detail=f"Invalid schedule_type. Must be one of: {[t.value for t in ScheduleType]}"
             )
         
-        schedule = scheduler_service.create_schedule(
+        schedule = schedule_manager.create_schedule(
             vector_db_name=vector_db_name,
             schedule_type=schedule_type,
             hour=request.hour,
@@ -327,14 +327,14 @@ async def create_or_update_schedule(
 @router.get("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def get_schedule(
     vector_db_name: str,
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     Get schedule configuration for a Vector Database.
     Requires Admin role or above.
     Returns null schedule if none exists (no 404).
     """
-    schedule = scheduler_service.get_schedule(vector_db_name)
+    schedule = schedule_manager.get_schedule(vector_db_name)
     
     if not schedule:
         # Return empty schedule object instead of 404
@@ -354,13 +354,13 @@ async def get_schedule(
 @router.delete("/schedule/{vector_db_name}", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def delete_schedule(
     vector_db_name: str,
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     Delete a schedule for a Vector Database.
     Requires Admin role or above.
     """
-    deleted = scheduler_service.delete_schedule(vector_db_name)
+    deleted = schedule_manager.delete_schedule(vector_db_name)
     
     if not deleted:
         raise HTTPException(
@@ -376,32 +376,44 @@ async def delete_schedule(
 
 @router.get("/schedules", response_model=List[Dict[str, Any]], dependencies=[Depends(require_admin)])
 async def list_schedules(
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     List all Vector DB schedules.
     Requires Admin role or above.
     """
-    return scheduler_service.list_schedules()
+    return schedule_manager.list_schedules()
 
 
 @router.post("/schedule/{vector_db_name}/trigger", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def trigger_sync_now(
     vector_db_name: str,
     current_user: User = Depends(require_admin),
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     Manually trigger an immediate sync for a Vector Database.
     Requires Admin role or above.
     """
     try:
-        message = scheduler_service.trigger_now(vector_db_name)
-        logger.info(f"Manual sync triggered for {vector_db_name} by {current_user.username}")
+        # Instead of scheduler_service triggering, we queue it to Celery directly
+        
+        # 1. Update DB status manually
+        schedule_manager.update_run_status(vector_db_name, ScheduleStatus.QUEUED)
+        
+        # 2. Add to celery embedded tasks queue
+        from backend.pipeline.workers.embedding_worker import celery_app
+        celery_app.send_task(
+            'backend.pipeline.workers.embedding_worker.execute_vector_db_sync',
+            args=[vector_db_name, True],
+            queue='embedding_tasks'
+        )
+        
+        logger.info(f"Manual sync triggered (queued) for {vector_db_name} by {current_user.username}")
         
         return {
             "status": "success",
-            "message": message
+            "message": f"Manual sync queued for {vector_db_name}"
         }
         
     except ValueError as e:
@@ -460,7 +472,7 @@ async def check_vector_db_name(
 @router.get("/registry", response_model=Dict[str, Any], dependencies=[Depends(require_admin)])
 async def list_all_vector_databases(
     db_service: DatabaseService = Depends(get_db_service),
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     List all Vector Databases with their disk sizes, document counts, and sync status.
@@ -537,7 +549,7 @@ async def list_all_vector_databases(
             total_disk_size += disk_size_bytes
             
             # Get schedule info
-            schedule = scheduler_service.get_schedule(name)
+            schedule = schedule_manager.get_schedule(name)
             schedule_info = None
             if schedule:
                 schedule_info = {
@@ -633,7 +645,7 @@ async def delete_vector_database(
     delete_files: bool = True,
     current_user: User = Depends(require_admin),
     db_service: DatabaseService = Depends(get_db_service),
-    scheduler_service: SchedulerService = Depends(get_scheduler_service)
+    schedule_manager: ScheduleManager = Depends(get_schedule_manager)
 ):
     """
     Delete a Vector Database from the registry and optionally remove its data.
@@ -668,7 +680,7 @@ async def delete_vector_database(
         
         # Delete schedule if exists
         try:
-            scheduler_service.delete_schedule(vector_db_name)
+            schedule_manager.delete_schedule(vector_db_name)
         except Exception:
             pass
         

@@ -119,33 +119,32 @@ class TracingManager:
         """
         Get LangChain callback handler with trace context.
         
-        In Langfuse v3.x, the CallbackHandler only accepts:
-        - public_key (optional, uses env var if not provided)
-        - update_trace (bool)
-        
-        User/session metadata must be passed via LangChain config metadata:
-        - langfuse_user_id
-        - langfuse_session_id
-        - langfuse_tags
+        The callback handler will automatically create traces in Langfuse
+        when LLM calls are made through LangChain.
         """
         if not self.langfuse_enabled:
             return None
             
         try:
-            # In Langfuse v3.x, CallbackHandler has minimal constructor params
-            # Metadata is passed via LangChain invoke() config
-            handler = LangfuseCallbackHandler(
-                public_key=settings.langfuse_public_key,
-                update_trace=True,
-            )
+            # Generate trace_id if not provided
+            if trace_id is None:
+                trace_id = str(uuid.uuid4())
             
-            # Store metadata for reference (will be passed via config in invoke())
+            # In Langfuse v3.x, LangchainCallbackHandler only accepts specific params
+            # It reads credentials from environment variables
+            handler = LangfuseCallbackHandler()
+            
+            # Store our trace context for reference
+            handler._trace_id = trace_id
             handler._trace_name = trace_name
             handler._user_id = user_id
             handler._session_id = session_id
-            handler._trace_id = trace_id
             
-            logger.debug(f"Created Langfuse callback: trace_name={trace_name}")
+            # Add get_trace_id method if it doesn't exist
+            if not hasattr(handler, 'get_trace_id'):
+                handler.get_trace_id = lambda: trace_id
+            
+            logger.info(f"Created Langfuse callback handler: trace_id={trace_id}")
             return handler
             
         except Exception as e:

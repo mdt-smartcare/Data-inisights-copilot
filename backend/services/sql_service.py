@@ -10,6 +10,9 @@ from collections import OrderedDict
 import re
 import time
 import hashlib
+import json
+import redis
+from datetime import timedelta
 
 from sqlalchemy import inspect
 from langchain_community.utilities import SQLDatabase
@@ -33,55 +36,98 @@ logger = get_logger(__name__)
 
 
 # =============================================================================
-# QUERY RESULT CACHE - Avoid redundant DB hits for repeated queries
+# REDIS SQL QUERY RESULT CACHE
 # =============================================================================
-class QueryCache:
+
+# Initialize Redis client using settings
+try:
+    _redis_client = redis.from_url(settings.celery_result_backend, decode_responses=True)
+    # Test connection
+    _redis_client.ping()
+    logger.info("Successfully connected to Redis for SQL caching")
+except Exception as e:
+    logger.warning(f"Failed to connect to Redis for SQL caching: {e}. Falling back to disabled cache.")
+    _redis_client = None
+
+def _hash_sql(sql_query: str) -> str:
+    """Create a SHA256 hash from normalized SQL to use as cache key."""
+    # Normalize: lowercase and remove extra whitespace/newlines
+    normalized = " ".join(sql_query.lower().split())
+    return hashlib.sha256(normalized.encode('utf-8')).hexdigest()
+
+def _determine_ttl(sql_query: str) -> int:
     """
-    Simple LRU cache for SQL query results.
-    Caches results for 5 minutes to handle repeated similar questions.
+    Determine TTL based on query volatility:
+    - High-volatility metrics (live counts): 5 minutes
+    - Historical aggregations: 1 hour
     """
-    def __init__(self, max_size: int = 100, ttl_seconds: int = 300):
-        self.cache: OrderedDict[str, Tuple[str, float]] = OrderedDict()
-        self.max_size = max_size
-        self.ttl_seconds = ttl_seconds
+    sql_lower = sql_query.lower()
     
-    def _hash_query(self, question: str) -> str:
-        """Create a hash key from the question."""
-        normalized = question.lower().strip()
-        return hashlib.md5(normalized.encode()).hexdigest()
+    historical_indicators = [
+        'group by month', 'group by year', 'group by quarter',
+        'extract(year', 'extract(month', 'date_trunc',
+        '< 202', '<= 202', '< 201' # explicit past years
+    ]
     
-    def get(self, question: str) -> Optional[str]:
-        """Get cached result if exists and not expired."""
-        key = self._hash_query(question)
-        if key in self.cache:
-            result, timestamp = self.cache[key]
-            if time.time() - timestamp < self.ttl_seconds:
-                # Move to end (most recently used)
-                self.cache.move_to_end(key)
-                logger.info("Cache HIT for query (saved ~3s)")
-                return result
-            else:
-                # Expired, remove it
-                del self.cache[key]
-        return None
+    if any(indicator in sql_lower for indicator in historical_indicators):
+        return 3600 # 1 hour
     
-    def set(self, question: str, result: str) -> None:
-        """Cache a query result."""
-        key = self._hash_query(question)
-        self.cache[key] = (result, time.time())
-        # Enforce max size
-        while len(self.cache) > self.max_size:
-            self.cache.popitem(last=False)  # Remove oldest
-        logger.debug(f"Cached query result (cache size: {len(self.cache)})")
-    
-    def clear(self) -> None:
-        """Clear all cached results."""
-        self.cache.clear()
-        logger.info("Query cache cleared")
+    return 300 # 5 minutes default
+
+def invalidate_sql_cache():
+    """Clear all SQL query results from Redis cache."""
+    if not _redis_client:
+        return
+        
+    try:
+        # We prefix all sql cache keys with 'sql_cache:'
+        keys = _redis_client.keys('sql_cache:*')
+        if keys:
+            _redis_client.delete(*keys)
+            logger.info(f"Invalidated {len(keys)} SQL cache entries")
+    except Exception as e:
+        logger.error(f"Failed to invalidate SQL cache: {e}")
+
+class CachedSQLDatabase(SQLDatabase):
+    """
+    Extension of LangChain's SQLDatabase that intercepts .run()
+    to inject Redis query result caching. This ensures both optimized
+    and Agent executions benefit from the same cache.
+    """
+    def run(self, command: str, fetch: str = "all", include_columns: bool = False, **kwargs) -> str:
+        # 1. Skip caching for non-SELECT commands (though Langchain agent should only SELECT)
+        if not command.strip().lower().startswith('select') or not _redis_client:
+            return super().run(command, fetch, include_columns, **kwargs)
+        
+        # 2. Key Structure 
+        # Adding fetch & include_columns to hash just in case, though they are usually default
+        cache_key = f"sql_cache:{_hash_sql(command)}_{fetch}_{include_columns}"
+        
+        try:
+            cached_result = _redis_client.get(cache_key)
+            if cached_result:
+                logger.info(" Cache HIT in Redis from CachedSQLDatabase wrapper")
+                return cached_result
+        except Exception as e:
+            logger.warning(f" Redis GET failed in CachedSQLDatabase: {e}")
+            
+        # 3. Cache MISS, execute DB
+        logger.info(" Cache MISS in CachedSQLDatabase, executing DB run")
+        run_start = time.time()
+        result = super().run(command, fetch, include_columns, **kwargs)
+        logger.info(f"  DB Execution Time: {(time.time() - run_start)*1000:.0f}ms")
+        
+        # 4. Save to Cache
+        if _redis_client and result:
+             try:
+                 ttl = _determine_ttl(command)
+                 _redis_client.setex(cache_key, ttl, str(result))
+             except Exception as e:
+                 logger.warning(f" Redis SET failed in CachedSQLDatabase: {e}")
+                 
+        return str(result)
 
 
-# Global query cache instance
-_query_cache = QueryCache(max_size=100, ttl_seconds=300)
 
 
 def _get_active_database_url(agent_id: Optional[int] = None, connection_id: Optional[int] = None) -> Optional[str]:
@@ -199,14 +245,14 @@ class SQLService:
             # Solution: First get table names via a lightweight query, then use include_tables
             # to limit reflection to only those tables (avoids domain inspection).
             
-            from sqlalchemy import create_engine, text
+            from backend.core.db_pool import get_cached_engine
+            from sqlalchemy import text
             
-            # Create engine for lightweight table discovery
-            engine = create_engine(
+            # Extract engine using connection pooling wrapper
+            engine = get_cached_engine(
                 self._database_url,
-                pool_size=20, 
-                max_overflow=50, 
-                pool_timeout=60
+                pool_size=5, 
+                max_overflow=10
             )
             
             all_table_names = []
@@ -270,7 +316,7 @@ class SQLService:
                     except Exception as e2:
                         logger.warning(f"pg_class fallback also failed: {e2}")
             
-            engine.dispose()
+            # engine.dispose() # DO NOT DISPOSE cached engine
             
             logger.info(f"Discovered {len(all_table_names)} tables/views total")
             
@@ -294,10 +340,11 @@ class SQLService:
 
             # Initialize database connection with explicit include_tables
             # This avoids full metadata reflection that requires pg_collation access
+            # Note: engine_args is NOT passed here since we already have a configured engine
+            # from get_cached_engine() with pool settings applied
             db_kwargs = {
                 'view_support': True,
                 'include_tables': include_tables,
-                'engine_args': {'pool_size': 20, 'max_overflow': 50, 'pool_timeout': 60}
             }
             
             # If we detected a non-public schema, we need to set it
@@ -305,8 +352,9 @@ class SQLService:
                 db_kwargs['schema'] = detected_schema
                 logger.info(f"Using schema: {detected_schema}")
             
-            self.db = SQLDatabase.from_uri(self._database_url, **db_kwargs)
-            logger.info("Database connection established with view support")
+            # Use our custom CachedSQLDatabase wrapper
+            self.db = CachedSQLDatabase(engine=engine, **db_kwargs)
+            logger.info("Database connection established with view support and Redis caching")
             
             self._cache_schema()
             
@@ -540,10 +588,7 @@ class SQLService:
     def query(self, question: str) -> str:
         logger.info(f"Executing SQL query for: '{question[:100]}...'")
         
-        # Check cache first
-        cached_result = _query_cache.get(question)
-        if cached_result:
-            return cached_result
+        # We removed the NLP question-level cache in favor of the lower-level Redis SQL-execution cache
         
         if self._is_simple_query(question):
             logger.info(" Detected simple query - using optimized execution path")
@@ -552,8 +597,6 @@ class SQLService:
             logger.info(" Complex query detected - using full agent")
             result = self._execute_with_agent(question)
         
-        # Cache the result
-        _query_cache.set(question, result)
         return result
     
 
@@ -603,12 +646,14 @@ class SQLService:
                 logger.warning("  Final SQL validation failed, falling back to agent")
                 return self._execute_with_agent(question)
             
-            # Execute SQL and track time
-            logger.info(" Executing query against database (no API call)")
+            # Execute SQL (CachedSQLDatabase will intercept and cache this transparently)
+            logger.info(" Executing SQL query via CachedSQLDatabase")
             sql_start = time.time()
-            result = self.db.run(sql_query)
+            result_raw = self.db.run(sql_query)
+            result = str(result_raw)
             sql_duration_ms = (time.time() - sql_start) * 1000
-            logger.info(f" Query result: {result}")
+            
+            logger.info(f" Query result: {result[:500]}...")
             
             # Update Langfuse with SQL execution metrics
             if langfuse_context:
@@ -918,14 +963,14 @@ Response:"""
             table_names: Optional list of tables to inspect. If None, fetches all.
         """
         try:
-            from sqlalchemy import create_engine, text
+            from backend.core.db_pool import get_cached_engine
+            from sqlalchemy import text
             
-            # Create engine for lightweight table discovery (avoids pg_collation issue)
-            engine = create_engine(
+            # Extract engine using connection pooling wrapper
+            engine = get_cached_engine(
                 uri,
-                pool_size=20, 
-                max_overflow=50, 
-                pool_timeout=60
+                pool_size=5, 
+                max_overflow=10
             )
             
             all_table_names = []
@@ -1000,7 +1045,7 @@ Response:"""
                     logger.warning(f"Could not get columns for table {table}: {e}")
                     schema_info[table] = []
             
-            engine.dispose()
+            # engine.dispose() # DO NOT DISPOSE CACHED ENGINE
             return {"tables": target_tables, "details": schema_info}
             
         except Exception as e:

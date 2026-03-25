@@ -1007,6 +1007,15 @@ async def _run_embedding_job(
         conn.close()
         job_service.complete_job(job_id, validation_passed=validation_passed)
         
+        # INVALIDATE SQL CACHE ON SUCCESSFUL SYNC
+        try:
+            from backend.services.sql_service import invalidate_sql_cache
+            invalidate_sql_cache()
+            logger.info("Invalidated SQL query cache following manual database sync.")
+        except Exception as e:
+            logger.warning(f"Failed to invalidate SQL cache after manual sync: {e}")
+            
+        
         await notification_service.create_notification(
             user_id=user_id,
             notification_type="embedding_complete",
