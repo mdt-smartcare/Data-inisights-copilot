@@ -6,6 +6,7 @@ import {
     ChevronDownIcon,
     ChevronUpIcon
 } from '@heroicons/react/24/outline';
+import { formatDateTime } from '../utils/datetime';
 
 export interface PromptVersion {
     id: number;
@@ -45,13 +46,6 @@ const PromptHistory: React.FC<PromptHistoryProps> = ({ history, onRollback, onCo
 
     const activeVersion = history.find(v => v.is_active === 1);
 
-    const formatDate = (dateString: string) => {
-        return new Date(dateString).toLocaleString(undefined, {
-            dateStyle: 'medium',
-            timeStyle: 'short'
-        });
-    };
-
     if (history.length === 0) {
         return (
             <div className={`p-12 text-center ${isCompact ? 'p-6' : ''}`}>
@@ -84,7 +78,7 @@ const PromptHistory: React.FC<PromptHistoryProps> = ({ history, onRollback, onCo
                                         v{version.version}
                                     </span>
                                     <span className="text-[10px] text-gray-400 font-medium">
-                                        {new Date(version.created_at).toLocaleDateString()}
+                                        {formatDateTime(version.created_at)}
                                     </span>
                                 </div>
                                 <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed group-hover:text-gray-700">
@@ -146,7 +140,7 @@ const PromptHistory: React.FC<PromptHistoryProps> = ({ history, onRollback, onCo
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {formatDate(item.created_at)}
+                                        {formatDateTime(item.created_at)}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         {item.is_active ? (

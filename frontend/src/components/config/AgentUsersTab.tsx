@@ -7,6 +7,7 @@ import { getAgentUsers, assignUserToAgent, revokeUserAccess, handleApiError } fr
 import type { AgentUser, SearchUser } from '../../services/api';
 import { getRoleDisplayName } from '../../utils/permissions';
 import UserSearchInput from './UserSearchInput';
+import { formatDateTime } from '../../utils/datetime';
 
 interface AgentUsersTabProps {
     agentId: number;
@@ -203,7 +204,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {agentUser.created_at ? new Date(agentUser.created_at).toLocaleDateString() : '-'}
+                                        {agentUser.created_at ? formatDateTime(agentUser.created_at) : '-' }
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         {agentUser.username !== user?.username && (

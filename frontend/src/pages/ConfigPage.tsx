@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion, listEmbeddingJobs } from '../services/api';
 import type { IngestionResponse } from '../services/api';
+import { formatDateTime, formatDate } from '../utils/datetime';
 import ConnectionManager from '../components/ConnectionManager';
 import SchemaSelector from '../components/SchemaSelector';
 import DictionaryUploader from '../components/DictionaryUploader';
@@ -930,7 +931,7 @@ const ConfigPage: React.FC = () => {
                                                                                 <CheckCircleIcon className="w-6 h-6 text-green-600" />
                                                                                 <p className="text-base font-semibold text-gray-900">
                                                                                     {vectorDbStatus.last_updated_at
-                                                                                        ? new Date(vectorDbStatus.last_updated_at + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+                                                                                        ? formatDateTime(vectorDbStatus.last_updated_at)
                                                                                         : 'Never run'}
                                                                                 </p>
                                                                             </div>
@@ -953,7 +954,7 @@ const ConfigPage: React.FC = () => {
                                                                             <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
                                                                                 <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Last Full Sync</p>
                                                                                 <p className="text-sm font-medium text-gray-800">
-                                                                                    {vectorDbStatus.last_full_run ? new Date(vectorDbStatus.last_full_run + 'Z').toLocaleDateString() : 'N/A'}
+                                                                                    {vectorDbStatus.last_full_run ? formatDate(vectorDbStatus.last_full_run) : 'N/A'}
                                                                                 </p>
                                                                             </div>
                                                                             <div className="p-3 bg-gray-50 rounded-lg border border-gray-100">
@@ -1213,7 +1214,7 @@ const ConfigPage: React.FC = () => {
                                                                                     <span className="w-10 h-10 rounded-xl bg-gray-100 text-gray-700 flex items-center justify-center font-bold">V{compareVersions.v1.version}</span>
                                                                                     <div>
                                                                                         <p className="text-sm font-bold text-gray-900">Historical Version</p>
-                                                                                        <p className="text-xs text-gray-500">{new Date(compareVersions.v1.created_at).toLocaleString()}</p>
+                                                                                        <p className="text-xs text-gray-500">{formatDateTime(compareVersions.v1.created_at)}</p>
                                                                                     </div>
                                                                                 </div>
                                                                                 <button
@@ -1245,7 +1246,7 @@ const ConfigPage: React.FC = () => {
                                                                                             Active Version
                                                                                             <span className="w-2 h-2 rounded-full bg-green-500"></span>
                                                                                         </p>
-                                                                                        <p className="text-xs text-gray-500">{new Date(compareVersions.v2.created_at).toLocaleString()}</p>
+                                                                                        <p className="text-xs text-gray-500">{formatDateTime(compareVersions.v2.created_at)}</p>
                                                                                     </div>
                                                                                 </div>
                                                                                 <span className="px-4 py-2 bg-green-50 text-green-700 rounded-lg text-xs font-bold border border-green-100 flex items-center gap-2">

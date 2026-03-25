@@ -6,6 +6,7 @@ import RefreshButton from '../components/RefreshButton';
 import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
 import { apiClient } from '../services/api';
+import { formatDateTime } from '../utils/datetime';
 
 interface AuditLog {
     id: number;
@@ -236,7 +237,7 @@ const AuditLogsPage: React.FC = () => {
                                         {logs.map((log) => (
                                             <tr key={log.id} className="hover:bg-gray-50">
                                                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
-                                                    {new Date(log.timestamp).toLocaleString()}
+                                                    {formatDateTime(log.timestamp)}
                                                 </td>
                                                 <td className="px-4 py-3 whitespace-nowrap">
                                                     <div className="text-sm font-medium text-gray-900">{log.actor_username || 'System'}</div>

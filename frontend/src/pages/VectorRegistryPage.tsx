@@ -18,6 +18,7 @@ import {
 } from '../services/api';
 import ChatHeader from '../components/chat/ChatHeader';
 import { APP_CONFIG } from '../config';
+import { formatDateTime } from '../utils/datetime';
 
 type HealthStatus = 'healthy' | 'warning' | 'error' | 'missing' | 'orphaned';
 
@@ -78,10 +79,6 @@ export default function VectorRegistryPage() {
     }
   };
 
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleString();
-  };
 
   const handleSort = (field: typeof sortField) => {
     if (sortField === field) {
@@ -292,7 +289,7 @@ export default function VectorRegistryPage() {
                               <td className="px-4 py-3 text-sm text-gray-600">
                                 {db.schedule?.last_run_at ? (
                                   <div>
-                                    <div>{formatDate(db.schedule.last_run_at)}</div>
+                                    <div>{formatDateTime(db.schedule.last_run_at)}</div>
                                     {db.schedule.last_run_status && (
                                       <span className={`text-xs ${
                                         db.schedule.last_run_status === 'success' ? 'text-green-600' :
@@ -316,7 +313,7 @@ export default function VectorRegistryPage() {
                                     </span>
                                     {db.schedule.next_run_at && (
                                       <div className="text-xs text-gray-500 mt-0.5">
-                                        Next: {formatDate(db.schedule.next_run_at)}
+                                        Next: {formatDateTime(db.schedule.next_run_at)}
                                       </div>
                                     )}
                                   </div>

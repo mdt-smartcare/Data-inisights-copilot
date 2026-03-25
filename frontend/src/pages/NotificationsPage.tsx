@@ -4,6 +4,7 @@ import ChatHeader from '../components/chat/ChatHeader';
 import { getNotifications, getNotificationCount, markNotificationAsRead, dismissNotification, markAllNotificationsAsRead } from '../services/api';
 import type { Notification } from '../types/rag';
 import { useToast } from '../components/Toast';
+import { formatDateTime } from '../utils/datetime';
 
 const NOTIFICATION_ICONS: Record<string, string> = {
     embedding_started: '🚀',
@@ -111,11 +112,6 @@ export default function NotificationsPage() {
             error('Failed to mark all as read');
         }
     };
-
-    const formatTime = (dateString: string) => {
-        const date = new Date(dateString);
-        return date.toLocaleString();
-    };
     
     const handlePageChange = (newPage: number) => {
         if (newPage >= 0 && newPage < totalPages) {
@@ -194,7 +190,7 @@ export default function NotificationsPage() {
                                                         {notification.title}
                                                     </h4>
                                                     <span className="text-xs text-gray-500 whitespace-nowrap">
-                                                        {formatTime(notification.created_at)}
+                                                        {formatDateTime(notification.created_at)}
                                                     </span>
                                                 </div>
 

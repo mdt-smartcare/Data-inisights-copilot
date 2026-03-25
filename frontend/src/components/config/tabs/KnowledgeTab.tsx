@@ -5,6 +5,7 @@ import ScheduleSelector from '../../ScheduleSelector';
 import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { ActiveConfig, VectorDbStatus } from '../../../contexts/AgentContext';
 import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
+import { formatDate, formatDateTime } from '../../../utils/datetime';
 
 interface KnowledgeTabProps {
     activeConfig: ActiveConfig;
@@ -183,7 +184,7 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                         <CheckCircleIcon className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" />
                                         <p className="text-sm sm:text-base font-semibold text-gray-900">
                                             {vectorDbStatus.last_updated_at
-                                                ? new Date(vectorDbStatus.last_updated_at + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+                                                ? formatDateTime(vectorDbStatus.last_updated_at)
                                                 : 'Never run'}
                                         </p>
                                     </div>
@@ -206,7 +207,7 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                     <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Last Full Sync</p>
                                         <p className="text-xs sm:text-sm font-medium text-gray-800">
-                                            {vectorDbStatus.last_full_run ? new Date(vectorDbStatus.last_full_run + 'Z').toLocaleDateString() : 'N/A'}
+                                            {vectorDbStatus.last_full_run ? formatDateTime(vectorDbStatus.last_full_run) : 'N/A'}
                                         </p>
                                     </div>
                                     <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">

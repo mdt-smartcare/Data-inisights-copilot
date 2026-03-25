@@ -28,6 +28,7 @@ import {
 import ChatHeader from '../components/chat/ChatHeader';
 import RAGConfigPanel from '../components/RAGConfigPanel';
 import { APP_CONFIG } from '../config';
+import { formatDateTime } from '../utils/datetime';
 
 // ============================================
 // Types
@@ -236,10 +237,6 @@ export default function DataManagementPage() {
   // Utility Functions
   // ============================================
 
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return '-';
-    return new Date(dateStr).toLocaleString();
-  };
 
   const handleRefresh = () => {
     setError(null);
@@ -689,7 +686,7 @@ export default function DataManagementPage() {
                               <td className="px-4 py-3 text-sm text-gray-600">
                                 {db.schedule?.last_run_at ? (
                                   <div>
-                                    <div>{formatDate(db.schedule.last_run_at)}</div>
+                                    <div>{formatDateTime(db.schedule.last_run_at)}</div>
                                     {db.schedule.last_run_status && (
                                       <span className={`text-xs ${db.schedule.last_run_status === 'success' ? 'text-green-600' : db.schedule.last_run_status === 'failed' ? 'text-red-600' : 'text-yellow-600'}`}>
                                         {db.schedule.last_run_status}
@@ -705,7 +702,7 @@ export default function DataManagementPage() {
                                       <span className={`w-2 h-2 rounded-full ${db.schedule.enabled ? 'bg-green-500' : 'bg-gray-300'}`} />
                                       {db.schedule.schedule_type}
                                     </span>
-                                    {db.schedule.next_run_at && <div className="text-xs text-gray-500 mt-0.5">Next: {formatDate(db.schedule.next_run_at)}</div>}
+                                    {db.schedule.next_run_at && <div className="text-xs text-gray-500 mt-0.5">Next: {formatDateTime(db.schedule.next_run_at)}</div>}
                                   </div>
                                 ) : <span className="text-gray-400 text-sm">Not scheduled</span>}
                               </td>

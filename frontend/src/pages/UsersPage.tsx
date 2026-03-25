@@ -8,6 +8,7 @@ import ConfirmationModal from '../components/ConfirmationModal';
 import { APP_CONFIG, CONFIRMATION_MESSAGES } from '../config';
 import { apiClient, getAgents, getAllAgents, getUserAgents, bulkAssignAgents, revokeUserAccess, handleApiError } from '../services/api';
 import type { Agent } from '../types';
+import { formatDateTime } from '../utils/datetime';
 
 interface UserData {
     id: number;
@@ -344,7 +345,7 @@ const UsersPage: React.FC = () => {
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}
+                                                {formatDateTime(u.created_at)}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                                 <div className="flex items-center justify-end gap-2">

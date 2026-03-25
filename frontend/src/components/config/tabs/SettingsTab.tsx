@@ -7,6 +7,7 @@ import { updateAgent, deleteAgent, handleApiError } from '../../../services/api'
 import { useToast } from '../../Toast';
 import ConfirmationModal from '../../ConfirmationModal';
 import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
+import { formatDate } from '../../../utils/datetime';
 
 interface SettingsTabProps {
     activeConfig?: ActiveConfig | null;
@@ -199,7 +200,7 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
                                 <div className="p-4 bg-gray-50 rounded-lg border border-gray-100">
                                     <p className="text-xs font-bold text-gray-400 uppercase mb-1">Created</p>
                                     <p className="text-sm font-medium text-gray-700">
-                                        {agent.created_at ? new Date(agent.created_at).toLocaleDateString() : 'Unknown'}
+                                        {agent.created_at ? formatDate(agent.created_at) : 'Unknown'}
                                     </p>
                                 </div>
                             </div>
