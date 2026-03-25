@@ -17,3 +17,4 @@ __pycache__/
 /data/chroma_db
 backend/embedding_test_output.txt
 /models
+/backend/venv

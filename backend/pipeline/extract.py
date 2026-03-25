@@ -115,6 +115,32 @@ class DatabaseConnector:
         self.engine = None
         self.connection = None
         self.is_connected = False
+        self._db_type = None  # 'postgresql', 'mysql', etc.
+        self._database_name = None  # For MySQL schema queries
+
+    def _detect_db_type(self, uri: str) -> str:
+        """Detect database type from URI."""
+        if uri.startswith('mysql'):
+            return 'mysql'
+        elif uri.startswith('postgresql') or uri.startswith('postgres'):
+            return 'postgresql'
+        elif uri.startswith('sqlite'):
+            return 'sqlite'
+        else:
+            return 'unknown'
+
+    def _extract_database_name(self, uri: str) -> Optional[str]:
+        """Extract database name from URI for MySQL schema queries."""
+        # URI format: mysql+pymysql://user:pass@host:port/database
+        try:
+            # Remove query params if any
+            uri_base = uri.split('?')[0]
+            # Get the part after the last /
+            if '/' in uri_base:
+                return uri_base.rsplit('/', 1)[-1]
+        except Exception:
+            pass
+        return None
 
     def connect(self) -> bool:
         """Establish database connection."""
@@ -130,6 +156,11 @@ class DatabaseConnector:
                     "Please configure a connection via Settings > Database Connections "
                     "and publish a RAG configuration."
                 )
+            
+            # Detect database type and extract database name
+            self._db_type = self._detect_db_type(uri)
+            self._database_name = self._extract_database_name(uri)
+            logger.info(f"Detected database type: {self._db_type}, database: {self._database_name}")
             
             logger.info("Connecting to database...")
             self.engine = get_cached_engine(
@@ -152,8 +183,6 @@ class DatabaseConnector:
         """Close database connection."""
         if self.connection:
             self.connection.close()
-        # if self.engine:
-        #     self.engine.dispose() # DO NOT DISPOSE CACHED ENGINE
         self.is_connected = False
         logger.info("Database connection closed.")
 
@@ -169,16 +198,35 @@ class DatabaseConnector:
             logger.error(f"Query execution failed: {e}")
             return []
 
+    def get_default_schema(self) -> str:
+        """Get the default schema name based on database type."""
+        if self._db_type == 'mysql':
+            return self._database_name or 'mysql'
+        else:
+            return 'public'
+
     def get_all_tables(self) -> List[str]:
-        """Get all table names from the public schema."""
-        query = """
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public' 
-            AND table_type = 'BASE TABLE' 
-            ORDER BY table_name
-        """
-        results = self.execute_query(query)
+        """Get all table names from the database."""
+        if self._db_type == 'mysql':
+            # MySQL uses database name as schema
+            query = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = :schema
+                AND table_type = 'BASE TABLE' 
+                ORDER BY table_name
+            """
+            results = self.execute_query(query, {"schema": self._database_name})
+        else:
+            # PostgreSQL uses 'public' schema
+            query = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_type = 'BASE TABLE' 
+                ORDER BY table_name
+            """
+            results = self.execute_query(query)
         return [row[0] for row in results] if results else []
 
 
@@ -306,7 +354,8 @@ class DataExtractor:
         if '.' in table_name:
             schema_name, base_table_name = table_name.split('.', 1)
         else:
-            schema_name = 'public'
+            # Use the connector's default schema (database name for MySQL, 'public' for PostgreSQL)
+            schema_name = self.db_connector.get_default_schema()
             base_table_name = table_name
         
         schema = self.db_connector.execute_query(
@@ -373,8 +422,16 @@ class DataExtractor:
         Yields:
             Tuples of (table_name, DataFrame)
         """
+        # Ensure connection is established to detect db_type
+        if not self.db_connector.is_connected:
+            self.db_connector.connect()
+        
         allowed_tables = self.get_allowed_tables()
         total_tables = len(allowed_tables)
+        
+        # Get database type for proper quoting
+        db_type = self.db_connector._db_type
+        logger.info(f"Extracting tables using {db_type} syntax")
         
         for i, table_name in enumerate(tqdm(allowed_tables, desc="Extracting tables")):
             if on_progress:
@@ -391,11 +448,24 @@ class DataExtractor:
             # Parse schema and table name for query
             if '.' in table_name:
                 schema_name, base_table_name = table_name.split('.', 1)
-                full_table_ref = f'"{schema_name}"."{base_table_name}"'
+                if db_type == 'mysql':
+                    full_table_ref = f'`{schema_name}`.`{base_table_name}`'
+                else:
+                    full_table_ref = f'"{schema_name}"."{base_table_name}"'
             else:
-                full_table_ref = f'public."{table_name}"'
+                if db_type == 'mysql':
+                    # MySQL: just use table name with backticks
+                    full_table_ref = f'`{table_name}`'
+                else:
+                    # PostgreSQL: use public schema
+                    full_table_ref = f'public."{table_name}"'
             
-            cols_str = ", ".join([f'"{c}"' for c in safe_columns])
+            # Use appropriate quoting for columns
+            if db_type == 'mysql':
+                cols_str = ", ".join([f'`{c}`' for c in safe_columns])
+            else:
+                cols_str = ", ".join([f'"{c}"' for c in safe_columns])
+            
             query = f'SELECT {cols_str} FROM {full_table_ref}'
             if table_limit:
                 query += f" LIMIT {table_limit}"

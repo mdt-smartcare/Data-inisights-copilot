@@ -30,6 +30,10 @@ def get_cached_engine(uri: str, pool_size: int = 5, max_overflow: int = 10, pool
     """
     global _engine_cache
 
+    # Normalize MySQL URIs to use pymysql driver
+    if uri.startswith("mysql://"):
+        uri = uri.replace("mysql://", "mysql+pymysql://", 1)
+
     with _engine_cache_lock:
         if uri not in _engine_cache:
             logger.info(f"Creating new SQLAlchemy Engine pool for DB URI (prefix): {uri[:15]}...")
@@ -62,4 +66,4 @@ def dispose_engines():
             except Exception as e:
                 logger.warning(f"Error disposing engine: {e}")
         _engine_cache.clear()
-        
+
