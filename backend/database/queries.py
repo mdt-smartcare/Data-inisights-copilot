@@ -523,6 +523,9 @@ class VectorDBQueries:
     INSERT = """
         INSERT INTO vector_db_registry (name, data_source_id, created_by) 
         VALUES (%s, %s, %s)
+        ON CONFLICT (name) DO UPDATE SET
+            data_source_id = EXCLUDED.data_source_id,
+            created_by = EXCLUDED.created_by
         RETURNING id
     """
     # Parameters: (name, data_source_id, created_by)

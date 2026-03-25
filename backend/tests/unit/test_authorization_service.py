@@ -160,6 +160,40 @@ class TestAuthorizationServiceAuditLogging:
             mock_cursor = mock_db_service.get_connection.return_value.cursor.return_value
             mock_cursor.execute.assert_called()
 
+    def test_logs_rag_action_handles_fk_constraint_violation(self, mock_db_service, admin_user):
+        """Test that FK constraint violation is handled gracefully by retrying with NULL config_id."""
+        with patch('backend.services.authorization_service.get_db_service', return_value=mock_db_service):
+            from backend.services.authorization_service import AuthorizationService
+            
+            mock_action = MagicMock()
+            mock_action.value = "embedding_started"
+            
+            mock_cursor = mock_db_service.get_connection.return_value.cursor.return_value
+            
+            # First call raises FK constraint error, second call succeeds
+            mock_cursor.execute.side_effect = [
+                Exception('insert or update on table "rag_audit_log" violates foreign key constraint "rag_audit_log_config_id_fkey"'),
+                None  # Second call succeeds
+            ]
+            
+            service = AuthorizationService()
+            
+            # Should not raise - should handle gracefully
+            result = service.log_rag_action(
+                user=admin_user,
+                action=mock_action,
+                config_id=999,  # Non-existent config
+                changes={"job_id": "test-job-123"},
+                success=True
+            )
+            
+            # Verify execute was called twice (first failed, second succeeded with NULL config_id)
+            assert mock_cursor.execute.call_count == 2
+            
+            # Verify second call has NULL for config_id
+            second_call_args = mock_cursor.execute.call_args_list[1][0][1]
+            assert second_call_args[0] is None  # config_id should be NULL
+
 class TestRoleChecksForAllActions:
     """Comprehensive tests for all RAG actions."""
     

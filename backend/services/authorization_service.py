@@ -206,24 +206,65 @@ class AuthorizationService:
             
             changes_json = json.dumps(changes) if changes else None
             
-            cursor.execute("""
-                INSERT INTO rag_audit_log 
-                (config_id, action, performed_by, performed_by_email, performed_by_role, 
-                 ip_address, user_agent, changes, reason, success, error_message)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                config_id,
-                action.value if isinstance(action, RAGAuditAction) else action,
-                user.id,
-                user.email or user.username,
-                user.role,
-                ip_address,
-                user_agent,
-                changes_json,
-                reason,
-                1 if success else 0,
-                error_message
-            ))
+            # Store original config_id in changes if we need to nullify it due to FK constraint
+            effective_config_id = config_id
+            
+            try:
+                cursor.execute("""
+                    INSERT INTO rag_audit_log 
+                    (config_id, action, performed_by, performed_by_email, performed_by_role, 
+                     ip_address, user_agent, changes, reason, success, error_message)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    effective_config_id,
+                    action.value if isinstance(action, RAGAuditAction) else action,
+                    user.id,
+                    user.email or user.username,
+                    user.role,
+                    ip_address,
+                    user_agent,
+                    changes_json,
+                    reason,
+                    1 if success else 0,
+                    error_message
+                ))
+            except Exception as insert_error:
+                # Handle foreign key constraint violation by retrying with config_id=NULL
+                # This can happen when config_id references a different table (e.g., rag_config)
+                # than what rag_audit_log.config_id expects (rag_configurations)
+                if "foreign key constraint" in str(insert_error).lower() and config_id is not None:
+                    logger.warning(
+                        f"Config ID {config_id} not found in rag_configurations, "
+                        f"logging action without config_id reference"
+                    )
+                    # Include the original config_id in the changes JSON for traceability
+                    if changes:
+                        changes["_original_config_id"] = config_id
+                    else:
+                        changes = {"_original_config_id": config_id}
+                    changes["_fk_fallback_at"] = datetime.utcnow().isoformat()
+                    changes_json = json.dumps(changes)
+                    
+                    cursor.execute("""
+                        INSERT INTO rag_audit_log 
+                        (config_id, action, performed_by, performed_by_email, performed_by_role, 
+                         ip_address, user_agent, changes, reason, success, error_message)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        None,  # Set config_id to NULL
+                        action.value if isinstance(action, RAGAuditAction) else action,
+                        user.id,
+                        user.email or user.username,
+                        user.role,
+                        ip_address,
+                        user_agent,
+                        changes_json,
+                        reason,
+                        1 if success else 0,
+                        error_message
+                    ))
+                else:
+                    raise  # Re-raise if it's a different error
             
             conn.commit()
             log_id = cursor.lastrowid
@@ -293,7 +334,7 @@ class AuthorizationService:
             if entry.get('changes'):
                 try:
                     entry['changes'] = json.loads(entry['changes'])
-                except:
+                except Exception:
                     pass
             result.append(entry)
         

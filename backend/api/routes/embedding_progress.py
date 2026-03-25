@@ -1007,6 +1007,16 @@ async def _run_embedding_job(
         conn.close()
         job_service.complete_job(job_id, validation_passed=validation_passed)
         
+        # =================================================================
+        # CLEANUP: Clear checkpoints after successful completion
+        # =================================================================
+        if checkpoint_service and validation_passed:
+            try:
+                checkpoint_service.clear_checkpoints()
+                logger.info(f"CHECKPOINT CLEANUP: Cleared checkpoints for {v_db_name} after successful completion")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to clear checkpoints after completion: {cleanup_error}")
+        
         # INVALIDATE SQL CACHE ON SUCCESSFUL SYNC
         try:
             from backend.services.sql_service import invalidate_sql_cache
