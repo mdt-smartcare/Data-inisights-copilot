@@ -31,7 +31,7 @@ class PromptPublishRequest(BaseModel):
     retriever_config: Optional[str] = None # JSON string
     chunking_config: Optional[str] = None # JSON string
     llm_config: Optional[str] = None # JSON string
-    agent_id: Optional[int] = None
+    agent_id: Optional[str] = None  # UUID as string
     data_source_type: str = 'database'
     ingestion_documents: Optional[str] = None # JSON string list
     ingestion_file_name: Optional[str] = None
@@ -43,7 +43,7 @@ class PromptResponse(BaseModel):
     version: str
 
     is_active: int
-    agent_id: Optional[int] = None
+    agent_id: Optional[str] = None  # UUID as string
     created_at: Optional[datetime] = None
     created_by_username: Optional[str] = None
     

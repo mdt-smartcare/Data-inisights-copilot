@@ -38,7 +38,7 @@ class UserUpdateRequest(BaseModel):
 
 class UserResponse(BaseModel):
     """User information response."""
-    id: int
+    id: str  # UUID as string
     username: str
     email: Optional[str] = None
     full_name: Optional[str] = None
