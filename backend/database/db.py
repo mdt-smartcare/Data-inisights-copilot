@@ -521,6 +521,7 @@ class DatabaseService(BaseRepository):
                 cursor.execute(AgentQueries.INSERT_AGENT, 
                     (name, description, agent_type, db_connection_uri, system_prompt, created_by))
                 agent_id = cursor.fetchone()['id']
+                logger.info(f"Created agent '{name}' with ID {agent_id}")
                 
                 # Auto-assign creator as admin in user_agents table
                 if created_by:

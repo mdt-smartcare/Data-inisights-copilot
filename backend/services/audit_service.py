@@ -68,7 +68,7 @@ class AuditService:
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                actor_id INTEGER,
+                actor_id UUID,
                 actor_username TEXT,
                 actor_role TEXT,
                 action TEXT NOT NULL,
@@ -77,7 +77,8 @@ class AuditService:
                 resource_name TEXT,
                 details TEXT,
                 ip_address TEXT,
-                user_agent TEXT
+                user_agent TEXT,
+                FOREIGN KEY (actor_id) REFERENCES users(id)
             )
         """)
         cursor.execute("""

@@ -281,16 +281,11 @@ class PromptQueries:
     
     INSERT_PROMPT = """
         INSERT INTO system_prompts (
-            prompt_text, version, is_active, created_by, agent_id,
-            connection_id, schema_selection, data_dictionary, reasoning, example_questions,
-            data_source_type, ingestion_documents, ingestion_file_name, ingestion_file_type,
-            embedding_config, retriever_config, chunking_config, llm_config
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            prompt_text, version, is_active, created_by, agent_id
+        ) VALUES (%s, %s, %s, %s, %s)
         RETURNING id
     """
-    # Parameters: (prompt_text, version, is_active, created_by, agent_id, connection_id, schema_selection,
-    #              data_dictionary, reasoning, example_questions, data_source_type, ingestion_documents,
-    #              ingestion_file_name, ingestion_file_type, embedding_config, retriever_config, chunking_config, llm_config)
+    # Parameters: (prompt_text, version, is_active, created_by, agent_id)
     
     DELETE_BY_AGENT = """
         DELETE FROM system_prompts 
@@ -429,21 +424,22 @@ class PromptConfigQueries:
             sp.agent_id,
             u.username as created_by_username,
             sp.id AS config_id,
-            sp.schema_selection,
-            sp.connection_id,
-            sp.data_dictionary,
-            sp.reasoning,
-            sp.example_questions,
-            sp.data_source_type,
-            sp.embedding_config,
-            sp.retriever_config,
-            sp.chunking_config,
-            sp.llm_config,
-            sp.ingestion_documents,
-            sp.ingestion_file_name,
-            sp.ingestion_file_type
+            pc.schema_selection,
+            pc.connection_id,
+            pc.data_dictionary,
+            pc.reasoning,
+            pc.example_questions,
+            pc.data_source_type,
+            pc.embedding_config,
+            pc.retriever_config,
+            pc.chunking_config,
+            pc.llm_config,
+            pc.ingestion_documents,
+            pc.ingestion_file_name,
+            pc.ingestion_file_type
         FROM system_prompts sp
         LEFT JOIN users u ON sp.created_by = u.username
+        LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
         WHERE sp.agent_id = %s
         ORDER BY sp.version DESC
     """
@@ -460,21 +456,22 @@ class PromptConfigQueries:
             sp.agent_id,
             u.username as created_by_username,
             sp.id AS config_id,
-            sp.schema_selection,
-            sp.connection_id,
-            sp.data_dictionary,
-            sp.reasoning,
-            sp.example_questions,
-            sp.data_source_type,
-            sp.embedding_config,
-            sp.retriever_config,
-            sp.chunking_config,
-            sp.llm_config,
-            sp.ingestion_documents,
-            sp.ingestion_file_name,
-            sp.ingestion_file_type
+            pc.schema_selection,
+            pc.connection_id,
+            pc.data_dictionary,
+            pc.reasoning,
+            pc.example_questions,
+            pc.data_source_type,
+            pc.embedding_config,
+            pc.retriever_config,
+            pc.chunking_config,
+            pc.llm_config,
+            pc.ingestion_documents,
+            pc.ingestion_file_name,
+            pc.ingestion_file_type
         FROM system_prompts sp
         LEFT JOIN users u ON sp.created_by = u.username
+        LEFT JOIN prompt_configs pc ON sp.id = pc.prompt_id
         WHERE sp.agent_id IS NULL
         ORDER BY sp.version DESC
     """

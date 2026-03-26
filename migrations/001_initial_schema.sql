@@ -164,6 +164,29 @@ CREATE INDEX IF NOT EXISTS idx_rag_audit_timestamp ON rag_audit_log(performed_at
 CREATE INDEX IF NOT EXISTS idx_rag_audit_config ON rag_audit_log(config_id);
 
 -- ============================================
+-- Audit Logs (General System Audit)
+-- ============================================
+CREATE TABLE IF NOT EXISTS audit_logs (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actor_id UUID,
+    actor_username TEXT,
+    actor_role TEXT,
+    action TEXT NOT NULL,
+    resource_type TEXT,
+    resource_id TEXT,
+    resource_name TEXT,
+    details TEXT,
+    ip_address TEXT,
+    user_agent TEXT,
+    FOREIGN KEY (actor_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_logs(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_actor ON audit_logs(actor_username);
+CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_logs(action);
+
+-- ============================================
 -- Notifications
 -- ============================================
 CREATE TABLE IF NOT EXISTS notifications (
