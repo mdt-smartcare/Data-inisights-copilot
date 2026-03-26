@@ -35,7 +35,7 @@ export const SandboxTab: React.FC<SandboxTabProps> = ({
             const response = await chatService.sendMessage({
                 query: content,
                 agent_id: agent.id,
-                session_id: 'sandbox-' + agent.id
+                session_id: 'sandbox-' + String(agent.id)
             });
 
             const aiMsg: Message = {

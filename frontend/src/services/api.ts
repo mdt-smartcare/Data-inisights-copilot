@@ -166,7 +166,7 @@ export const publishSystemPrompt = async (
   retrieverConfig?: any,
   chunkingConfig?: any,
   llmConfig?: any,
-  agentId?: number,
+  agentId?: string,
   dataSourceType: string = 'database',
   ingestionDocuments?: string,
   ingestionFileName?: string,
@@ -215,7 +215,7 @@ export const publishSystemPrompt = async (
   return response.data;
 };
 
-export const getPromptHistory = async (agentId?: number): Promise<any> => {
+export const getPromptHistory = async (agentId?: string): Promise<any> => {
   const response = await apiClient.get('/api/v1/config/history', { params: { agent_id: agentId } });
   return response.data;
 };
@@ -225,7 +225,7 @@ export const rollbackToVersion = async (versionId: number): Promise<{ status: st
   return response.data;
 };
 
-export const getActiveConfigMetadata = async (agentId?: number): Promise<any> => {
+export const getActiveConfigMetadata = async (agentId?: string): Promise<any> => {
   const response = await apiClient.get('/api/v1/config/active-metadata', { params: { agent_id: agentId } });
   return response.data;
 };
@@ -247,7 +247,7 @@ export const getUsers = async (): Promise<User[]> => {
 };
 
 export interface SearchUser {
-  id: number;
+  id: string;
   username: string;
   email?: string;
   full_name?: string;
@@ -265,7 +265,7 @@ export const lookupUsersByEmails = async (emails: string[]): Promise<SearchUser[
   return response.data;
 };
 
-export const getActivePrompt = async (agentId?: number): Promise<{ prompt_text: string }> => {
+export const getActivePrompt = async (agentId?: string): Promise<{ prompt_text: string }> => {
   const response = await apiClient.get('/api/v1/config/active', { params: { agent_id: agentId } });
   return response.data;
 };
@@ -275,32 +275,32 @@ export const createAgent = async (data: { name: string; description?: string; ty
   return response.data;
 };
 
-export const updateAgent = async (agentId: number, data: { name?: string; description?: string }): Promise<Agent> => {
+export const updateAgent = async (agentId: string, data: { name?: string; description?: string }): Promise<Agent> => {
   const response = await apiClient.patch(`/api/v1/agents/${agentId}`, data);
   return response.data;
 };
 
-export const deleteAgent = async (agentId: number): Promise<void> => {
+export const deleteAgent = async (agentId: string): Promise<void> => {
   await apiClient.delete(`/api/v1/agents/${agentId}`);
 };
 
-export const assignUserToAgent = async (agentId: number, userId: number, role: string): Promise<{ status: string }> => {
+export const assignUserToAgent = async (agentId: string, userId: string, role: string): Promise<{ status: string }> => {
   const response = await apiClient.post(`/api/v1/agents/${agentId}/users`, { user_id: userId, role });
   return response.data;
 };
 
-export const bulkAssignAgents = async (userId: number, agentIds: number[], role: string = 'user'): Promise<{ status: string; assigned: number[]; failed: number[]; message: string }> => {
+export const bulkAssignAgents = async (userId: string, agentIds: string[], role: string = 'user'): Promise<{ status: string; assigned: string[]; failed: string[]; message: string }> => {
   const response = await apiClient.post('/api/v1/agents/bulk-assign', { user_id: userId, agent_ids: agentIds, role });
   return response.data;
 };
 
-export const revokeUserAccess = async (agentId: number, userId: number): Promise<{ status: string }> => {
+export const revokeUserAccess = async (agentId: string, userId: string): Promise<{ status: string }> => {
   const response = await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
   return response.data;
 };
 
 export interface AgentUser {
-  id: number;
+  id: string;
   username: string;
   email?: string;
   full_name?: string;
@@ -308,15 +308,15 @@ export interface AgentUser {
   is_active: boolean;
   created_at?: string;
   agent_role: string;
-  granted_by?: number;
+  granted_by?: string;
 }
 
-export const getAgentUsers = async (agentId: number): Promise<{ users: AgentUser[]; agent_id: number }> => {
+export const getAgentUsers = async (agentId: string): Promise<{ users: AgentUser[]; agent_id: string }> => {
   const response = await apiClient.get(`/api/v1/agents/${agentId}/users`);
   return response.data;
 };
 
-export const getUserAgents = async (userId: number): Promise<{ agents: Agent[]; is_admin: boolean; message?: string }> => {
+export const getUserAgents = async (userId: string): Promise<{ agents: Agent[]; is_admin: boolean; message?: string }> => {
   const response = await apiClient.get(`/api/v1/users/${userId}/agents`);
   return response.data;
 };

@@ -27,10 +27,10 @@ const createMockAuth = (user: User | null) => ({
 });
 
 const mockUsers: Record<string, User> = {
-  viewer: { id: 1, username: 'viewer', role: 'user' as UserRole, email: 'v@test.com' },
-  editor: { id: 2, username: 'editor', role: 'user' as UserRole, email: 'e@test.com' },
-  admin: { id: 3, username: 'admin', role: 'admin' as UserRole, email: 'a@test.com' },
-  superAdmin: { id: 4, username: 'superadmin', role: 'super_admin' as UserRole, email: 'sa@test.com' },
+  viewer: { id: '11111111-1111-1111-1111-111111111111', username: 'viewer', role: 'user' as UserRole, email: 'v@test.com' },
+  editor: { id: '22222222-2222-2222-2222-222222222222', username: 'editor', role: 'user' as UserRole, email: 'e@test.com' },
+  admin: { id: '33333333-3333-3333-3333-333333333333', username: 'admin', role: 'admin' as UserRole, email: 'a@test.com' },
+  superAdmin: { id: '44444444-4444-4444-4444-444444444444', username: 'superadmin', role: 'super_admin' as UserRole, email: 'sa@test.com' },
 };
 
 const renderWithRouter = (user: User, initialPath = '/chat') => {

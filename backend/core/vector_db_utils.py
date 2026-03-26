@@ -85,7 +85,7 @@ def derive_vector_db_name(
     return "default_collection"
 
 
-def get_agent_data_path(agent_id: int, agent_name: Optional[str] = None) -> str:
+def get_agent_data_path(agent_id: str, agent_name: Optional[str] = None) -> str:
     """
     Get the standard data path prefix for an agent.
     
@@ -94,7 +94,7 @@ def get_agent_data_path(agent_id: int, agent_name: Optional[str] = None) -> str:
     - data/duckdb_files/agent_{id}_{name}/
     
     Args:
-        agent_id: The agent's database ID
+        agent_id: The agent's database ID (UUID as string)
         agent_name: The agent's display name (optional, for readability)
         
     Returns:

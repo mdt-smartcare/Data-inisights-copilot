@@ -98,28 +98,28 @@ export function renderWithRouter(
 // Mock user factories
 export const mockUsers = {
   viewer: {
-    id: 1,
+    id: '11111111-1111-1111-1111-111111111111',
     username: 'viewer_user',
     email: 'viewer@test.com',
     full_name: 'Viewer User',
     role: 'user' as const,
   },
   editor: {
-    id: 2,
+    id: '22222222-2222-2222-2222-222222222222',
     username: 'editor_user',
     email: 'editor@test.com',
     full_name: 'Editor User',
     role: 'user' as const,  // Changed from 'editor' to 'user'
   },
   superAdmin: {
-    id: 3,
+    id: '33333333-3333-3333-3333-333333333333',
     username: 'super_admin_user',
     email: 'admin@test.com',
     full_name: 'Super Admin',
     role: 'super_admin' as const,
   },
   admin: {
-    id: 4,
+    id: '44444444-4444-4444-4444-444444444444',
     username: 'admin_user',
     email: 'admin@test.com',
     full_name: 'Admin User',

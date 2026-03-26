@@ -6,7 +6,7 @@ import { XMarkIcon } from '@heroicons/react/24/outline';
 interface UserSearchInputProps {
     selectedUsers: SearchUser[];
     onSelectionChange: (users: SearchUser[]) => void;
-    excludeUserIds?: number[];
+    excludeUserIds?: string[];
     placeholder?: string;
     disabled?: boolean;
 }
@@ -122,7 +122,7 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
         inputRef.current?.focus();
     };
 
-    const handleRemove = (userId: number) => {
+    const handleRemove = (userId: string) => {
         onSelectionChange(selectedUsers.filter(u => u.id !== userId));
     };
 

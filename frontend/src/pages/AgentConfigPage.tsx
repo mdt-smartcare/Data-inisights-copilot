@@ -97,7 +97,7 @@ const AgentConfigPage: React.FC = () => {
             setIsLoadingAgent(true);
             try {
                 const agents = await getAgents();
-                const foundAgent = agents.find((a: Agent) => a.id === parseInt(id));
+                const foundAgent = agents.find((a: Agent) => a.id === id);
                 if (foundAgent) {
                     setAgent(foundAgent);
                 } else {

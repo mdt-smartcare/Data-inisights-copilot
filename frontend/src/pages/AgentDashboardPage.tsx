@@ -56,7 +56,7 @@ const AgentDashboardPage: React.FC = () => {
             try {
                 const agents = await getAgents();
                 if (!isMounted) return;
-                const foundAgent = agents.find((a: Agent) => a.id === parseInt(id));
+                const foundAgent = agents.find((a: Agent) => a.id === id);
                 if (foundAgent) {
                     setAgent(foundAgent);
                 } else {
@@ -86,7 +86,7 @@ const AgentDashboardPage: React.FC = () => {
         if (!id) return;
         try {
             const agents = await getAgents();
-            const foundAgent = agents.find((a: Agent) => a.id === parseInt(id));
+            const foundAgent = agents.find((a: Agent) => a.id === id);
             if (foundAgent) {
                 setAgent(foundAgent);
             }

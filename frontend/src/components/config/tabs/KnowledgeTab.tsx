@@ -5,7 +5,7 @@ import ScheduleSelector from '../../ScheduleSelector';
 import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { ActiveConfig, VectorDbStatus } from '../../../contexts/AgentContext';
 import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
-import { formatDate, formatDateTime } from '../../../utils/datetime';
+import { formatDateTime } from '../../../utils/datetime';
 
 interface KnowledgeTabProps {
     activeConfig: ActiveConfig;

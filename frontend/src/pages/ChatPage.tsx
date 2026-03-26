@@ -27,7 +27,7 @@ export default function ChatPage() {
   // AbortController for canceling in-flight requests
   const abortControllerRef = useRef<AbortController | null>(null);
   // Track which agent we sent the request to
-  const requestAgentIdRef = useRef<number | undefined>(undefined);
+  const requestAgentIdRef = useRef<string | undefined>(undefined);
 
   // Default suggestions shown when no agent is selected
   const DEFAULT_SUGGESTIONS = [
@@ -38,7 +38,7 @@ export default function ChatPage() {
 
   // Agent selection state
   const [agents, setAgents] = useState<any[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<number | undefined>(undefined);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
   
   // RAG availability state
@@ -59,10 +59,10 @@ export default function ChatPage() {
         // Check for agent ID in URL query param
         const agentIdParam = searchParams.get('agent');
         if (agentIdParam) {
-          const agentId = parseInt(agentIdParam, 10);
+          // agentId is now a UUID string
           // Verify agent exists in the list (user has access)
-          if (agentList.some((a: any) => a.id === agentId)) {
-            setSelectedAgentId(agentId);
+          if (agentList.some((a: any) => a.id === agentIdParam)) {
+            setSelectedAgentId(agentIdParam);
             return;
           }
         }

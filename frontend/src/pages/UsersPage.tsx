@@ -11,7 +11,7 @@ import type { Agent } from '../types';
 import { formatDateTime } from '../utils/datetime';
 
 interface UserData {
-    id: number;
+    id: string;
     username: string;
     email?: string;
     full_name?: string;
@@ -41,11 +41,11 @@ const UsersPage: React.FC = () => {
     const [allAgents, setAllAgents] = useState<Agent[]>([]);
     const [userAgents, setUserAgents] = useState<Agent[]>([]);
     const [loadingAgents, setLoadingAgents] = useState(false);
-    const [selectedAgentRoles, setSelectedAgentRoles] = useState<Record<number, 'admin' | 'user'>>({}); // Per-agent role map
+    const [selectedAgentRoles, setSelectedAgentRoles] = useState<Record<string, 'admin' | 'user'>>({}); // Per-agent role map (agent IDs are UUIDs)
     const [assigning, setAssigning] = useState(false);
 
     // Helper to get selected agent IDs
-    const selectedAgentIds = Object.keys(selectedAgentRoles).map(Number);
+    const selectedAgentIds = Object.keys(selectedAgentRoles); // Already strings (agent IDs are UUIDs)
 
     const hasAccess = canManageUsers(user);
     const currentUserIsSuperAdmin = isSuperAdmin(user);
@@ -181,7 +181,7 @@ const UsersPage: React.FC = () => {
         }
     };
 
-    const toggleAgentSelection = (agentId: number) => {
+    const toggleAgentSelection = (agentId: string) => {
         setSelectedAgentRoles(prev => {
             if (prev[agentId] !== undefined) {
                 // Remove from selection
@@ -194,14 +194,14 @@ const UsersPage: React.FC = () => {
         });
     };
 
-    const setAgentRole = (agentId: number, role: 'admin' | 'user') => {
+    const setAgentRole = (agentId: string, role: 'admin' | 'user') => {
         setSelectedAgentRoles(prev => ({
             ...prev,
             [agentId]: role
         }));
     };
 
-    const handleRevokeAgent = async (agentId: number) => {
+    const handleRevokeAgent = async (agentId: string) => {
         if (!agentModalUser) return;
         try {
             await revokeUserAccess(agentId, agentModalUser.id);

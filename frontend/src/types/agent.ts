@@ -3,7 +3,7 @@
  */
 
 export interface Agent {
-    id: number;
+    id: string;  // UUID
     name: string;
     description?: string;
     type: string;

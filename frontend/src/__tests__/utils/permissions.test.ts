@@ -21,7 +21,7 @@ import type { User } from '../../types';
 
 describe('Permissions', () => {
   const createUser = (role: 'super_admin' | 'admin' | 'user'): User => ({
-    id: 1,
+    id: '11111111-1111-1111-1111-111111111111',
     username: 'testuser',
     email: 'test@example.com',
     role: role,

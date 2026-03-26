@@ -14,7 +14,7 @@ export interface User {
   email?: string;        // Optional email address
   full_name?: string;    // Optional display name
   role?: string;         // Optional user role (e.g., 'admin', 'user')
-  id?: number;          // Optional database ID
+  id?: string;          // Optional database ID (UUID)
   created_at?: string;  // Optional account creation timestamp
 }
 

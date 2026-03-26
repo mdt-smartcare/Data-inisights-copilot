@@ -38,7 +38,7 @@ def check_agent_admin_access(db, agent_id: str, current_user: User) -> bool:  # 
 
 # --- Schemas ---
 class AgentResponse(BaseModel):
-    id: int
+    id: str  # UUID represented as string
     name: str
     description: Optional[str] = None
     type: str

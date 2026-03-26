@@ -215,7 +215,7 @@ const ConfigPage: React.FC = () => {
                     const { getAgents } = await import('../services/api');
                     const agentList = await getAgents();
 
-                    const agent = agentList.find(a => a.id === parseInt(agentIdParam));
+                    const agent = agentList.find(a => a.id === agentIdParam);
                     if (agent) setSelectedAgent(agent);
                 } catch (e) {
                     console.error("Failed to auto-select agent", e);
@@ -361,7 +361,7 @@ const ConfigPage: React.FC = () => {
             const response = await chatService.sendMessage({
                 query: content,
                 agent_id: selectedAgent.id,
-                session_id: 'sandbox-' + selectedAgent.id
+                session_id: 'sandbox-' + String(selectedAgent.id)
             });
 
             const aiMsg: Message = {

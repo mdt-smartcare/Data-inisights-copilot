@@ -11,8 +11,8 @@ import { useNavigate } from 'react-router-dom';
 
 interface AgentSelectorProps {
     agents: Agent[];
-    selectedAgentId: number | undefined;
-    onSelect: (agentId: number) => void;
+    selectedAgentId: string | undefined;
+    onSelect: (agentId: string) => void;
     isLoading: boolean;
 }
 
@@ -51,7 +51,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
         }
     };
 
-    const handleSelect = (agentId: number) => {
+    const handleSelect = (agentId: string) => {
         onSelect(agentId);
         setIsOpen(false);
     };

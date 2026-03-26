@@ -10,7 +10,7 @@ import UserSearchInput from './UserSearchInput';
 import { formatDateTime } from '../../utils/datetime';
 
 interface AgentUsersTabProps {
-    agentId: number;
+    agentId: string;
     agentName: string;
 }
 
@@ -107,7 +107,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
     };
 
     // Get IDs of users already assigned to exclude from search
-    const excludeUserIds = agentUsers.map(u => u.id);
+    const excludeUserIds: string[] = agentUsers.map(u => u.id);
 
     return (
         <div className="space-y-6">
