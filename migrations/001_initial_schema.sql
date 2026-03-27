@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS prompt_configs (
 CREATE TABLE IF NOT EXISTS vector_db_registry (
     id SERIAL PRIMARY KEY,
     name TEXT UNIQUE NOT NULL,
-    data_source_id TEXT,
+    data_source_id INTEGER REFERENCES db_connections(id) ON DELETE CASCADE,
     embedding_model TEXT,
     llm TEXT,
     last_full_run TIMESTAMP,
@@ -401,6 +401,21 @@ CREATE TABLE IF NOT EXISTS embedding_llm_compatibility (
     FOREIGN KEY(llm_model_id) REFERENCES llm_models(id) ON DELETE CASCADE,
     UNIQUE(embedding_model_id, llm_model_id)
 );
+
+-- ============================================
+-- Model Config Versions
+-- ============================================
+CREATE TABLE IF NOT EXISTS model_config_versions (
+    id SERIAL PRIMARY KEY,
+    config_type TEXT NOT NULL,              -- 'embedding', 'llm', or 'full'
+    config_snapshot TEXT NOT NULL,          -- JSON blob of the entire config state
+    version INTEGER NOT NULL,               -- Incrementing version number per config_type
+    updated_by TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_config_versions_type ON model_config_versions(config_type);
+CREATE INDEX IF NOT EXISTS idx_config_versions_version ON model_config_versions(config_type, version);
 
 -- ============================================
 -- Vector DB Schedules
