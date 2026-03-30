@@ -533,10 +533,12 @@ class ModelRegistryService:
                 "UPDATE embedding_models SET is_active = 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                 (updated_by, model_id),
             )
-            conn.commit()
 
-            # Save version snapshot
+            # Save version snapshot (using same transaction)
             self._save_version_snapshot("embedding", updated_by, conn)
+            
+            # Commit all changes together
+            conn.commit()
 
             # Sync system_settings (NEW)
             system_settings_updated = self._sync_system_settings(model_dict, updated_by)
@@ -726,10 +728,12 @@ class ModelRegistryService:
                 "UPDATE llm_models SET is_active = 1, updated_at = CURRENT_TIMESTAMP, updated_by = %s WHERE id = %s",
                 (updated_by, model_id),
             )
-            conn.commit()
 
-            # Save version snapshot
+            # Save version snapshot (using same transaction)
             self._save_version_snapshot("llm", updated_by, conn)
+            
+            # Commit all changes together
+            conn.commit()
 
             logger.info(f"LLM model {model_id} activated by {updated_by}")
             cursor.execute("SELECT * FROM llm_models WHERE id = %s", (model_id,))
@@ -835,6 +839,10 @@ class ModelRegistryService:
     # Versioning
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Versioning
+    # ------------------------------------------------------------------
+
     def _save_version_snapshot(self, config_type: str, updated_by: str, conn=None):
         """Save a config snapshot internally (uses existing or new connection)."""
         own_conn = conn is None
@@ -842,6 +850,20 @@ class ModelRegistryService:
             conn = self.db.get_connection()
         try:
             cursor = conn.cursor()
+
+            # Check if table exists (gracefully handle missing table)
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'model_config_versions'
+                ) AS table_exists
+            """)
+            result = cursor.fetchone()
+            table_exists = result['table_exists'] if result else False
+            
+            if not table_exists:
+                logger.warning("model_config_versions table does not exist - skipping version snapshot")
+                return
 
             # Get next version number
             cursor.execute(
@@ -864,24 +886,33 @@ class ModelRegistryService:
                 llm = [dict(r) for r in cursor.fetchall()]
                 cursor.execute("SELECT * FROM embedding_llm_compatibility")
                 compat = [dict(r) for r in cursor.fetchall()]
-                snapshot = json.dumps({"embedding_models": emb, "llm_models": llm, "compatibility": compat})
+                snapshot = json.dumps({"embedding_models": emb, "llm_models": llm, "compatibility": compat}, default=str)
                 cursor.execute(
                     "INSERT INTO model_config_versions (config_type, config_snapshot, version, updated_by) VALUES (%s, %s, %s, %s)",
                     (config_type, snapshot, next_version, updated_by),
                 )
-                conn.commit()
+                # Only commit if we own the connection
+                if own_conn:
+                    conn.commit()
                 return
 
             rows = [dict(r) for r in cursor.fetchall()]
-            snapshot = json.dumps(rows)
+            snapshot = json.dumps(rows, default=str)
 
             cursor.execute(
                 "INSERT INTO model_config_versions (config_type, config_snapshot, version, updated_by) VALUES (%s, %s, %s, %s)",
                 (config_type, snapshot, next_version, updated_by),
             )
-            conn.commit()
+            # Only commit if we own the connection
+            if own_conn:
+                conn.commit()
         except Exception as e:
             logger.error(f"Failed to save config version snapshot: {e}")
+            # If using caller's connection, re-raise so caller can handle rollback
+            if not own_conn:
+                raise
+            # If we own the connection, rollback our changes
+            conn.rollback()
         finally:
             if own_conn:
                 conn.close()
