@@ -182,7 +182,7 @@ export function formatTimeRemaining(seconds: number | null | undefined): string 
   if (seconds === null || seconds === undefined || seconds < 0) return '-';
   
   if (seconds < 60) {
-    return seconds < 10 ? '< 1m' : `${Math.ceil(seconds / 10) * 10}s`;
+    return `${seconds}s`;
   }
   
   const dur = dayjs.duration(seconds, 'seconds');
@@ -191,14 +191,14 @@ export function formatTimeRemaining(seconds: number | null | undefined): string 
   const remainingSeconds = dur.seconds();
   
   if (hours > 0) {
-    return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+    return `${hours.toString().padStart(2, '0')}h : ${minutes.toString().padStart(2, '0')}m : ${remainingSeconds.toString().padStart(2, '0')}s`;
   }
   
   if (minutes > 0) {
-    return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m ${remainingSeconds}s`;
+    return `${minutes.toString().padStart(2, '0')}m : ${remainingSeconds.toString().padStart(2, '0')}s`;
   }
   
-  return `${remainingSeconds}s`;
+  return `${remainingSeconds.toString().padStart(2, '0')}s`;
 }
 
 /**

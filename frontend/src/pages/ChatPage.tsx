@@ -10,6 +10,7 @@ import {
   ChatInput
 } from '../components/chat';
 import AgenticHybridResultsDisplay from '../components/AgenticHybridResultsDisplay';
+import ConfirmationModal from '../components/ConfirmationModal';
 import { useAuth } from '../contexts/AuthContext';
 import { canExecuteQuery } from '../utils/permissions';
 import { APP_CONFIG } from '../config';
@@ -40,6 +41,10 @@ export default function ChatPage() {
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
+  
+  // Agent switch confirmation modal state
+  const [showSwitchConfirmation, setShowSwitchConfirmation] = useState(false);
+  const [pendingAgentId, setPendingAgentId] = useState<string>("");
   
   // RAG availability state
   const [ragAvailable, setRagAvailable] = useState(false);
@@ -293,6 +298,46 @@ export default function ChatPage() {
     // feedbackService.submitFeedback({ message_id: messageId, rating });
   };
 
+  // Handler for agent selection with confirmation if messages exist
+  const handleAgentSelection = (agentId: string) => {
+    // If there are existing messages and we're switching to a different agent, show confirmation
+    if (messages.length > 0 && agentId !== selectedAgentId) {
+      setPendingAgentId(agentId);
+      setShowSwitchConfirmation(true);
+    } else {
+      // No messages or same agent, switch directly
+      setSelectedAgentId(agentId);
+      if (agentId === undefined) {
+        // Going back to agent selection, clear messages
+        setMessages([]);
+      }
+    }
+  };
+
+  // Confirm agent switch - clear history and switch
+  const confirmAgentSwitch = () => {
+    // Abort any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    
+    // Clear messages and switch agent
+    setMessages([]);
+    setSelectedAgentId(pendingAgentId);
+    setSessionId(crypto.randomUUID());
+    
+    // Close modal and reset
+    setShowSwitchConfirmation(false);
+    setPendingAgentId("");
+  };
+
+  // Cancel agent switch
+  const cancelAgentSwitch = () => {
+    setShowSwitchConfirmation(false);
+    setPendingAgentId(undefined);
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       <ChatHeader title={APP_CONFIG.APP_NAME} />
@@ -319,7 +364,7 @@ export default function ChatPage() {
                 {agents.map(agent => (
                   <button
                     key={agent.id}
-                    onClick={() => setSelectedAgentId(agent.id)}
+                    onClick={() => handleAgentSelection(agent.id)}
                     className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-300 hover:ring-1 hover:ring-indigo-300 transition-all text-left group"
                   >
                     <div className="flex items-start gap-4">
@@ -375,18 +420,7 @@ export default function ChatPage() {
 
             {agents.length > 1 && (
               <button
-                onClick={() => {
-                  setSelectedAgentId(undefined);
-                  setMessages([]); // Optional: clear messages when switching? Or keep them? User didn't specify, but switching context usually implies fresh start or at least leaving the view.
-                  // Keeping messages might be confusing if they belong to another agent.
-                  // For now, let's NOT clear messages automatically unless user explicitly clears, but navigating back usually implies "I'm done with this agent".
-                  // Actually, if I go back and select the SAME agent, I might expect history.
-                  // Does `selectedAgentId(undefined)` clear history? No, `messages` state is in ChatPage.
-                  // If I switch agents, the `chatMutation` payload changes `agent_id`.
-                  // It is safer to clear messages on switch to avoid sending previous context to new agent?
-                  // The prompt says "go back and select a new agent".
-                  // Let's just go back for now.
-                }}
+                onClick={() => handleAgentSelection("")}
                 className="text-sm text-gray-600 hover:text-indigo-600 font-medium px-3 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
               >
                 Change Assistant
@@ -457,6 +491,18 @@ export default function ChatPage() {
           />
         </>
       )}
+
+      {/* Agent Switch Confirmation Modal */}
+      <ConfirmationModal
+        show={showSwitchConfirmation}
+        title="Switch Agent?"
+        message={`Switching agents will clear your current chat history and context. Are you sure you want to switch to a different agent?`}
+        onConfirm={confirmAgentSwitch}
+        onCancel={cancelAgentSwitch}
+        confirmText="Switch Agent"
+        cancelText="Stay Here"
+        type="warning"
+      />
     </div>
   );
 }

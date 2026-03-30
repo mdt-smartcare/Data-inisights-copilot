@@ -552,9 +552,6 @@ const UsersPage: React.FC = () => {
                                                                                 {agent.user_role === 'admin' ? '⚙️ Configure' : '💬 Chat'}
                                                                             </span>
                                                                         </div>
-                                                                        {agent.description && (
-                                                                            <p className="text-xs text-gray-500 truncate mt-0.5">{agent.description}</p>
-                                                                        )}
                                                                     </div>
                                                                 </div>
                                                                 <button
@@ -636,11 +633,6 @@ const UsersPage: React.FC = () => {
                                                                                 <span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-900' : 'text-gray-900'}`}>
                                                                                     {agent.name}
                                                                                 </span>
-                                                                                {agent.description && (
-                                                                                    <span className={`block text-xs truncate mt-0.5 ${isSelected ? 'text-indigo-600' : 'text-gray-500'}`}>
-                                                                                        {agent.description}
-                                                                                    </span>
-                                                                                )}
                                                                             </div>
                                                                         </label>
 
