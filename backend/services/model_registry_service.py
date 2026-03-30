@@ -371,14 +371,13 @@ class ModelRegistryService:
             cursor.execute(
                 """INSERT INTO embedding_models
                    (provider, model_name, display_name, dimensions, max_tokens, is_custom, is_active, updated_by)
-                   VALUES (%s, %s, %s, %s, %s, 0, 0, %s)""",
+                   VALUES (%s, %s, %s, %s, %s, 0, 0, %s)
+                   RETURNING *""",
                 (data.provider, data.model_name, data.display_name,
                  data.dimensions, data.max_tokens, created_by),
             )
-            conn.commit()
-            new_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM embedding_models WHERE id = %s", (new_id,))
             result = dict(cursor.fetchone())
+            conn.commit()
             
             # Add catalog metadata
             result["catalog_info"] = catalog_model.model_dump()
@@ -459,14 +458,14 @@ class ModelRegistryService:
             cursor.execute(
                 """INSERT INTO embedding_models
                    (provider, model_name, display_name, dimensions, max_tokens, is_custom, is_active, updated_by)
-                   VALUES (%s, %s, %s, %s, %s, 1, 0, %s)""",
+                   VALUES (%s, %s, %s, %s, %s, 1, 0, %s)
+                   RETURNING *""",
                 (data.provider, data.model_name, data.display_name,
                  data.dimensions, data.max_tokens, created_by),
             )
+            result = dict(cursor.fetchone())
             conn.commit()
-            new_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM embedding_models WHERE id = %s", (new_id,))
-            return dict(cursor.fetchone())
+            return result
         except Exception as e:
             conn.rollback()
             if "UNIQUE constraint" in str(e):
@@ -675,14 +674,14 @@ class ModelRegistryService:
                 """INSERT INTO llm_models
                    (provider, model_name, display_name, context_length, max_output_tokens,
                     parameters, is_custom, is_active, updated_by)
-                   VALUES (%s, %s, %s, %s, %s, %s, 1, 0, %s)""",
+                   VALUES (%s, %s, %s, %s, %s, %s, 1, 0, %s)
+                   RETURNING *""",
                 (data.provider, data.model_name, data.display_name,
                  data.context_length, data.max_output_tokens, params_json, created_by),
             )
+            result = dict(cursor.fetchone())
             conn.commit()
-            new_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM llm_models WHERE id = %s", (new_id,))
-            return dict(cursor.fetchone())
+            return result
         except Exception as e:
             conn.rollback()
             if "UNIQUE constraint" in str(e):
