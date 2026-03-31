@@ -2,9 +2,13 @@
 
 **TL;DR:** Migrate FHIR RAG backend to clean architecture modular monolith in `backend-modmono/app/` with shared `/core` infrastructure and 6 domain modules. Each agent has dedicated configuration (chunking, PII, RAG, embedding, LLM, prompts) - new agents inherit system defaults. Use repository pattern per module, three-layer architecture (presentation/application/infrastructure).
 
+> **Architecture Update (2026-03-31):** Modules now use **flat file structure** (models.py, repository.py, service.py, schemas.py, routes.py) instead of nested presentation/application/infrastructure folders. Three-layer architecture principles are maintained through code organization and dependency flow.
+
 ---
 
 ## Architecture Overview
+
+**Note:** As of 2026-03-31, modules now use **flat file structure** instead of nested presentation/application/infrastructure folders. The three-layer architecture is maintained through code organization.
 
 ```
 backend-modmono/
@@ -29,88 +33,50 @@ backend-modmono/
         defaults.py              ← Default chunking, PII, RAG, embedding, LLM configs
       __init__.py
     
-    /modules                     ← Domain modules
+    /modules                     ← Domain modules (FLAT FILE STRUCTURE)
       /users                     ← User management & RBAC
-        /presentation
-          routes.py              ← /users/*, /auth/*
-          schemas.py
-        /application
-          user_service.py
-          authorization_service.py
-        /infrastructure
-          user_repository.py
+        models.py                ← ORM models (infrastructure)
+        repository.py            ← Data access (infrastructure)
+        service.py               ← Business logic (application)
+        schemas.py               ← Pydantic DTOs (presentation)
+        auth_routes.py           ← Auth endpoints (presentation)
+        routes.py                ← User mgmt endpoints (presentation)
       
       /agents                    ← Agent CRUD + ALL agent configs ⭐
-        /presentation
-          routes.py              ← Agent CRUD
-          config_routes.py       ← ALL agent config endpoints
-          schemas.py
-        /application
-          agent_service.py       ← Agent CRUD, creation with defaults
-          config_service.py      ← Agent chunking, PII, medical, vector, RAG config
-          embedding_config_service.py  ← Agent embedding model
-          llm_config_service.py  ← Agent LLM provider selection
-          prompt_service.py      ← Agent system prompts
-        /infrastructure
-          agent_repository.py
-          config_repository.py   ← agent_configs table
-          prompt_repository.py
-        /domain
-          models.py              ← Agent, AgentConfig domain models
+        models.py                ← AgentModel, SystemPromptModel, PromptConfigModel (infrastructure)
+        repository.py            ← Agent & config data access (infrastructure)
+        service.py               ← Agent CRUD, config management (application)
+        schemas.py               ← Agent/config DTOs (presentation)
+        routes.py                ← 28 endpoints: CRUD, access, config, prompts (presentation)
       
-      /chat                      ← RAG query pipeline
-        /presentation
-          routes.py              ← /chat, /feedback
-          schemas.py
-        /application
-          rag_orchestrator.py    ← Uses agent's config
-          intent_router.py
-          followup_service.py
-          reflection_service.py
-        /infrastructure
-          llm_providers/
-          feedback_repository.py
+      /chat                      ← RAG query pipeline (pending)
+        models.py
+        repository.py
+        service.py               ← RAG orchestrator, intent router
+        schemas.py
+        routes.py                ← /chat, /feedback
       
-      /embeddings                ← Embedding jobs, providers, vector store
-        /presentation
-          routes.py              ← /embedding-jobs, /embedding-progress
-          websocket.py
-        /application
-          job_service.py
-          batch_processor.py
-          checkpoint_service.py
-        /infrastructure
-          providers/             ← BGE, OpenAI, SentenceTransformer
-            base_provider.py
-            bge_provider.py
-            openai_provider.py
-            sentence_transformer_provider.py
-          vector_store_client.py
-          chroma_client.py
-          job_repository.py
+      /embeddings                ← Embedding jobs, providers, vector store (pending)
+        models.py
+        repository.py
+        service.py               ← Job service, batch processor
+        schemas.py
+        routes.py                ← /embedding-jobs, /embedding-progress
+        providers.py             ← BGE, OpenAI, SentenceTransformer providers
       
-      /ingestion                 ← Data ingestion & SQL
-        /presentation
-          routes.py              ← /data, /ingest, /vector-db
-        /application
-          sql_service.py
-          file_query_service.py
-          file_sql_service.py
-        /infrastructure
-          file_storage.py
-          duckdb_client.py
+      /ingestion                 ← Data ingestion & SQL (pending)
+        models.py
+        repository.py
+        service.py               ← SQL service, file query service
+        schemas.py
+        routes.py                ← /data, /ingest, /vector-db
       
-      /observability            ← Audit, tracing, notifications
-        /presentation
-          routes.py              ← /audit, /health, /observability
-          websocket.py
-        /application
-          audit_service.py
-          notification_service.py
-          observability_service.py
-        /infrastructure
-          audit_repository.py
-          tracing_client.py
+      /observability            ← Audit, tracing, notifications ✅ IMPLEMENTED
+        models.py                ← AuditLogModel (infrastructure)
+        repository.py            ← Audit queries (infrastructure)
+        service.py               ← Centralized audit logging (application)
+        schemas.py               ← Audit DTOs (presentation)
+        routes.py                ← /audit/* endpoints (presentation)
     
     app.py                       ← FastAPI entry point
     config.py                    ← App-level config (DB URL, CORS, max upload size, rate limits)
@@ -128,6 +94,15 @@ backend-modmono/
 - **Presentation**: FastAPI routes, request/response validation, HTTP concerns
 - **Application**: Business logic, use cases, orchestration between services
 - **Infrastructure**: External dependencies (DB, APIs, file systems, caching)
+
+**Module Organization (Flat File Structure):**
+- Each module contains files organized by responsibility, not folders
+- `models.py` - SQLAlchemy ORM models (infrastructure layer)
+- `repository.py` - Database queries and data access (infrastructure layer)
+- `service.py` - Business logic and orchestration (application layer)
+- `schemas.py` - Pydantic request/response models (presentation layer)
+- `routes.py` - FastAPI endpoints (presentation layer)
+- Three-layer architecture is maintained through code organization and dependency flow
 
 **Agent-Centric Configuration:**
 - Each agent has its own dedicated config (chunking, PII, medical context, vector store, RAG, embedding model, LLM provider, system prompts)
@@ -176,20 +151,20 @@ backend-modmono/
 #### **Step 6: Users & Auth Module** 
 *Depends on: Phase 1*
 
-**Presentation layer:**
-- Migrate `backend/api/routes/auth.py` → `app/modules/users/presentation/auth_routes.py`
-- Migrate `backend/api/routes/users.py` → `app/modules/users/presentation/user_routes.py`
-- Create `schemas.py` for UserCreate, UserUpdate, UserResponse DTOs
+**Files to create (flat structure):**
+- `models.py` - UserModel ORM (from backend/models/schemas.py)
+- `repository.py` - User database operations (from backend/database/queries.py)
+- `service.py` - User business logic, role assignment
+- `schemas.py` - UserCreate, UserUpdate, UserResponse DTOs
+- `auth_routes.py` - Authentication endpoints (from backend/api/routes/auth.py)
+- `routes.py` - User management endpoints (from backend/api/routes/users.py)
 
-**Application layer:**
-- Migrate `backend/services/authorization_service.py` → `app/modules/users/application/authorization_service.py`
-- Create `user_service.py` for user business logic (CRUD operations, role assignment)
+**Migration tasks:**
+- Migrate `backend/api/routes/auth.py` → `auth_routes.py`
+- Migrate `backend/api/routes/users.py` → `routes.py`
+- Migrate `backend/services/authorization_service.py` → `service.py`
+- Extract user queries from `backend/database/queries.py` → `repository.py`
 - Extract audit logging calls to use core audit service
-
-**Infrastructure layer:**
-- Create `user_repository.py` extending core's BaseRepository
-- Database queries from `backend/database/queries.py` relevant to users
-- User-agent assignment logic
 
 **Dependencies:** core.database, core.auth, core.models.auth
 
@@ -197,6 +172,15 @@ backend-modmono/
 
 #### **Step 7: Observability Module (Audit only)**
 *Depends on: Phase 1, parallel with step 6*
+
+**Status:** ✅ IMPLEMENTED
+
+**Files created:**
+- `models.py` - AuditLogModel ORM
+- `repository.py` - Audit log queries with filters
+- `service.py` - Centralized audit logging service
+- `schemas.py` - AuditLog DTOs
+- `routes.py` - 3 audit query endpoints
 
 **Presentation layer:**
 - Migrate `backend/api/routes/audit.py` → `app/modules/observability/presentation/audit_routes.py`
@@ -238,11 +222,14 @@ backend-modmono/
 #### **Step 9: Agents Module** (LARGEST MODULE - owns all agent config)
 *Depends on: Users module, System defaults (step 8)*
 
-**Presentation layer:**
-- Migrate `backend/api/routes/agents.py` → `app/modules/agents/presentation/routes.py`
-- Migrate agent config routes from `backend/api/routes/config.py` → `app/modules/agents/presentation/config_routes.py`
-- Migrate LLM routes from `backend/api/routes/llm_settings.py` → `app/modules/agents/presentation/llm_routes.py`
-- Create `schemas.py` for all agent and config DTOs
+**Status:** ✅ IMPLEMENTED
+
+**Files created (flat structure):**
+- `models.py` - AgentModel, UserAgentModel, SystemPromptModel, PromptConfigModel
+- `repository.py` - Agent & config data access with 20+ methods
+- `service.py` - Agent CRUD, config management (all 8 config types)
+- `schemas.py` - Agent/config DTOs (310 lines) - AgentCreate, AgentUpdate, all config types
+- `routes.py` - 28 API endpoints: CRUD, user access, configs, prompts
 
 **New route structure:**
 ```
@@ -252,49 +239,37 @@ POST   /agents                              ← Inherits defaults from core.conf
 GET    /agents/{agent_id}
 PUT    /agents/{agent_id}
 DELETE /agents/{agent_id}
-POST   /agents/{agent_id}/assign            ← Assign user to agent
 
-# Agent-specific configuration
+# User access management (4 endpoints)
+POST   /agents/{agent_id}/users             ← Grant access
+DELETE /agents/{agent_id}/users/{user_id}  ← Revoke access
+PUT    /agents/{agent_id}/users/{user_id}/role
+GET    /agents/{agent_id}/users
+
+# Agent-specific configuration (13 endpoints)
+GET    /agents/{agent_id}/config
+PUT    /agents/{agent_id}/config
 GET    /agents/{agent_id}/config/chunking
 PUT    /agents/{agent_id}/config/chunking
-GET    /agents/{agent_id}/config/pii
-PUT    /agents/{agent_id}/config/pii
-GET    /agents/{agent_id}/config/medical-context
-PUT    /agents/{agent_id}/config/medical-context
-GET    /agents/{agent_id}/config/vector-store
-PUT    /agents/{agent_id}/config/vector-store
+GET    /agents/{agent_id}/config/embedding
+PUT    /agents/{agent_id}/config/embedding
 GET    /agents/{agent_id}/config/rag
 PUT    /agents/{agent_id}/config/rag
+GET    /agents/{agent_id}/config/llm
+PUT    /agents/{agent_id}/config/llm
 
-# Agent-specific embedding model
-GET    /agents/{agent_id}/embedding
-PUT    /agents/{agent_id}/embedding
-
-# Agent-specific LLM provider
-GET    /agents/{agent_id}/llm
-PUT    /agents/{agent_id}/llm
-
-# Agent-specific system prompts
-GET    /agents/{agent_id}/prompts
+# Agent-specific system prompts (3 endpoints)
 POST   /agents/{agent_id}/prompts
+POST   /agents/{agent_id}/prompts/{prompt_id}/activate
 GET    /agents/{agent_id}/prompts/active
-PUT    /agents/{agent_id}/prompts/{version}/activate
-GET    /agents/{agent_id}/prompts/history
 ```
 
-**Application layer:**
-- Extract agent CRUD from `backend/services/agent_service.py` → `app/modules/agents/application/agent_service.py`
-  - On agent creation: Copy defaults from `/core/config/defaults.py` into `agent_configs` table
-- Migrate `backend/services/config_service.py` → `app/modules/agents/application/config_service.py` (agent-level configs)
-- Migrate `backend/services/agent_embedding_service.py` → `app/modules/agents/application/embedding_config_service.py`
-- Extract LLM config logic from `backend/services/llm_registry.py` → `app/modules/agents/application/llm_config_service.py`
-- Create `prompt_service.py` for agent prompt management (versioning, activation)
-- Implement config caching per-agent with hot-reload
-
-**Infrastructure layer:**
-- Create `agent_repository.py` for agents, user_agents tables
-- Create `config_repository.py` for agent_configs table (stores all agent-specific configs as JSON/JSONB)
-- Create `prompt_repository.py` for system_prompts table
+**Migration tasks completed:**
+- Agent CRUD with default initialization from `/core/config/defaults.py`
+- Agent-level configs stored as JSON in `prompt_configs` table
+- System prompt versioning and activation
+- User-agent RBAC (3-tier: user/editor/admin)
+- Configuration caching per-agent
 
 **Dependencies:** modules.users, core.config.defaults, core.database
 

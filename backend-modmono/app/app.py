@@ -259,17 +259,17 @@ async def root():
 # ============================================
 
 # Users & Authentication
-from app.modules.users.presentation.auth_routes import router as auth_router
-from app.modules.users.presentation.user_routes import router as users_router
+from app.modules.users.auth_routes import router as auth_router
+from app.modules.users.routes import router as users_router
 
 app.include_router(auth_router, prefix=f"{settings.api_v1_prefix}/auth", tags=["Authentication"])
 app.include_router(users_router, prefix=f"{settings.api_v1_prefix}/users", tags=["Users"])
 
 # Observability & Audit
-from app.modules.observability.presentation.routes import router as observability_router
+from app.modules.observability.routes import router as observability_router
 
 # Agents
-from app.modules.agents.presentation.routes import router as agents_router
+from app.modules.agents.routes import router as agents_router
 
 app.include_router(observability_router, prefix=f"{settings.api_v1_prefix}", tags=["Observability"])
 app.include_router(agents_router, prefix=f"{settings.api_v1_prefix}/agents", tags=["Agents"])

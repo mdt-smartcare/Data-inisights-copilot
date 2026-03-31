@@ -10,7 +10,7 @@ This file demonstrates how to:
 # ============================================
 # 1. Define SQLAlchemy ORM Model
 # ============================================
-# Location: app/modules/users/infrastructure/models.py
+# Location: app/modules/users/models.py
 
 from uuid import uuid4
 from datetime import datetime
@@ -35,7 +35,7 @@ class UserModel(Base):
 # ============================================
 # 2. Define Pydantic Schemas (API Layer)
 # ============================================
-# Location: app/modules/users/presentation/schemas.py
+# Location: app/modules/users/schemas.py
 
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
@@ -71,12 +71,12 @@ class User(BaseModel):
 # ============================================
 # 3. Create Repository
 # ============================================
-# Location: app/modules/users/infrastructure/user_repository.py
+# Location: app/modules/users/repository.py
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database.base_repository import BaseRepository
-from app.modules.users.infrastructure.models import UserModel
-from app.modules.users.presentation.schemas import User, UserCreate, UserUpdate
+from app.modules.users.models import UserModel
+from app.modules.users.schemas import User, UserCreate, UserUpdate
 
 
 class UserRepository(BaseRepository[UserModel, UserCreate, UserUpdate, User]):
@@ -116,15 +116,15 @@ class UserRepository(BaseRepository[UserModel, UserCreate, UserUpdate, User]):
 # ============================================
 # 4. Use in FastAPI Routes
 # ============================================
-# Location: app/modules/users/presentation/routes.py
+# Location: app/modules/users/routes.py
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
 from app.core.database.session import get_db_session
-from app.modules.users.infrastructure.user_repository import UserRepository
-from app.modules.users.presentation.schemas import User, UserCreate, UserUpdate
+from app.modules.users.repository import UserRepository
+from app.modules.users.schemas import User, UserCreate, UserUpdate
 from app.core.models.common import BaseResponse, PaginatedResponse
 
 router = APIRouter(prefix="/users", tags=["users"])

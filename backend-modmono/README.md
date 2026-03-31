@@ -2,6 +2,8 @@
 
 Modern three-layer modular monolith architecture for FHIR RAG (Retrieval Augmented Generation) API.
 
+> **Architecture Update (2026-03-31):** Modules now use **flat file structure** instead of nested presentation/application/infrastructure folders. Three-layer architecture is maintained through code organization (models.py, repository.py, service.py, schemas.py, routes.py).
+
 ## Architecture
 
 - **Clean Architecture** with three layers:
@@ -93,13 +95,32 @@ backend-modmono/
 │   │   ├── models/                # Shared Pydantic models
 │   │   └── utils/                 # Logging, tracing, exceptions
 │   │
-│   ├── modules/                   # Domain modules
-│   │   ├── users/                 # User management & auth
-│   │   ├── agents/                # Agent management (largest module)
-│   │   ├── chat/                  # Chat & query execution
-│   │   ├── embeddings/            # Embedding jobs & vector stores
-│   │   ├── ingestion/             # Data ingestion & SQL queries
-│   │   └── observability/         # Audit logs & monitoring
+│   ├── modules/                   # Domain modules (flat file structure)
+│   │   ├── users/
+│   │   │   ├── models.py          # ORM models (infrastructure)
+│   │   │   ├── repository.py     # Data access (infrastructure)
+│   │   │   ├── service.py         # Business logic (application)
+│   │   │   ├── schemas.py         # Pydantic DTOs (presentation)
+│   │   │   ├── auth_routes.py     # Auth endpoints (presentation)
+│   │   │   └── routes.py          # User endpoints (presentation)
+│   │   │
+│   │   ├── agents/                # Agent management
+│   │   │   ├── models.py          # AgentModel, SystemPromptModel, etc.
+│   │   │   ├── repository.py     # Agent data access
+│   │   │   ├── service.py         # Agent business logic
+│   │   │   ├── schemas.py         # Agent DTOs
+│   │   │   └── routes.py          # Agent API endpoints
+│   │   │
+│   │   ├── observability/         # Audit logs & monitoring
+│   │   │   ├── models.py
+│   │   │   ├── repository.py
+│   │   │   ├── service.py
+│   │   │   ├── schemas.py
+│   │   │   └── routes.py
+│   │   │
+│   │   ├── chat/                  # (pending implementation)
+│   │   ├── embeddings/            # (pending implementation)
+│   │   └── ingestion/             # (pending implementation)
 │   │
 │   └── app.py                     # FastAPI application entry point
 │
@@ -109,6 +130,16 @@ backend-modmono/
 ├── .env.example                   # Environment template
 └── README.md                      # This file
 ```
+
+**Module Organization:**
+- Each module uses **flat file structure** (no nested subdirectories)
+- Files are organized by responsibility:
+  - `models.py` - SQLAlchemy ORM models (infrastructure layer)
+  - `repository.py` - Database queries and data access (infrastructure layer)
+  - `service.py` - Business logic and orchestration (application layer)
+  - `schemas.py` - Pydantic request/response models (presentation layer)
+  - `routes.py` - FastAPI endpoints (presentation layer)
+- Three-layer architecture is maintained through code organization, not folder structure
 
 ## Configuration
 
@@ -185,12 +216,15 @@ Once running, visit:
 
 - ✅ **Core Infrastructure**: Database, auth, logging, tracing, exceptions
 - ✅ **System Defaults**: Agent configuration templates
-- 🚧 **Users Module**: Auth, RBAC, OIDC (pending implementation)
-- 🚧 **Agents Module**: Agent CRUD, configs (pending implementation)
-- 🚧 **Chat Module**: Query execution, RAG (pending implementation)
-- 🚧 **Embeddings Module**: Vector stores, jobs (pending implementation)
-- 🚧 **Ingestion Module**: File upload, SQL queries (pending implementation)
-- 🚧 **Observability Module**: Audit logs, metrics (pending implementation)
+- ✅ **Users Module**: User CRUD, authentication, RBAC (JWT + OIDC)
+  - 13 endpoints: login, me, user management, password operations
+- ✅ **Observability Module**: Audit logging, system monitoring
+  - 3 endpoints: query logs, recent logs, user activity
+- ✅ **Agents Module**: Agent CRUD, full configuration management
+  - 28 endpoints: CRUD, user access, 8 config types, system prompts
+- 🚧 **Chat Module**: Query execution, RAG pipeline (pending)
+- 🚧 **Embeddings Module**: Vector stores, embedding jobs (pending)
+- 🚧 **Ingestion Module**: File upload, SQL queries (pending)
 
 ## Database Migrations
 
