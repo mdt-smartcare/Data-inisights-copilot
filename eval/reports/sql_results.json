@@ -1,6 +1,170 @@
 {
-  "sql_accuracy": 0.8,
-  "queries_evaluated": 10,
-  "equivalent_count": 8,
-  "failed_count": 2
+  "total_queries": 20,
+  "execution_equivalence_rate": 0.0,
+  "avg_overall_score": 0.925,
+  "schema_compliance": {
+    "avg_table_accuracy": 1.0,
+    "avg_join_correctness": 0.7,
+    "avg_filter_compliance": 1.0,
+    "avg_aggregation_match": 1.0
+  },
+  "by_difficulty": {
+    "easy": {
+      "count": 5,
+      "avg_score": 1.0,
+      "equivalent_rate": 0.0
+    },
+    "medium": {
+      "count": 7,
+      "avg_score": 0.9285714285714286,
+      "equivalent_rate": 0.0
+    },
+    "hard": {
+      "count": 8,
+      "avg_score": 0.875,
+      "equivalent_rate": 0.0
+    }
+  },
+  "by_category": {
+    "subquery": {
+      "count": 1,
+      "avg_score": 0.75
+    },
+    "existence_check": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "average": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "multi_table_analysis": {
+      "count": 1,
+      "avg_score": 0.75
+    },
+    "group_by": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "join_simple": {
+      "count": 1,
+      "avg_score": 0.75
+    },
+    "multi_join": {
+      "count": 1,
+      "avg_score": 0.75
+    },
+    "percentage": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "visit_analysis": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "bp_trend": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "date_filter": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "simple_count": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "comparison": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "trend": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "bp_analysis": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "join_with_filter": {
+      "count": 1,
+      "avg_score": 0.75
+    },
+    "lookup": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "care_cascade": {
+      "count": 1,
+      "avg_score": 1.0
+    },
+    "ranking": {
+      "count": 1,
+      "avg_score": 0.75
+    },
+    "diagnosis_analysis": {
+      "count": 1,
+      "avg_score": 1.0
+    }
+  },
+  "mode": "schema-only",
+  "failures": [
+    {
+      "id": "sql_eval_006",
+      "query": "How many patients are there per site?",
+      "score": 0.75,
+      "issues": [
+        "Missing join: patient_tracker.site_id = site.id"
+      ],
+      "generated_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY s.name ORDER BY patient_count DESC;"
+    },
+    {
+      "id": "sql_eval_007",
+      "query": "What are the top 5 sites by patient count?",
+      "score": 0.75,
+      "issues": [
+        "Missing join: patient_tracker.site_id = site.id"
+      ],
+      "generated_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY s.name ORDER BY patient_count DESC LIMIT 5;"
+    },
+    {
+      "id": "sql_eval_010",
+      "query": "Show patient count by organization and site",
+      "score": 0.75,
+      "issues": [
+        "Missing join: patient_tracker.site_id = site.id",
+        "Missing join: site.organization_id = organization.id"
+      ],
+      "generated_sql": "SELECT o.name AS organization_name, s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id JOIN organization o ON s.organization_id = o.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY o.name, s.name ORDER BY organization_name, pati"
+    },
+    {
+      "id": "sql_eval_014",
+      "query": "Show the screening coverage rate by site",
+      "score": 0.75,
+      "issues": [
+        "Missing join: patient_tracker.site_id = site.id"
+      ],
+      "generated_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS total_patients, COUNT(CASE WHEN pt.is_screened = true THEN 1 END) AS screened, ROUND(100.0 * COUNT(CASE WHEN pt.is_screened = true THEN 1 END) / NULLIF(COUNT(pt.id), 0), 2) AS coverage_rate FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt."
+    },
+    {
+      "id": "sql_eval_015",
+      "query": "Which sites have more than 1000 active patients?",
+      "score": 0.75,
+      "issues": [
+        "Missing join: patient_tracker.site_id = site.id"
+      ],
+      "generated_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY s.name HAVING COUNT(pt.id) > 1000 ORDER BY patient_count DESC;"
+    },
+    {
+      "id": "sql_eval_019",
+      "query": "Show average glucose values by organization",
+      "score": 0.75,
+      "issues": [
+        "Missing join: glucose_log.patient_tracker_id = patient_tracker.id",
+        "Missing join: patient_tracker.site_id = site.id",
+        "Missing join: site.organization_id = organization.id"
+      ],
+      "generated_sql": "SELECT o.name AS organization_name, ROUND(AVG(gl.glucose_value), 1) AS avg_glucose FROM glucose_log gl JOIN patient_tracker pt ON gl.patient_tracker_id = pt.id JOIN site s ON pt.site_id = s.id JOIN organization o ON s.organization_id = o.id WHERE gl.is_active = true AND gl.is_deleted = false GROUP B"
+    }
+  ]
 }
