@@ -1,0 +1,1 @@
+"""Observability module for audit logs and system monitoring."""
