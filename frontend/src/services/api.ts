@@ -889,6 +889,11 @@ export const getSystemSettings = async (category: string): Promise<Record<string
   return response.data;
 };
 
+export const updateSystemSettings = async (category: string, settings: Record<string, any>, reason?: string): Promise<Record<string, any>> => {
+  const response = await apiClient.put(`/api/v1/settings/${category}`, { settings, reason });
+  return response.data;
+};
+
 // ============================================================================
 // FILE SQL API - DuckDB-based SQL queries on uploaded files
 // ============================================================================

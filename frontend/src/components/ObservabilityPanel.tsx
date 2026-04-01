@@ -47,6 +47,13 @@ interface UsageStats {
     };
 }
 
+export interface ReasoningStep {
+    tool: string;              // Name of the tool used
+    thought?: string;          // Optional LLM thinking process/thought
+    input: string;             // Tool input/query
+    output?: string;           // Tool execution result
+}
+
 interface RecentTrace {
     id: string;
     trace_id: string;
@@ -77,6 +84,7 @@ const ObservabilityPanel: React.FC = () => {
     const [traces, setTraces] = useState<RecentTrace[]>([]);
     const [period, setPeriod] = useState('24h');
     const [refreshing, setRefreshing] = useState(false);
+
 
     useEffect(() => {
         loadData();
@@ -145,7 +153,7 @@ const ObservabilityPanel: React.FC = () => {
 
     // Safe accessor helpers
     const getSummary = () => stats?.summary || { total_traces: 0, total_observations: 0, total_generations: 0, total_cost: 0, total_tokens: 0 };
-    const getByOperation = () => stats?.by_operation || { 
+    const getByOperation = () => stats?.by_operation || {
         llm: { calls: 0, tokens: 0, cost: 0, avg_latency_ms: 0 },
         embedding: { calls: 0, tokens: 0, cost: 0, avg_latency_ms: 0 },
         retrieval: { calls: 0, tokens: 0, cost: 0, avg_latency_ms: 0 }
@@ -172,9 +180,9 @@ const ObservabilityPanel: React.FC = () => {
                     </h2>
                     <div className="flex items-center gap-4">
                         {stats?.langfuse_enabled && (
-                            <a 
-                                href={stats.langfuse_host} 
-                                target="_blank" 
+                            <a
+                                href={stats.langfuse_host}
+                                target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-xs text-purple-600 hover:text-purple-800 underline"
                             >
@@ -211,14 +219,12 @@ const ObservabilityPanel: React.FC = () => {
                         <div className="flex items-center gap-3 mt-2">
                             <button
                                 onClick={() => handleConfigChange('tracing_provider', config.tracing_provider === 'langfuse' ? 'none' : 'langfuse')}
-                                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${
-                                    config.tracing_provider === 'langfuse' ? 'bg-purple-600' : 'bg-gray-200'
-                                }`}
+                                className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 ${config.tracing_provider === 'langfuse' ? 'bg-purple-600' : 'bg-gray-200'
+                                    }`}
                             >
                                 <span
-                                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                        config.tracing_provider === 'langfuse' ? 'translate-x-5' : 'translate-x-0'
-                                    }`}
+                                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${config.tracing_provider === 'langfuse' ? 'translate-x-5' : 'translate-x-0'
+                                        }`}
                                 />
                             </button>
                             <span className="text-sm text-gray-700">
@@ -238,6 +244,7 @@ const ObservabilityPanel: React.FC = () => {
                             )}
                         </p>
                     </div>
+
                 </div>
             </div>
 
@@ -350,11 +357,10 @@ const ObservabilityPanel: React.FC = () => {
                                     <tr key={idx} className="hover:bg-gray-50">
                                         <td className="px-4 py-3 text-sm font-medium text-gray-900">{model.model}</td>
                                         <td className="px-4 py-3 text-sm">
-                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                                                model.type === 'LLM' 
-                                                    ? 'bg-purple-100 text-purple-800' 
-                                                    : 'bg-blue-100 text-blue-800'
-                                            }`}>
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${model.type === 'LLM'
+                                                ? 'bg-purple-100 text-purple-800'
+                                                : 'bg-blue-100 text-blue-800'
+                                                }`}>
                                                 {model.type || 'LLM'}
                                             </span>
                                         </td>
@@ -393,9 +399,9 @@ const ObservabilityPanel: React.FC = () => {
                     </div>
                     {stats?.langfuse_enabled && (
                         <p className="mt-4 text-xs text-gray-500 text-center">
-                            <a 
-                                href={stats.langfuse_host} 
-                                target="_blank" 
+                            <a
+                                href={stats.langfuse_host}
+                                target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-purple-600 hover:text-purple-800 underline"
                             >
@@ -412,7 +418,7 @@ const ObservabilityPanel: React.FC = () => {
 // Expandable Trace Card Component
 const TraceCard = ({ trace }: { trace: RecentTrace }) => {
     const [expanded, setExpanded] = useState(false);
-    
+
     return (
         <div className="border border-gray-200 rounded-lg overflow-hidden">
             {/* Collapsed Header - Always visible */}
@@ -438,17 +444,17 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                     <span className="text-xs text-gray-500">
                         {(trace.latency || 0).toFixed(2)}s
                     </span>
-                    <svg 
-                        className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} 
-                        fill="none" 
-                        stroke="currentColor" 
+                    <svg
+                        className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
                         viewBox="0 0 24 24"
                     >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
                 </div>
             </button>
-            
+
             {/* Expanded Details */}
             {expanded && (
                 <div className="px-4 py-4 border-t border-gray-200 bg-white space-y-4">
@@ -464,7 +470,7 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                             <p className="text-sm text-gray-800 whitespace-pre-wrap">{trace.user_query || '(empty)'}</p>
                         </div>
                     </div>
-                    
+
                     {/* AI Response */}
                     <div>
                         <div className="flex items-center gap-2 mb-2">
@@ -477,7 +483,7 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                             <p className="text-sm text-gray-800 whitespace-pre-wrap">{trace.final_answer || '(empty)'}</p>
                         </div>
                     </div>
-                    
+
                     {/* Metadata Row */}
                     <div className="flex flex-wrap gap-4 pt-2 border-t border-gray-100 text-xs text-gray-500">
                         {trace.user_id && (
@@ -500,9 +506,8 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                             </svg>
                             <span>Cost: ${(trace.total_cost || 0).toFixed(4)}</span>
                         </div>
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
-                            trace.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                        }`}>
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${trace.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            }`}>
                             {trace.status || 'success'}
                         </span>
                     </div>

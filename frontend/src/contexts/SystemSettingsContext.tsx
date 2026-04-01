@@ -4,6 +4,16 @@ import { getSystemSettings } from '../services/api';
 import { useAuth } from './AuthContext';
 
 /**
+ * System settings structure that matches backend system settings.
+ */
+export interface SystemSettings {
+    app_name: string;
+    theme: 'light' | 'dark' | 'system';
+    primary_color: string;
+    logo_url: string;
+}
+
+/**
  * Advanced settings structure that matches the backend system settings.
  * All values come from the Settings page - nothing is hardcoded.
  */
@@ -46,15 +56,17 @@ interface SystemSettingsContextType {
     // Settings loaded from backend
     advancedSettings: AdvancedSettings;
     embeddingJobSettings: EmbeddingJobSettings;
-    
+    systemSettings: SystemSettings;
+
     // Loading state
     isLoading: boolean;
     isLoaded: boolean;
     error: string | null;
-    
+
     // Actions
     refreshSettings: () => Promise<void>;
-    
+    updateSystemSettings: (settings: Partial<SystemSettings>) => Promise<void>;
+
     // Helper to get settings for embedding modal
     getEmbeddingModalDefaults: () => {
         batch_size: number;
@@ -80,18 +92,18 @@ interface SystemSettingsContextType {
 const FALLBACK_SETTINGS: AdvancedSettings = {
     embedding: { model: 'BAAI/bge-m3' },
     llm: { temperature: 0.0, maxTokens: 4096 },
-    chunking: { 
-        parentChunkSize: 512, 
-        parentChunkOverlap: 100, 
-        childChunkSize: 128, 
-        childChunkOverlap: 25 
+    chunking: {
+        parentChunkSize: 512,
+        parentChunkOverlap: 100,
+        childChunkSize: 128,
+        childChunkOverlap: 25
     },
-    retriever: { 
-        topKInitial: 50, 
-        topKFinal: 10, 
-        hybridWeights: [0.75, 0.25], 
-        rerankEnabled: true, 
-        rerankerModel: 'BAAI/bge-reranker-base' 
+    retriever: {
+        topKInitial: 50,
+        topKFinal: 10,
+        hybridWeights: [0.75, 0.25],
+        rerankEnabled: true,
+        rerankerModel: 'BAAI/bge-reranker-base'
     }
 };
 
@@ -102,12 +114,20 @@ const FALLBACK_EMBEDDING_JOB_SETTINGS: EmbeddingJobSettings = {
     retryAttempts: 3
 };
 
+const FALLBACK_SYSTEM_SETTINGS: SystemSettings = {
+    app_name: "Data Insights AI-Copilot",
+    theme: "light",
+    primary_color: "#3B82F6",
+    logo_url: ""
+};
+
 const SystemSettingsContext = createContext<SystemSettingsContextType | null>(null);
 
 export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     const { isAuthenticated, isLoading: authLoading } = useAuth();
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(FALLBACK_SETTINGS);
     const [embeddingJobSettings, setEmbeddingJobSettings] = useState<EmbeddingJobSettings>(FALLBACK_EMBEDDING_JOB_SETTINGS);
+    const [systemSettings, setSystemSettings] = useState<SystemSettings>(FALLBACK_SYSTEM_SETTINGS);
     const [isLoading, setIsLoading] = useState(true);
     const [isLoaded, setIsLoaded] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -115,19 +135,20 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     const refreshSettings = useCallback(async () => {
         setIsLoading(true);
         setError(null);
-        
+
         try {
             // Fetch all settings categories in parallel
-            const [embSettings, ragSettings, llmSettings, chunkingSettings] = await Promise.all([
+            const [embSettings, ragSettings, llmSettings, chunkingSettings, sysResult] = await Promise.all([
                 getSystemSettings('embedding').catch(() => null),
                 getSystemSettings('rag').catch(() => null),
                 getSystemSettings('llm').catch(() => null),
-                getSystemSettings('chunking').catch(() => null)  // Separate chunking category
+                getSystemSettings('chunking').catch(() => null), // Separate chunking category
+                getSystemSettings('system').catch(() => null)
             ]);
 
             setAdvancedSettings(prev => {
                 const next = { ...prev };
-                
+
                 // Embedding settings
                 if (embSettings) {
                     if (embSettings.model_name) {
@@ -141,7 +162,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
                         setEmbeddingJobSettings(ejs => ({ ...ejs, maxConcurrent: embSettings.max_concurrent }));
                     }
                 }
-                
+
                 // Chunking settings (from dedicated chunking category)
                 if (chunkingSettings) {
                     if (chunkingSettings.parent_chunk_size !== undefined) {
@@ -157,7 +178,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
                         next.chunking = { ...next.chunking, childChunkOverlap: chunkingSettings.child_chunk_overlap };
                     }
                 }
-                
+
                 // RAG settings (retriever only - chunking moved to separate category)
                 if (ragSettings) {
                     // Retriever
@@ -177,7 +198,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
                         next.retriever = { ...next.retriever, rerankerModel: ragSettings.reranker_model };
                     }
                 }
-                
+
                 // LLM settings
                 if (llmSettings) {
                     if (llmSettings.temperature !== undefined) {
@@ -190,10 +211,17 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
                         next.llm = { ...next.llm, model: llmSettings.model_name };
                     }
                 }
-                
+
                 return next;
             });
-            
+
+            if (sysResult) {
+                setSystemSettings(prev => ({
+                    ...prev,
+                    ...sysResult
+                }));
+            }
+
             setIsLoaded(true);
         } catch (err) {
             console.error('Failed to load system settings:', err);
@@ -234,13 +262,27 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         };
     }, [advancedSettings, embeddingJobSettings]);
 
+    const updateSystemSettings = useCallback(async (settings: Partial<SystemSettings>) => {
+        try {
+            // We assume updateSystemSettingsApi is imported from '../services/api'
+            const { updateSystemSettings: updateSystemSettingsApi } = await import('../services/api');
+            await updateSystemSettingsApi('system', settings, 'User updated system settings');
+            setSystemSettings(prev => ({ ...prev, ...settings }));
+        } catch (error) {
+            console.error('Failed to update system settings:', error);
+            throw error;
+        }
+    }, []);
+
     const value: SystemSettingsContextType = {
         advancedSettings,
         embeddingJobSettings,
+        systemSettings,
         isLoading,
         isLoaded,
         error,
         refreshSettings,
+        updateSystemSettings,
         getEmbeddingModalDefaults,
     };
 

@@ -50,7 +50,7 @@ class SettingCategory(str, Enum):
     EMBEDDING = "embedding"
     LLM = "llm"
     RAG = "rag"
-    UI = "ui"
+    SYSTEM = "system"
     SECURITY = "security"
     OBSERVABILITY = "observability"
     # Operational configuration categories
@@ -122,8 +122,8 @@ class RAGSettings(BaseModel):
         return v
 
 
-class UISettings(BaseModel):
-    """UI/theming configuration settings."""
+class SystemSettings(BaseModel):
+    """System-wide configuration settings."""
     app_name: str = "Data Insights AI-Copilot"
     theme: Literal["light", "dark", "system"] = "light"
     primary_color: str = "#3B82F6"
@@ -212,7 +212,7 @@ SETTINGS_VALIDATORS = {
     SettingCategory.EMBEDDING: EmbeddingSettings,
     SettingCategory.LLM: LLMSettings,
     SettingCategory.RAG: RAGSettings,
-    SettingCategory.UI: UISettings,
+    SettingCategory.SYSTEM: SystemSettings,
     SettingCategory.SECURITY: SecuritySettings,
     SettingCategory.OBSERVABILITY: ObservabilitySettings,
     # Operational configuration validators
@@ -505,7 +505,33 @@ class SettingsService:
                     
                     logger.info(f"Setting updated: {category}.{key} by {updated_by}")
                 else:
-                    logger.warning(f"Setting not found: {category}.{key}")
+                    logger.info(f"Setting not found in DB, inserting: {category}.{key}")
+                    # Determine value type for new setting
+                    if isinstance(value, bool):
+                        value_type = 'boolean'
+                    elif isinstance(value, (int, float)):
+                        value_type = 'number'
+                    else:
+                        value_type = 'string'
+                        
+                    new_value = self._serialize_value(value, value_type)
+                    old_value = None
+                    
+                    cursor.execute("""
+                        INSERT INTO system_settings
+                        (category, key, value, value_type, version, updated_by, is_sensitive, description)
+                        VALUES (%s, %s, %s, %s, 1, %s, 0, %s)
+                        RETURNING id
+                    """, (category, key, new_value, value_type, updated_by, ''))
+                    
+                    setting_id = cursor.fetchone()['id']
+                    
+                    # Record history
+                    cursor.execute("""
+                        INSERT INTO settings_history 
+                        (setting_id, category, key, previous_value, new_value, changed_by, change_reason)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (setting_id, category, key, old_value, new_value, updated_by, change_reason))
             
             conn.commit()
             self._invalidate_cache()
