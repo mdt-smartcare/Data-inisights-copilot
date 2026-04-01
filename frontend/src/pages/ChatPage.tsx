@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { chatService } from '../services/chatService';
+import { roleAtLeast } from '../utils/permissions';
 import { getActiveConfigMetadata } from '../services/api';
 import type { Message, QueryMode, AgenticHybridResult } from '../types';
 import {
@@ -41,14 +42,15 @@ export default function ChatPage() {
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
-  
+
   // Agent switch confirmation modal state
   const [showSwitchConfirmation, setShowSwitchConfirmation] = useState(false);
   const [pendingAgentId, setPendingAgentId] = useState<string>("");
-  
+
   // RAG availability state
   const [ragAvailable, setRagAvailable] = useState(false);
   const [agenticHybridAvailable, setAgenticHybridAvailable] = useState(false);
+  const [qaMode, setQaMode] = useState(false);
 
   useEffect(() => {
     // Load agents on mount
@@ -71,7 +73,7 @@ export default function ChatPage() {
             return;
           }
         }
-        
+
         // Auto-select ONLY if there is exactly 1 agent
         if (agentList.length === 1) {
           setSelectedAgentId(agentList[0].id);
@@ -106,13 +108,13 @@ export default function ChatPage() {
       try {
         // Fetch agent-specific config including example questions
         const config = await getActiveConfigMetadata(selectedAgentId);
-        
+
         if (config && config.example_questions) {
           try {
-            const parsed = typeof config.example_questions === 'string' 
-              ? JSON.parse(config.example_questions) 
+            const parsed = typeof config.example_questions === 'string'
+              ? JSON.parse(config.example_questions)
               : config.example_questions;
-            
+
             if (Array.isArray(parsed) && parsed.length > 0) {
               setSuggestions(parsed);
               console.log(`Loaded ${parsed.length} example questions for agent ${selectedAgentId}`);
@@ -122,7 +124,7 @@ export default function ChatPage() {
             console.warn("Failed to parse example questions", e);
           }
         }
-        
+
         // Fallback to defaults if no agent-specific questions
         setSuggestions(DEFAULT_SUGGESTIONS);
       } catch (err) {
@@ -130,7 +132,7 @@ export default function ChatPage() {
         setSuggestions(DEFAULT_SUGGESTIONS);
       }
     };
-    
+
     loadAgentSuggestions();
   }, [selectedAgentId]);
 
@@ -138,18 +140,18 @@ export default function ChatPage() {
   useEffect(() => {
     if (selectedAgentId !== undefined) {
       // Agent selected or changed
-      
+
       // 1. Abort any in-flight request from previous agent (Approach 3)
       if (abortControllerRef.current) {
         console.log('Aborting previous request due to agent switch');
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
-      
+
       // 2. Reset session ID for new agent (Approach 1)
       console.log(`Agent ${selectedAgentId} selected - creating new session`);
       setSessionId(crypto.randomUUID());
-      
+
       // 3. Optional: Clear messages for clean slate
       // Uncomment if you want messages to clear on agent switch
       // setMessages([]);
@@ -179,17 +181,17 @@ export default function ChatPage() {
         console.error('Failed to check RAG availability', err);
       }
     };
-    
+
     checkRagAvailability();
   }, [selectedAgentId, agents]);
 
   const chatMutation = useMutation({
-    mutationFn: (data: { query: string; session_id: string; query_mode?: QueryMode; signal: AbortSignal }) => {
+    mutationFn: (data: { query: string; session_id: string; query_mode?: QueryMode; signal: AbortSignal; debug?: boolean }) => {
       // Store which agent this request is for
       requestAgentIdRef.current = selectedAgentId;
-      
-      return chatService.sendMessage({ 
-        ...data, 
+
+      return chatService.sendMessage({
+        ...data,
         agent_id: selectedAgentId,
         signal: data.signal
       });
@@ -217,16 +219,15 @@ export default function ChatPage() {
         content: data.answer,
         timestamp: new Date(data.timestamp),
         sources: data.sources,
-        sqlQuery: data.sql_query,
         suggestedQuestions: data.suggested_questions,
         chartData: data.chart_data,
-        traceId: data.trace_id,
-        processingTime: data.processing_time,
         queryMode: data.query_mode as QueryMode,
         agenticHybridResult: data.agentic_hybrid_result as AgenticHybridResult,
+        traceId: data.trace_id,
+        qaDebug: data.qa_debug,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      
+
       // Clear abort controller after successful response
       abortControllerRef.current = null;
     },
@@ -236,7 +237,7 @@ export default function ChatPage() {
         console.log('Request cancelled - no error shown');
         return;
       }
-      
+
       console.error('Chat error:', error);
       const errorMessage: Message = {
         id: Date.now().toString(),
@@ -245,7 +246,7 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
-      
+
       // Clear abort controller on error
       abortControllerRef.current = null;
     },
@@ -269,7 +270,8 @@ export default function ChatPage() {
       query: content,
       session_id: sessionId,
       query_mode: queryMode,
-      signal: abortController.signal
+      signal: abortController.signal,
+      debug: qaMode
     });
   };
 
@@ -279,7 +281,7 @@ export default function ChatPage() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    
+
     setMessages([]);
     setSessionId(crypto.randomUUID()); // Generate new session for fresh start
   };
@@ -321,12 +323,12 @@ export default function ChatPage() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    
+
     // Clear messages and switch agent
     setMessages([]);
     setSelectedAgentId(pendingAgentId);
     setSessionId(crypto.randomUUID());
-    
+
     // Close modal and reset
     setShowSwitchConfirmation(false);
     setPendingAgentId("");
@@ -335,7 +337,7 @@ export default function ChatPage() {
   // Cancel agent switch
   const cancelAgentSwitch = () => {
     setShowSwitchConfirmation(false);
-    setPendingAgentId(undefined);
+    setPendingAgentId("");
   };
 
   return (
@@ -418,14 +420,34 @@ export default function ChatPage() {
               </div>
             </div>
 
-            {agents.length > 1 && (
-              <button
-                onClick={() => handleAgentSelection("")}
-                className="text-sm text-gray-600 hover:text-indigo-600 font-medium px-3 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
-              >
-                Change Assistant
-              </button>
-            )}
+            <div className="flex items-center gap-3">
+              {/* QA Mode Toggle - Only for admins and superadmins */}
+              {roleAtLeast(user?.role, 'admin') && (
+                <button
+                  onClick={() => setQaMode(!qaMode)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${qaMode
+                    ? 'bg-amber-100 text-amber-700 border border-amber-200 shadow-sm'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                    }`}
+                  title={qaMode ? "Disable QA Debug Mode" : "Enable QA Debug Mode"}
+                >
+                  <svg className={`w-4 h-4 ${qaMode ? 'text-amber-600' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                  <span>QA Mode</span>
+                  {qaMode && <span className="flex h-2 w-2 rounded-full bg-amber-500 animate-pulse ml-0.5" />}
+                </button>
+              )}
+
+              {agents.length > 1 && (
+                <button
+                  onClick={() => setSelectedAgentId(undefined)}
+                  className="text-sm text-gray-600 hover:text-indigo-600 font-medium px-3 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
+                >
+                  Change Assistant
+                </button>
+              )}
+            </div>
           </div>
 
           {messages.length > 0 && (

@@ -36,6 +36,8 @@ class ChatRequest(BaseModel):
         description="Session ID for conversation tracking. Auto-generated if not provided."
     )
     agent_id: Optional[str] = Field(default=None, description="Target agent ID (UUID)")
+    query_mode: str = Field(default="auto", description="Query mode (auto, sql, rag, hybrid)")
+    debug: bool = Field(default=False, description="Enable QA debug information in response")
     
     model_config = ConfigDict(json_schema_extra={
         "example": {
@@ -81,10 +83,10 @@ class ChartData(BaseModel):
 
 
 class ReasoningStep(BaseModel):
-    """Agent reasoning step."""
-    tool: str = Field(..., description="Tool name used")
-    input: str = Field(..., description="Tool input/query")
-    output: str = Field(..., description="Tool output (truncated)")
+    tool: str
+    thought: Optional[str] = None
+    input: str
+    output: Optional[str] = None
 
 
 class EmbeddingInfo(BaseModel):
@@ -96,14 +98,25 @@ class EmbeddingInfo(BaseModel):
     docs_retrieved: Optional[int] = Field(default=None, description="Number of documents retrieved")
 
 
+class QADebugInfo(BaseModel):
+    """Unified QA debug information."""
+    sql_query: Optional[str] = Field(default=None, description="Raw SQL query executed")
+    reasoning_steps: List[ReasoningStep] = Field(default_factory=list, description="Agent thought process")
+    trace_id: str = Field(..., description="Langfuse trace ID")
+    trace_url: Optional[str] = Field(default=None, description="Direct link to Langfuse dashboard")
+    processing_time_ms: float = Field(..., description="Total processing time in milliseconds")
+    agent_config: Optional[Dict[str, Any]] = Field(default=None, description="Model and RAG parameters used")
+
+
 class ChatResponse(BaseModel):
+
     """Chat response payload."""
     answer: str = Field(..., description="Chatbot answer text")
     chart_data: Optional[ChartData] = Field(default=None, description="Optional chart visualization")
     suggested_questions: List[str] = Field(default_factory=list, description="Follow-up questions")
-    reasoning_steps: List[ReasoningStep] = Field(default_factory=list, description="Agent reasoning process")
+    qa_debug: Optional[QADebugInfo] = Field(default=None, description="Optional QA debug information")
     embedding_info: Optional[EmbeddingInfo] = Field(default=None, description="Embedding analysis")
-    trace_id: str = Field(..., description="Langfuse trace ID for debugging")
+    trace_id: str = Field(..., description="Langfuse trace ID for debugging/feedback")
     session_id: Optional[str] = Field(default=None, description="Session ID for conversation tracking")
     agent_id: Optional[str] = Field(default=None, description="Agent ID (UUID) that generated this response")
     timestamp: datetime = Field(default_factory=datetime.utcnow, description="Response timestamp")
@@ -120,15 +133,20 @@ class ChatResponse(BaseModel):
                 "What is the average age of users?",
                 "Show active users by region"
             ],
-            "reasoning_steps": [
-                {"tool": "sql_query_tool", "input": "SELECT COUNT(*) FROM users WHERE status='active'", "output": "245"}
-            ],
+            "qa_debug": {
+                "sql_query": "SELECT COUNT(*) FROM users WHERE status='active'",
+                "reasoning_steps": [
+                    {"tool": "sql_query_tool", "input": "...", "output": "245"}
+                ],
+                "trace_id": "550e8400-e29b-41d4-a716-446655440000",
+                "trace_url": "https://langfuse.com/...",
+                "processing_time_ms": 1250.5
+            },
             "embedding_info": {
                 "model": "bge-m3",
                 "dimensions": 1024,
                 "search_method": "hybrid"
             },
-            "trace_id": "550e8400-e29b-41d4-a716-446655440000",
             "session_id": "abc123-session-id",
             "timestamp": "2025-12-30T10:30:00Z"
         }

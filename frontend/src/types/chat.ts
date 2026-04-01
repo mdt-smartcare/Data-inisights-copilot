@@ -11,6 +11,29 @@
 export type QueryMode = 'auto' | 'sql' | 'rag' | 'hybrid' | 'agentic_hybrid';
 
 /**
+ * Reasoning step taken by the agent
+ */
+export interface ReasoningStep {
+  tool: string;              // Name of the tool used
+  thought?: string;          // Optional LLM thinking process/thought
+  input: string;             // Tool input/query
+  output?: string;           // Tool execution result
+}
+
+/**
+ * Unified QA debug information
+ */
+export interface QADebugInfo {
+  sql_query?: string;
+  reasoning_steps: ReasoningStep[];
+  trace_id: string;
+  trace_url?: string;
+  processing_time_ms: number;
+  agent_config?: Record<string, any>;
+}
+
+
+/**
  * Agentic Hybrid Result structure
  * Contains the full workflow results from RAG → SQL → LLM synthesis
  * Matches the backend API response structure
@@ -18,7 +41,7 @@ export type QueryMode = 'auto' | 'sql' | 'rag' | 'hybrid' | 'agentic_hybrid';
 export interface AgenticHybridResult {
   status: string;
   question: string;
-  
+
   // Workflow stages
   stage_1_rag: {
     query: string;
@@ -36,16 +59,16 @@ export interface AgenticHybridResult {
     prompt_context: string;
     model_used: string;
   };
-  
+
   // Final answer
   final_answer: string;
-  
+
   // Performance metrics
   total_time_ms: number;
   rag_time_ms: number;
   sql_time_ms: number;
   synthesis_time_ms: number;
-  
+
   error?: string;
 }
 
@@ -59,13 +82,12 @@ export interface Message {
   content: string;                     // Message text content
   timestamp: Date;                     // When the message was created
   sources?: Source[];                  // Optional sources used to generate response
-  sqlQuery?: string;                   // Optional SQL query executed for response
   suggestedQuestions?: string[];       // Optional follow-up questions
   chartData?: ChartData;               // Optional visualization data
-  traceId?: string;                    // Optional trace ID for debugging
-  processingTime?: number;             // Optional response generation time in ms
   queryMode?: QueryMode;               // Query mode used for this message
   agenticHybridResult?: AgenticHybridResult; // Optional agentic hybrid workflow result
+  traceId?: string;                    // Optional trace ID for feedback
+  qaDebug?: QADebugInfo;               // Optional unified QA debug information
 }
 
 /**
@@ -101,6 +123,8 @@ export interface ChatRequest {
   session_id?: string;        // Optional session ID for conversation tracking
   agent_id?: string;          // Optional target agent ID (UUID)
   signal?: AbortSignal;       // Optional signal for request cancellation
+  query_mode?: QueryMode;     // Optional query mode
+  debug?: boolean;            // Optional debug flag for QA info
 }
 
 /**
@@ -108,17 +132,16 @@ export interface ChatRequest {
  * Returned after processing user query
  */
 export interface ChatResponse {
-  answer: string;                      // Generated response text
-  sources?: Source[];                  // Optional retrieved documents
-  sql_query?: string;                  // Optional executed SQL query
-  suggested_questions?: string[];      // Optional follow-up questions
-  chart_data?: ChartData;              // Optional chart visualization
-  conversation_id: string;             // Conversation thread ID
-  session_id?: string;                 // Session ID for conversation tracking
-  agent_id?: string;                   // Agent ID that generated this response (UUID)
-  timestamp: string;                   // Response generation timestamp
-  trace_id?: string;                   // Optional trace ID for debugging
-  processing_time?: number;            // Optional processing time in ms
-  query_mode?: QueryMode;              // Query mode used for processing
-  agentic_hybrid_result?: AgenticHybridResult; // Optional agentic hybrid workflow result
+  answer: string;
+  sources?: Source[];
+  suggested_questions?: string[];
+  chart_data?: ChartData;
+  conversation_id: string;
+  session_id?: string;
+  agent_id?: string;
+  timestamp: string;
+  query_mode?: QueryMode;
+  agentic_hybrid_result?: AgenticHybridResult;
+  trace_id: string;
+  qa_debug?: QADebugInfo;
 }

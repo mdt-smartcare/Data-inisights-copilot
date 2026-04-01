@@ -16,9 +16,10 @@ from langchain.agents import create_tool_calling_agent, AgentExecutor
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 
-from backend.config import get_settings, get_llm_settings, get_embedding_settings
+from backend.config import get_settings, get_llm_settings, get_embedding_settings, get_runtime_setting
 from backend.core.logging import get_logger
 from backend.services.sql_service import get_sql_service, SQLService
+from backend.core.capture import current_sql_capture, SQLCapture
 from backend.services.vector_store import get_vector_store
 from backend.services.embeddings import get_embedding_model
 from backend.services.followup_service import FollowUpService
@@ -26,7 +27,7 @@ from backend.services.llm_registry import get_llm_registry
 from backend.services.intent_router import IntentClassifier
 from backend.database.db import get_db_service
 from backend.models.schemas import (
-    ChatResponse, ChartData, ReasoningStep, EmbeddingInfo
+    ChatResponse, ChartData, ReasoningStep, EmbeddingInfo, QADebugInfo
 )
 from backend.core.cancellation import check_cancelled, RequestCancelled
 
@@ -177,7 +178,8 @@ class AgentService:
         self.tools = [
             Tool(
                 name="sql_query_tool",
-                func=self.sql_service.query if self.sql_service else lambda x: "SQL service not available.",
+                func=lambda x: "This tool requires async execution. Please use ainvoke.",
+                coroutine=self.sql_service.query if self.sql_service else None,
                 description="""**PRIMARY TOOL FOR STATISTICS - Pass NATURAL LANGUAGE questions only.**
 
 This tool accepts natural language questions (NOT SQL queries) and automatically generates and executes SQL.
@@ -432,13 +434,15 @@ Rewritten Query:""")
             logger.warning(f"Query rewriting failed: {e}. Using original query.")
             return query
 
+
     async def process_query(
         self,
         query: str,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        trace_id: Optional[str] = None,
         request: Optional["Request"] = None,
-        trace_id: Optional[str] = None
+        debug: bool = False
     ) -> Dict[str, Any]:
         """
         Process a user query through the RAG pipeline with conversation memory.
@@ -469,6 +473,10 @@ Rewritten Query:""")
         followup_task = None
         
         try:
+            # Initialize SQL capture container for this request
+            sql_capture = SQLCapture()
+            token = current_sql_capture.set(sql_capture)
+            
             # Rewrite query with context
             query = await self._rewrite_query_with_context(query, session_id)
             
@@ -524,7 +532,7 @@ Rewritten Query:""")
                 # Check if client disconnected before SQL query
                 await check_cancelled(request)
                 sql_used = True
-                full_response = self.sql_service.query(query)
+                full_response = await self.sql_service.query(query)
                 intermediate_steps.append((type('obj', (object,), {'tool': 'sql_query_tool', 'tool_input': query}), full_response))
 
             elif final_intent == "B":
@@ -693,11 +701,39 @@ Rewritten Query:""")
             
             # Build response
             embedding_settings = get_embedding_settings()
+            
+            # Build QA Debug object if requested
+            qa_debug = None
+            if debug:
+                duration_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+                
+                # Fetch Langfuse host for URL generation
+                # Default to cloud if not specified, though local deployments might differ
+                langfuse_url = None
+                if settings.enable_langfuse:
+                    base_url = settings.langfuse_host.rstrip('/')
+                    langfuse_url = f"{base_url}/trace/{trace_id}"
+                
+                qa_debug = QADebugInfo(
+                    sql_query=sql_capture.query,
+                    reasoning_steps=reasoning_steps,
+                    trace_id=trace_id,
+                    trace_url=langfuse_url,
+                    processing_time_ms=round(duration_ms, 2),
+                    agent_config={
+                        "model": getattr(self.llm, "model_name", "unknown") if hasattr(self, "llm") else "unknown",
+                        "temperature": getattr(self.llm, "temperature", 0.0) if hasattr(self, "llm") else 0.0,
+                        "rag_params": self.rag_config if hasattr(self, "rag_config") else {},
+                        "intent": final_intent if 'final_intent' in locals() else "unknown"
+                    }
+                )
+                logger.info(f"🐞 QA Debug Info populated for trace_id={trace_id}")
+
             response = ChatResponse(
                 answer=self._clean_answer(full_response),
                 chart_data=chart_data,
                 suggested_questions=suggested_questions,
-                reasoning_steps=reasoning_steps,
+                qa_debug=qa_debug,
                 embedding_info=EmbeddingInfo(
                     model=embedding_settings.get('model_name', 'BAAI/bge-m3'),
                     dimensions=self.embedding_model.dimension,
@@ -746,7 +782,7 @@ Rewritten Query:""")
             asyncio.create_task(_track_and_flush())
             
             return response.model_dump()
-        
+            
         except RequestCancelled:
             # Client disconnected - cancel any background tasks and re-raise
             logger.info(f"Request cancelled by client (trace_id={trace_id})")
@@ -757,6 +793,10 @@ Rewritten Query:""")
         except Exception as e:
             logger.error(f"Query processing failed (trace_id={trace_id}): {e}", exc_info=True)
             raise
+            
+        finally:
+            # Cleanup context variable
+            current_sql_capture.reset(token)
     
     # Cached SQL examples: (examples_list, example_embeddings or None)
     _cached_examples = None
@@ -912,10 +952,23 @@ Rewritten Query:""")
             else:
                 tool_input = str(action.tool_input)
             
+            # Extract thought from action log
+            thought = None
+            if hasattr(action, 'log') and action.log:
+                # LLM logs often look like: "Thought: I need to check... \nAction: ..."
+                log = action.log
+                if "Action:" in log:
+                    thought = log.split("Action:")[0].strip()
+                    if thought.startswith("Thought:"):
+                        thought = thought[len("Thought:"):].strip()
+                else:
+                    thought = log.strip()
+            
             steps.append(ReasoningStep(
                 tool=action.tool,
-                input=tool_input[:200],  # Truncate
-                output=str(observation)[:200]  # Truncate
+                thought=thought,
+                input=tool_input[:500],  # Increased truncation limit for better visibility
+                output=str(observation)[:500] if observation else None
             ))
         
         return steps
@@ -955,9 +1008,9 @@ Rewritten Query:""")
                 
                 return DuckDBRunner(service)
             
-            def query(self, question: str) -> str:
+            async def query(self, question: str) -> str:
                 """Query wrapper that returns string like SQLService."""
-                result = self._service.query(question)
+                result = await self._service.query(question)
                 if isinstance(result, dict):
                     if result.get('status') == 'error':
                         return f"Error: {result.get('error', 'Unknown error')}"
@@ -972,7 +1025,7 @@ Rewritten Query:""")
             cached_schema = ""
             db = None
             
-            def query(self, question: str) -> str:
+            async def query(self, question: str) -> str:
                 return "SQL service not available. Please ensure you have uploaded files for this agent."
         
         return DummySQLService()

@@ -68,6 +68,7 @@ async def chat(
         user_int_id=user_int_id,
         session_id=session_id,
         trace_id=trace_id,
+        user_role=current_user.role,
         is_super_admin=current_user.role == 'super_admin'
     )
 
@@ -79,6 +80,7 @@ async def _process_chat_with_tracing(
     user_int_id: str,  # UUID as string (legacy var name from when IDs were int)
     session_id: str,
     trace_id: str,
+    user_role: str,
     is_super_admin: bool
 ):
     """Process chat request with optional Langfuse tracing."""
@@ -138,12 +140,19 @@ async def _process_chat_with_tracing(
             is_super_admin=is_super_admin
         )
         
+        # Security: Only admins can use debug mode
+        debug_requested = request.debug
+        if debug_requested and user_role not in ["admin", "super_admin"]:
+            logger.warning(f"Unauthorized debug request from user {user_id} (role: {user_role})")
+            debug_requested = False
+            
         result = await agent_service.process_query(
             query=request.query,
             user_id=user_id,
             session_id=session_id,
+            trace_id=trace_id,
             request=fastapi_req,
-            trace_id=trace_id
+            debug=debug_requested
         )
         
         # Use the Langfuse trace ID for feedback association
