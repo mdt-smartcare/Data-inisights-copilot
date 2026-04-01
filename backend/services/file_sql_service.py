@@ -25,6 +25,7 @@ from langchain_openai import ChatOpenAI
 from backend.config import get_settings, get_llm_settings
 from backend.core.logging import get_logger
 from backend.services.prompt_builder import PromptBuilder
+from backend.core.capture import current_sql_capture
 
 settings = get_settings()
 logger = get_logger(__name__)
@@ -222,7 +223,7 @@ Columns:
             return "No tables available."
         return schema["schema_text"]
     
-    def _generate_sql(self, question: str) -> str:
+    async def _generate_sql(self, question: str) -> str:
         """Generate SQL from natural language question using PromptBuilder."""
         schema_text = self.get_schema_for_prompt()
         
@@ -238,7 +239,7 @@ Columns:
 
         # Use callbacks for tracing if available
         invoke_config = {"callbacks": self.callbacks} if self.callbacks else {}
-        response = self.llm_fast.invoke(prompt, config=invoke_config)
+        response = await self.llm_fast.ainvoke(prompt, config=invoke_config)
         sql = response.content.strip()
         
         # Clean up any markdown formatting
@@ -341,6 +342,12 @@ Columns:
         """
         start_time = time.time()
         
+        # Store for QA visibility
+        capture = current_sql_capture.get()
+        if capture:
+            capture.query = sql
+            logger.info(f"✅ SQL captured (DuckDB): {sql[:50]}...")
+
         conn = self._get_connection()
         try:
             result = conn.execute(sql)
@@ -370,7 +377,7 @@ Columns:
         finally:
             conn.close()
     
-    def _format_response(self, question: str, sql: str, columns: List[str], 
+    async def _format_response(self, question: str, sql: str, columns: List[str], 
                          rows: List[Dict], execution_time_ms: float) -> str:
         """Format SQL results into natural language response with chart JSON."""
         
@@ -520,10 +527,10 @@ Response:"""
 
         # Use callbacks for tracing if available
         invoke_config = {"callbacks": self.callbacks} if self.callbacks else {}
-        response = self.llm_fast.invoke(prompt, config=invoke_config)
+        response = await self.llm_fast.ainvoke(prompt, config=invoke_config)
         return response.content.strip()
     
-    def query(self, question: str) -> Dict[str, Any]:
+    async def query(self, question: str) -> Dict[str, Any]:
         """
         Main entry point: Natural language question → SQL → Results.
         
@@ -545,7 +552,7 @@ Response:"""
         
         try:
             # Step 1: Generate SQL from natural language
-            sql = self._generate_sql(question)
+            sql = await self._generate_sql(question)
             
             # Step 2: Validate SQL
             if not self._validate_sql(sql):
@@ -559,7 +566,7 @@ Response:"""
             columns, rows, execution_time_ms = self._execute_sql(sql)
             
             # Step 4: Format response
-            answer = self._format_response(question, sql, columns, rows, execution_time_ms)
+            answer = await self._format_response(question, sql, columns, rows, execution_time_ms)
             
             result = {
                 "status": "success",

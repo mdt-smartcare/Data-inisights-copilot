@@ -13,6 +13,7 @@ import hashlib
 import json
 import redis
 from datetime import timedelta
+from backend.core.capture import SQLCapture, current_sql_capture
 
 from sqlalchemy import inspect
 from langchain_community.utilities import SQLDatabase
@@ -102,6 +103,14 @@ class CachedSQLDatabase(SQLDatabase):
     and Agent executions benefit from the same cache.
     """
     def run(self, command: str, fetch: str = "all", include_columns: bool = False, **kwargs) -> str:
+        # Store for QA visibility
+        capture = current_sql_capture.get()
+        if capture:
+            capture.query = command
+            logger.info(f"✅ SQL captured in ContextVar: {command[:50]}...")
+        else:
+            logger.warning("❌ No SQL capture container found in context!")
+        
         # 1. Skip caching for non-SELECT commands (though Langchain agent should only SELECT)
         if not command.strip().lower().startswith('select') or not _redis_client:
             return super().run(command, fetch, include_columns, **kwargs)
@@ -641,24 +650,22 @@ class SQLService:
         
         return is_simple
     
-    @observe
-    def query(self, question: str) -> str:
+    async def query(self, question: str) -> str:
         logger.info(f"Executing SQL query for: '{question[:100]}...'")
         
         # We removed the NLP question-level cache in favor of the lower-level Redis SQL-execution cache
         
         if self._is_simple_query(question):
             logger.info(" Detected simple query - using optimized execution path")
-            result = self._execute_optimized(question)
+            result = await self._execute_optimized(question)
         else:
             logger.info(" Complex query detected - using full agent")
-            result = self._execute_with_agent(question)
+            result = await self._execute_with_agent(question)
         
         return result
     
 
-    @observe(as_type="span")
-    def _execute_optimized(self, question: str) -> str:
+    async def _execute_optimized(self, question: str) -> str:
         logger.info("=" * 80)
         logger.info("OPTIMIZED SQL EXECUTION:")
         logger.info("=" * 80)
@@ -676,10 +683,11 @@ class SQLService:
                 sql_query = sql_query.split('--')[0].strip()
                 sql_query = sql_query.rstrip(';') + ';'
             else:
-                sql_query = self._generate_sql(question)
+                sql_query = await self._generate_sql(question)
                 api_call_count += 1
             
             # Update Langfuse trace with generated SQL
+            from langfuse.decorators import langfuse_context
             if langfuse_context:
                 try:
                     langfuse_context.update_current_observation(
@@ -693,7 +701,7 @@ class SQLService:
                     pass
             
             # Validate SQL with reflection loop
-            sql_query, validation_retries = self._validate_and_fix_sql(question, sql_query)
+            sql_query, validation_retries = await self._validate_and_fix_sql(question, sql_query)
             api_call_count += validation_retries
             
             logger.info(f" SQL to execute: {sql_query[:200]}...")
@@ -701,7 +709,7 @@ class SQLService:
             # Still run the regex safety check as a final fail-safe
             if not self._validate_sql_query(sql_query):
                 logger.warning("  Final SQL validation failed, falling back to agent")
-                return self._execute_with_agent(question)
+                return await self._execute_with_agent(question)
             
             # Execute SQL (CachedSQLDatabase will intercept and cache this transparently)
             logger.info(" Executing SQL query via CachedSQLDatabase")
@@ -726,7 +734,7 @@ class SQLService:
                     pass
             
             # Format response using FAST model
-            output = self._format_response(question, sql_query, result)
+            output = await self._format_response(question, sql_query, result)
             api_call_count += 1
             
             total_duration_ms = (time.time() - start_time) * 1000
@@ -754,10 +762,10 @@ class SQLService:
         except Exception as e:
             logger.warning(f"  Optimized execution failed: {e}. Falling back to full agent.")
             logger.error(f"Error details: {str(e)}", exc_info=True)
-            return self._execute_with_agent(question)
+            return await self._execute_with_agent(question)
 
     @observe(as_type="span", name="generate_sql")
-    def _generate_sql(self, question: str) -> str:
+    async def _generate_sql(self, question: str) -> str:
         """
         Generate SQL query from natural language question.
         
@@ -805,7 +813,7 @@ class SQLService:
                     dialect="postgresql"
                 )
                 
-                response = self.llm_fast.invoke(prompt)
+                response = await self.llm_fast.ainvoke(prompt)
                 sql_query = response.content.strip()
                 sql_query = re.sub(r'```sql\n?', '', sql_query)
                 sql_query = re.sub(r'```\n?', '', sql_query)
@@ -838,14 +846,13 @@ Return ONLY the SQL query, no markdown, no explanation, no comments.
 
 SQL Query:"""
 
-        response = self.llm_fast.invoke(prompt)
+        response = await self.llm_fast.ainvoke(prompt)
         sql_query = response.content.strip()
         sql_query = re.sub(r'```sql\n?', '', sql_query)
         sql_query = re.sub(r'```\n?', '', sql_query)
         return sql_query.strip()
 
-    @observe(as_type="span", name="validate_sql")
-    def _validate_and_fix_sql(self, question: str, sql_query: str) -> tuple:
+    async def _validate_and_fix_sql(self, question: str, sql_query: str) -> tuple:
         """Validate SQL and fix if needed. Returns (sql_query, retry_count)."""
         logger.info(f"Initial SQL generated: {sql_query[:100]}...")
         
@@ -884,7 +891,7 @@ PREVIOUS SQL: {sql_query}
 
 Return ONLY the corrected SQL query."""
                 
-                response = self.llm_fast.invoke(fix_prompt)
+                response = await self.llm_fast.ainvoke(fix_prompt)
                 sql_query = response.content.strip()
                 sql_query = re.sub(r'```sql\n?', '', sql_query)
                 sql_query = re.sub(r'```\n?', '', sql_query)
@@ -908,8 +915,7 @@ Return ONLY the corrected SQL query."""
         logger.warning("SQL failed validation after retries. Proceeding with safety check.")
         return sql_query, retry_count
 
-    @observe(as_type="span", name="format_response")
-    def _format_response(self, question: str, sql_query: str, result: str) -> str:
+    async def _format_response(self, question: str, sql_query: str, result: str) -> str:
         """Format SQL result into natural language response with chart. Uses FAST model."""
         logger.info(" API Call: Format natural language response (using gpt-3.5-turbo)")
         
@@ -984,7 +990,7 @@ CHART TYPE SELECTION GUIDE (choose the most appropriate):
 Response:"""
 
         # OPTIMIZATION: Use fast model (gpt-3.5-turbo) for response formatting
-        formatted_response = self.llm_fast.invoke(format_prompt)
+        formatted_response = await self.llm_fast.ainvoke(format_prompt)
         return formatted_response.content.strip()
 
     def _validate_sql_query(self, sql_query: str) -> bool:
@@ -1018,14 +1024,13 @@ Response:"""
         
         return True
     
-    @observe
-    def _execute_with_agent(self, question: str) -> str:
+    async def _execute_with_agent(self, question: str) -> str:
         logger.info("=" * 80)
         logger.info(" SQL AGENT EXECUTION TRACE:")
         logger.info("=" * 80)
         
         try:
-            result = self.sql_agent.invoke({"input": question})
+            result = await self.sql_agent.ainvoke({"input": question})
             
             if isinstance(result, dict):
                 output = result.get("output", str(result))

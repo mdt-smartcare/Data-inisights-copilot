@@ -436,10 +436,18 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
 
     def _load_docstore(self):
         """Load the parent document store from disk with module remapping."""
-        docstore_path = f"{self.config['vector_store']['chroma_path']}/parent_docstore.pkl"
+        # Get project root directory (go up from rag -> backend -> project root)
+        project_root = Path(__file__).parent.parent.parent
+        
+        # Get collection name to construct the docstore path
+        collection_name = self.config['vector_store']['collection_name']
+        
+        # Construct docstore path relative to project root's data/indexes folder
+        docstore_path = project_root / "data" / "indexes" / collection_name / "parent_docstore.pkl"
+        
         try:
             logger.info(f"Loading docstore from {docstore_path} with module remapping")
-            docstore = load_with_remapping(docstore_path)
+            docstore = load_with_remapping(str(docstore_path))
             logger.info("Successfully loaded docstore with module remapping")
             return docstore
         except FileNotFoundError:
