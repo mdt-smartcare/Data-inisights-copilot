@@ -459,7 +459,6 @@ Rewritten Query:""")
             logger.info(f"Generated new trace_id: {trace_id}")
         
         start_time = datetime.now(timezone.utc)
-        
         logger.info(f"Processing query (trace_id={trace_id}): '{query[:100]}...'")
         
         # Use the handler passed during initialization - it manages the trace

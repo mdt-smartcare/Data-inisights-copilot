@@ -89,6 +89,8 @@ const AgentConfigPage: React.FC = () => {
     const [publishing, setPublishing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [isLoadingConfig, setIsLoadingConfig] = useState(true); // Start true - assume we need to load config
 
     // Load agent
     useEffect(() => {
@@ -119,41 +121,15 @@ const AgentConfigPage: React.FC = () => {
     useEffect(() => {
         const loadConfig = async () => {
             if (!agent) return;
+            setIsLoadingConfig(true);
 
-            // Fetch system defaults
-            try {
-                const [embSettings, ragSettings, llmSettings] = await Promise.all([
-                    getSystemSettings('embedding').catch(() => null),
-                    getSystemSettings('rag').catch(() => null),
-                    getSystemSettings('llm').catch(() => null)
-                ]);
-
-                setAdvancedSettings(prev => {
-                    const next = { ...prev };
-                    if (embSettings && embSettings.model_name) next.embedding = { ...next.embedding, model: embSettings.model_name };
-                    if (ragSettings) {
-                        if (ragSettings.chunk_size) next.chunking = { ...next.chunking, parentChunkSize: ragSettings.chunk_size };
-                        if (ragSettings.chunk_overlap) next.chunking = { ...next.chunking, parentChunkOverlap: ragSettings.chunk_overlap };
-                        if (ragSettings.top_k_initial) next.retriever = { ...next.retriever, topKInitial: ragSettings.top_k_initial };
-                        if (ragSettings.top_k_final) next.retriever = { ...next.retriever, topKFinal: ragSettings.top_k_final };
-                        if (ragSettings.hybrid_weights) next.retriever = { ...next.retriever, hybridWeights: ragSettings.hybrid_weights };
-                        if (ragSettings.rerank_enabled !== undefined) next.retriever = { ...next.retriever, rerankEnabled: ragSettings.rerank_enabled };
-                        if (ragSettings.reranker_model) next.retriever = { ...next.retriever, rerankerModel: ragSettings.reranker_model };
-                    }
-                    if (llmSettings) {
-                        if (llmSettings.temperature !== undefined) next.llm = { ...next.llm, temperature: llmSettings.temperature };
-                        if (llmSettings.max_tokens) next.llm = { ...next.llm, maxTokens: llmSettings.max_tokens };
-                    }
-                    return next;
-                });
-            } catch (err) {
-                console.warn("Failed to load backend defaults", err);
-            }
-
-            // Load existing config
+            // Load existing config first to determine if this is edit mode
             try {
                 const config = await getActiveConfigMetadata(agent.id);
                 if (config) {
+                    // Mark as edit mode since we have existing config
+                    setIsEditMode(true);
+
                     // Pre-fill state from existing config
                     if (config.connection_id) {
                         setConnectionId(config.connection_id);
@@ -168,7 +144,13 @@ const AgentConfigPage: React.FC = () => {
                     }
                     if (config.schema_selection) {
                         try {
-                            setSelectedSchema(JSON.parse(config.schema_selection));
+                            const parsed = JSON.parse(config.schema_selection);
+                            // For file source, schema_selection is an array of column names
+                            if (config.data_source_type === 'file' && Array.isArray(parsed)) {
+                                setSelectedFileColumns(parsed);
+                            } else {
+                                setSelectedSchema(parsed);
+                            }
                         } catch (e) {
                             console.error("Failed to parse schema", e);
                         }
@@ -184,7 +166,30 @@ const AgentConfigPage: React.FC = () => {
                     }
                     if (config.data_source_type) setDataSourceType(config.data_source_type as 'database' | 'file');
 
-                    // Pre-fill Advanced Settings from config
+                    // Reconstruct file upload result for file sources
+                    if (config.data_source_type === 'file' && config.ingestion_file_name) {
+                        const reconstructedFileResult: IngestionResponse = {
+                            status: 'success',
+                            file_name: config.ingestion_file_name,
+                            file_type: config.ingestion_file_type || 'csv',
+                            documents: config.ingestion_documents 
+                                ? (typeof config.ingestion_documents === 'string' 
+                                    ? JSON.parse(config.ingestion_documents) 
+                                    : config.ingestion_documents)
+                                : [],
+                            total_documents: 0,
+                            row_count: config.row_count,
+                            columns: config.schema_selection 
+                                ? (typeof config.schema_selection === 'string'
+                                    ? JSON.parse(config.schema_selection)
+                                    : config.schema_selection)
+                                : undefined
+                        };
+                        reconstructedFileResult.total_documents = reconstructedFileResult.documents?.length || 0;
+                        setFileUploadResult(reconstructedFileResult);
+                    }
+
+                    // Use config's stored Advanced Settings (no need for system defaults)
                     const parseConf = (c: any) => c ? (typeof c === 'string' ? JSON.parse(c) : c) : null;
                     const emb = parseConf(config.embedding_config);
                     const llm = parseConf(config.llm_config);
@@ -199,21 +204,63 @@ const AgentConfigPage: React.FC = () => {
                         if (ret) next.retriever = { ...next.retriever, ...ret };
                         return next;
                     });
+                } else {
+                    // NEW config - fetch system defaults for initial values
+                    try {
+                        const [embSettings, ragSettings, llmSettings] = await Promise.all([
+                            getSystemSettings('embedding').catch(() => null),
+                            getSystemSettings('rag').catch(() => null),
+                            getSystemSettings('llm').catch(() => null)
+                        ]);
+
+                        setAdvancedSettings(prev => {
+                            const next = { ...prev };
+                            if (embSettings && embSettings.model_name) next.embedding = { ...next.embedding, model: embSettings.model_name };
+                            if (ragSettings) {
+                                if (ragSettings.chunk_size) next.chunking = { ...next.chunking, parentChunkSize: ragSettings.chunk_size };
+                                if (ragSettings.chunk_overlap) next.chunking = { ...next.chunking, parentChunkOverlap: ragSettings.chunk_overlap };
+                                if (ragSettings.top_k_initial) next.retriever = { ...next.retriever, topKInitial: ragSettings.top_k_initial };
+                                if (ragSettings.top_k_final) next.retriever = { ...next.retriever, topKFinal: ragSettings.top_k_final };
+                                if (ragSettings.hybrid_weights) next.retriever = { ...next.retriever, hybridWeights: ragSettings.hybrid_weights };
+                                if (ragSettings.rerank_enabled !== undefined) next.retriever = { ...next.retriever, rerankEnabled: ragSettings.rerank_enabled };
+                                if (ragSettings.reranker_model) next.retriever = { ...next.retriever, rerankerModel: ragSettings.reranker_model };
+                            }
+                            if (llmSettings) {
+                                if (llmSettings.temperature !== undefined) next.llm = { ...next.llm, temperature: llmSettings.temperature };
+                                if (llmSettings.max_tokens) next.llm = { ...next.llm, maxTokens: llmSettings.max_tokens };
+                            }
+                            return next;
+                        });
+                    } catch (err) {
+                        console.warn("Failed to load backend defaults", err);
+                    }
                 }
             } catch (e) {
                 console.error("Failed to load existing config", e);
             }
 
-            // Load history
-            try {
-                const historyData = await getPromptHistory(agent.id);
-                setHistory(historyData);
-            } catch (err) {
-                console.error("Failed to load history", err);
-            }
+            // History will be loaded when user navigates to Step 5
+
+            // Done loading config
+            setIsLoadingConfig(false);
         };
         loadConfig();
     }, [agent]);
+
+    // Load history only when entering Review step (Step 5)
+    useEffect(() => {
+        if (currentStep === 5 && agent && history.length === 0) {
+            const loadHistory = async () => {
+                try {
+                    const historyData = await getPromptHistory(agent.id);
+                    setHistory(historyData);
+                } catch (err) {
+                    console.error("Failed to load history", err);
+                }
+            };
+            loadHistory();
+        }
+    }, [currentStep, agent, history.length]);
 
     // Sync state to window for API use (temporary solution)
     useEffect(() => {
@@ -410,13 +457,13 @@ const AgentConfigPage: React.FC = () => {
         }
     };
 
-    if (isAuthLoading || isLoadingAgent) {
+    if (isAuthLoading || isLoadingAgent || isLoadingConfig) {
         return (
             <div className="flex flex-col h-screen bg-gray-50">
                 <ChatHeader title={APP_CONFIG.APP_NAME} />
                 <div className="flex-1 flex items-center justify-center">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    <span className="ml-3 text-gray-500">Loading...</span>
+                    <span className="ml-3 text-gray-500">{isLoadingConfig ? 'Loading configuration...' : 'Loading...'}</span>
                 </div>
             </div>
         );
@@ -519,6 +566,9 @@ const AgentConfigPage: React.FC = () => {
                                     setConnectionName={setConnectionName}
                                     setFileUploadResult={setFileUploadResult}
                                     onFileColumnsInit={setSelectedFileColumns}
+                                    isEditMode={isEditMode}
+                                    connectionName={connectionName}
+                                    initialFileResult={fileUploadResult}
                                 />
                             )}
 

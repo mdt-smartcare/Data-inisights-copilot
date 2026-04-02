@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion, listEmbeddingJobs } from '../services/api';
+import { generateSystemPrompt, publishSystemPrompt, getPromptHistory, getActiveConfigMetadata, handleApiError, startEmbeddingJob, rollbackToVersion, listEmbeddingJobs, getConnections, getSystemSettings } from '../services/api';
 import type { IngestionResponse } from '../services/api';
 import { formatDateTime, formatDate } from '../utils/datetime';
 import ConnectionManager from '../components/ConnectionManager';
@@ -121,6 +121,9 @@ const ConfigPage: React.FC = () => {
     // Status
     const [generating, setGenerating] = useState(false);
     const [publishing, setPublishing] = useState(false);
+    const [isEditMode, setIsEditMode] = useState(false);
+    const [isSourceLocked, setIsSourceLocked] = useState(false);
+    const [isLoadingConfig, setIsLoadingConfig] = useState(false);
 
     // Sandbox State
     const [sandboxMessages, setSandboxMessages] = useState<Message[]>([]);
@@ -151,9 +154,9 @@ const ConfigPage: React.FC = () => {
         (window as any).__config_dictionary = dataDictionary;
     }, [connectionId, selectedSchema, dataDictionary]);
 
-    // Load history when entering step 4 or dashboard
+    // Load history only when entering Review step (Step 5)
     useEffect(() => {
-        if ((currentStep === 4 || currentStep === 0) && selectedAgent) {
+        if (currentStep === 5 && selectedAgent && history.length === 0) {
             loadHistory();
         }
     }, [currentStep, selectedAgent]);
@@ -161,48 +164,6 @@ const ConfigPage: React.FC = () => {
     // Handle URL changes and Auto-selection
     useEffect(() => {
         if (isLoading) return;
-
-        // Fetch dynamic system settings for defaults to prevent mismatched configs
-        const fetchDefaults = async () => {
-            try {
-                const { getSystemSettings } = await import('../services/api');
-                const [embSettings, ragSettings, llmSettings, chunkingSettings] = await Promise.all([
-                    getSystemSettings('embedding').catch(() => null),
-                    getSystemSettings('rag').catch(() => null),
-                    getSystemSettings('llm').catch(() => null),
-                    getSystemSettings('chunking').catch(() => null)
-                ]);
-
-                setAdvancedSettings(prev => {
-                    const next = { ...prev };
-                    if (embSettings && embSettings.model_name) {
-                        next.embedding.model = embSettings.model_name;
-                    }
-                    // Chunking settings from dedicated 'chunking' category
-                    if (chunkingSettings) {
-                        if (chunkingSettings.parent_chunk_size) next.chunking.parentChunkSize = chunkingSettings.parent_chunk_size;
-                        if (chunkingSettings.parent_chunk_overlap) next.chunking.parentChunkOverlap = chunkingSettings.parent_chunk_overlap;
-                        if (chunkingSettings.child_chunk_size) next.chunking.childChunkSize = chunkingSettings.child_chunk_size;
-                        if (chunkingSettings.child_chunk_overlap) next.chunking.childChunkOverlap = chunkingSettings.child_chunk_overlap;
-                    }
-                    // Retriever settings from 'rag' category
-                    if (ragSettings) {
-                        if (ragSettings.top_k_initial) next.retriever.topKInitial = ragSettings.top_k_initial;
-                        if (ragSettings.top_k_final) next.retriever.topKFinal = ragSettings.top_k_final;
-                        if (ragSettings.hybrid_weights) next.retriever.hybridWeights = ragSettings.hybrid_weights;
-                        if (ragSettings.rerank_enabled !== undefined) next.retriever.rerankEnabled = ragSettings.rerank_enabled;
-                        if (ragSettings.reranker_model) next.retriever.rerankerModel = ragSettings.reranker_model;
-                    }
-                    if (llmSettings) {
-                        if (llmSettings.temperature !== undefined) next.llm.temperature = llmSettings.temperature;
-                        if (llmSettings.max_tokens) next.llm.maxTokens = llmSettings.max_tokens;
-                    }
-                    return next;
-                });
-            } catch (err) {
-                console.warn("Failed to load backend defaults", err);
-            }
-        };
 
         const syncFromUrl = async () => {
             // Sync / Auto-select Agent
@@ -223,7 +184,9 @@ const ConfigPage: React.FC = () => {
             }
         };
 
-        fetchDefaults();
+        // System defaults are fetched only when needed:
+        // - In loadDashboard when NO existing config (new agent)
+        // - In handleStartNew when starting fresh
         syncFromUrl();
     }, [isLoading, searchParams, selectedAgent]);
 
@@ -249,28 +212,69 @@ const ConfigPage: React.FC = () => {
 
     const loadDashboard = async () => {
         if (!selectedAgent) return;
+        setIsLoadingConfig(true);
         try {
             const config = await getActiveConfigMetadata(selectedAgent.id);
             if (config) {
                 setActiveConfig(config);
+                // Mark as edit mode since we have existing config
+                setIsEditMode(true);
+                setIsSourceLocked(true);
+
+                // Pre-fill data source type
+                if (config.data_source_type) {
+                    setDataSourceType(config.data_source_type as 'database' | 'file');
+                }
+
                 // Pre-fill state
                 if (config.connection_id) {
                     setConnectionId(config.connection_id);
-                    // Also fetch name for UI consistency
-                    import('../services/api').then(api => {
-                        api.getConnections().then(conns => {
-                            const c = conns.find(x => x.id === config.connection_id);
-                            if (c) setConnectionName(c.name);
-                        });
-                    });
+                    // Fetch connection name for UI
+                    try {
+                        const conns = await getConnections();
+                        const c = conns.find((x: any) => x.id === config.connection_id);
+                        if (c) setConnectionName(c.name);
+                    } catch (e) {
+                        console.error("Failed to fetch connection name", e);
+                    }
                 }
                 if (config.schema_selection) {
                     try {
-                        setSelectedSchema(JSON.parse(config.schema_selection));
+                        const parsed = JSON.parse(config.schema_selection);
+                        // For file source, schema_selection is an array of column names
+                        if (config.data_source_type === 'file' && Array.isArray(parsed)) {
+                            setSelectedFileColumns(parsed);
+                        } else {
+                            setSelectedSchema(parsed);
+                        }
                     } catch (e) {
                         console.error("Failed to parse schema", e);
                     }
                 }
+
+                // Reconstruct file upload result for file sources
+                if (config.data_source_type === 'file' && config.ingestion_file_name) {
+                    const reconstructedFileResult: IngestionResponse = {
+                        status: 'success',
+                        file_name: config.ingestion_file_name,
+                        file_type: config.ingestion_file_type || 'csv',
+                        documents: config.ingestion_documents 
+                            ? (typeof config.ingestion_documents === 'string' 
+                                ? JSON.parse(config.ingestion_documents) 
+                                : config.ingestion_documents)
+                            : [],
+                        total_documents: 0,
+                        row_count: config.row_count,
+                        columns: config.schema_selection 
+                            ? (typeof config.schema_selection === 'string'
+                                ? JSON.parse(config.schema_selection)
+                                : config.schema_selection)
+                            : undefined
+                    };
+                    reconstructedFileResult.total_documents = reconstructedFileResult.documents?.length || 0;
+                    setFileUploadResult(reconstructedFileResult);
+                }
+
                 if (config.data_dictionary) setDataDictionary(config.data_dictionary);
                 if (config.prompt_text) setDraftPrompt(config.prompt_text);
                 if (config.reasoning) {
@@ -334,13 +338,53 @@ const ConfigPage: React.FC = () => {
                     console.error("Failed to fetch active jobs", jobErr);
                 }
             } else {
+                // NO existing config - fetch system defaults for initial values
+                setIsEditMode(false);
+                setIsSourceLocked(false);
                 setCurrentStep(1);
+                
+                try {
+                    const [embSettings, ragSettings, llmSettings, chunkingSettings] = await Promise.all([
+                        getSystemSettings('embedding').catch(() => null),
+                        getSystemSettings('rag').catch(() => null),
+                        getSystemSettings('llm').catch(() => null),
+                        getSystemSettings('chunking').catch(() => null)
+                    ]);
+
+                    setAdvancedSettings(prev => {
+                        const next = { ...prev };
+                        if (embSettings && embSettings.model_name) next.embedding.model = embSettings.model_name;
+                        if (chunkingSettings) {
+                            if (chunkingSettings.parent_chunk_size) next.chunking.parentChunkSize = chunkingSettings.parent_chunk_size;
+                            if (chunkingSettings.parent_chunk_overlap) next.chunking.parentChunkOverlap = chunkingSettings.parent_chunk_overlap;
+                            if (chunkingSettings.child_chunk_size) next.chunking.childChunkSize = chunkingSettings.child_chunk_size;
+                            if (chunkingSettings.child_chunk_overlap) next.chunking.childChunkOverlap = chunkingSettings.child_chunk_overlap;
+                        }
+                        if (ragSettings) {
+                            if (ragSettings.top_k_initial) next.retriever.topKInitial = ragSettings.top_k_initial;
+                            if (ragSettings.top_k_final) next.retriever.topKFinal = ragSettings.top_k_final;
+                            if (ragSettings.hybrid_weights) next.retriever.hybridWeights = ragSettings.hybrid_weights;
+                            if (ragSettings.rerank_enabled !== undefined) next.retriever.rerankEnabled = ragSettings.rerank_enabled;
+                            if (ragSettings.reranker_model) next.retriever.rerankerModel = ragSettings.reranker_model;
+                        }
+                        if (llmSettings) {
+                            if (llmSettings.temperature !== undefined) next.llm.temperature = llmSettings.temperature;
+                            if (llmSettings.max_tokens) next.llm.maxTokens = llmSettings.max_tokens;
+                        }
+                        return next;
+                    });
+                } catch (err) {
+                    console.warn("Failed to load backend defaults", err);
+                }
             }
-            // Load history for total versions count
-            loadHistory();
+            // History will be loaded when user navigates to Step 5
         } catch (e) {
             console.error("Failed to load active config", e);
+            setIsEditMode(false);
+            setIsSourceLocked(false);
             setCurrentStep(1);
+        } finally {
+            setIsLoadingConfig(false);
         }
     };
 
@@ -438,9 +482,9 @@ const ConfigPage: React.FC = () => {
 
         // Re-fetch backend defaults
         try {
-            const { getSystemSettings } = await import('../services/api');
-            const [embSettings, chunkingSettings, llmSettings] = await Promise.all([
+            const [embSettings, ragSettings, chunkingSettings, llmSettings] = await Promise.all([
                 getSystemSettings('embedding').catch(() => null),
+                getSystemSettings('rag').catch(() => null),
                 getSystemSettings('chunking').catch(() => null),
                 getSystemSettings('llm').catch(() => null)
             ]);
@@ -453,6 +497,13 @@ const ConfigPage: React.FC = () => {
                     if (chunkingSettings.parent_chunk_overlap) next.chunking.parentChunkOverlap = chunkingSettings.parent_chunk_overlap;
                     if (chunkingSettings.child_chunk_size) next.chunking.childChunkSize = chunkingSettings.child_chunk_size;
                     if (chunkingSettings.child_chunk_overlap) next.chunking.childChunkOverlap = chunkingSettings.child_chunk_overlap;
+                }
+                if (ragSettings) {
+                    if (ragSettings.top_k_initial) next.retriever.topKInitial = ragSettings.top_k_initial;
+                    if (ragSettings.top_k_final) next.retriever.topKFinal = ragSettings.top_k_final;
+                    if (ragSettings.hybrid_weights) next.retriever.hybridWeights = ragSettings.hybrid_weights;
+                    if (ragSettings.rerank_enabled !== undefined) next.retriever.rerankEnabled = ragSettings.rerank_enabled;
+                    if (ragSettings.reranker_model) next.retriever.rerankerModel = ragSettings.reranker_model;
                 }
                 if (llmSettings) {
                     if (llmSettings.temperature !== undefined) next.llm.temperature = llmSettings.temperature;
@@ -1342,69 +1393,148 @@ const ConfigPage: React.FC = () => {
                                 {currentStep === 1 && (
                                     <div className="max-w-2xl mx-auto">
                                         <h2 className="text-xl font-semibold mb-4">Connect Data Source</h2>
-                                        <p className="text-gray-500 text-sm mb-4">
-                                            Choose how you want to provide data to this agent.
-                                        </p>
-
-                                        {/* Data Source Toggle */}
-                                        <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-6">
-                                            <button
-                                                type="button"
-                                                onClick={() => { setDataSourceType('database'); setFileUploadResult(null); }}
-                                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
-                                                    ${dataSourceType === 'database'
-                                                        ? 'bg-blue-600 text-white'
-                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
-                                                    }`}
-                                            >
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
-                                                </svg>
-                                                Database
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => { setDataSourceType('file'); setConnectionId(null); }}
-                                                className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
-                                                    ${dataSourceType === 'file'
-                                                        ? 'bg-blue-600 text-white'
-                                                        : 'bg-white text-gray-600 hover:bg-gray-50'
-                                                    }`}
-                                            >
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                                                </svg>
-                                                File Upload
-                                            </button>
-                                        </div>
-
-                                        {/* Database Source */}
-                                        {dataSourceType === 'database' && (
+                                        
+                                        {/* Show loading while config is being fetched */}
+                                        {isLoadingConfig ? (
+                                            <div className="flex items-center justify-center py-12">
+                                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                                                <span className="ml-3 text-gray-500">Loading configuration...</span>
+                                            </div>
+                                        ) : isEditMode && isSourceLocked && (connectionId || fileUploadResult) ? (
+                                            /* Locked State - Edit Mode */
                                             <>
                                                 <p className="text-gray-500 text-sm mb-4">
-                                                    Choose the database you want to generate insights from.
+                                                    Your previously selected data source is shown below. Click "Change Source" to select a different one.
                                                 </p>
-                                                <ConnectionManager
-                                                    onSelect={(id, name) => {
-                                                        setConnectionId(id);
-                                                        setConnectionName(name || '');
-                                                    }}
-                                                    selectedId={connectionId}
-                                                    readOnly={!canManageConnections(user)}
-                                                />
+                                                <div className="bg-gray-50 border border-gray-200 rounded-lg p-5">
+                                                    <div className="flex items-center gap-2 mb-4">
+                                                        <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                                        </svg>
+                                                        <span className="text-sm font-medium text-gray-600">Currently Selected Data Source</span>
+                                                    </div>
+
+                                                    {dataSourceType === 'database' && connectionName && (
+                                                        <div className="flex items-center gap-3 mb-4">
+                                                            <div className="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center">
+                                                                <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                                                                </svg>
+                                                            </div>
+                                                            <div>
+                                                                <p className="text-base font-semibold text-gray-900">{connectionName}</p>
+                                                                <p className="text-sm text-gray-500">Database Connection</p>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    {dataSourceType === 'file' && fileUploadResult && (
+                                                        <div className="flex items-center gap-3 mb-4">
+                                                            <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+                                                                <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                                                </svg>
+                                                            </div>
+                                                            <div className="flex-1">
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${fileUploadResult.file_type === 'csv' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                                        {fileUploadResult.file_type.toUpperCase()}
+                                                                    </span>
+                                                                    <p className="text-base font-semibold text-gray-900">{fileUploadResult.file_name}</p>
+                                                                </div>
+                                                                <p className="text-sm text-gray-500">
+                                                                    {fileUploadResult.row_count ? (
+                                                                        <>{fileUploadResult.row_count.toLocaleString()} rows</>
+                                                                    ) : (
+                                                                        <>{fileUploadResult.total_documents?.toLocaleString() || 0} documents</>
+                                                                    )}
+                                                                    {fileUploadResult.columns && (
+                                                                        <span className="text-gray-400 ml-2">• {fileUploadResult.columns.length} columns</span>
+                                                                    )}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
+                                                    <button
+                                                        onClick={() => setIsSourceLocked(false)}
+                                                        className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                                                        </svg>
+                                                        Change Source
+                                                    </button>
+                                                </div>
                                             </>
-                                        )}
-
-                                        {/* File Upload Source */}
-                                        {dataSourceType === 'file' && (
+                                        ) : (
                                             <>
                                                 <p className="text-gray-500 text-sm mb-4">
-                                                    Upload a CSV or Excel file to extract and select columns from.
+                                                    Choose how you want to provide data to this agent.
                                                 </p>
-                                                <FileUploadSource
-                                                    onExtractionComplete={handleFileExtractionComplete}
-                                                    disabled={!canEdit}
-                                                />
+
+                                                {/* Data Source Toggle */}
+                                                <div className="flex rounded-lg border border-gray-200 overflow-hidden mb-6">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { setDataSourceType('database'); setFileUploadResult(null); }}
+                                                        className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                                                            ${dataSourceType === 'database'
+                                                                ? 'bg-blue-600 text-white'
+                                                                : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                            }`}
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                                                        </svg>
+                                                        Database
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { setDataSourceType('file'); setConnectionId(null); }}
+                                                        className={`flex-1 px-4 py-3 text-sm font-medium transition-colors flex items-center justify-center gap-2
+                                                            ${dataSourceType === 'file'
+                                                                ? 'bg-blue-600 text-white'
+                                                                : 'bg-white text-gray-600 hover:bg-gray-50'
+                                                            }`}
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                                        </svg>
+                                                        File Upload
+                                                    </button>
+                                                </div>
+
+                                                {/* Database Source */}
+                                                {dataSourceType === 'database' && (
+                                                    <>
+                                                        <p className="text-gray-500 text-sm mb-4">
+                                                            Choose the database you want to generate insights from.
+                                                        </p>
+                                                        <ConnectionManager
+                                                            onSelect={(id, name) => {
+                                                                setConnectionId(id);
+                                                                setConnectionName(name || '');
+                                                            }}
+                                                            selectedId={connectionId}
+                                                            readOnly={!canManageConnections(user)}
+                                                        />
+                                                    </>
+                                                )}
+
+                                                {/* File Upload Source */}
+                                                {dataSourceType === 'file' && (
+                                                    <>
+                                                        <p className="text-gray-500 text-sm mb-4">
+                                                            Upload a CSV or Excel file to extract and select columns from.
+                                                        </p>
+                                                        <FileUploadSource
+                                                            onExtractionComplete={handleFileExtractionComplete}
+                                                            disabled={!canEdit}
+                                                            initialResult={fileUploadResult}
+                                                        />
+                                                    </>
+                                                )}
                                             </>
                                         )}
                                     </div>
