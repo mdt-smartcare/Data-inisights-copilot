@@ -242,8 +242,10 @@ def _process_large_file_background(
             # Get row count and columns using DuckDB (efficient)
             conn = duckdb.connect(":memory:")
             info = conn.execute(f"SELECT COUNT(*) FROM read_csv_auto('{csv_path}')").fetchone()
+            logger.info(f"CSV Ingestion Info: {info}")
             row_count = info[0]
             cols = conn.execute(f"DESCRIBE SELECT * FROM read_csv_auto('{csv_path}')").fetchall()
+            logger.info(f"CSV Ingestion Columns: {cols}")
             columns = [normalize_column_name(c[0], i) for i, c in enumerate(cols)]
             conn.close()
         else:
@@ -438,6 +440,7 @@ async def upload_and_extract(
                     
                     # Get actual metadata
                     db_path = _get_user_duckdb_path(current_user.id)
+                    logger.info(f"Connecting to DuckDB at {db_path} to fetch metadata for {table_name} with user id {current_user.id}")
                     conn = duckdb.connect(str(db_path), read_only=True)
                     meta = conn.execute(
                         "SELECT columns, row_count FROM _file_metadata WHERE table_name = ?",
