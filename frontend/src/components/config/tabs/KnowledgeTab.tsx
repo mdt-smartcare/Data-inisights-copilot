@@ -191,7 +191,19 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                 </div>
 
                                 {/* Enhanced Metadata Fields */}
-                                <div className="col-span-1 sm:col-span-2 md:col-span-3 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-2">
+                                <div className="col-span-1 sm:col-span-2 md:col-span-3 grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mt-2">
+                                    <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                        <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Vector Database</p>
+                                        <p className="text-xs sm:text-sm font-medium text-gray-800 capitalize flex items-center gap-1.5">
+                                            {vectorDbStatus.vector_db_type === 'qdrant' && (
+                                                <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                                            )}
+                                            {vectorDbStatus.vector_db_type === 'chroma' && (
+                                                <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                                            )}
+                                            {vectorDbStatus.vector_db_type || 'N/A'}
+                                        </p>
+                                    </div>
                                     <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Embedding Model</p>
                                         <p className="text-xs sm:text-sm font-medium text-gray-800 truncate" title={vectorDbStatus.embedding_model || 'N/A'}>
