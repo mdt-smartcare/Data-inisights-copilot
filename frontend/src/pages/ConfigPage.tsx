@@ -76,6 +76,7 @@ const ConfigPage: React.FC = () => {
         last_incremental_run: string | null;
         version: string;
         diagnostics: Array<{ level: string; message: string }>;
+        vector_db_type?: 'qdrant' | 'chroma' | string;
     } | null>(null);
 
     // Data source type derived from selected data source
@@ -774,7 +775,13 @@ const ConfigPage: React.FC = () => {
                                                         activePromptVersion={activeConfig.version}
                                                         totalPromptVersions={history.length}
                                                         lastUpdatedBy={activeConfig.created_by_username}
-                                                        settings={advancedSettings}
+                                                        settings={{
+                                                        ...advancedSettings,
+                                                        embedding: {
+                                                            ...advancedSettings.embedding,
+                                                            vectorDbType: vectorDbStatus?.vector_db_type || 'qdrant'
+                                                        }
+                                                    }}
                                                     />
 
                                                     {/* Quick Stats Grid */}
@@ -1465,7 +1472,13 @@ const ConfigPage: React.FC = () => {
                                 {currentStep === 4 && (
                                     <div className="h-full flex flex-col">
                                         <AdvancedSettings
-                                            settings={advancedSettings}
+                                            settings={{
+                                            ...advancedSettings,
+                                            embedding: {
+                                                ...advancedSettings.embedding,
+                                                vectorDbType: vectorDbStatus?.vector_db_type || 'qdrant'
+                                            }
+                                        }}
                                             onChange={setAdvancedSettings}
                                             readOnly={!canEdit}
                                             dataSourceName={selectedDataSource?.title || 'default'}
