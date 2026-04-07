@@ -91,6 +91,7 @@ export interface VectorDbStatus {
     last_incremental_run: string | null;
     version: string;
     diagnostics: Array<{ level: string; message: string }>;
+    vector_db_type?: 'qdrant' | 'chroma' | string;
 }
 
 interface AgentContextType {

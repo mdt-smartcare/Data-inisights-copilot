@@ -453,6 +453,7 @@ interface VectorDbStatusResult {
   embedding_status?: string | null;
   last_job_id?: string | null;
   last_job_status?: string | null;
+  vector_db_type?: 'qdrant' | 'chroma' | string;
 }
 
 /**
