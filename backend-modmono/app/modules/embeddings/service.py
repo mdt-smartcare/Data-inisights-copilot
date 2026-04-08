@@ -917,7 +917,7 @@ async def _extract_documents_from_postgres(
     Args:
         db_url: PostgreSQL connection URL
         selected_columns: Dict mapping table names to list of columns
-        batch_size: Rows per batch
+        batch_size: Rows per fetch batch (streaming cursor)
     
     Returns:
         tuple: (total_count, list of document dicts with 'id', 'content', 'metadata')
@@ -1039,7 +1039,7 @@ async def _extract_documents_from_duckdb(
     duckdb_path: str,
     table_name: str,
     columns: List[str],
-    batch_size: int = 1000,
+    batch_size: int = 50000,  # PERFORMANCE: Large batches for streaming
     job_id: str = None,
 ) -> tuple[int, List[Dict[str, Any]]]:
     """
@@ -1049,7 +1049,7 @@ async def _extract_documents_from_duckdb(
         duckdb_path: Path to DuckDB file
         table_name: Table to extract from  
         columns: Columns to include
-        batch_size: Rows per batch
+        batch_size: Rows per fetch batch (streaming cursor)
         job_id: Optional job ID for progress updates to frontend
     
     Returns:
@@ -1085,33 +1085,40 @@ async def _extract_documents_from_duckdb(
         
         logger.info(f"Using ID column: {id_column or 'ROW_NUMBER()'}")
         
-        # Extract documents
-        documents = []
-        offset = 0
+        # PERFORMANCE: Use streaming cursor instead of LIMIT/OFFSET
+        # This avoids O(n^2) scanning that happens with OFFSET pagination
+        if id_column:
+            query = f'SELECT "{id_column}", {columns_sql} FROM "{table_name}"'
+        else:
+            query = f'SELECT ROW_NUMBER() OVER () as _row_num, {columns_sql} FROM "{table_name}"'
+        
+        logger.info(f"Starting FAST streaming extraction (no OFFSET pagination)")
         extraction_start = time.time()
         
-        while offset < total_count:
-            if id_column:
-                query = f"SELECT \"{id_column}\", {columns_sql} FROM \"{table_name}\" LIMIT {batch_size} OFFSET {offset}"
-            else:
-                # DuckDB doesn't have rowid - use ROW_NUMBER() instead
-                query = f"SELECT ROW_NUMBER() OVER () as _row_num, {columns_sql} FROM \"{table_name}\" LIMIT {batch_size} OFFSET {offset}"
-            
-            rows = conn.execute(query).fetchall()
+        # Execute query and use streaming fetchmany() - MUCH faster than OFFSET!
+        result = conn.execute(query)
+        
+        documents = []
+        rows_processed = 0
+        last_progress_update = 0
+        
+        while True:
+            # Fetch batch using streaming cursor (no OFFSET scanning!)
+            rows = result.fetchmany(batch_size)
+            if not rows:
+                break
             
             for row in rows:
                 row_id = str(row[0])
-                # Combine all text columns into one document
                 text_parts = []
                 metadata = {"table": table_name, "row_id": row_id}
                 
                 for i, col in enumerate(columns):
-                    value = row[i + 1]  # +1 because first column is ID
+                    value = row[i + 1]
                     if value is not None:
                         value_str = str(value).strip()
                         if value_str and value_str.lower() not in ('none', 'null', 'nan', ''):
                             text_parts.append(f"{col}: {value_str}")
-                            # Only store first 5 columns in metadata to save memory
                             if i < 5:
                                 metadata[col] = value_str[:100]
                 
@@ -1122,13 +1129,14 @@ async def _extract_documents_from_duckdb(
                         "metadata": metadata
                     })
             
-            offset += batch_size
+            rows_processed += len(rows)
             
-            # Log and update progress every 50K rows
-            if offset % 50000 == 0 or offset >= total_count:
+            # Log and update progress every 100K rows
+            if rows_processed - last_progress_update >= 100000 or rows_processed >= total_count:
+                last_progress_update = rows_processed
                 elapsed = time.time() - extraction_start
-                rate = offset / elapsed if elapsed > 0 else 0
-                progress_pct = offset * 100 / total_count
+                rate = rows_processed / elapsed if elapsed > 0 else 0
+                progress_pct = rows_processed * 100 / total_count
                 logger.info(f"Extraction progress: {offset}/{total_count} rows ({progress_pct:.1f}%), {len(documents)} docs, {rate:.0f} rows/sec")
                 
                 # Update job progress in database for frontend visibility
