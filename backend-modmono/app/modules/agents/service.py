@@ -787,6 +787,9 @@ class AgentConfigService:
         data = _config_to_dict(config)
         # Convert is_active int to bool
         data["is_active"] = bool(data.get("is_active", 0))
+        # Add data_source_type from related data_source if available
+        if hasattr(config, 'data_source') and config.data_source:
+            data["data_source_type"] = config.data_source.source_type
         return AgentConfigResponse(**data)
     
     async def _to_response_with_models(self, config) -> AgentConfigResponse:
@@ -796,6 +799,12 @@ class AgentConfigService:
         from .schemas import ModelInfo
         
         response = self._to_response(config)
+        
+        # If data_source_type not set, fetch from data source
+        if not response.data_source_type and config.data_source_id:
+            source = await self.sources.get_by_id(config.data_source_id)
+            if source:
+                response.data_source_type = source.source_type
         
         # Fetch model info for each model ID
         model_ids = [
