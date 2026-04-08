@@ -8,6 +8,7 @@ from typing import List, Optional
 
 from app.core.utils.logging import get_logger
 from app.core.config import get_settings
+from app.core.prompts import get_followup_generator_prompt
 
 logger = get_logger(__name__)
 
@@ -47,18 +48,7 @@ class FollowupService:
             from langchain_core.prompts import ChatPromptTemplate
             
             prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are a helpful assistant that suggests follow-up questions.
-
-Based on the user's question and the response they received, suggest {max_questions} 
-natural follow-up questions they might want to ask.
-
-Rules:
-1. Questions should be directly related to the topic
-2. Questions should be diverse (don't repeat the same idea)
-3. Questions should be concise (under 100 characters)
-4. Questions should be complete sentences ending with ?
-
-Respond with ONLY the questions, one per line, no numbering or bullets."""),
+                ("system", get_followup_generator_prompt()),
                 ("user", """Original question: {question}
 
 Response received: {response}

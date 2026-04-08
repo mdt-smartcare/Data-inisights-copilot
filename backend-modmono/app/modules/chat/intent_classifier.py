@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.core.utils.logging import get_logger
 from app.core.config import get_settings
+from app.core.prompts import get_intent_router_prompt
 
 logger = get_logger(__name__)
 
@@ -182,29 +183,8 @@ class IntentClassifier:
         """
         from langchain_core.prompts import ChatPromptTemplate
         
-        system_prompt = """You are an Intent Router for a clinical database query system.
-
-The database has:
-- Structured data: patient demographics (age, gender, region), dates, IDs, numeric values
-- Unstructured data: clinical notes, doctor summaries, patient histories
-
-Classify queries into ONE of these intents:
-
-A (SQL_ONLY): For counting, aggregating, filtering structured data
-   Examples: "How many patients are over 60?", "Average age by gender", "Total cases this month"
-
-B (VECTOR_ONLY): For semantic search in clinical notes/documents  
-   Examples: "Find patients with chest pain symptoms", "What treatments were discussed?"
-
-C (HYBRID): For queries needing SQL filter THEN vector search
-   Examples: "Male patients over 50 with diabetes symptoms in their notes"
-   For this, also provide sql_filter: a SQL query returning IDs to filter the vector search
-
-Respond with:
-- intent: "A", "B", or "C"
-- sql_filter: Only for intent C, SQL to get IDs (e.g., "SELECT patient_id FROM patients WHERE age > 50")
-- confidence_score: 0.0 to 1.0
-- reason: Brief explanation"""
+        # Load prompt from external template file
+        system_prompt = get_intent_router_prompt()
 
         prompt = ChatPromptTemplate.from_messages([
             ("system", system_prompt),

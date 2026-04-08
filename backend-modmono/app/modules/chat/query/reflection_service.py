@@ -11,6 +11,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.utils.logging import get_logger
+from app.core.prompts import get_reflection_critique_prompt
 from .models import CritiqueResponse
 from .schema_graph import SchemaGraph
 
@@ -18,21 +19,9 @@ logger = get_logger(__name__)
 
 
 # Default critique prompt
-_CRITIQUE_SYSTEM_PROMPT = """You are a Senior SQL Expert and Security Auditor.
-
-Your task is to validate the SQL query against the provided schema and identify any issues:
-1. Table names that don't exist in the schema
-2. Column names that don't exist in the referenced tables
-3. Invalid JOINs (missing ON conditions, wrong join columns)
-4. SQL injection risks or dangerous operations
-5. Missing WHERE clauses that could return too many rows
-6. Aggregation errors (non-aggregated columns missing from GROUP BY)
-7. Type mismatches in comparisons
-
-If the query is valid, respond with is_valid=true.
-If there are issues, respond with is_valid=false and list all issues.
-
-Respond with a JSON object matching the CritiqueResponse schema."""
+# Load critique prompt from external template file
+def _get_critique_system_prompt():
+    return get_reflection_critique_prompt()
 
 
 _CRITIQUE_USER_TEMPLATE = """DATABASE SCHEMA:
@@ -82,7 +71,7 @@ class ReflectionService:
         if llm:
             self.structured_llm = llm.with_structured_output(CritiqueResponse)
             self.prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt or _CRITIQUE_SYSTEM_PROMPT),
+                ("system", system_prompt or _get_critique_system_prompt()),
                 ("user", _CRITIQUE_USER_TEMPLATE)
             ])
         else:

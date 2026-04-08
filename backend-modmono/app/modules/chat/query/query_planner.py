@@ -16,6 +16,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
 from app.core.utils.logging import get_logger
+from app.core.prompts import get_query_planner_prompt
 from .models import (
     QueryPlan, Metric, Filter, OrderSpec, TimeRange,
     JoinSpec, SchemaLinkResult
@@ -25,21 +26,9 @@ from .schema_graph import SchemaGraph
 logger = get_logger(__name__)
 
 
-# Default system prompt for query planning
-_PLAN_SYSTEM_TEMPLATE = """You are a SQL Query Planner. Your job is to decompose a natural language question into a structured query plan.
-
-Given a question and database schema, extract:
-1. **entities**: List of tables needed to answer the question
-2. **select_columns**: Non-aggregated columns to SELECT
-3. **metrics**: Aggregations (COUNT, SUM, AVG, etc.) with column and function
-4. **filters**: WHERE conditions with column, operator, and value
-5. **grouping**: GROUP BY columns
-6. **ordering**: ORDER BY specifications
-7. **limit**: Optional LIMIT value
-8. **time_range**: Date/timestamp filtering if mentioned
-9. **reasoning**: Brief explanation of the approach
-
-Output a JSON object matching the QueryPlan schema."""
+# Load system prompt from external template file
+def _get_plan_system_template():
+    return get_query_planner_prompt()
 
 
 _PLAN_USER_TEMPLATE = """DATABASE SCHEMA:
@@ -88,7 +77,7 @@ class QueryPlanner:
         self.structured_llm = llm.with_structured_output(QueryPlan)
         
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt or _PLAN_SYSTEM_TEMPLATE),
+            ("system", system_prompt or _get_plan_system_template()),
             ("user", _PLAN_USER_TEMPLATE)
         ])
     

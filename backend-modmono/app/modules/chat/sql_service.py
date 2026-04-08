@@ -13,6 +13,7 @@ from sqlalchemy.engine import Engine
 
 from app.core.utils.logging import get_logger
 from app.core.config import get_settings
+from app.core.prompts import get_sql_generator_prompt
 from app.core.encryption import decrypt_value
 
 logger = get_logger(__name__)
@@ -227,17 +228,7 @@ class SQLService:
         
         # Generate SQL using LLM
         prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a SQL expert. Generate a PostgreSQL query for the user's question.
-            
-Database Schema:
-{schema}
-
-Rules:
-1. Return ONLY the SQL query, no explanations
-2. Use appropriate aggregations (COUNT, SUM, AVG) for analytics questions
-3. Always include a LIMIT clause (max 100)
-4. Use lowercase for SQL keywords for consistency
-5. If you can't answer with available tables, return: SELECT 'Insufficient data' as error"""),
+            ("system", get_sql_generator_prompt() + "\n\nDatabase Schema:\n{schema}"),
             ("user", "{question}")
         ])
         
