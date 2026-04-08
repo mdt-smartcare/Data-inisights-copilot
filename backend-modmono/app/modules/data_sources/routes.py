@@ -357,13 +357,17 @@ async def upload_file(
                 
                 message = f"Large file ({file_size / (1024*1024):.1f} MB). Processing in background. {len(columns)} columns detected."
                 
-                # Create data source record
+                # Create data source record with duckdb_file_path
                 import json
+                from app.modules.data_sources.utils import get_user_duckdb_path
+                duckdb_path = str(get_user_duckdb_path(str(current_user.id)))
+                
                 ds = await service.create_file_source(
                     title=title or file.filename,
                     original_file_path=str(permanent_source),
                     file_type=file_type,
                     description=description,
+                    duckdb_file_path=duckdb_path,
                     duckdb_table_name=table_name,
                     columns_json=json.dumps(columns) if columns else None,
                     row_count=row_count,
