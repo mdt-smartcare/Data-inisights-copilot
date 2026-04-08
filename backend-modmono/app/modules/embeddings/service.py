@@ -1137,7 +1137,7 @@ async def _extract_documents_from_duckdb(
                 elapsed = time.time() - extraction_start
                 rate = rows_processed / elapsed if elapsed > 0 else 0
                 progress_pct = rows_processed * 100 / total_count
-                logger.info(f"Extraction progress: {offset}/{total_count} rows ({progress_pct:.1f}%), {len(documents)} docs, {rate:.0f} rows/sec")
+                logger.info(f"Extraction progress: {rows_processed}/{total_count} rows ({progress_pct:.1f}%), {len(documents)} docs, {rate:.0f} rows/sec")
                 
                 # Update job progress in database for frontend visibility
                 if job_id:
@@ -1145,7 +1145,7 @@ async def _extract_documents_from_duckdb(
                         await _update_job_status(
                             job_id, 
                             EmbeddingJobStatus.PREPARING, 
-                            phase=f"Extracting data: {offset:,}/{total_count:,} rows ({progress_pct:.1f}%)"
+                            phase=f"Extracting data: {rows_processed:,}/{total_count:,} rows ({progress_pct:.1f}%)"
                         )
                     except Exception as e:
                         logger.warning(f"Failed to update extraction progress: {e}")
