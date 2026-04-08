@@ -1067,7 +1067,7 @@ async def _extract_documents_from_duckdb(
         
         # Also get a row identifier if available
         # Try common ID column names
-        id_columns = ['id', 'ID', 'row_id', 'index', 'reviewid', 'record_id', 'patient_id']
+        id_columns = ['id', 'ID', 'row_id', 'index', 'reviewid', 'record_id', 'patient_id', 'res_id', 'encounter_id']
         id_column = None
         table_columns = [col[0] for col in conn.execute(f"DESCRIBE \"{table_name}\"").fetchall()]
         for ic in id_columns:
@@ -1075,9 +1075,12 @@ async def _extract_documents_from_duckdb(
                 id_column = ic
                 break
         
+        logger.info(f"Using ID column: {id_column or 'ROW_NUMBER()'}")
+        
         # Extract documents
         documents = []
         offset = 0
+        extraction_start = time.time()
         
         while offset < total_count:
             if id_column:
@@ -1100,7 +1103,9 @@ async def _extract_documents_from_duckdb(
                         value_str = str(value).strip()
                         if value_str and value_str.lower() not in ('none', 'null', 'nan', ''):
                             text_parts.append(f"{col}: {value_str}")
-                            metadata[col] = value_str[:200]  # Truncate metadata
+                            # Only store first 5 columns in metadata to save memory
+                            if i < 5:
+                                metadata[col] = value_str[:100]
                 
                 if text_parts:
                     documents.append({
@@ -1110,12 +1115,20 @@ async def _extract_documents_from_duckdb(
                     })
             
             offset += batch_size
+            
+            # Log progress every 50K rows
+            if offset % 50000 == 0 or offset >= total_count:
+                elapsed = time.time() - extraction_start
+                rate = offset / elapsed if elapsed > 0 else 0
+                logger.info(f"Extraction progress: {offset}/{total_count} rows ({offset*100/total_count:.1f}%), {len(documents)} docs, {rate:.0f} rows/sec")
+        
+        extraction_time = time.time() - extraction_start
+        logger.info(f"Extraction complete: {len(documents)} documents from {total_count} rows in {extraction_time:.1f}s")
         
         return total_count, documents
     
     finally:
         conn.close()
-
 
 async def _run_embedding_job(job_config: Dict[str, Any]):
     """
