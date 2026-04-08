@@ -1,9 +1,10 @@
 """
 Business logic for data source management.
 """
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.data_sources.repository import DataSourceRepository
@@ -87,9 +88,38 @@ class DataSourceService:
             return DataSourceResponse.model_validate(source)
         return None
     
-    async def delete_source(self, source_id: UUID) -> bool:
-        """Delete a data source."""
-        return await self.repo.delete(source_id)
+    async def delete_source(self, source_id: UUID) -> Dict[str, Any]:
+        """
+        Delete a data source.
+        
+        Returns:
+            Dict with 'success' bool and optional 'error' message.
+            If agent configs reference this source, returns list of dependent agents.
+        """
+        from app.modules.agents.models import AgentConfigModel, AgentModel
+        
+        # Check if any agent configs reference this data source
+        query = (
+            select(AgentConfigModel, AgentModel.title)
+            .join(AgentModel, AgentConfigModel.agent_id == AgentModel.id)
+            .where(AgentConfigModel.data_source_id == source_id)
+        )
+        result = await self.db.execute(query)
+        dependent_configs = result.all()
+        
+        if dependent_configs:
+            # Build list of dependent agents for error message
+            agent_names = list(set(row[1] for row in dependent_configs))
+            return {
+                "success": False,
+                "error": f"Cannot delete data source: it is used by {len(dependent_configs)} agent configuration(s)",
+                "dependent_agents": agent_names,
+                "dependent_config_count": len(dependent_configs),
+            }
+        
+        # Safe to delete
+        deleted = await self.repo.delete(source_id)
+        return {"success": deleted}
     
     async def list_sources(
         self,
@@ -246,7 +276,7 @@ class DataSourceService:
                 raise ValueError(f"Failed to fetch database schema: {str(e)}")
         
         elif source_type == "file":
-            # For file sources, parse columns from columns_json or duckdb
+            # For file sources, parse columns from columns_json, duckdb, or original file
             table_name = source.duckdb_table_name or source.title or "data"
             columns = []
             
@@ -281,7 +311,28 @@ class DataSourceService:
                         })
                     conn.close()
                 except Exception:
-                    pass  # Fall back to empty columns
+                    pass  # Fall back to original file
+            
+            # Fallback: Extract columns directly from original file
+            if not columns and source.original_file_path:
+                try:
+                    from app.modules.data_sources.utils import extract_file_columns_fast
+                    col_names, col_details = extract_file_columns_fast(
+                        source.original_file_path, 
+                        source.file_type or "csv"
+                    )
+                    for i, col_name in enumerate(col_names):
+                        col_type = col_details[i].get("type", "VARCHAR") if i < len(col_details) else "VARCHAR"
+                        columns.append({
+                            "column_name": col_name,
+                            "data_type": col_type,
+                            "is_nullable": True,
+                            "is_primary_key": False,
+                            "foreign_key": None,
+                        })
+                except Exception as e:
+                    import logging
+                    logging.warning(f"Failed to extract columns from original file: {e}")
             
             tables_info.append({
                 "table_name": table_name,

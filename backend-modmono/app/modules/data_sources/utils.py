@@ -509,3 +509,90 @@ def delete_all_user_tables(user_id: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to delete user data: {e}")
         return False
+
+
+# ==========================================
+# Fast Column Extraction (for large files)
+# ==========================================
+
+def extract_file_columns_fast(file_path: str, file_type: str) -> tuple:
+    """
+    Quickly extract column names and types from a file without loading full data.
+    
+    For CSV: Uses DuckDB's read_csv_auto with sample_size to infer types fast.
+    For Excel: Uses openpyxl read-only mode to read only the header row.
+    
+    Args:
+        file_path: Path to the file
+        file_type: File type ('csv' or 'xlsx')
+        
+    Returns:
+        Tuple of (column_names: List[str], column_details: List[Dict[str, str]])
+        where column_details contains dicts with 'name' and 'type' keys.
+    """
+    if file_type == 'csv':
+        return _extract_csv_columns_fast(file_path)
+    elif file_type == 'xlsx':
+        return _extract_excel_columns_fast(file_path)
+    else:
+        return [], []
+
+
+def _extract_csv_columns_fast(file_path: str) -> tuple:
+    """Extract columns from CSV using DuckDB sample (very fast for large files)."""
+    try:
+        conn = duckdb.connect(":memory:")
+        csv_path_escaped = str(file_path).replace("'", "''")
+        
+        # DESCRIBE with sample_size only reads a small portion - fast even for huge files
+        result = conn.execute(
+            f"DESCRIBE SELECT * FROM read_csv_auto('{csv_path_escaped}', header=true, sample_size=1000)"
+        ).fetchall()
+        conn.close()
+        
+        columns = []
+        column_details = []
+        
+        for i, row in enumerate(result):
+            original_name = row[0]
+            normalized_name = normalize_column_name(original_name, i)
+            col_type = str(row[1]).upper() if row[1] else 'VARCHAR'
+            
+            columns.append(normalized_name)
+            column_details.append({"name": normalized_name, "type": col_type})
+        
+        logger.info(f"Fast-extracted {len(columns)} columns from CSV: {file_path}")
+        return columns, column_details
+        
+    except Exception as e:
+        logger.error(f"Failed to extract CSV columns: {e}")
+        return [], []
+
+
+def _extract_excel_columns_fast(file_path: str) -> tuple:
+    """Extract columns from Excel by reading only the header row."""
+    try:
+        from openpyxl import load_workbook
+        
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        ws = wb.active
+        
+        columns = []
+        column_details = []
+        
+        for row in ws.iter_rows(min_row=1, max_row=1, values_only=True):
+            for i, cell in enumerate(row):
+                original_name = str(cell) if cell else f"col_{i}"
+                normalized_name = normalize_column_name(original_name, i)
+                
+                columns.append(normalized_name)
+                column_details.append({"name": normalized_name, "type": "VARCHAR"})
+            break
+        
+        wb.close()
+        logger.info(f"Fast-extracted {len(columns)} columns from Excel: {file_path}")
+        return columns, column_details
+        
+    except Exception as e:
+        logger.error(f"Failed to extract Excel columns: {e}")
+        return [], []
