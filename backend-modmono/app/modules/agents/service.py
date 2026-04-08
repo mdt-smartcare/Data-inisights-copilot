@@ -860,6 +860,7 @@ class AgentConfigService:
         import os
         from langchain.schema import HumanMessage, SystemMessage
         from app.core.llm import create_llm_provider
+        from app.core.prompts import get_chart_generator_prompt
         
         config = await self.configs.get_by_id(version_id)
         if not config:
@@ -893,6 +894,10 @@ class AgentConfigService:
         
         # Escape curly braces
         safe_context = data_context.replace("{", "{{").replace("}", "}}")
+        
+        # Get chart generation rules from external template
+        # Note: We don't escape braces here since chart_rules goes into the LLM prompt as literal text
+        chart_rules = get_chart_generator_prompt()
         
         # Get LLM configuration from ai_models table using llm_model_id
         from ..ai_models.models import AIModel
@@ -967,12 +972,21 @@ class AgentConfigService:
 SCHEMA CONTEXT:
 {safe_context}
 
+CHART VISUALIZATION RULES (MUST BE INCLUDED IN THE GENERATED PROMPT):
+{chart_rules}
+
 REQUIREMENTS:
 1. Create a clear CORE IDENTITY section defining the agent's role
 2. Include the DATA DICTIONARY with all field definitions
 3. Add OPERATIONAL RULES for query handling
 4. Define RESPONSE FORMAT guidelines
 5. Include a Zero-Hallucination Mandate
+6. **CRITICAL**: Include a CHART VISUALIZATION section with the chart generation rules. This is a KEY FEATURE - the agent MUST know how to generate chart JSON for data visualization.
+
+The generated prompt MUST include:
+- Instructions for generating chart_json when query results contain quantitative or categorical data
+- Chart type selection guidelines (bar, line, pie, scorecard, gauge, treemap, funnel, bullet, horizontal_bar, radar)
+- The JSON format specification for chart generation
 
 Return ONLY the system prompt text.
 
