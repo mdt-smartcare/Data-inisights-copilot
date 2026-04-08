@@ -1181,7 +1181,15 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
     chunking_config = job_config.get("chunking_config") or {}
     data_dictionary = job_config.get("data_dictionary") or {}
     selected_columns_raw = job_config.get("selected_columns") or {}
-    batch_size = job_config.get("batch_size") or 500  # PERFORMANCE: Larger batches for better GPU utilization
+    # PERFORMANCE: Enforce minimum batch size for GPU efficiency
+    config_batch_size = job_config.get("batch_size") or 500
+    # For HuggingFace local models, small batches (e.g., 100) waste GPU - need 500+ for good throughput
+    MIN_BATCH_SIZE = 500
+    if config_batch_size < MIN_BATCH_SIZE:
+        logger.warning(f"Batch size {config_batch_size} too small for efficient GPU use. Using {MIN_BATCH_SIZE}.")
+        batch_size = MIN_BATCH_SIZE
+    else:
+        batch_size = config_batch_size  # PERFORMANCE: Larger batches for better GPU utilization
     incremental = job_config.get("incremental", False)
     data_source_id = job_config.get("data_source_id")
     
