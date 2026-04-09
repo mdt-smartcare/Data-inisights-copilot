@@ -7,6 +7,7 @@ Logs to both console (stdout) and file (logs/backend.log).
 import sys
 import logging
 import os
+import re
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from typing import Optional
@@ -20,6 +21,44 @@ sys.stdout.reconfigure(line_buffering=True)
 # Default log file path
 DEFAULT_LOG_DIR = Path(__file__).parent.parent.parent.parent / "logs"
 DEFAULT_LOG_FILE = "backend.log"
+
+
+# =============================================================================
+# Sensitive Data Filter for Access Logs
+# =============================================================================
+
+class SensitiveDataFilter(logging.Filter):
+    """
+    Filter to sanitize sensitive data from log messages.
+    
+    Removes or masks sensitive query parameters (e.g., JWT tokens)
+    from Uvicorn access logs to prevent credential leakage.
+    """
+    
+    # Pattern to match sensitive query parameters
+    SENSITIVE_PARAMS_PATTERN = re.compile(
+        r'(\?|&)(token|api_key|apikey|secret|password|auth)=[^&\s\]"]+',
+        re.IGNORECASE
+    )
+    
+    def filter(self, record: logging.LogRecord) -> bool:
+        """
+        Filter and sanitize the log record message.
+        
+        Returns True to allow the record through (after sanitization).
+        """
+        if record.msg and isinstance(record.msg, str):
+            record.msg = self.SENSITIVE_PARAMS_PATTERN.sub(r'\1\2=[REDACTED]', record.msg)
+        
+        if record.args:
+            sanitized_args = []
+            for arg in record.args:
+                if isinstance(arg, str):
+                    arg = self.SENSITIVE_PARAMS_PATTERN.sub(r'\1\2=[REDACTED]', arg)
+                sanitized_args.append(arg)
+            record.args = tuple(sanitized_args)
+        
+        return True
 
 
 def configure_logging(
@@ -57,10 +96,14 @@ def configure_logging(
     # Clear existing handlers
     root_logger.handlers.clear()
     
+    # Create sensitive data filter
+    sensitive_filter = SensitiveDataFilter()
+    
     # Console handler (stdout)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(getattr(logging, log_level.upper()))
     console_handler.setFormatter(logging.Formatter("%(message)s"))
+    console_handler.addFilter(sensitive_filter)
     root_logger.addHandler(console_handler)
     
     # File handler with rotation
@@ -73,6 +116,7 @@ def configure_logging(
         )
         file_handler.setLevel(getattr(logging, log_level.upper()))
         file_handler.setFormatter(logging.Formatter("%(message)s"))
+        file_handler.addFilter(sensitive_filter)
         root_logger.addHandler(file_handler)
         print(f"Logging to file: {log_path}")
     except Exception as e:
@@ -87,6 +131,10 @@ def configure_logging(
     # Suppress SQLAlchemy warnings
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+    
+    # Apply sensitive data filter to Uvicorn access logs
+    uvicorn_access_logger = logging.getLogger("uvicorn.access")
+    uvicorn_access_logger.addFilter(sensitive_filter)
     
     # Processors for structlog
     shared_processors: list[Processor] = [
