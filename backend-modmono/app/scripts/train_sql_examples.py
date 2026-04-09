@@ -35,7 +35,7 @@ from app.modules.sql_examples.store import get_sql_examples_store, reset_sql_exa
 logger = get_logger(__name__)
 
 # Default paths
-DEFAULT_TRAINING_FILE = Path(__file__).parent.parent / "core" / "config" / "sql_training_examples.json"
+DEFAULT_TRAINING_FILE = Path(__file__).parent.parent / "config" / "sql_training_examples.json"
 
 
 # ============================================
