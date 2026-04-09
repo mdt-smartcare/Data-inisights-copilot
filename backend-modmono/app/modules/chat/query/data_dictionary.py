@@ -315,10 +315,32 @@ class DataDictionary:
 
 _data_dictionary: Optional[DataDictionary] = None
 
+# Default config path relative to this file
+_DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "core" / "config" / "data_dictionary.yaml"
+
 
 def get_data_dictionary(config_path: Optional[str] = None) -> DataDictionary:
-    """Get or create the global DataDictionary instance."""
+    """
+    Get or create the global DataDictionary instance.
+    
+    Args:
+        config_path: Optional path to data_dictionary.yaml. 
+                     If not provided, uses the default path at app/core/config/data_dictionary.yaml
+    
+    Returns:
+        DataDictionary singleton instance
+    """
     global _data_dictionary
     if _data_dictionary is None:
+        if config_path is None and _DEFAULT_CONFIG_PATH.exists():
+            config_path = str(_DEFAULT_CONFIG_PATH)
+            logger.info(f"Loading data dictionary from default path: {config_path}")
         _data_dictionary = DataDictionary(config_path)
     return _data_dictionary
+
+
+def reset_data_dictionary() -> None:
+    """Reset the data dictionary singleton (mainly for testing)."""
+    global _data_dictionary
+    _data_dictionary = None
+

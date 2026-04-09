@@ -31,6 +31,10 @@ from app.modules.chat.query.query_relevance_checker import (
     IRRELEVANT_PII,
     IRRELEVANT_CONTEXT,
 )
+from app.modules.chat.query.data_dictionary import (
+    get_data_dictionary,
+    DataDictionary,
+)
 
 logger = get_logger(__name__)
 
@@ -157,6 +161,15 @@ class SQLService:
             except Exception as e:
                 logger.warning(f"Failed to initialize SQL examples store: {e}")
                 self._sql_examples_store = None
+        
+        # Initialize data dictionary for semantic enrichment
+        self._data_dictionary: Optional[DataDictionary] = None
+        try:
+            self._data_dictionary = get_data_dictionary()
+            logger.info("Data dictionary initialized for semantic enrichment")
+        except Exception as e:
+            logger.warning(f"Failed to initialize data dictionary: {e}")
+            self._data_dictionary = None
     
     def _classify_query_type(self, question: str) -> str:
         """
@@ -249,6 +262,29 @@ class SQLService:
         except Exception as e:
             logger.error(f"Failed to retrieve few-shot examples: {e}")
             return []
+    
+    def _get_data_dictionary_context(self) -> str:
+        """
+        Get data dictionary context for prompt enrichment.
+        
+        Returns relevant business definitions, default filters, and metric templates
+        based on the available tables.
+        
+        Returns:
+            Formatted string with data dictionary context
+        """
+        if not self._data_dictionary:
+            return ""
+        
+        try:
+            tables = self._discover_tables()
+            context = self._data_dictionary.to_prompt_context(tables)
+            if context:
+                logger.debug(f"Added data dictionary context for {len(tables)} tables")
+            return context
+        except Exception as e:
+            logger.warning(f"Failed to get data dictionary context: {e}")
+            return ""
     
     def _format_few_shot_examples(self, examples: List[Dict[str, Any]]) -> str:
         """
@@ -553,15 +589,20 @@ class SQLService:
             few_shot_section = self._format_few_shot_examples(few_shot_examples)
             logger.info(f"Using {len(few_shot_examples)} few-shot examples for SQL generation")
         
-        # Build the enhanced prompt with DuckDB rules and few-shot examples
+        # Build the enhanced prompt with DuckDB rules, data dictionary, and few-shot examples
         base_prompt = get_sql_generator_prompt()
         
         # Add DuckDB-specific rules if using DuckDB
         db_rules = DUCKDB_SQL_RULES if self._is_duckdb() else ""
         
+        # Get data dictionary context for semantic enrichment
+        data_dict_context = self._get_data_dictionary_context()
+        
         system_prompt_parts = [base_prompt]
         if db_rules:
             system_prompt_parts.append(db_rules)
+        if data_dict_context:
+            system_prompt_parts.append(data_dict_context)
         if few_shot_section:
             system_prompt_parts.append(few_shot_section)
         system_prompt_parts.append("Database Schema:\n{schema}")

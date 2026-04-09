@@ -1,0 +1,680 @@
+# =============================================================================
+# Data Dictionary Configuration
+# =============================================================================
+# This file maps business terms, synonyms, and default filters to database
+# schema elements. It is loaded by the DataDictionary service and injected
+# into SQL generation prompts for schema-aware, semantically grounded queries.
+#
+# PRIVACY NOTE: This file uses GENERIC patterns only. No real column names,
+# data values, or identifying information should be included here.
+#
+# INSTRUCTIONS:
+# - Add your domain-specific definitions below
+# - Restart the backend or call DataDictionary.reload() to pick up changes
+# - Use lowercase keys for case-insensitive matching
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Business Definitions
+# Maps business terms to their schema-level meaning (table + condition)
+# Used to resolve ambiguous user questions to precise SQL conditions
+# -----------------------------------------------------------------------------
+business_definitions:
+  # ===== Record Status Definitions =====
+  active_record:
+    table: entity_table
+    condition: "is_active = true AND is_deleted = false"
+    description: "Records that are currently active and not soft-deleted"
+
+  deleted_record:
+    table: entity_table
+    condition: "is_deleted = true"
+    description: "Records that have been soft-deleted from the system"
+
+  inactive_record:
+    table: entity_table
+    condition: "is_active = false AND is_deleted = false"
+    description: "Records that are inactive but not deleted"
+
+  valid_record:
+    table: entity_table
+    condition: "is_active = true AND is_deleted = false AND is_valid = true"
+    description: "Records that are active, not deleted, and have passed validation"
+
+  # ===== Time-Based Definitions =====
+  recent_record:
+    table: entity_table
+    condition: "created_at >= CURRENT_DATE - INTERVAL '30 days'"
+    description: "Records created in the last 30 days"
+
+  historical_record:
+    table: entity_table
+    condition: "created_at < CURRENT_DATE - INTERVAL '365 days'"
+    description: "Records older than one year"
+
+  current_period:
+    table: measurement_table
+    condition: "measurement_date >= DATE_TRUNC('month', CURRENT_DATE)"
+    description: "Records from the current calendar month"
+
+  previous_period:
+    table: measurement_table
+    condition: "measurement_date >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND measurement_date < DATE_TRUNC('month', CURRENT_DATE)"
+    description: "Records from the previous calendar month"
+
+  last_7_days:
+    table: entity_table
+    condition: "created_at >= CURRENT_DATE - INTERVAL '7 days'"
+    description: "Records from the last 7 days"
+
+  last_90_days:
+    table: entity_table
+    condition: "created_at >= CURRENT_DATE - INTERVAL '90 days'"
+    description: "Records from the last 90 days"
+
+  year_to_date:
+    table: entity_table
+    condition: "created_at >= DATE_TRUNC('year', CURRENT_DATE)"
+    description: "Records from the start of the current year"
+
+  # ===== Measurement Threshold Definitions =====
+  normal_range:
+    table: measurement_table
+    condition: "value >= lower_threshold AND value <= upper_threshold"
+    description: "Measurements within normal/expected range"
+
+  elevated_value:
+    table: measurement_table
+    condition: "value > upper_threshold"
+    description: "Measurements above the upper threshold"
+
+  low_value:
+    table: measurement_table
+    condition: "value < lower_threshold"
+    description: "Measurements below the lower threshold"
+
+  critical_value:
+    table: measurement_table
+    condition: "value > critical_upper OR value < critical_lower"
+    description: "Measurements in critical range requiring attention"
+
+  within_target:
+    table: measurement_table
+    condition: "value >= target_min AND value <= target_max"
+    description: "Measurements within target goal range"
+
+  # ===== Status Category Definitions =====
+  pending_status:
+    table: entity_table
+    condition: "status IN ('pending', 'awaiting', 'queued', 'submitted')"
+    description: "Records in a pending or waiting state"
+
+  completed_status:
+    table: entity_table
+    condition: "status IN ('completed', 'done', 'finished', 'closed')"
+    description: "Records that have been completed"
+
+  in_progress_status:
+    table: entity_table
+    condition: "status IN ('in_progress', 'active', 'ongoing', 'processing')"
+    description: "Records currently being processed"
+
+  cancelled_status:
+    table: entity_table
+    condition: "status IN ('cancelled', 'canceled', 'voided', 'aborted')"
+    description: "Records that were cancelled"
+
+  # ===== Risk Level Definitions =====
+  high_risk:
+    table: entity_table
+    condition: "risk_level IN ('high', 'critical', 'severe', 'urgent')"
+    description: "Records classified as high risk"
+
+  moderate_risk:
+    table: entity_table
+    condition: "risk_level IN ('moderate', 'medium', 'elevated')"
+    description: "Records classified as moderate risk"
+
+  low_risk:
+    table: entity_table
+    condition: "risk_level IN ('low', 'minimal', 'normal')"
+    description: "Records classified as low risk"
+
+  # ===== Data Quality Definitions =====
+  complete_record:
+    table: entity_table
+    condition: "is_complete = true AND missing_fields = 0"
+    description: "Records with all required fields populated"
+
+  incomplete_record:
+    table: entity_table
+    condition: "is_complete = false OR missing_fields > 0"
+    description: "Records with missing required fields"
+
+  verified_record:
+    table: entity_table
+    condition: "is_verified = true AND verified_at IS NOT NULL"
+    description: "Records that have been verified"
+
+  duplicate_suspected:
+    table: entity_table
+    condition: "is_potential_duplicate = true"
+    description: "Records flagged as potential duplicates"
+
+
+# -----------------------------------------------------------------------------
+# Synonyms
+# Maps user-facing terms to canonical schema references
+# Format: canonical_term: [list_of_aliases]
+# -----------------------------------------------------------------------------
+synonyms:
+  # ===== Table Name Synonyms =====
+  entity_table:
+    - "entities"
+    - "records"
+    - "main_table"
+    - "primary_table"
+    - "master_table"
+    - "base_table"
+
+  measurement_table:
+    - "measurements"
+    - "readings"
+    - "values"
+    - "observations"
+    - "data_points"
+    - "metrics"
+
+  event_table:
+    - "events"
+    - "activities"
+    - "actions"
+    - "occurrences"
+    - "transactions"
+    - "logs"
+
+  reference_table:
+    - "references"
+    - "lookups"
+    - "codes"
+    - "categories"
+    - "types"
+    - "master_data"
+
+  location_table:
+    - "locations"
+    - "sites"
+    - "facilities"
+    - "places"
+    - "venues"
+    - "centers"
+
+  user_table:
+    - "users"
+    - "accounts"
+    - "members"
+    - "participants"
+    - "individuals"
+    - "persons"
+
+  # ===== Column Name Synonyms =====
+  created_at:
+    - "create_date"
+    - "creation_date"
+    - "date_created"
+    - "inserted_at"
+    - "added_at"
+    - "registration_date"
+
+  updated_at:
+    - "update_date"
+    - "modified_at"
+    - "last_modified"
+    - "last_updated"
+    - "changed_at"
+    - "modification_date"
+
+  measurement_date:
+    - "date"
+    - "recorded_at"
+    - "timestamp"
+    - "observation_date"
+    - "reading_date"
+    - "taken_at"
+
+  is_active:
+    - "active"
+    - "is_enabled"
+    - "enabled"
+    - "active_flag"
+    - "status_active"
+
+  is_deleted:
+    - "deleted"
+    - "is_removed"
+    - "removed"
+    - "soft_deleted"
+    - "deleted_flag"
+
+  identifier:
+    - "id"
+    - "record_id"
+    - "unique_id"
+    - "key"
+    - "primary_key"
+    - "ref_id"
+
+  name:
+    - "title"
+    - "label"
+    - "description"
+    - "display_name"
+    - "full_name"
+
+  category:
+    - "type"
+    - "classification"
+    - "group"
+    - "kind"
+    - "class"
+    - "segment"
+
+  value:
+    - "amount"
+    - "quantity"
+    - "reading"
+    - "measurement"
+    - "score"
+    - "result"
+
+  status:
+    - "state"
+    - "condition"
+    - "phase"
+    - "stage"
+    - "progress"
+
+  # ===== Aggregate Function Synonyms =====
+  count:
+    - "number of"
+    - "how many"
+    - "total count"
+    - "quantity of"
+    - "amount of"
+
+  average:
+    - "mean"
+    - "avg"
+    - "typical"
+    - "average value"
+    - "arithmetic mean"
+
+  sum:
+    - "total"
+    - "sum total"
+    - "aggregate"
+    - "combined"
+    - "overall"
+
+  maximum:
+    - "max"
+    - "highest"
+    - "peak"
+    - "top"
+    - "greatest"
+    - "largest"
+
+  minimum:
+    - "min"
+    - "lowest"
+    - "bottom"
+    - "smallest"
+    - "least"
+
+  # ===== Time Period Synonyms =====
+  daily:
+    - "per day"
+    - "each day"
+    - "by day"
+    - "day over day"
+    - "day-wise"
+
+  weekly:
+    - "per week"
+    - "each week"
+    - "by week"
+    - "week over week"
+    - "weekly basis"
+
+  monthly:
+    - "per month"
+    - "each month"
+    - "by month"
+    - "month over month"
+    - "monthly basis"
+
+  yearly:
+    - "per year"
+    - "each year"
+    - "by year"
+    - "annual"
+    - "annually"
+    - "year over year"
+
+  quarterly:
+    - "per quarter"
+    - "each quarter"
+    - "by quarter"
+    - "q1 q2 q3 q4"
+    - "quarterly basis"
+
+
+# -----------------------------------------------------------------------------
+# Default Filters
+# Mandatory WHERE clause conditions applied per table unless user says otherwise
+# These prevent common mistakes like including deleted records
+# -----------------------------------------------------------------------------
+default_filters:
+  entity_table:
+    - "is_deleted = false"
+    - "is_active = true"
+
+  measurement_table:
+    - "is_deleted = false"
+    - "is_valid = true"
+
+  event_table:
+    - "is_deleted = false"
+    - "status != 'cancelled'"
+
+  user_table:
+    - "is_deleted = false"
+    - "is_active = true"
+
+  location_table:
+    - "is_deleted = false"
+    - "is_active = true"
+
+  reference_table:
+    - "is_active = true"
+
+  audit_table:
+    - "is_system_generated = false"
+
+  temporary_table:
+    - "expires_at > CURRENT_TIMESTAMP"
+
+  archive_table:
+    - "is_archived = true"
+
+  staging_table:
+    - "is_processed = false"
+
+
+# -----------------------------------------------------------------------------
+# Metric Templates
+# Pre-defined SQL expressions for common analytical metrics
+# These are injected into prompts when the user asks for specific metrics
+# -----------------------------------------------------------------------------
+metric_templates:
+  # ===== Percentage/Rate Calculations =====
+  percentage_rate:
+    expression: "COUNT(DISTINCT CASE WHEN {condition} THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT {id_column}), 0)"
+    description: "Calculates percentage rate with NULL safety for division by zero"
+    tables: ["entity_table"]
+
+  conversion_rate:
+    expression: "COUNT(DISTINCT CASE WHEN {converted_condition} THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN {eligible_condition} THEN {id_column} END), 0)"
+    description: "Calculates conversion rate from eligible to converted"
+    tables: ["entity_table"]
+
+  completion_rate:
+    expression: "COUNT(DISTINCT CASE WHEN status = 'completed' THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT {id_column}), 0)"
+    description: "Percentage of records that reached completed status"
+    tables: ["entity_table"]
+
+  success_rate:
+    expression: "COUNT(DISTINCT CASE WHEN is_successful = true THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_attempted = true THEN {id_column} END), 0)"
+    description: "Success rate among attempted records"
+    tables: ["entity_table"]
+
+  # ===== Average Calculations =====
+  safe_average:
+    expression: "AVG(NULLIF({value_column}, 0))"
+    description: "Average excluding zero values (treats zeros as missing)"
+    tables: ["measurement_table"]
+
+  weighted_average:
+    expression: "SUM({value_column} * {weight_column}) / NULLIF(SUM({weight_column}), 0)"
+    description: "Weighted average calculation"
+    tables: ["measurement_table"]
+
+  trimmed_average:
+    expression: "AVG({value_column}) FILTER (WHERE {value_column} BETWEEN PERCENTILE_CONT(0.05) AND PERCENTILE_CONT(0.95))"
+    description: "Average excluding top and bottom 5% outliers"
+    tables: ["measurement_table"]
+
+  # ===== Count Patterns =====
+  distinct_count:
+    expression: "COUNT(DISTINCT {column})"
+    description: "Count of unique values in a column"
+    tables: ["entity_table"]
+
+  conditional_count:
+    expression: "COUNT(DISTINCT CASE WHEN {condition} THEN {id_column} END)"
+    description: "Count of distinct records matching a condition"
+    tables: ["entity_table"]
+
+  running_count:
+    expression: "COUNT(*) OVER (ORDER BY {date_column} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)"
+    description: "Cumulative count over time"
+    tables: ["entity_table"]
+
+  # ===== Time-Based Metrics =====
+  days_since:
+    expression: "EXTRACT(DAY FROM CURRENT_DATE - {date_column})"
+    description: "Number of days since a date"
+    tables: ["entity_table"]
+
+  time_to_completion:
+    expression: "AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) / 86400)"
+    description: "Average days from creation to completion"
+    tables: ["entity_table"]
+
+  period_over_period_growth:
+    expression: "((current_period_value - previous_period_value) * 100.0) / NULLIF(previous_period_value, 0)"
+    description: "Percentage growth between two periods"
+    tables: ["entity_table"]
+
+  moving_average_7day:
+    expression: "AVG({value_column}) OVER (ORDER BY {date_column} ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)"
+    description: "7-day moving average"
+    tables: ["measurement_table"]
+
+  moving_average_30day:
+    expression: "AVG({value_column}) OVER (ORDER BY {date_column} ROWS BETWEEN 29 PRECEDING AND CURRENT ROW)"
+    description: "30-day moving average"
+    tables: ["measurement_table"]
+
+  # ===== Distribution Metrics =====
+  percentile_25:
+    expression: "PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY {value_column})"
+    description: "25th percentile (first quartile)"
+    tables: ["measurement_table"]
+
+  percentile_50:
+    expression: "PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY {value_column})"
+    description: "50th percentile (median)"
+    tables: ["measurement_table"]
+
+  percentile_75:
+    expression: "PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY {value_column})"
+    description: "75th percentile (third quartile)"
+    tables: ["measurement_table"]
+
+  standard_deviation:
+    expression: "STDDEV({value_column})"
+    description: "Standard deviation of values"
+    tables: ["measurement_table"]
+
+  coefficient_of_variation:
+    expression: "STDDEV({value_column}) * 100.0 / NULLIF(AVG({value_column}), 0)"
+    description: "Coefficient of variation (CV) as percentage"
+    tables: ["measurement_table"]
+
+  # ===== Ranking Metrics =====
+  rank_by_value:
+    expression: "RANK() OVER (ORDER BY {value_column} DESC)"
+    description: "Rank records by value (highest first)"
+    tables: ["entity_table"]
+
+  dense_rank_by_value:
+    expression: "DENSE_RANK() OVER (ORDER BY {value_column} DESC)"
+    description: "Dense rank by value (no gaps in ranking)"
+    tables: ["entity_table"]
+
+  percentile_rank:
+    expression: "PERCENT_RANK() OVER (ORDER BY {value_column})"
+    description: "Percentile rank (0 to 1)"
+    tables: ["entity_table"]
+
+
+# -----------------------------------------------------------------------------
+# Table Descriptions
+# Human-readable descriptions for tables (injected into prompts)
+# -----------------------------------------------------------------------------
+table_descriptions:
+  entity_table: "Primary table containing main entity records with status and metadata"
+  measurement_table: "Table storing numeric measurements, readings, or observations over time"
+  event_table: "Table tracking events, activities, or transactions"
+  reference_table: "Lookup table containing reference data, codes, and categories"
+  location_table: "Table containing location, site, or facility information"
+  user_table: "Table containing user accounts and profile information"
+  audit_table: "System table tracking changes and audit history"
+  relationship_table: "Table defining relationships between entities"
+  configuration_table: "Table storing system or entity configuration settings"
+  log_table: "Table containing system logs and activity records"
+
+
+# -----------------------------------------------------------------------------
+# Column Semantics
+# Human-readable descriptions for important columns (helps LLM understand data)
+# Format: table_name: {column_name: description}
+# -----------------------------------------------------------------------------
+column_semantics:
+  entity_table:
+    id: "Unique identifier for the record (primary key)"
+    is_active: "Whether the record is currently active (not deactivated)"
+    is_deleted: "Soft-delete flag — true means the record should be excluded from queries"
+    is_valid: "Whether the record has passed validation checks"
+    status: "Current status of the record (e.g., pending, active, completed)"
+    category: "Classification or type of the entity"
+    created_at: "Timestamp when the record was first created"
+    updated_at: "Timestamp when the record was last modified"
+    created_by: "User or system that created the record"
+    updated_by: "User or system that last modified the record"
+
+  measurement_table:
+    id: "Unique identifier for the measurement record"
+    entity_id: "Foreign key linking to the entity being measured"
+    value: "The numeric measurement value"
+    unit: "Unit of measurement (e.g., kg, cm, %)"
+    measurement_date: "Date/time when the measurement was taken"
+    is_valid: "Whether the measurement passed validation"
+    is_deleted: "Soft-delete flag for the measurement"
+    lower_threshold: "Lower bound of normal range"
+    upper_threshold: "Upper bound of normal range"
+
+  event_table:
+    id: "Unique identifier for the event"
+    entity_id: "Foreign key linking to the related entity"
+    event_type: "Type or category of the event"
+    event_date: "Date/time when the event occurred"
+    status: "Current status of the event"
+    is_deleted: "Soft-delete flag for the event"
+    duration: "Duration of the event in appropriate units"
+    outcome: "Result or outcome of the event"
+
+  location_table:
+    id: "Unique identifier for the location"
+    name: "Name or title of the location"
+    location_type: "Type of location (e.g., facility, site, region)"
+    parent_id: "Foreign key to parent location (for hierarchy)"
+    is_active: "Whether the location is currently operational"
+    is_deleted: "Soft-delete flag for the location"
+    address: "Physical address of the location"
+    coordinates: "Geographic coordinates (latitude, longitude)"
+
+  user_table:
+    id: "Unique identifier for the user"
+    username: "User's login name"
+    email: "User's email address"
+    role: "User's role or permission level"
+    is_active: "Whether the user account is active"
+    is_deleted: "Soft-delete flag for the user"
+    last_login: "Timestamp of user's last login"
+    created_at: "Timestamp when the account was created"
+
+
+# -----------------------------------------------------------------------------
+# Query Patterns
+# Common SQL patterns for frequently asked question types
+# -----------------------------------------------------------------------------
+query_patterns:
+  count_by_category:
+    description: "Count records grouped by a category column"
+    pattern: "SELECT {category_column}, COUNT(*) as count FROM {table} WHERE {filters} GROUP BY {category_column} ORDER BY count DESC"
+    
+  trend_over_time:
+    description: "Show values or counts over time periods"
+    pattern: "SELECT DATE_TRUNC('{period}', {date_column}) as period, {aggregation}({value_column}) as value FROM {table} WHERE {filters} GROUP BY 1 ORDER BY 1"
+    
+  top_n_by_value:
+    description: "Get top N records by a value column"
+    pattern: "SELECT {columns} FROM {table} WHERE {filters} ORDER BY {value_column} DESC LIMIT {n}"
+    
+  comparison_between_groups:
+    description: "Compare metrics between two groups"
+    pattern: "SELECT {group_column}, {aggregation}({value_column}) as metric FROM {table} WHERE {filters} GROUP BY {group_column}"
+    
+  latest_per_entity:
+    description: "Get the most recent record for each entity"
+    pattern: "SELECT DISTINCT ON ({entity_id}) * FROM {table} WHERE {filters} ORDER BY {entity_id}, {date_column} DESC"
+    
+  cumulative_sum:
+    description: "Calculate running total over time"
+    pattern: "SELECT {date_column}, SUM({value_column}) OVER (ORDER BY {date_column}) as cumulative_total FROM {table} WHERE {filters}"
+
+
+# -----------------------------------------------------------------------------
+# Validation Rules
+# Rules for validating generated SQL queries
+# -----------------------------------------------------------------------------
+validation_rules:
+  required_filters:
+    - "All queries on entity_table must include is_deleted = false"
+    - "All queries on measurement_table must include is_valid = true"
+    - "Queries returning individual records must include appropriate privacy filters"
+    
+  prohibited_operations:
+    - "No DELETE, UPDATE, INSERT, DROP, TRUNCATE, ALTER operations"
+    - "No access to system tables or information_schema"
+    - "No GRANT, REVOKE, or permission-related commands"
+    
+  limits:
+    - "All SELECT queries should include LIMIT clause (max 10000 rows)"
+    - "Aggregation queries should GROUP BY appropriate columns"
+    - "Date range queries should not exceed 5 years of data"
+
+
+# -----------------------------------------------------------------------------
+# Error Messages
+# User-friendly error messages for common issues
+# -----------------------------------------------------------------------------
+error_messages:
+  no_data_found: "No records found matching your criteria. Try broadening your search parameters."
+  ambiguous_column: "The column name '{column}' exists in multiple tables. Please specify which table you mean."
+  invalid_date_range: "The specified date range is invalid. Please use dates in YYYY-MM-DD format."
+  missing_required_filter: "This query requires additional filters to protect data privacy."
+  query_too_broad: "This query would return too many records. Please add more specific filters."
+  unsupported_operation: "This type of operation is not supported for security reasons."
