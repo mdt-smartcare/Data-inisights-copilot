@@ -61,7 +61,12 @@ DUCKDB_SQL_RULES = """CRITICAL DUCKDB SQL RULES:
 7. Use INTERVAL '90 days' syntax for date arithmetic, not DATE_SUB() or DATEADD()
 8. For consecutive streak detection, use the ROW_NUMBER difference technique in CTEs
 9. String concatenation uses || operator, not CONCAT() in some contexts
-10. Boolean values are TRUE/FALSE, not 1/0"""
+10. Boolean values are TRUE/FALSE, not 1/0
+11. **TYPE CASTING FOR DATE COLUMNS**: If a date column is VARCHAR type (check schema), CAST it before date comparisons:
+    - Use CAST(column_name AS TIMESTAMP) or column_name::TIMESTAMP
+    - Example: WHERE CAST(created_at AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1 year'
+    - Also cast before DATE_TRUNC: DATE_TRUNC('month', CAST(created_at AS TIMESTAMP))
+12. **CHECK COLUMN TYPES IN SCHEMA**: Before date/numeric operations, verify the column type. If VARCHAR contains dates, cast explicitly."""
 
 # Query type classification keywords
 QUERY_TYPE_KEYWORDS = {
@@ -358,7 +363,7 @@ class SQLService:
             raise
     
     def _discover_tables(self) -> List[str]:
-        """Discover available tables in the database."""
+        """Discover available tables in the database, excluding internal/metadata tables."""
         if self._table_names:
             return self._table_names
         
@@ -375,16 +380,25 @@ class SQLService:
                         AND table_schema NOT IN ('pg_catalog', 'information_schema')
                         ORDER BY table_name
                     """))
-                    self._table_names = [row[0] for row in result]
+                    all_tables = [row[0] for row in result]
                 except Exception:
                     # Fallback for DuckDB or other databases
                     try:
                         result = conn.execute(text("SHOW TABLES"))
-                        self._table_names = [row[0] for row in result]
+                        all_tables = [row[0] for row in result]
                     except Exception:
-                        self._table_names = []
+                        all_tables = []
+                
+                # Filter out internal/metadata tables (those starting with underscore)
+                self._table_names = [t for t in all_tables if not t.startswith('_')]
+                
+                # Log what was found
+                if all_tables:
+                    filtered_count = len(all_tables) - len(self._table_names)
+                    if filtered_count > 0:
+                        logger.debug(f"Filtered out {filtered_count} internal tables")
             
-            logger.info(f"Discovered {len(self._table_names)} tables")
+            logger.info(f"Discovered {len(self._table_names)} tables: {self._table_names}")
             return self._table_names
             
         except Exception as e:
@@ -395,7 +409,8 @@ class SQLService:
         """
         Get database schema as context for LLM queries.
         
-        Returns a formatted string describing tables and their columns.
+        Returns a formatted string describing tables and their columns with types.
+        Highlights VARCHAR columns that contain date-like names and need casting.
         """
         if self._cached_schema:
             return self._cached_schema
@@ -404,6 +419,10 @@ class SQLService:
         engine = self._get_engine()
         
         schema_parts = []
+        varchar_date_columns = []  # Track VARCHAR columns that look like dates
+        
+        # Date-related column name patterns
+        date_patterns = ['date', 'time', 'created', 'updated', 'modified', 'timestamp', '_at', '_on']
         
         try:
             with engine.connect() as conn:
@@ -420,21 +439,46 @@ class SQLService:
                         columns = [(row[0], row[1], row[2]) for row in result]
                         
                         if columns:
-                            col_desc = ", ".join([
-                                f"{name} ({dtype}{'?' if nullable == 'YES' else ''})"
-                                for name, dtype, nullable in columns[:20]  # Limit columns
-                            ])
+                            col_parts = []
+                            for name, dtype, nullable in columns[:30]:
+                                null_indicator = "?" if nullable == 'YES' else ""
+                                col_parts.append(f"{name} ({dtype}{null_indicator})")
+                                
+                                # Check if this is a VARCHAR column with a date-like name
+                                if dtype.upper() == 'VARCHAR':
+                                    name_lower = name.lower()
+                                    if any(pattern in name_lower for pattern in date_patterns):
+                                        varchar_date_columns.append(f"{table}.{name}")
+                            
+                            col_desc = ", ".join(col_parts)
+                            if len(columns) > 30:
+                                col_desc += f", ... and {len(columns) - 30} more columns"
                             schema_parts.append(f"- {table}: {col_desc}")
                     except Exception:
                         schema_parts.append(f"- {table}: (columns unavailable)")
             
-            self._cached_schema = "Tables:\n" + "\n".join(schema_parts)
+            # Build final schema with warnings
+            final_parts = ["Tables:\n" + "\n".join(schema_parts)]
+            
+            # Add explicit warning about VARCHAR date columns
+            if varchar_date_columns:
+                warning = "\n\nWARNING - VARCHAR DATE COLUMNS REQUIRE CASTING:\n"
+                warning += "These columns store dates as VARCHAR. You MUST cast them before date operations:\n"
+                for col in varchar_date_columns:
+                    col_name = col.split('.')[-1]
+                    warning += f"  - {col} -> CAST({col_name} AS TIMESTAMP)\n"
+                warning += "\nREQUIRED PATTERNS:\n"
+                warning += "  WHERE CAST(created_at AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1 year'\n"
+                warning += "  DATE_TRUNC('month', CAST(created_at AS TIMESTAMP))"
+                final_parts.append(warning)
+            
+            self._cached_schema = "\n".join(final_parts)
             return self._cached_schema
             
         except Exception as e:
             logger.error(f"Failed to get schema context: {e}")
             return f"Tables: {', '.join(tables)}"
-    
+
     @property
     def cached_schema(self) -> str:
         """Get cached schema or generate it."""
