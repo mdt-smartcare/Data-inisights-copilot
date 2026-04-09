@@ -26,9 +26,9 @@ HF_API_BASE = "https://huggingface.co/api"
 @dataclass
 class HFModelInfo:
     """HuggingFace model information."""
-    model_id: str  # e.g., 'BAAI/bge-m3'
+    model_id: str  # e.g., 'BAAI/bge-base-en-v1.5'
     author: str  # e.g., 'BAAI'
-    model_name: str  # e.g., 'bge-m3'
+    model_name: str  # e.g., 'bge-base-en-v1.5'
     pipeline_tag: Optional[str] = None  # e.g., 'sentence-similarity', 'text-generation'
     library_name: Optional[str] = None  # e.g., 'sentence-transformers', 'transformers'
     downloads: int = 0
@@ -90,7 +90,7 @@ class HuggingFaceHubService:
         )
         
         # Get model info
-        info = await service.get_model_info("BAAI/bge-m3")
+        info = await service.get_model_info("BAAI/bge-base-en-v1.5")
     """
     
     def __init__(self, hf_token: Optional[str] = None):
@@ -199,7 +199,7 @@ class HuggingFaceHubService:
         Get detailed info for a specific model.
         
         Args:
-            model_id: Full model ID (e.g., 'BAAI/bge-m3')
+            model_id: Full model ID (e.g., 'BAAI/bge-base-en-v1.5')
             
         Returns:
             HFModelInfo or None if not found
@@ -259,7 +259,7 @@ class HuggingFaceHubService:
         Uses huggingface_hub library for proper downloading with caching.
         
         Args:
-            model_id: Full model ID (e.g., 'BAAI/bge-m3')
+            model_id: Full model ID (e.g., 'BAAI/bge-base-en-v1.5')
             local_path: Directory to save the model
             revision: Git revision/branch (default 'main')
             progress_callback: Optional callback(downloaded_bytes, total_bytes)

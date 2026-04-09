@@ -144,7 +144,7 @@ class AuditEvent(BaseModel):
                 "resource_name": "Medical Q&A Agent",
                 "details": {
                     "agent_type": "medical",
-                    "embedding_model": "bge-m3"
+                    "embedding_model": "bge-base-en-v1.5"
                 },
                 "ip_address": "192.168.1.100",
                 "request_id": "req-789",

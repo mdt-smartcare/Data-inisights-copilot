@@ -287,7 +287,7 @@ EMBEDDING_MODEL_CATALOG = [
         "description": "Fast, lightweight embedding model for quick prototyping",
     },
     {
-        "model_name": "BAAI/bge-m3",
+        "model_name": "BAAI/bge-base-en-v1.5",
         "display_name": "BGE M3 (Multilingual)",
         "provider": "sentence-transformers",
         "dimensions": 1024,

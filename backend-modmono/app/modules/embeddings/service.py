@@ -60,7 +60,7 @@ DEFAULT_LOCAL_BATCH_SIZE = 256  # Larger batches for local GPU models (more effi
 MIN_GPU_BATCH_SIZE = 128  # Optimal minimum for MPS/CUDA with BGE-M3
 
 # Local GPU providers that benefit from larger batch sizes
-LOCAL_GPU_PROVIDERS = ("huggingface", "sentence-transformers", "bge-m3", "bge")
+LOCAL_GPU_PROVIDERS = ("huggingface", "sentence-transformers", "bge-base-en-v1.5", "bge")
 
 # Model name patterns for local models (handles misconfigured provider settings)
 LOCAL_MODEL_PATTERNS = ("bge-", "bge_", "sentence-transformers", "all-minilm", "e5-", "gte-")
@@ -997,13 +997,13 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
         from app.core.config import get_settings
         settings = get_settings()
         
-        # Model name like "BAAI/bge-m3" -> check paths:
+        # Model name like "BAAI/bge-base-en-v1.5" -> check paths:
         model_parts = actual_model.split('/')
         possible_paths = [
-            settings.data_dir / "models" / actual_model,  # data/models/BAAI/bge-m3
-            Path(f"./models/{model_parts[-1]}"),  # models/bge-m3
-            Path(f"./data/models/{actual_model}"),  # data/models/BAAI/bge-m3
-            Path(f"../backend/models/{model_parts[-1]}"),  # ../backend/models/bge-m3
+            settings.data_dir / "models" / actual_model,  # data/models/BAAI/bge-base-en-v1.5
+            Path(f"./models/{model_parts[-1]}"),  # models/bge-base-en-v1.5
+            Path(f"./data/models/{actual_model}"),  # data/models/BAAI/bge-base-en-v1.5
+            Path(f"../backend/models/{model_parts[-1]}"),  # ../backend/models/bge-base-en-v1.5
         ]
         
         local_path = None
