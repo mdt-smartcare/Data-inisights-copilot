@@ -1,0 +1,109 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-04-09T06:20:31.972055",
+  "source": "test_failure_analysis",
+  "suggestions": [
+    {
+      "category": "window_in_where",
+      "pattern_name": "Window Function in WHERE",
+      "question_template": "Show the first record for each patient",
+      "correct_sql": "WITH ranked AS (\n    SELECT *, ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at) as rn\n    FROM records\n)\nSELECT * FROM ranked WHERE rn = 1",
+      "based_on_failures": 3,
+      "priority": "critical",
+      "tags": [
+        "window",
+        "cte",
+        "duckdb"
+      ],
+      "notes": "Fix: Use CTE pattern: WITH ranked AS (SELECT *, ROW_NUMBER() OVER (...) as rn FROM table) SELECT * FROM ranked WHERE rn = 1"
+    },
+    {
+      "category": "date_sub_function",
+      "pattern_name": "DATE_SUB Function (Not Supported)",
+      "question_template": "Find records from the last 90 days",
+      "correct_sql": "SELECT * FROM records WHERE created_at >= CURRENT_DATE - INTERVAL '90 days'",
+      "based_on_failures": 2,
+      "priority": "medium",
+      "tags": [
+        "date",
+        "duckdb",
+        "syntax"
+      ],
+      "notes": "Fix: Use interval arithmetic: date_column - INTERVAL '90 days'"
+    },
+    {
+      "category": "aggregate_in_where",
+      "pattern_name": "Aggregate Function in WHERE",
+      "question_template": "Find patients with above average visits",
+      "correct_sql": "SELECT patient_id, COUNT(*) as visit_count\nFROM visits\nGROUP BY patient_id\nHAVING COUNT(*) > (SELECT AVG(cnt) FROM (SELECT COUNT(*) as cnt FROM visits GROUP BY patient_id))",
+      "based_on_failures": 1,
+      "priority": "medium",
+      "tags": [
+        "aggregate",
+        "subquery",
+        "having"
+      ],
+      "notes": "Fix: Use subquery or CTE with HAVING clause for aggregate filtering"
+    },
+    {
+      "category": "datediff_two_args",
+      "pattern_name": "DATEDIFF with 2 Arguments",
+      "question_template": "Calculate days between admission and discharge",
+      "correct_sql": "SELECT DATEDIFF('day', admission_date, discharge_date) as days_stayed FROM admissions",
+      "based_on_failures": 1,
+      "priority": "medium",
+      "tags": [
+        "date",
+        "duckdb",
+        "syntax"
+      ],
+      "notes": "Fix: Use 3-argument syntax: DATEDIFF('day', start_date, end_date)"
+    }
+  ],
+  "training_examples": [
+    {
+      "question": "Show the first record for each patient",
+      "sql": "WITH ranked AS (\n    SELECT *, ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at) as rn\n    FROM records\n)\nSELECT * FROM ranked WHERE rn = 1",
+      "category": "window_in_where",
+      "tags": [
+        "window",
+        "cte",
+        "duckdb"
+      ],
+      "source": "auto_generated_from_failures"
+    },
+    {
+      "question": "Find records from the last 90 days",
+      "sql": "SELECT * FROM records WHERE created_at >= CURRENT_DATE - INTERVAL '90 days'",
+      "category": "date_sub_function",
+      "tags": [
+        "date",
+        "duckdb",
+        "syntax"
+      ],
+      "source": "auto_generated_from_failures"
+    },
+    {
+      "question": "Find patients with above average visits",
+      "sql": "SELECT patient_id, COUNT(*) as visit_count\nFROM visits\nGROUP BY patient_id\nHAVING COUNT(*) > (SELECT AVG(cnt) FROM (SELECT COUNT(*) as cnt FROM visits GROUP BY patient_id))",
+      "category": "aggregate_in_where",
+      "tags": [
+        "aggregate",
+        "subquery",
+        "having"
+      ],
+      "source": "auto_generated_from_failures"
+    },
+    {
+      "question": "Calculate days between admission and discharge",
+      "sql": "SELECT DATEDIFF('day', admission_date, discharge_date) as days_stayed FROM admissions",
+      "category": "datediff_two_args",
+      "tags": [
+        "date",
+        "duckdb",
+        "syntax"
+      ],
+      "source": "auto_generated_from_failures"
+    }
+  ]
+}
