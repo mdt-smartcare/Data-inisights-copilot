@@ -401,16 +401,15 @@ export interface AgentUser {
   username: string;
   email?: string;
   full_name?: string;
-  user_role: string;
+  role: string;
   is_active: boolean;
-  created_at?: string;
-  agent_role: string;
+  granted_at?: string;
   granted_by?: string;
 }
 
 export const getAgentUsers = async (agentId: string): Promise<{ users: AgentUser[]; agent_id: string }> => {
   const response = await apiClient.get(`/api/v1/agents/${agentId}/users`);
-  return response.data;
+  return response.data?.data;
 };
 
 export const getUserAgents = async (userId: string): Promise<{ agents: Agent[]; is_admin: boolean; message?: string }> => {

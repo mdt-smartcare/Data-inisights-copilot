@@ -326,10 +326,20 @@ class UserAgentGrantRequest(BaseModel):
 
 
 class UserAgentResponse(BaseModel):
-    """User-agent relationship response."""
+    """User-agent relationship response with user details."""
+    # User identification
+    id: UUID  # user_id for frontend compatibility
     user_id: UUID
     agent_id: UUID
-    role: str
+    
+    # User details
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    is_active: bool = True
+    
+    # Agent access details
+    role: Optional[str]=None  # Role on this specific agent (user, admin)
     granted_at: datetime
     granted_by: Optional[UUID] = None
     
@@ -340,6 +350,7 @@ class UserAgentListResponse(BaseModel):
     """List of users with access to an agent."""
     users: List[UserAgentResponse]
     total: int
+    agent_id: Optional[UUID] = None
 
 
 # ==========================================

@@ -19,6 +19,7 @@ from app.core.auth.permissions import (
     get_current_user, require_editor, require_admin, can_manage_agents
 )
 from app.core.utils.exceptions import AppException
+from app.core.utils.logging import get_logger
 from app.core.models.common import BaseResponse
 from app.modules.users.schemas import User
 from app.modules.agents.service import (
@@ -37,6 +38,8 @@ from app.modules.agents.schemas import (
     # User access schemas
     UserAgentGrantRequest, UserAgentResponse, UserAgentListResponse,
 )
+
+logger = get_logger(__name__)
 
 
 # Create routers

@@ -61,8 +61,9 @@ const UsersPage: React.FC = () => {
         setError(null);
         try {
             const res = await apiClient.get('/api/v1/users');
-
-            setUsers(res.data || []);
+            // Handle wrapped response: { success, data: { items } }
+            const users = res.data?.data?.items || res.data?.items || (Array.isArray(res.data) ? res.data : []);
+            setUsers(users);
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to load users');
         } finally {

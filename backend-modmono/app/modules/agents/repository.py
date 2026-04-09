@@ -15,14 +15,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database.base_repository import BaseRepository
+from app.core.utils.logging import get_logger
 from app.modules.agents.models import (
     AgentModel, AgentConfigModel, UserAgentModel
 )
+from app.modules.users.models import UserModel
 from app.modules.data_sources.models import DataSourceModel
 from app.modules.agents.schemas import (
     AgentCreate, AgentUpdate, AgentResponse,
-    DataSourceResponse, AgentConfigResponse
+    DataSourceResponse, AgentConfigResponse, UserAgentResponse
 )
+
+logger = get_logger(__name__)
 
 
 class AgentRepository(BaseRepository[AgentModel, AgentCreate, AgentUpdate, AgentResponse]):
@@ -593,11 +597,30 @@ class UserAgentRepository:
         
         return role_levels.get(access.role, 0) >= role_levels.get(min_role, 0)
     
-    async def get_agent_users(self, agent_id: UUID) -> List[UserAgentModel]:
-        """Get all users with access to an agent."""
-        query = select(UserAgentModel).where(UserAgentModel.agent_id == agent_id)
+    async def get_agent_users(self, agent_id: UUID) -> List[UserAgentResponse]:
+        """Get all users with access to an agent using explicit JOIN with specific columns."""
+        query = (
+            select(
+                # User agent columns
+                UserAgentModel.user_id,
+                UserAgentModel.user_id.label("id"),
+                UserAgentModel.agent_id,
+                UserAgentModel.role,
+                UserAgentModel.granted_at,
+                UserAgentModel.granted_by,
+                # User columns
+                UserModel.username,
+                UserModel.email,
+                UserModel.full_name,
+                UserModel.is_active,
+            )
+            .join(UserModel, UserAgentModel.user_id == UserModel.id)
+            .where(UserAgentModel.agent_id == agent_id)
+        )
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        rows = result.all()
+        
+        return [UserAgentResponse(**row._asdict()) for row in rows]
     
     async def get_user_agents(self, user_id: UUID) -> List[UserAgentModel]:
         """Get all agents a user has access to."""

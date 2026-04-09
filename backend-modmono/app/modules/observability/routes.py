@@ -1,130 +1,87 @@
 """
-Audit log routes.
-
-Provides endpoints for querying audit logs and system monitoring.
+Audit log API endpoints.
+Only accessible by Admin.
 """
-from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session
-from app.core.models.common import BaseResponse, PaginatedResponse
-from app.core.auth.permissions import require_admin, require_user
+from app.core.auth.permissions import require_admin
 from app.modules.observability.service import AuditService
-from app.modules.observability.schemas import AuditLog
+from app.modules.observability.schemas import AuditLogResponse, AuditLogCountResponse, AuditAction
 from app.modules.users.schemas import User
+from app.core.utils.logging import get_logger
 
-router = APIRouter()
+logger = get_logger(__name__)
+
+router = APIRouter(prefix="/audit", tags=["Audit Logs"])
 
 
-@router.get("/audit", response_model=BaseResponse[PaginatedResponse[AuditLog]])
-async def query_audit_logs(
-    actor_id: Optional[str] = Query(default=None, description="Filter by actor user ID"),
-    actor_username: Optional[str] = Query(default=None, description="Filter by actor username"),
-    action: Optional[str] = Query(default=None, description="Filter by action type"),
-    resource_type: Optional[str] = Query(default=None, description="Filter by resource type"),
-    resource_id: Optional[str] = Query(default=None, description="Filter by resource ID"),
-    start_date: Optional[datetime] = Query(default=None, description="Filter logs after this date"),
-    end_date: Optional[datetime] = Query(default=None, description="Filter logs before this date"),
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=1000),
+@router.get("/logs", response_model=List[AuditLogResponse])
+async def get_audit_logs(
+    actor: Optional[str] = Query(None, description="Filter by actor username"),
+    action: Optional[str] = Query(None, description="Filter by action prefix (e.g., 'prompt')"),
+    resource_type: Optional[str] = Query(None, description="Filter by resource type"),
+    start_date: Optional[str] = Query(None, description="Filter logs after this date (ISO format)"),
+    end_date: Optional[str] = Query(None, description="Filter logs before this date (ISO format)"),
+    limit: int = Query(100, ge=1, le=500, description="Max results per page"),
+    offset: int = Query(0, ge=0, description="Pagination offset"),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_admin)
 ):
     """
-    Query audit logs with filters.
+    Get audit logs with optional filters.
     
-    **Required Permission:** ADMIN
+    **Requires Admin role.**
     
-    **Filters:**
-    - actor_id: User ID who performed the action
-    - actor_username: Username who performed the action
-    - action: Type of action (e.g., "user.created", "agent.updated")
-    - resource_type: Type of resource affected
-    - resource_id: ID of resource affected
-    - start_date: Show logs after this timestamp
-    - end_date: Show logs before this timestamp
+    Returns paginated list of audit log entries with details about:
+    - Who performed the action
+    - What action was taken
+    - Which resource was affected
+    - When it happened
     """
     service = AuditService(session)
-    logs, total = await service.query_logs(
-        actor_id=actor_id,
-        actor_username=actor_username,
+    return await service.get_logs(
+        actor_username=actor,
         action=action,
         resource_type=resource_type,
-        resource_id=resource_id,
         start_date=start_date,
         end_date=end_date,
-        skip=skip,
-        limit=limit
+        limit=limit,
+        offset=offset
     )
-    pages = (total + limit - 1) // limit  # Ceiling division
-    
-    return BaseResponse.ok(data=PaginatedResponse(
-        items=logs,
-        total=total,
-        page=skip // limit,
-        size=limit,
-        pages=pages
-    ))
 
 
-@router.get("/audit/recent", response_model=BaseResponse[PaginatedResponse[AuditLog]])
-async def get_recent_audit_logs(
-    limit: int = Query(default=100, ge=1, le=1000),
+@router.get("/logs/count", response_model=AuditLogCountResponse)
+async def get_audit_log_count(
+    actor: Optional[str] = Query(None, description="Filter by actor username"),
+    action: Optional[str] = Query(None, description="Filter by action prefix"),
+    resource_type: Optional[str] = Query(None, description="Filter by resource type"),
     session: AsyncSession = Depends(get_db_session),
     current_user: User = Depends(require_admin)
 ):
     """
-    Get most recent audit logs.
+    Get total count of audit logs matching filters.
     
-    **Required Permission:** ADMIN
-    
-    Returns the most recent audit log entries, ordered by timestamp descending.
+    **Requires Admin role.**
     """
     service = AuditService(session)
-    logs = await service.get_recent_logs(limit=limit)
-    
-    return BaseResponse.ok(data=PaginatedResponse(
-        items=logs,
-        total=len(logs),
-        page=0,
-        size=limit,
-        pages=1
-    ))
+    count = await service.get_log_count(
+        actor_username=actor,
+        action=action,
+        resource_type=resource_type
+    )
+    return AuditLogCountResponse(count=count)
 
 
-@router.get("/audit/user/{user_id}", response_model=BaseResponse[PaginatedResponse[AuditLog]])
-async def get_user_activity(
-    user_id: str,
-    limit: int = Query(default=100, ge=1, le=1000),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_user)
+@router.get("/actions", response_model=List[str])
+async def get_audit_action_types(
+    current_user: User = Depends(require_admin)
 ):
     """
-    Get audit logs for a specific user.
+    Get list of all possible audit action types.
     
-    **Permission:** Users can view their own activity. Admins can view any user's activity.
-    
-    Shows all actions performed by the specified user.
+    **Requires Admin role.**
     """
-    # Users can only view their own activity
-    if current_user.id != user_id:
-        from app.core.auth.permissions import can_view_all_audit_logs
-        if not can_view_all_audit_logs(current_user.role):
-            from fastapi import HTTPException, status
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot view other users' activity"
-            )
-    
-    service = AuditService(session)
-    logs = await service.get_user_activity(actor_id=user_id, limit=limit)
-    
-    return BaseResponse.ok(data=PaginatedResponse(
-        items=logs,
-        total=len(logs),
-        page=0,
-        size=limit,
-        pages=1
-    ))
+    return [action.value for action in AuditAction]

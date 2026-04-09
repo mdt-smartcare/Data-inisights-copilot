@@ -1,141 +1,127 @@
 """
-Audit service for logging and querying system actions.
-
-Provides centralized audit logging for compliance and security monitoring.
+Audit logging service for tracking user actions.
+Provides auditability for all configuration changes.
 """
-from typing import Optional, List
-from datetime import datetime
-import json
+from typing import Optional, List, Dict, Any, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.observability.repository import AuditLogRepository
-from app.modules.observability.schemas import AuditLog, AuditLogCreate
+from app.modules.observability.schemas import AuditLogResponse, AuditLogCreate, AuditAction
 from app.core.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 class AuditService:
-    """Service for audit logging operations."""
+    """Service for logging and querying audit events."""
     
     def __init__(self, session: AsyncSession):
         self.session = session
         self.repository = AuditLogRepository(session)
     
-    async def log_action(
+    async def log(
         self,
-        action: str,
+        action: Union[AuditAction, str],
         actor_id: Optional[str] = None,
         actor_username: Optional[str] = None,
         actor_role: Optional[str] = None,
         resource_type: Optional[str] = None,
         resource_id: Optional[str] = None,
         resource_name: Optional[str] = None,
-        details: Optional[dict] = None,
+        details: Optional[Dict[str, Any]] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None
-    ) -> AuditLog:
+    ) -> int:
         """
-        Log an action to the audit trail.
+        Log an audit event.
         
         Args:
-            action: Action performed (e.g., "user.created", "agent.updated")
-            actor_id: ID of user performing action
-            actor_username: Username of actor
-            actor_role: Role of actor
-            resource_type: Type of resource affected
-            resource_id: ID of resource affected
-            resource_name: Name of resource affected
-            details: Additional details (dict, will be JSON-serialized)
-            ip_address: IP address of request
-            user_agent: User agent string
-        
+            action: The action being performed (AuditAction enum or string)
+            actor_id: User ID performing the action
+            actor_username: Username of the actor
+            actor_role: Role of the actor
+            resource_type: Type of resource affected (e.g., 'prompt', 'connection')
+            resource_id: ID of the affected resource
+            resource_name: Human-readable name of the resource
+            details: Additional details as a dictionary
+            ip_address: Client IP address
+            user_agent: Client user agent
+            
         Returns:
-            Created audit log entry
+            ID of the created log entry
         """
-        # Serialize details to JSON string
-        details_str = None
-        if details:
-            try:
-                details_str = json.dumps(details)
-            except Exception as e:
-                logger.warning(f"Failed to serialize audit details: {e}")
-                details_str = str(details)
+        action_str = action.value if isinstance(action, AuditAction) else action
         
         log_data = AuditLogCreate(
             actor_id=actor_id,
             actor_username=actor_username,
             actor_role=actor_role,
-            action=action,
+            action=action_str,
             resource_type=resource_type,
             resource_id=resource_id,
             resource_name=resource_name,
-            details=details_str,
+            details=details,
             ip_address=ip_address,
             user_agent=user_agent
         )
         
-        audit_log = await self.repository.create(log_data)
-        
-        logger.info(
-            "Audit log created",
-            action=action,
-            actor=actor_username,
-            resource=f"{resource_type}/{resource_id}" if resource_type else None
-        )
-        
-        return audit_log
+        return await self.repository.create(log_data)
     
-    async def query_logs(
+    async def get_logs(
         self,
-        actor_id: Optional[str] = None,
         actor_username: Optional[str] = None,
         action: Optional[str] = None,
         resource_type: Optional[str] = None,
-        resource_id: Optional[str] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        skip: int = 0,
-        limit: int = 100
-    ) -> tuple[List[AuditLog], int]:
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[AuditLogResponse]:
         """
-        Query audit logs with filters.
+        Query audit logs with optional filters.
         
         Args:
-            Various filter parameters
-        
+            actor_username: Filter by username
+            action: Filter by action type (prefix match)
+            resource_type: Filter by resource type
+            start_date: Filter logs after this date (ISO format)
+            end_date: Filter logs before this date (ISO format)
+            limit: Maximum number of results
+            offset: Pagination offset
+            
         Returns:
-            Tuple of (logs list, total count)
+            List of audit log entries
         """
-        logs = await self.repository.query_logs(
-            actor_id=actor_id,
+        return await self.repository.get_logs(
             actor_username=actor_username,
             action=action,
             resource_type=resource_type,
-            resource_id=resource_id,
             start_date=start_date,
             end_date=end_date,
-            skip=skip,
-            limit=limit
+            limit=limit,
+            offset=offset
         )
+    
+    async def get_log_count(
+        self,
+        actor_username: Optional[str] = None,
+        action: Optional[str] = None,
+        resource_type: Optional[str] = None
+    ) -> int:
+        """
+        Get total count of logs matching filters.
         
-        total = await self.repository.count_logs(
-            actor_id=actor_id,
+        Args:
+            actor_username: Filter by username
+            action: Filter by action type (prefix match)
+            resource_type: Filter by resource type
+            
+        Returns:
+            Count of matching logs
+        """
+        return await self.repository.get_log_count(
             actor_username=actor_username,
             action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            start_date=start_date,
-            end_date=end_date
+            resource_type=resource_type
         )
-        
-        return logs, total
-    
-    async def get_recent_logs(self, limit: int = 100) -> List[AuditLog]:
-        """Get most recent audit logs."""
-        return await self.repository.get_recent_logs(limit=limit)
-    
-    async def get_user_activity(self, actor_id: str, limit: int = 100) -> List[AuditLog]:
-        """Get audit logs for a specific user."""
-        return await self.repository.get_logs_by_user(actor_id=actor_id, limit=limit)

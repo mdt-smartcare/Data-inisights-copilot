@@ -14,6 +14,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.exceptions import AppException, ErrorCode
+from app.core.utils.logging import get_logger
 from app.modules.agents.repository import (
     AgentRepository, AgentConfigRepository, UserAgentRepository,
     _config_to_dict
@@ -27,6 +28,8 @@ from app.modules.agents.schemas import (
 )
 # Import data source repository for config validation
 from app.modules.data_sources.repository import DataSourceRepository
+
+logger = get_logger(__name__)
 
 
 class AgentService:
@@ -217,8 +220,9 @@ class UserAgentService:
         """Get all users with access to an agent."""
         users = await self.user_agents.get_agent_users(agent_id)
         return UserAgentListResponse(
-            users=[UserAgentResponse.model_validate(u) for u in users],
+            users=users,
             total=len(users),
+            agent_id=agent_id,
         )
 
 

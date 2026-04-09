@@ -66,7 +66,7 @@ async def create_database_source(
     )
     return BaseResponse.ok(data=source)
 
-
+# ROUTE_UNUSED - use /upload endpoint for file sources instead
 @router.post("/file", response_model=BaseResponse[DataSourceResponse], status_code=status.HTTP_201_CREATED)
 async def create_file_source(
     data: FileSourceCreate,
