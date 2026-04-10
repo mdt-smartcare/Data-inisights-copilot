@@ -386,60 +386,60 @@ default_filters:
   - is_processed = false
 metric_templates:
   percentage_rate:
-    expression: COUNT(DISTINCT CASE WHEN {condition} THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT {id_column}), 0)
+    expression: COUNT(DISTINCT CASE WHEN {{condition}} THEN {{id_column}} END) * 100.0 / NULLIF(COUNT(DISTINCT {{id_column}}), 0)
     description: Calculates percentage rate with NULL safety for division by zero
     tables:
     - entity_table
   conversion_rate:
-    expression: COUNT(DISTINCT CASE WHEN {converted_condition} THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT CASE
-      WHEN {eligible_condition} THEN {id_column} END), 0)
+    expression: COUNT(DISTINCT CASE WHEN {{converted_condition}} THEN {{id_column}} END) * 100.0 / NULLIF(COUNT(DISTINCT CASE
+      WHEN {{eligible_condition}} THEN {{id_column}} END), 0)
     description: Calculates conversion rate from eligible to converted
     tables:
     - entity_table
   completion_rate:
-    expression: COUNT(DISTINCT CASE WHEN status = 'completed' THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT {id_column}),
+    expression: COUNT(DISTINCT CASE WHEN status = 'completed' THEN {{id_column}} END) * 100.0 / NULLIF(COUNT(DISTINCT {{id_column}}),
       0)
     description: Percentage of records that reached completed status
     tables:
     - entity_table
   success_rate:
-    expression: COUNT(DISTINCT CASE WHEN is_successful = true THEN {id_column} END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN
-      is_attempted = true THEN {id_column} END), 0)
+    expression: COUNT(DISTINCT CASE WHEN is_successful = true THEN {{id_column}} END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN
+      is_attempted = true THEN {{id_column}} END), 0)
     description: Success rate among attempted records
     tables:
     - entity_table
   safe_average:
-    expression: AVG(NULLIF({value_column}, 0))
+    expression: AVG(NULLIF({{value_column}}, 0))
     description: Average excluding zero values (treats zeros as missing)
     tables:
     - measurement_table
   weighted_average:
-    expression: SUM({value_column} * {weight_column}) / NULLIF(SUM({weight_column}), 0)
+    expression: SUM({{value_column}} * {{weight_column}}) / NULLIF(SUM({{weight_column}}), 0)
     description: Weighted average calculation
     tables:
     - measurement_table
   trimmed_average:
-    expression: AVG({value_column}) FILTER (WHERE {value_column} BETWEEN PERCENTILE_CONT(0.05) AND PERCENTILE_CONT(0.95))
+    expression: AVG({{value_column}}) FILTER (WHERE {{value_column}} BETWEEN PERCENTILE_CONT(0.05) AND PERCENTILE_CONT(0.95))
     description: Average excluding top and bottom 5% outliers
     tables:
     - measurement_table
   distinct_count:
-    expression: COUNT(DISTINCT {column})
+    expression: COUNT(DISTINCT {{column}})
     description: Count of unique values in a column
     tables:
     - entity_table
   conditional_count:
-    expression: COUNT(DISTINCT CASE WHEN {condition} THEN {id_column} END)
+    expression: COUNT(DISTINCT CASE WHEN {{condition}} THEN {{id_column}} END)
     description: Count of distinct records matching a condition
     tables:
     - entity_table
   running_count:
-    expression: COUNT(*) OVER (ORDER BY {date_column} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+    expression: COUNT(*) OVER (ORDER BY {{date_column}} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
     description: Cumulative count over time
     tables:
     - entity_table
   days_since:
-    expression: EXTRACT(DAY FROM CURRENT_DATE - {date_column})
+    expression: EXTRACT(DAY FROM CURRENT_DATE - {{date_column}})
     description: Number of days since a date
     tables:
     - entity_table
@@ -454,52 +454,52 @@ metric_templates:
     tables:
     - entity_table
   moving_average_7day:
-    expression: AVG({value_column}) OVER (ORDER BY {date_column} ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)
+    expression: AVG({{value_column}}) OVER (ORDER BY {{date_column}} ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)
     description: 7-day moving average
     tables:
     - measurement_table
   moving_average_30day:
-    expression: AVG({value_column}) OVER (ORDER BY {date_column} ROWS BETWEEN 29 PRECEDING AND CURRENT ROW)
+    expression: AVG({{value_column}}) OVER (ORDER BY {{date_column}} ROWS BETWEEN 29 PRECEDING AND CURRENT ROW)
     description: 30-day moving average
     tables:
     - measurement_table
   percentile_25:
-    expression: PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY {value_column})
+    expression: PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY {{value_column}})
     description: 25th percentile (first quartile)
     tables:
     - measurement_table
   percentile_50:
-    expression: PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY {value_column})
+    expression: PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY {{value_column}})
     description: 50th percentile (median)
     tables:
     - measurement_table
   percentile_75:
-    expression: PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY {value_column})
+    expression: PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY {{value_column}})
     description: 75th percentile (third quartile)
     tables:
     - measurement_table
   standard_deviation:
-    expression: STDDEV({value_column})
+    expression: STDDEV({{value_column}})
     description: Standard deviation of values
     tables:
     - measurement_table
   coefficient_of_variation:
-    expression: STDDEV({value_column}) * 100.0 / NULLIF(AVG({value_column}), 0)
+    expression: STDDEV({{value_column}}) * 100.0 / NULLIF(AVG({{value_column}}), 0)
     description: Coefficient of variation (CV) as percentage
     tables:
     - measurement_table
   rank_by_value:
-    expression: RANK() OVER (ORDER BY {value_column} DESC)
+    expression: RANK() OVER (ORDER BY {{value_column}} DESC)
     description: Rank records by value (highest first)
     tables:
     - entity_table
   dense_rank_by_value:
-    expression: DENSE_RANK() OVER (ORDER BY {value_column} DESC)
+    expression: DENSE_RANK() OVER (ORDER BY {{value_column}} DESC)
     description: Dense rank by value (no gaps in ranking)
     tables:
     - entity_table
   percentile_rank:
-    expression: PERCENT_RANK() OVER (ORDER BY {value_column})
+    expression: PERCENT_RANK() OVER (ORDER BY {{value_column}})
     description: Percentile rank (0 to 1)
     tables:
     - entity_table
@@ -618,25 +618,25 @@ column_semantics:
 query_patterns:
   count_by_category:
     description: Count records grouped by a category column
-    pattern: SELECT {category_column}, COUNT(*) as count FROM {table} WHERE {filters} GROUP BY {category_column} ORDER BY
+    pattern: SELECT {{category_column}}, COUNT(*) as count FROM {{table}} WHERE {{filters}} GROUP BY {{category_column}} ORDER BY
       count DESC
   trend_over_time:
     description: Show values or counts over time periods
-    pattern: SELECT DATE_TRUNC('{period}', {date_column}) as period, {aggregation}({value_column}) as value FROM {table} WHERE
-      {filters} GROUP BY 1 ORDER BY 1
+    pattern: SELECT DATE_TRUNC('{{period}}', {{date_column}}) as period, {{aggregation}}({{value_column}}) as value FROM {{table}} WHERE
+      {{filters}} GROUP BY 1 ORDER BY 1
   top_n_by_value:
     description: Get top N records by a value column
-    pattern: SELECT {columns} FROM {table} WHERE {filters} ORDER BY {value_column} DESC LIMIT {n}
+    pattern: SELECT {{columns}} FROM {{table}} WHERE {{filters}} ORDER BY {{value_column}} DESC LIMIT {{n}}
   comparison_between_groups:
     description: Compare metrics between two groups
-    pattern: SELECT {group_column}, {aggregation}({value_column}) as metric FROM {table} WHERE {filters} GROUP BY {group_column}
+    pattern: SELECT {{group_column}}, {{aggregation}}({{value_column}}) as metric FROM {{table}} WHERE {{filters}} GROUP BY {{group_column}}
   latest_per_entity:
     description: Get the most recent record for each entity
-    pattern: SELECT DISTINCT ON ({entity_id}) * FROM {table} WHERE {filters} ORDER BY {entity_id}, {date_column} DESC
+    pattern: SELECT DISTINCT ON ({{entity_id}}) * FROM {{table}} WHERE {{filters}} ORDER BY {{entity_id}}, {{date_column}} DESC
   cumulative_sum:
     description: Calculate running total over time
-    pattern: SELECT {date_column}, SUM({value_column}) OVER (ORDER BY {date_column}) as cumulative_total FROM {table} WHERE
-      {filters}
+    pattern: SELECT {{date_column}}, SUM({{value_column}}) OVER (ORDER BY {{date_column}}) as cumulative_total FROM {{table}} WHERE
+      {{filters}}
 validation_rules:
   required_filters:
   - All queries on entity_table must include is_deleted = false
@@ -652,7 +652,7 @@ validation_rules:
   - Date range queries should not exceed 5 years of data
 error_messages:
   no_data_found: No records found matching your criteria. Try broadening your search parameters.
-  ambiguous_column: The column name '{column}' exists in multiple tables. Please specify which table you mean.
+  ambiguous_column: The column name '{{column}}' exists in multiple tables. Please specify which table you mean.
   invalid_date_range: The specified date range is invalid. Please use dates in YYYY-MM-DD format.
   missing_required_filter: This query requires additional filters to protect data privacy.
   query_too_broad: This query would return too many records. Please add more specific filters.

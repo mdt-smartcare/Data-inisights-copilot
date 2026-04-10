@@ -371,23 +371,43 @@ class SQLService:
         
         try:
             with engine.connect() as conn:
-                # Try information_schema first (works for PostgreSQL, MySQL)
-                try:
-                    result = conn.execute(text("""
-                        SELECT table_name 
-                        FROM information_schema.tables 
-                        WHERE table_type = 'BASE TABLE'
-                        AND table_schema NOT IN ('pg_catalog', 'information_schema')
-                        ORDER BY table_name
-                    """))
-                    all_tables = [row[0] for row in result]
-                except Exception:
-                    # Fallback for DuckDB or other databases
+                all_tables = []
+                
+                if self._is_duckdb():
+                    # For DuckDB: include both tables AND views (uploaded files are registered as views)
                     try:
-                        result = conn.execute(text("SHOW TABLES"))
+                        result = conn.execute(text("""
+                            SELECT table_name 
+                            FROM information_schema.tables 
+                            WHERE table_schema = 'main'
+                            ORDER BY table_name
+                        """))
+                        all_tables = [row[0] for row in result]
+                    except Exception as e:
+                        logger.debug(f"DuckDB information_schema query failed: {e}")
+                        # Fallback: use SHOW TABLES
+                        try:
+                            result = conn.execute(text("SHOW TABLES"))
+                            all_tables = [row[0] for row in result]
+                        except Exception:
+                            all_tables = []
+                else:
+                    # For PostgreSQL, MySQL - use standard information_schema with BASE TABLE filter
+                    try:
+                        result = conn.execute(text("""
+                            SELECT table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                            ORDER BY table_name
+                        """))
                         all_tables = [row[0] for row in result]
                     except Exception:
-                        all_tables = []
+                        try:
+                            result = conn.execute(text("SHOW TABLES"))
+                            all_tables = [row[0] for row in result]
+                        except Exception:
+                            all_tables = []
                 
                 # Filter out internal/metadata tables (those starting with underscore)
                 self._table_names = [t for t in all_tables if not t.startswith('_')]
