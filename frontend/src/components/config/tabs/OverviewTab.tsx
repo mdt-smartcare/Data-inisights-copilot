@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ActiveConfig, AdvancedSettings, ModelInfo } from '../../../contexts/AgentContext';
 import type { Agent } from '../../../types/agent';
-import { getFileSqlTables, updateAgent, deleteAgent, handleApiError } from '../../../services/api';
+import { updateAgent, deleteAgent, handleApiError } from '../../../services/api';
 import { useToast } from '../../Toast';
 import ConfirmationModal from '../../ConfirmationModal';
 import { CpuChipIcon, CircleStackIcon, CubeTransparentIcon, AdjustmentsHorizontalIcon, SparklesIcon, PencilIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
@@ -43,7 +43,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     const navigate = useNavigate();
     const { success: showSuccess, error: showError } = useToast();
     
-    const [fileSchema, setFileSchema] = useState<Record<string, string[]>>({});
+    // Schema is now parsed directly from activeConfig.schema_selection
     
     // Edit state
     const [isEditing, setIsEditing] = useState(false);
@@ -120,33 +120,15 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         ? { name: activeConfig.ingestion_file_name, type: activeConfig.ingestion_file_type || 'unknown' }
         : undefined;
 
-    // Fetch file schema from DuckDB for file-based sources
-    useEffect(() => {
-        if (activeConfig.data_source_type === 'file') {
-            getFileSqlTables()
-                .then((response) => {
-                    if (response && response.tables && response.tables.length > 0) {
-                        const schema: Record<string, string[]> = {};
-                        response.tables.forEach((table: { name?: string; original_filename?: string; columns?: string[] }) => {
-                            schema[table.name || table.original_filename || 'file'] = table.columns || [];
-                        });
-                        setFileSchema(schema);
-                    }
-                })
-                .catch((err) => {
-                    console.log('Could not fetch file tables:', err);
-                });
-        }
-    }, [activeConfig.data_source_type]);
-
-    // Parse schema
+    // Parse schema from schema_selection (works for both file and database sources)
+    // schema_selection contains the selected_columns from agent config
     let schema: Record<string, string[]> = {};
-    if (activeConfig.data_source_type === 'file') {
-        schema = fileSchema;
-    } else if (activeConfig.schema_selection) {
+    if (activeConfig.schema_selection) {
         try {
-            const parsed = JSON.parse(activeConfig.schema_selection);
-            if (typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+            const parsed = typeof activeConfig.schema_selection === 'string' 
+                ? JSON.parse(activeConfig.schema_selection) 
+                : activeConfig.schema_selection;
+            if (typeof parsed === 'object' && parsed !== null && Object.keys(parsed).length > 0) {
                 schema = parsed;
             }
         } catch {

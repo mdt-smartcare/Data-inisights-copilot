@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Cog6ToothIcon, XMarkIcon, InformationCircleIcon, PencilIcon } from '@heroicons/react/24/outline';
 import type { ChunkingConfig, ParallelizationConfig, MedicalContextConfig } from '../types/rag';
 import { useSystemSettings } from '../contexts/SystemSettingsContext';
@@ -76,25 +76,46 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
     const [editChunking, setEditChunking] = useState(false);
     const [incremental, setIncremental] = useState(true);
 
-    // Update settings when system settings load
+    // Track if modal was previously open to detect open transitions
+    const wasOpenRef = useRef(false);
+    
+    // KEY FIX: Reinitialize settings when modal OPENS (transition from closed to open)
     useEffect(() => {
-        if (!settingsLoading) {
+        const justOpened = isOpen && !wasOpenRef.current;
+        wasOpenRef.current = isOpen;
+        
+        if (justOpened) {
+            // Modal just opened - use defaultSettings from parent (saved config)
+            console.log('[EmbeddingModal] Opened with defaultSettings.chunking:', defaultSettings?.chunking);
+            
             const newDefaults = getEmbeddingModalDefaults();
-            setSettings(prev => ({
-                ...prev,
+            setSettings({
                 batch_size: defaultSettings?.batch_size ?? newDefaults.batch_size,
                 max_concurrent: defaultSettings?.max_concurrent ?? newDefaults.max_concurrent,
-                chunking: defaultSettings?.chunking ?? {
+                chunking: defaultSettings?.chunking ? {
+                    parent_chunk_size: defaultSettings.chunking.parent_chunk_size,
+                    parent_chunk_overlap: defaultSettings.chunking.parent_chunk_overlap,
+                    child_chunk_size: defaultSettings.chunking.child_chunk_size,
+                    child_chunk_overlap: defaultSettings.chunking.child_chunk_overlap,
+                } : {
                     parent_chunk_size: newDefaults.chunking.parent_chunk_size,
                     parent_chunk_overlap: newDefaults.chunking.parent_chunk_overlap,
                     child_chunk_size: newDefaults.chunking.child_chunk_size,
                     child_chunk_overlap: newDefaults.chunking.child_chunk_overlap,
                 },
+                parallelization: defaultSettings?.parallelization ?? newDefaults.parallelization,
+                medical_context_config: defaultSettings?.medical_context_config ?? {
+                    medical_context: {},
+                    clinical_flag_prefixes: ['is_', 'has_', 'was_', 'history_of_', 'confirmed_', 'requires_', 'on_'],
+                    use_yaml_defaults: true,
+                },
                 max_consecutive_failures: defaultSettings?.max_consecutive_failures ?? newDefaults.max_consecutive_failures,
                 retry_attempts: defaultSettings?.retry_attempts ?? newDefaults.retry_attempts,
-            }));
+            });
+            setEditChunking(false);
+            setShowAdvanced(false);
         }
-    }, [settingsLoading, getEmbeddingModalDefaults, defaultSettings]);
+    }, [isOpen, defaultSettings, getEmbeddingModalDefaults]);
 
     if (!isOpen) return null;
 

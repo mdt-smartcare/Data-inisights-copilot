@@ -23,3 +23,4 @@ backend/embedding_test_output.txt
 # Local output and settings
 .vscode/
 eval/reports/
+/Data Literacy 2.0

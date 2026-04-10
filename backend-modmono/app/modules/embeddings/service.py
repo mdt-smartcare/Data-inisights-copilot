@@ -15,9 +15,12 @@ import math
 import time
 import asyncio
 import threading
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from collections import OrderedDict
+import hashlib
+import multiprocessing
 from pathlib import Path
 from contextlib import asynccontextmanager
 
@@ -39,6 +42,209 @@ logger = get_logger(__name__)
 
 # Thread pool for running embedding jobs without blocking the event loop
 _embedding_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embedding_job_")
+
+# =============================================================================
+# Concurrent Batch Processing Configuration (ported from old backend)
+# =============================================================================
+# API providers (OpenAI, Azure) benefit from concurrent HTTP requests
+# Local models (HuggingFace/SentenceTransformers) should process sequentially 
+# to maximize GPU utilization and avoid memory contention
+DEFAULT_API_CONCURRENT = 4  # Process up to 4 batches concurrently for API providers
+DEFAULT_LOCAL_BATCH_SIZE = 256  # Larger batches for local GPU models (more efficient)
+
+# =============================================================================
+# MPS/CUDA BATCH SIZE OPTIMIZATION (ported from old backend)
+# =============================================================================
+# For local GPU providers, override small UI batch sizes for efficiency
+# Small batches (e.g., 32) underutilize GPU parallelism - 128+ is optimal
+MIN_GPU_BATCH_SIZE = 128  # Optimal minimum for MPS/CUDA with BGE-M3
+
+# Local GPU providers that benefit from larger batch sizes
+LOCAL_GPU_PROVIDERS = ("huggingface", "sentence-transformers", "bge-base-en-v1.5", "bge")
+
+# Model name patterns for local models (handles misconfigured provider settings)
+LOCAL_MODEL_PATTERNS = ("bge-", "bge_", "sentence-transformers", "all-minilm", "e5-", "gte-")
+
+
+def _is_api_provider(model_name: str) -> bool:
+    """Check if the embedding model is an API-based provider (supports concurrent requests)."""
+    if not model_name:
+        return False
+    model_lower = model_name.lower()
+    return model_lower.startswith('openai/') or model_lower.startswith('azure/')
+
+
+def _is_local_gpu_model(model_name: str) -> bool:
+    """
+    Check if the embedding model is a local GPU model that benefits from larger batch sizes.
+    
+    Local models like BGE-M3, sentence-transformers, etc. run on MPS/CUDA and 
+    achieve better throughput with batch sizes >= 128.
+    """
+    if not model_name:
+        return False
+    model_lower = model_name.lower()
+    
+    # Check provider prefix
+    provider = model_lower.split('/')[0] if '/' in model_lower else ''
+    if provider in LOCAL_GPU_PROVIDERS:
+        return True
+    
+    # Check model name patterns
+    return any(pattern in model_lower for pattern in LOCAL_MODEL_PATTERNS)
+
+
+def _optimize_batch_size_for_gpu(batch_size: int, model_name: str) -> int:
+    """
+    Optimize batch size for local GPU models.
+    
+    Small UI batch sizes (e.g., 32) are suboptimal for GPU processing.
+    This overrides them to MIN_GPU_BATCH_SIZE for ~2-3x speedup.
+    
+    Returns the original batch_size for API providers.
+    """
+    if _is_local_gpu_model(model_name) and batch_size < MIN_GPU_BATCH_SIZE:
+        logger.info(
+            f"MPS/CUDA OPTIMIZATION: UI batch_size={batch_size} is suboptimal for GPU. "
+            f"Overriding to {MIN_GPU_BATCH_SIZE} for ~2.5x speedup."
+        )
+        return MIN_GPU_BATCH_SIZE
+    return batch_size
+
+
+# =============================================================================
+# Query Embedding Cache (Performance Optimization)
+# =============================================================================
+# embed_query() is deterministic: same text → same embedding.
+# Queries repeat frequently (follow-ups, retries, similar phrasing).
+# 512 entries ≈ 2MB for 1024-dim embeddings.
+_QUERY_EMBEDDING_CACHE: OrderedDict[str, List[float]] = OrderedDict()
+_QUERY_CACHE_MAX = 512
+
+
+def get_cached_query_embedding(text: str, embed_fn) -> List[float]:
+    """
+    Get query embedding with LRU caching.
+    
+    Caching avoids re-computing embeddings (~50-200ms per query).
+    512 entries ≈ 2MB for 1024-dim vectors.
+    """
+    cache_key = text.strip()
+    
+    if cache_key in _QUERY_EMBEDDING_CACHE:
+        _QUERY_EMBEDDING_CACHE.move_to_end(cache_key)
+        return _QUERY_EMBEDDING_CACHE[cache_key]
+    
+    # Cache miss — compute embedding
+    if asyncio.iscoroutinefunction(embed_fn):
+        loop = asyncio.get_event_loop()
+        embedding = loop.run_until_complete(embed_fn([text]))[0]
+    else:
+        embedding = embed_fn([text])[0]
+    
+    _QUERY_EMBEDDING_CACHE[cache_key] = embedding
+    if len(_QUERY_EMBEDDING_CACHE) > _QUERY_CACHE_MAX:
+        _QUERY_EMBEDDING_CACHE.popitem(last=False)
+    
+    return embedding
+
+
+# =============================================================================
+# Parallel Delta Worker for Incremental Updates
+# =============================================================================
+
+def _parallel_delta_worker(
+    doc_batch: List[Dict[str, Any]], 
+    existing_checksums: Dict[str, str]
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Worker function for parallel delta checking during incremental updates.
+    
+    Calculates checksums for documents and identifies which need re-embedding.
+    Runs in separate process via ProcessPoolExecutor for CPU parallelism.
+    """
+    processed = []
+    stale_ids = []
+    
+    for doc in doc_batch:
+        content = doc.get("content", "")
+        doc_id = doc.get("id", str(uuid.uuid4()))
+        
+        # Calculate checksum
+        doc_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+        
+        # Add checksum to metadata
+        if "metadata" not in doc:
+            doc["metadata"] = {}
+        doc["metadata"]["checksum"] = doc_hash
+        doc["metadata"]["source_id"] = doc_id
+        
+        # Check if document exists and has changed
+        if doc_id in existing_checksums:
+            if existing_checksums[doc_id] != doc_hash:
+                stale_ids.append(doc_id)
+                processed.append(doc)
+        else:
+            processed.append(doc)
+    
+    return processed, stale_ids
+
+
+async def _parallel_delta_check(
+    documents: List[Dict[str, Any]],
+    existing_checksums: Dict[str, str],
+    delta_check_batch_size: int = 50000,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """
+    Perform parallel delta checking to identify new/modified documents.
+    
+    Uses ProcessPoolExecutor for CPU-bound checksum calculation.
+    """
+    if not existing_checksums:
+        # No existing data - add checksums to all docs
+        for doc in documents:
+            content = doc.get("content", "")
+            doc_id = doc.get("id", str(uuid.uuid4()))
+            doc_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+            if "metadata" not in doc:
+                doc["metadata"] = {}
+            doc["metadata"]["checksum"] = doc_hash
+            doc["metadata"]["source_id"] = doc_id
+        return documents, []
+    
+    num_workers = max(1, multiprocessing.cpu_count() // 2)
+    doc_batches = [
+        documents[i:i + delta_check_batch_size] 
+        for i in range(0, len(documents), delta_check_batch_size)
+    ]
+    
+    logger.info(f"Delta check: {len(documents)} docs, {len(doc_batches)} batches, {num_workers} workers")
+    
+    def run_delta_check_sync():
+        local_processed = []
+        local_stale = []
+        
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = [
+                executor.submit(_parallel_delta_worker, batch, existing_checksums) 
+                for batch in doc_batches
+            ]
+            
+            for i, future in enumerate(as_completed(futures)):
+                try:
+                    batch_processed, batch_stale = future.result()
+                    local_processed.extend(batch_processed)
+                    local_stale.extend(batch_stale)
+                except Exception as e:
+                    logger.error(f"Delta check batch failed: {e}")
+        
+        return local_processed, local_stale
+    
+    loop = asyncio.get_event_loop()
+    all_processed, all_stale = await loop.run_in_executor(None, run_delta_check_sync)
+    
+    logger.info(f"Delta check complete: {len(all_processed)} to process, {len(all_stale)} stale")
+    return all_processed, all_stale
 
 
 class EmbeddingJobService:
@@ -110,8 +316,20 @@ class EmbeddingJobService:
         
         # Extract batch settings from embedding_config or use defaults
         # Default to 256 for faster processing
-        batch_size = emb_config.get('batch_size', 256)
-        max_concurrent = emb_config.get('max_concurrent', 5)
+        # Use request override first, then chunking_config, then embedding_config
+        batch_size = request.batch_size or chunking_config.get('batch_size') or emb_config.get('batch_size', 256)
+        max_concurrent = request.max_concurrent or chunking_config.get('max_concurrent') or emb_config.get('max_concurrent', 5)
+        
+        # If request has chunking config, merge it
+        if request.chunking:
+            chunking_config = {
+                'parent_chunk_size': request.chunking.parent_chunk_size,
+                'parent_chunk_overlap': request.chunking.parent_chunk_overlap,
+                'child_chunk_size': request.chunking.child_chunk_size,
+                'child_chunk_overlap': request.chunking.child_chunk_overlap,
+                'batch_size': batch_size,  # Include batch_size in chunking_config
+                'max_concurrent': max_concurrent,
+            }
         
         # Generate job ID
         job_id = f"emb-job-{uuid.uuid4().hex[:12]}"
@@ -150,12 +368,15 @@ class EmbeddingJobService:
         job_id: str,
         config_id: int,
         user_id: str,
-        incremental: bool = False
+        incremental: bool = False,
+        batch_size: int = None,
+        max_concurrent: int = None,
+        chunking_override: dict = None
     ) -> None:
         """
         Start embedding job in background thread.
         
-        All settings are read from agent_config table.
+        Settings are read from job record (which includes request overrides) or agent_config table.
         """
         # Get config data needed for embedding
         stmt = select(AgentConfigModel).where(AgentConfigModel.id == config_id)
@@ -208,10 +429,16 @@ class EmbeddingJobService:
         if not model_name:
             model_name = emb_config.get('model', 'huggingface/BAAI/bge-large-en-v1.5')
         
-        # Extract batch settings from embedding_config or use defaults
-        # Default to 256 for faster processing
-        batch_size = emb_config.get('batch_size', 256)
-        max_concurrent = emb_config.get('max_concurrent', 5)
+        # Use passed batch_size first (from create_job), then chunking_config, then embedding_config
+        if batch_size is None:
+            batch_size = chunking_config.get('batch_size') or emb_config.get('batch_size', 256)
+        if max_concurrent is None:
+            max_concurrent = chunking_config.get('max_concurrent') or emb_config.get('max_concurrent', 5)
+        
+        # Apply chunking override from request if provided
+        if chunking_override:
+            chunking_config.update(chunking_override)
+            logger.info(f"Applied chunking override: {chunking_override}")
         
         # Build config dict for background task - all from agent_config
         job_config = {
@@ -770,13 +997,13 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
         from app.core.config import get_settings
         settings = get_settings()
         
-        # Model name like "BAAI/bge-m3" -> check paths:
+        # Model name like "BAAI/bge-base-en-v1.5" -> check paths:
         model_parts = actual_model.split('/')
         possible_paths = [
-            settings.data_dir / "models" / actual_model,  # data/models/BAAI/bge-m3
-            Path(f"./models/{model_parts[-1]}"),  # models/bge-m3
-            Path(f"./data/models/{actual_model}"),  # data/models/BAAI/bge-m3
-            Path(f"../backend/models/{model_parts[-1]}"),  # ../backend/models/bge-m3
+            settings.data_dir / "models" / actual_model,  # data/models/BAAI/bge-base-en-v1.5
+            Path(f"./models/{model_parts[-1]}"),  # models/bge-base-en-v1.5
+            Path(f"./data/models/{actual_model}"),  # data/models/BAAI/bge-base-en-v1.5
+            Path(f"../backend/models/{model_parts[-1]}"),  # ../backend/models/bge-base-en-v1.5
         ]
         
         local_path = None
@@ -852,7 +1079,7 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
                 texts,
                 normalize_embeddings=True,
                 show_progress_bar=False,
-                batch_size=128,  # Internal batch size for model
+                batch_size=256,  # PERFORMANCE FIX: Large batch for GPU efficiency (was 128)
                 convert_to_numpy=True  # Efficient GPU→CPU transfer
             )
             
@@ -917,7 +1144,7 @@ async def _extract_documents_from_postgres(
     Args:
         db_url: PostgreSQL connection URL
         selected_columns: Dict mapping table names to list of columns
-        batch_size: Rows per batch
+        batch_size: Rows per fetch batch (streaming cursor)
     
     Returns:
         tuple: (total_count, list of document dicts with 'id', 'content', 'metadata')
@@ -1039,15 +1266,17 @@ async def _extract_documents_from_duckdb(
     duckdb_path: str,
     table_name: str,
     columns: List[str],
-    batch_size: int = 1000
+    batch_size: int = 50000,
+    job_id: str = None,
 ) -> tuple[int, List[Dict[str, Any]]]:
     """
     Extract documents from DuckDB for embedding.
     
-    Returns:
-        tuple: (total_count, list of document dicts with 'id', 'content', 'metadata')
+    Handles column name mismatches by normalizing names and mapping to actual table columns.
+    For example, maps "live_improved_yes_no" to "Live Improved (Yes/No)".
     """
     import duckdb
+    import re as regex_module
     
     if not os.path.exists(duckdb_path):
         raise ValueError(f"DuckDB file not found: {duckdb_path}")
@@ -1056,51 +1285,103 @@ async def _extract_documents_from_duckdb(
     
     try:
         # Get total row count
-        count_result = conn.execute(f"SELECT COUNT(*) FROM \"{table_name}\"").fetchone()
+        count_result = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()
         total_count = count_result[0] if count_result else 0
         
         logger.info(f"Found {total_count} rows in table {table_name}")
         
-        # Build column list for query - use all text columns
-        safe_columns = [f'"{c}"' for c in columns]
+        # Get actual column names from the table schema
+        table_columns = [col[0] for col in conn.execute(f'DESCRIBE "{table_name}"').fetchall()]
+        logger.info(f"Actual columns ({len(table_columns)}): {table_columns[:10]}...")
+        logger.info(f"Requested columns ({len(columns)}): {columns[:10]}...")
+        
+        # Normalize column names for matching (handles "Live Improved (Yes/No)" vs "live_improved_yes_no")
+        def normalize_col(name: str) -> str:
+            n = name.lower().strip()
+            n = regex_module.sub(r'[^a-z0-9]', '_', n)
+            n = regex_module.sub(r'_+', '_', n).strip('_')
+            return n
+        
+        # Build mapping: normalized -> actual column name
+        col_map = {}
+        for col in table_columns:
+            col_map[normalize_col(col)] = col
+            col_map[col] = col
+            col_map[col.lower()] = col
+        
+        # Map requested columns to actual columns
+        validated_columns = []  # Actual column names for SQL
+        display_columns = []    # Display names for documents
+        missing_columns = []
+        
+        for req in columns:
+            if req in table_columns:
+                validated_columns.append(req)
+                display_columns.append(req)
+            elif req.lower() in col_map:
+                validated_columns.append(col_map[req.lower()])
+                display_columns.append(req)
+            elif normalize_col(req) in col_map:
+                validated_columns.append(col_map[normalize_col(req)])
+                display_columns.append(req)
+            else:
+                missing_columns.append(req)
+        
+        if missing_columns:
+            logger.warning(f"Columns not found (skipped): {missing_columns[:10]}{'...' if len(missing_columns) > 10 else ''}")
+        
+        if not validated_columns:
+            raise ValueError(f"None of the requested columns exist in table '{table_name}'")
+        
+        logger.info(f"Validated {len(validated_columns)}/{len(columns)} columns for extraction")
+        
+        # Build column list for query using VALIDATED column names
+        safe_columns = [f'"{c}"' for c in validated_columns]
         columns_sql = ", ".join(safe_columns)
         
-        # Also get a row identifier if available
-        # Try common ID column names
-        id_columns = ['id', 'ID', 'row_id', 'index', 'reviewid', 'record_id', 'patient_id']
+        # Find ID column
+        id_columns = ['id', 'ID', 'row_id', 'index', 'reviewid', 'record_id', 'patient_id', 'res_id', 'encounter_id']
         id_column = None
-        table_columns = [col[0] for col in conn.execute(f"DESCRIBE \"{table_name}\"").fetchall()]
         for ic in id_columns:
             if ic in table_columns:
                 id_column = ic
                 break
         
-        # Extract documents
-        documents = []
-        offset = 0
+        logger.info(f"Using ID column: {id_column or 'ROW_NUMBER()'}")
         
-        while offset < total_count:
-            if id_column:
-                query = f"SELECT \"{id_column}\", {columns_sql} FROM \"{table_name}\" LIMIT {batch_size} OFFSET {offset}"
-            else:
-                # DuckDB doesn't have rowid - use ROW_NUMBER() instead
-                query = f"SELECT ROW_NUMBER() OVER () as _row_num, {columns_sql} FROM \"{table_name}\" LIMIT {batch_size} OFFSET {offset}"
-            
-            rows = conn.execute(query).fetchall()
+        # Build query
+        if id_column:
+            query = f'SELECT "{id_column}", {columns_sql} FROM "{table_name}"'
+        else:
+            query = f'SELECT ROW_NUMBER() OVER () as _row_num, {columns_sql} FROM "{table_name}"'
+        
+        logger.info("Starting FAST streaming extraction (no OFFSET pagination)")
+        extraction_start = time.time()
+        
+        result = conn.execute(query)
+        
+        documents = []
+        rows_processed = 0
+        last_progress_update = 0
+        
+        while True:
+            rows = result.fetchmany(batch_size)
+            if not rows:
+                break
             
             for row in rows:
                 row_id = str(row[0])
-                # Combine all text columns into one document
                 text_parts = []
                 metadata = {"table": table_name, "row_id": row_id}
                 
-                for i, col in enumerate(columns):
-                    value = row[i + 1]  # +1 because first column is ID
+                for i, col in enumerate(display_columns):
+                    value = row[i + 1]
                     if value is not None:
                         value_str = str(value).strip()
                         if value_str and value_str.lower() not in ('none', 'null', 'nan', ''):
                             text_parts.append(f"{col}: {value_str}")
-                            metadata[col] = value_str[:200]  # Truncate metadata
+                            if i < 5:
+                                metadata[col] = value_str[:100]
                 
                 if text_parts:
                     documents.append({
@@ -1109,19 +1390,43 @@ async def _extract_documents_from_duckdb(
                         "metadata": metadata
                     })
             
-            offset += batch_size
+            rows_processed += len(rows)
+            
+            if rows_processed - last_progress_update >= 100000 or rows_processed >= total_count:
+                last_progress_update = rows_processed
+                elapsed = time.time() - extraction_start
+                rate = rows_processed / elapsed if elapsed > 0 else 0
+                progress_pct = rows_processed * 100 / total_count if total_count > 0 else 0
+                logger.info(f"Extraction progress: {rows_processed}/{total_count} rows ({progress_pct:.1f}%), {len(documents)} docs, {rate:.0f} rows/sec")
+                
+                if job_id:
+                    try:
+                        await _update_job_status(
+                            job_id, 
+                            EmbeddingJobStatus.PREPARING, 
+                            phase=f"Extracting data: {rows_processed:,}/{total_count:,} rows ({progress_pct:.1f}%)"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update extraction progress: {e}")
+        
+        extraction_time = time.time() - extraction_start
+        logger.info(f"Extraction complete: {len(documents)} documents from {total_count} rows in {extraction_time:.1f}s")
         
         return total_count, documents
     
     finally:
         conn.close()
 
-
 async def _run_embedding_job(job_config: Dict[str, Any]):
     """
-    Background task to run embedding generation.
+    Background task to run embedding generation with parent-child chunking.
     
-    Performs actual embedding generation using configured model and stores in ChromaDB.
+    Pipeline:
+    1. Extract raw data from DuckDB/PostgreSQL
+    2. Transform to LangChain Documents with medical context enrichment
+    3. Apply Parent-Child (Small-to-Big) chunking via AdvancedDataTransformer
+    4. Generate embeddings for child chunks
+    5. Store in vector DB with parent document linking
     """
     job_id = job_config.get("job_id")
     if not job_id:
@@ -1140,400 +1445,355 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
     chunking_config = job_config.get("chunking_config") or {}
     data_dictionary = job_config.get("data_dictionary") or {}
     selected_columns_raw = job_config.get("selected_columns") or {}
-    batch_size = job_config.get("batch_size") or 256  # Default to 256 for faster processing
+    
+    batch_size = job_config.get("batch_size") or 256
     incremental = job_config.get("incremental", False)
+    batch_size = _optimize_batch_size_for_gpu(batch_size, embedding_model)
     data_source_id = job_config.get("data_source_id")
     
     logger.info(f"Starting embedding job {job_id} for config {config_id}")
-    logger.info(f"Job {job_id} config: model={embedding_model}, batch_size={batch_size}, incremental={incremental}")
     
-    job_start_time = time.time()  # Track total job time
+    # Parse chunking configuration
+    parent_chunk_size = chunking_config.get('parent_chunk_size') or chunking_config.get('parentChunkSize', 512)
+    parent_chunk_overlap = chunking_config.get('parent_chunk_overlap') or chunking_config.get('parentChunkOverlap', 100)
+    child_chunk_size = chunking_config.get('child_chunk_size') or chunking_config.get('childChunkSize', 128)
+    child_chunk_overlap = chunking_config.get('child_chunk_overlap') or chunking_config.get('childChunkOverlap', 25)
+    use_parent_child_chunking = chunking_config.get('use_parent_child_chunking', True)
+    
+    logger.info(f"Job {job_id} config: model={embedding_model}, batch_size={batch_size}, incremental={incremental}")
+    logger.info(f"Job {job_id} chunking: parent={parent_chunk_size}/{parent_chunk_overlap}, child={child_chunk_size}/{child_chunk_overlap}, enabled={use_parent_child_chunking}")
+    
+    job_start_time = time.time()
     
     try:
-        # Update status to PREPARING
-        phase_start = time.time()
-        logger.info(f"Job {job_id}: Updating status to PREPARING...")
         await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Loading configuration...")
-        logger.info(f"Job {job_id}: Status updated to PREPARING in {time.time() - phase_start:.2f}s")
         
-        # Parse selected_columns (JSON string or dict)
         selected_columns = selected_columns_raw
         if isinstance(selected_columns, str):
             try:
                 selected_columns = json.loads(selected_columns)
             except json.JSONDecodeError:
-                logger.warning(f"Job {job_id}: Failed to parse selected_columns JSON")
                 selected_columns = {}
         
-        logger.info(f"Job {job_id}: selected_columns has {len(selected_columns) if selected_columns else 0} tables")
-        
-        # Get data source and agent info
         from app.modules.agents.models import AgentConfigModel
         from app.modules.data_sources.models import DataSourceModel
         
-        # Data source info - could be file (DuckDB) or database (PostgreSQL)
         source_type = None
         duckdb_path = None
         duckdb_table_name = None
         db_url = None
         agent_id = "unknown"
         
-        logger.info(f"Job {job_id}: Opening database session to fetch config...")
         async with _get_background_db_session() as session:
-            logger.info(f"Job {job_id}: Database session opened, fetching config {config_id}...")
-            # Get config
             stmt = select(AgentConfigModel).where(AgentConfigModel.id == config_id)
             result = await session.execute(stmt)
             config = result.scalar_one_or_none()
             
             if not config:
-                logger.error(f"Job {job_id}: Configuration {config_id} not found!")
                 await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="Configuration not found")
                 return
             
-            logger.info(f"Job {job_id}: Config found, agent_id={config.agent_id}, data_source_id={config.data_source_id}")
             agent_id = str(config.agent_id) if config.agent_id else "unknown"
             data_source_id = config.data_source_id
             
-            # Get data source
             if data_source_id:
-                logger.info(f"Job {job_id}: Fetching data source {data_source_id}...")
                 ds_stmt = select(DataSourceModel).where(DataSourceModel.id == data_source_id)
                 ds_result = await session.execute(ds_stmt)
                 data_source = ds_result.scalar_one_or_none()
                 
                 if data_source:
-                    source_type = data_source.source_type  # 'file' or 'database'
+                    source_type = data_source.source_type
                     duckdb_path = data_source.duckdb_file_path
                     duckdb_table_name = data_source.duckdb_table_name
                     db_url = data_source.db_url
-                    logger.info(f"Job {job_id}: Data source found: type={source_type}, db_url={db_url[:50] if db_url else 'None'}...")
-                else:
-                    logger.error(f"Job {job_id}: Data source {data_source_id} not found!")
-            else:
-                logger.error(f"Job {job_id}: No data_source_id in config!")
         
-        logger.info(f"Job {job_id}: Database session closed. source_type={source_type}. Elapsed since start: {time.time() - job_start_time:.2f}s")
-        
-        # Validate data source configuration
-        if source_type == 'file':
-            if not duckdb_path or not duckdb_table_name:
-                await _update_job_status(
-                    job_id, 
-                    EmbeddingJobStatus.FAILED, 
-                    error_message="File data source not configured. Please upload a file first."
-                )
-                return
-        elif source_type == 'database':
-            if not db_url:
-                await _update_job_status(
-                    job_id, 
-                    EmbeddingJobStatus.FAILED, 
-                    error_message="Database connection URL not configured."
-                )
-                return
-        else:
-            await _update_job_status(
-                job_id, 
-                EmbeddingJobStatus.FAILED, 
-                error_message=f"Unknown data source type: {source_type}. Expected 'file' or 'database'."
-            )
+        # Validate data source
+        if source_type == 'file' and (not duckdb_path or not duckdb_table_name):
+            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="File data source not configured.")
+            return
+        elif source_type == 'database' and not db_url:
+            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="Database URL not configured.")
+            return
+        elif source_type not in ('file', 'database'):
+            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message=f"Unknown source type: {source_type}")
             return
         
-        # Generate vector DB name
         vector_db_name = f"agent_{agent_id}_config_{config_id}"
         
-        logger.info(f"Job {job_id}: Using embedding model {embedding_model}, vector DB: {vector_db_name}")
+        # =================================================================
+        # PHASE 1: Extract raw data
+        # =================================================================
+        await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Extracting documents...")
         
-        # Update phase
-        await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Extracting documents from data source...")
-        
-        # Extract documents based on source type
         try:
             if source_type == 'database':
-                # For database sources, selected_columns is already {"table": ["col1", "col2"]}
                 if not selected_columns:
-                    await _update_job_status(
-                        job_id, 
-                        EmbeddingJobStatus.FAILED, 
-                        error_message="No tables/columns selected for embedding. Please configure selected columns."
-                    )
+                    await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No columns selected.")
                     return
-                
-                logger.info(f"Extracting from database: {len(selected_columns)} tables, columns: {selected_columns}")
-                
-                total_count, documents = await _extract_documents_from_postgres(
-                    db_url=db_url,
-                    selected_columns=selected_columns,
-                    batch_size=1000
-                )
+                total_count, raw_documents = await _extract_documents_from_postgres(db_url=db_url, selected_columns=selected_columns, batch_size=1000)
             else:
-                # For file sources, need to get columns for the specific DuckDB table
                 columns_to_embed = []
                 if selected_columns and isinstance(selected_columns, dict):
-                    # Format: {"table_name": ["col1", "col2"]}
-                    if duckdb_table_name in selected_columns:
-                        columns_to_embed = selected_columns[duckdb_table_name]
-                    else:
-                        # Take all columns from first table
-                        for t, cols in selected_columns.items():
+                    columns_to_embed = selected_columns.get(duckdb_table_name, [])
+                    if not columns_to_embed:
+                        for cols in selected_columns.values():
                             columns_to_embed = cols
                             break
                 
                 if not columns_to_embed:
-                    await _update_job_status(
-                        job_id, 
-                        EmbeddingJobStatus.FAILED, 
-                        error_message="No columns selected for embedding. Please configure selected columns."
-                    )
+                    await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No columns selected.")
                     return
                 
-                logger.info(f"Extracting from DuckDB: table={duckdb_table_name}, columns={columns_to_embed}")
-                
-                total_count, documents = await _extract_documents_from_duckdb(
-                    duckdb_path=duckdb_path,
-                    table_name=duckdb_table_name,
-                    columns=columns_to_embed,
-                    batch_size=1000
+                total_count, raw_documents = await _extract_documents_from_duckdb(
+                    duckdb_path=duckdb_path, table_name=duckdb_table_name,
+                    columns=columns_to_embed, batch_size=1000, job_id=job_id
                 )
         except Exception as e:
-            logger.error(f"Failed to extract documents: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-            await _update_job_status(
-                job_id, 
-                EmbeddingJobStatus.FAILED, 
-                error_message=f"Failed to extract documents: {str(e)}"
-            )
+            logger.error(f"Extraction failed: {e}")
+            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message=f"Extraction failed: {str(e)[:400]}")
             return
         
-        if not documents:
-            await _update_job_status(
-                job_id, 
-                EmbeddingJobStatus.FAILED, 
-                error_message="No documents found to embed. Check if the selected columns have data."
-            )
+        if not raw_documents:
+            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No documents found.")
             return
         
-        total_documents = len(documents)
+        logger.info(f"Job {job_id}: Extracted {len(raw_documents)} raw documents in {time.time() - job_start_time:.1f}s")
+        
+        # =================================================================
+        # PHASE 2: Parent-Child Chunking (if enabled)
+        # =================================================================
+        if use_parent_child_chunking:
+            await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Applying parent-child chunking...")
+            
+            try:
+                from langchain_core.documents import Document as LCDocument
+                from app.modules.embeddings.transform import AdvancedDataTransformer
+                from app.core.config import get_settings
+                
+                settings = get_settings()
+                
+                transformer_config = {
+                    'chunking': {
+                        'parent_splitter': {'chunk_size': parent_chunk_size, 'chunk_overlap': parent_chunk_overlap},
+                        'child_splitter': {'chunk_size': child_chunk_size, 'chunk_overlap': child_chunk_overlap}
+                    },
+                    'medical_context': data_dictionary if isinstance(data_dictionary, dict) else {},
+                }
+                
+                docstore_dir = settings.data_dir / "docstores" / vector_db_name
+                docstore_dir.mkdir(parents=True, exist_ok=True)
+                docstore_path = str(docstore_dir / "parent_docs.db")
+                
+                transformer = AdvancedDataTransformer(config=transformer_config, docstore_path=docstore_path)
+                
+                lc_documents = [
+                    LCDocument(
+                        page_content=doc["content"],
+                        metadata={"source_table": doc["metadata"].get("table", "unknown"), "source_id": doc["id"], **{k: v for k, v in doc["metadata"].items() if k != "table"}}
+                    )
+                    for doc in raw_documents
+                ]
+                
+                logger.info(f"Job {job_id}: Running parent-child chunking on {len(lc_documents)} documents...")
+                
+                loop = asyncio.get_event_loop()
+                def run_chunking():
+                    return transformer.perform_parent_child_chunking(documents=lc_documents)
+                
+                chunking_start = time.time()
+                child_documents, parent_docstore = await loop.run_in_executor(None, run_chunking)
+                
+                logger.info(f"Job {job_id}: Chunking complete in {time.time() - chunking_start:.1f}s: {len(lc_documents)} parents -> {len(child_documents)} children")
+                
+                documents = [
+                    {
+                        "id": hashlib.sha256(f"{child.page_content}{child.metadata.get('doc_id', '')}".encode()).hexdigest()[:16],
+                        "content": child.page_content,
+                        "metadata": child.metadata
+                    }
+                    for child in child_documents
+                ]
+                total_documents = len(documents)
+                
+            except Exception as e:
+                logger.error(f"Job {job_id}: Chunking failed: {e}, falling back to raw documents")
+                import traceback
+                logger.error(traceback.format_exc())
+                documents = raw_documents
+                total_documents = len(documents)
+        else:
+            documents = raw_documents
+            total_documents = len(documents)
+        
         batch_count = (total_documents + batch_size - 1) // batch_size
+        logger.info(f"Job {job_id}: {total_documents} documents ready for embedding ({batch_count} batches)")
         
-        logger.info(f"Extracted {total_documents} documents for embedding ({batch_count} batches). Elapsed since start: {time.time() - job_start_time:.2f}s")
-        
-        # Update job with actual document count
         async with _get_background_db_session() as session:
             from sqlalchemy import update as sql_update
             from app.modules.embeddings.models import EmbeddingJobModel
-            stmt = sql_update(EmbeddingJobModel).where(
-                EmbeddingJobModel.job_id == job_id
-            ).values(
-                total_documents=total_documents,
-                total_batches=batch_count
-            )
+            stmt = sql_update(EmbeddingJobModel).where(EmbeddingJobModel.job_id == job_id).values(total_documents=total_documents, total_batches=batch_count)
             await session.execute(stmt)
         
-        # Update status to EMBEDDING - model loading can take 1-2 minutes for large models
-        await _update_job_status(job_id, EmbeddingJobStatus.EMBEDDING, phase="Loading embedding model (this may take 1-2 min for large models)...")
+        # =================================================================
+        # PHASE 3: Load Embedding Model
+        # =================================================================
+        await _update_job_status(job_id, EmbeddingJobStatus.EMBEDDING, phase="Loading embedding model...")
         
-        # Get embedding provider
-        model_load_start = time.time()
         try:
             embed_fn = await _get_embedding_provider(embedding_model, api_key, api_base_url)
-            model_load_time = time.time() - model_load_start
-            logger.info(f"Job {job_id}: Embedding provider loaded in {model_load_time:.2f}s. Total elapsed: {time.time() - job_start_time:.2f}s")
+            logger.info(f"Job {job_id}: Embedding model loaded")
         except Exception as e:
-            logger.error(f"Failed to initialize embedding model: {e}")
-            await _update_job_status(
-                job_id, 
-                EmbeddingJobStatus.FAILED, 
-                error_message=f"Failed to initialize embedding model: {str(e)}"
-            )
+            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message=f"Model load failed: {str(e)[:400]}")
             return
         
-        # Initialize Vector Store using factory pattern (supports Qdrant and ChromaDB)
-        await _update_job_status(job_id, EmbeddingJobStatus.EMBEDDING, phase="Initializing vector database...")
+        # =================================================================
+        # PHASE 4: Initialize Vector Store
+        # =================================================================
+        await _update_job_status(job_id, EmbeddingJobStatus.EMBEDDING, phase="Initializing vector store...")
         
         from app.modules.embeddings.vector_stores.factory import get_vector_store, get_vector_store_type
+        from app.core.settings import get_settings
         
         vector_store_type = get_vector_store_type()
-        logger.info(f"Job {job_id}: Using vector store type: {vector_store_type}")
-        
         vector_store = get_vector_store(vector_db_name)
         
-        # Delete existing collection if not incremental
         if not incremental:
             try:
                 await vector_store.delete_collection()
-                logger.info(f"Deleted existing collection: {vector_db_name}")
-            except Exception as e:
-                logger.warning(f"Could not delete existing collection (may not exist): {e}")
+            except:
+                pass
         
-        # Get storage path for config update
-        from app.core.settings import get_settings
         settings = get_settings()
         vector_store_path = str(settings.data_dir / vector_store_type / vector_db_name)
         
-        logger.info(f"Vector store ready: {vector_db_name} ({vector_store_type})")
         await _update_job_status(job_id, EmbeddingJobStatus.EMBEDDING, phase="Generating embeddings...")
         
-        # Process documents in batches - optimized for throughput
+        # =================================================================
+        # PHASE 5: Embed and Store
+        # =================================================================
         processed = 0
         total_vectors = 0
         start_time = time.time()
         failed_batches = 0
+        CANCEL_CHECK_INTERVAL = 20
         
-        # Check for cancellation only every N batches to reduce DB overhead
-        CANCEL_CHECK_INTERVAL = 10
+        use_concurrent = _is_api_provider(embedding_model) and asyncio.iscoroutinefunction(embed_fn)
+        max_concurrent = job_config.get("max_concurrent") or DEFAULT_API_CONCURRENT
         
-        logger.info(f"Job {job_id}: Starting main embedding loop with {batch_count} batches, batch_size={batch_size}")
+        logger.info(f"Job {job_id}: Starting embedding: {batch_count} batches, concurrent={use_concurrent}")
         
-        for batch_idx in range(batch_count):
-            batch_start_time = time.time()
+        if use_concurrent:
+            semaphore = asyncio.Semaphore(max_concurrent)
             
-            # Check for cancellation periodically (not every batch - expensive!)
-            if batch_idx % CANCEL_CHECK_INTERVAL == 0:
+            async def process_batch(batch_idx):
+                async with semaphore:
+                    batch_start = batch_idx * batch_size
+                    batch_docs = documents[batch_start:batch_start + batch_size]
+                    if not batch_docs:
+                        return {"processed": 0, "vectors": 0, "failed": False}
+                    try:
+                        texts = [d["content"] for d in batch_docs]
+                        embeddings = await embed_fn(texts)
+                        await vector_store.upsert_batch(ids=[d["id"] for d in batch_docs], documents=texts, embeddings=embeddings, metadatas=[d["metadata"] for d in batch_docs])
+                        return {"processed": len(batch_docs), "vectors": len(embeddings), "failed": False}
+                    except Exception as e:
+                        logger.error(f"Batch {batch_idx} failed: {e}")
+                        return {"processed": len(batch_docs), "vectors": 0, "failed": True}
+            
+            tasks = [process_batch(i) for i in range(batch_count)]
+            completed = 0
+            for coro in asyncio.as_completed(tasks):
+                result = await coro
+                completed += 1
+                processed += result["processed"]
+                total_vectors += result["vectors"]
+                if result["failed"]:
+                    failed_batches += 1
+                if completed % 10 == 0 or completed == batch_count:
+                    elapsed = time.time() - start_time
+                    await _update_job_progress(job_id, processed, completed, total_documents, f"Batch {completed}/{batch_count} ({processed/elapsed:.1f} docs/sec)", elapsed)
+        else:
+            for batch_idx in range(batch_count):
+                if batch_idx % CANCEL_CHECK_INTERVAL == 0:
+                    try:
+                        async with _get_background_db_session() as session:
+                            repo = EmbeddingJobRepository(session)
+                            job = await repo.get_by_id(job_id)
+                            if job and job.status == EmbeddingJobStatus.CANCELLED.value:
+                                return
+                    except:
+                        pass
+                
+                batch_start = batch_idx * batch_size
+                batch_docs = documents[batch_start:batch_start + batch_size]
+                if not batch_docs:
+                    continue
+                
+                texts = [d["content"] for d in batch_docs]
                 try:
-                    async with _get_background_db_session() as session:
-                        repo = EmbeddingJobRepository(session)
-                        job = await repo.get_by_id(job_id)
-                        if job and job.status == EmbeddingJobStatus.CANCELLED.value:
-                            logger.info(f"Job {job_id} was cancelled")
-                            return
+                    if asyncio.iscoroutinefunction(embed_fn):
+                        embeddings = await embed_fn(texts)
+                    else:
+                        embeddings = embed_fn(texts)
                 except Exception as e:
-                    logger.warning(f"Failed to check cancellation status: {e}")
-            
-            # Get batch of documents
-            batch_start = batch_idx * batch_size
-            batch_end = min(batch_start + batch_size, total_documents)
-            batch_docs = documents[batch_start:batch_end]
-            
-            if len(batch_docs) == 0:
-                logger.warning(f"Job {job_id}: Batch {batch_idx} has 0 documents! Skipping...")
-                continue
-            
-            # Generate embeddings
-            texts = [doc["content"] for doc in batch_docs]
-            
-            embed_start = time.time()
-            try:
-                # PERFORMANCE FIX: Call sync function directly (we're already in a background thread)
-                # No need for run_in_executor overhead per batch!
-                if asyncio.iscoroutinefunction(embed_fn):
-                    # Async provider (OpenAI, Azure)
-                    embeddings = await embed_fn(texts)
-                else:
-                    # Sync provider (HuggingFace) - call directly, no executor needed
-                    embeddings = embed_fn(texts)
-                embed_time = time.time() - embed_start
-            except Exception as e:
-                import traceback
-                logger.error(f"Embedding generation failed for batch {batch_idx}: {e}")
-                logger.error(traceback.format_exc())
-                failed_batches += 1
+                    logger.error(f"Embed failed batch {batch_idx}: {e}")
+                    failed_batches += 1
+                    processed += len(batch_docs)
+                    continue
+                
+                try:
+                    await vector_store.upsert_batch(ids=[d["id"] for d in batch_docs], documents=texts, embeddings=embeddings, metadatas=[d["metadata"] for d in batch_docs])
+                    total_vectors += len(embeddings)
+                except Exception as e:
+                    logger.error(f"Store failed batch {batch_idx}: {e}")
+                    failed_batches += 1
+                
                 processed += len(batch_docs)
-                continue
-            
-            # Store in Vector Store (Qdrant or ChromaDB)
-            ids = [doc["id"] for doc in batch_docs]
-            metadatas = [doc["metadata"] for doc in batch_docs]
-            
-            store_start = time.time()
-            try:
-                await vector_store.upsert_batch(
-                    ids=ids,
-                    documents=texts,
-                    embeddings=embeddings,
-                    metadatas=metadatas
-                )
-                total_vectors += len(embeddings)
-                store_time = time.time() - store_start
-            except Exception as e:
-                logger.error(f"Vector store upsert failed for batch {batch_idx}: {e}")
-                failed_batches += 1
-                store_time = time.time() - store_start
-            
-            processed += len(batch_docs)
-            batch_total_time = time.time() - batch_start_time
-            
-            # Log detailed timing for first 5 batches and every 10th batch
-            if batch_idx < 5 or batch_idx % 10 == 0:
-                logger.info(f"Job {job_id}: Batch {batch_idx + 1} timing: embed={embed_time:.2f}s, store={store_time:.2f}s, total={batch_total_time:.2f}s for {len(batch_docs)} docs ({len(batch_docs)/batch_total_time:.1f} docs/sec). Job elapsed: {time.time() - job_start_time:.1f}s")
-            
-            # Calculate speed
-            elapsed = time.time() - start_time
-            docs_per_second = processed / elapsed if elapsed > 0 else 0
-            
-            # Update progress only every 5 batches to reduce DB overhead
-            if batch_idx % 5 == 0 or batch_idx == batch_count - 1:
-                await _update_job_progress(
-                    job_id=job_id,
-                    processed=processed,
-                    current_batch=batch_idx + 1,
-                    total=total_documents,
-                    phase=f"Batch {batch_idx + 1}/{batch_count} ({docs_per_second:.1f} docs/sec)",
-                    elapsed_seconds=elapsed
-                )
-            
-            if batch_idx % 10 == 0:
-                logger.info(f"Job {job_id}: Batch {batch_idx + 1}/{batch_count} | {processed}/{total_documents} docs | {docs_per_second:.1f} docs/sec")
+                
+                if batch_idx % 10 == 0 or batch_idx == batch_count - 1:
+                    elapsed = time.time() - start_time
+                    await _update_job_progress(job_id, processed, batch_idx + 1, total_documents, f"Batch {batch_idx + 1}/{batch_count} ({processed/elapsed:.1f} docs/sec)", elapsed)
+                
+                if batch_idx < 3 or batch_idx % 25 == 0:
+                    logger.info(f"Job {job_id}: Batch {batch_idx + 1}/{batch_count}, {processed}/{total_documents} docs")
         
-        # Update status to VALIDATING
-        await _update_job_status(job_id, EmbeddingJobStatus.VALIDATING, phase="Validating embeddings...")
+        # =================================================================
+        # PHASE 6: Finalize
+        # =================================================================
+        await _update_job_status(job_id, EmbeddingJobStatus.VALIDATING, phase="Validating...")
         
-        # Verify collection count
         final_count = await vector_store.get_collection_count()
-        logger.info(f"Vector store collection {vector_db_name} has {final_count} vectors")
+        logger.info(f"Job {job_id}: Vector store has {final_count} vectors")
         
-        # Update status to STORING
-        await _update_job_status(job_id, EmbeddingJobStatus.STORING, phase="Finalizing vector database...")
+        await _update_job_status(job_id, EmbeddingJobStatus.STORING, phase="Finalizing...")
         
-        # Update config with vector DB info
         async with _get_background_db_session() as session:
             from sqlalchemy import update as sql_update
-            stmt = sql_update(AgentConfigModel).where(
-                AgentConfigModel.id == config_id
-            ).values(
-                vector_collection_name=vector_db_name,
-                embedding_path=vector_store_path,
-                embedding_status="completed"
+            stmt = sql_update(AgentConfigModel).where(AgentConfigModel.id == config_id).values(
+                vector_collection_name=vector_db_name, embedding_path=vector_store_path, embedding_status="completed"
             )
             await session.execute(stmt)
         
-        # Update job with final vector count
         async with _get_background_db_session() as session:
             from sqlalchemy import update as sql_update
             from app.modules.embeddings.models import EmbeddingJobModel
-            stmt = sql_update(EmbeddingJobModel).where(
-                EmbeddingJobModel.job_id == job_id
-            ).values(
-                total_vectors=total_vectors
-            )
+            stmt = sql_update(EmbeddingJobModel).where(EmbeddingJobModel.job_id == job_id).values(total_vectors=total_vectors)
             await session.execute(stmt)
         
-        # Calculate final stats
         total_time = time.time() - start_time
-        avg_speed = processed / total_time if total_time > 0 else 0
+        chunking_info = "with parent-child chunking" if use_parent_child_chunking else "no chunking"
         
-        # Mark as completed
-        await _update_job_status(
-            job_id, 
-            EmbeddingJobStatus.COMPLETED, 
-            phase=f"Completed: {processed} documents, {total_vectors} vectors ({avg_speed:.1f} docs/sec) - {vector_store_type}"
-        )
+        await _update_job_status(job_id, EmbeddingJobStatus.COMPLETED, 
+            phase=f"Completed: {processed} docs, {total_vectors} vectors ({processed/total_time:.1f} docs/sec) - {chunking_info}")
         
-        logger.info(f"Embedding job {job_id} completed: {processed} documents, {total_vectors} vectors in {total_time:.1f}s using {vector_store_type}")
+        logger.info(f"Job {job_id} completed: {processed} docs, {total_vectors} vectors in {total_time:.1f}s ({chunking_info})")
         
     except Exception as e:
-        logger.error(f"Embedding job {job_id} failed: {e}")
+        logger.error(f"Job {job_id} failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
-        
         try:
-            await _update_job_status(
-                job_id, 
-                EmbeddingJobStatus.FAILED, 
-                phase="Job failed",
-                error_message=str(e)[:500]  # Truncate to avoid DB errors
-            )
-        except Exception as status_error:
-            logger.error(f"Job {job_id}: Failed to update status after error: {status_error}")
+            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, phase="Failed", error_message=str(e)[:500])
+        except:
+            pass
+

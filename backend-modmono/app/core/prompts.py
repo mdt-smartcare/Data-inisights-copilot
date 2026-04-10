@@ -140,3 +140,18 @@ def get_query_rewriter_prompt() -> str:
 def get_base_system_prompt() -> str:
     """Get the base system prompt."""
     return load_prompt("base_system", fallback="You are a helpful AI assistant.")
+
+
+def get_database_generator_prompt() -> str:
+    """Get the database system prompt generator template."""
+    return load_prompt("database_generator", fallback="You are a SQL expert for database queries.")
+
+
+def get_file_generator_prompt() -> str:
+    """Get the file/CSV system prompt generator template."""
+    return load_prompt("file_generator", fallback="You are a data analyst for file-based data.")
+
+
+def get_reasoning_generator_prompt() -> str:
+    """Get the reasoning and example questions generator template."""
+    return load_prompt("reasoning_generator", fallback="Generate reasoning and example questions for the data schema.")

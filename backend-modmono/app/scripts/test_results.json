@@ -1,0 +1,255 @@
+{
+  "timestamp": "2026-04-09T15:22:44.833386",
+  "total_tests": 6,
+  "passed": 0,
+  "failed": 0,
+  "errors": 6,
+  "skipped": 0,
+  "pass_rate": 0.0,
+  "results": [
+    {
+      "test_id": "basic_001",
+      "question": "How many records are in the database?",
+      "generated_sql": "select count(*) as record_count from information_schema.tables limit 100",
+      "expected_sql": "SELECT COUNT(*) FROM entity_table",
+      "sql_executed": false,
+      "sql_error": "(duckdb.duckdb.IOException) IO Error: Cannot open database \"/Users/adityanbhatt/Documents/Data-inisights-copilot/backend-modmono/data/test.db\" in read-only mode: database does not exist\n(Background on this error at: https://sqlalche.me/e/20/e3q8)",
+      "execution_time_ms": 1305.0739765167236,
+      "category": "general",
+      "complexity": "medium",
+      "status": "error",
+      "result_match": false,
+      "row_count": 0,
+      "column_names": [],
+      "generation_time_ms": 1301.2549877166748,
+      "notes": "Row count mismatch: got 0, expected 1",
+      "tags": [
+        "basic",
+        "count",
+        "aggregation"
+      ]
+    },
+    {
+      "test_id": "basic_002",
+      "question": "Show me all unique categories",
+      "generated_sql": "select distinct category from your_table_name limit 100",
+      "expected_sql": "SELECT DISTINCT category FROM entity_table",
+      "sql_executed": false,
+      "sql_error": "(duckdb.duckdb.IOException) IO Error: Cannot open database \"/Users/adityanbhatt/Documents/Data-inisights-copilot/backend-modmono/data/test.db\" in read-only mode: database does not exist\n(Background on this error at: https://sqlalche.me/e/20/e3q8)",
+      "execution_time_ms": 654.2551517486572,
+      "category": "general",
+      "complexity": "medium",
+      "status": "error",
+      "result_match": true,
+      "row_count": 0,
+      "column_names": [],
+      "generation_time_ms": 649.0480899810791,
+      "notes": "Row count mismatch: got 0, expected ; Query executed but returned no rows",
+      "tags": [
+        "basic",
+        "distinct"
+      ]
+    },
+    {
+      "test_id": "aggregation_001",
+      "question": "What is the average value by category?",
+      "generated_sql": "select 'Insufficient data' as error",
+      "expected_sql": "SELECT category, AVG(value) FROM measurement_table GROUP BY category",
+      "sql_executed": false,
+      "sql_error": "(duckdb.duckdb.IOException) IO Error: Cannot open database \"/Users/adityanbhatt/Documents/Data-inisights-copilot/backend-modmono/data/test.db\" in read-only mode: database does not exist\n(Background on this error at: https://sqlalche.me/e/20/e3q8)",
+      "execution_time_ms": 1737.4258041381836,
+      "category": "general",
+      "complexity": "medium",
+      "status": "error",
+      "result_match": true,
+      "row_count": 0,
+      "column_names": [],
+      "generation_time_ms": 1731.558084487915,
+      "notes": "Row count mismatch: got 0, expected ; Query executed but returned no rows",
+      "tags": [
+        "aggregation",
+        "groupby",
+        "average"
+      ]
+    },
+    {
+      "test_id": "temporal_001",
+      "question": "Show records from the last 30 days",
+      "generated_sql": "select 'Insufficient data' as error",
+      "expected_sql": "SELECT * FROM entity_table WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'",
+      "sql_executed": false,
+      "sql_error": "(duckdb.duckdb.IOException) IO Error: Cannot open database \"/Users/adityanbhatt/Documents/Data-inisights-copilot/backend-modmono/data/test.db\" in read-only mode: database does not exist\n(Background on this error at: https://sqlalche.me/e/20/e3q8)",
+      "execution_time_ms": 1616.1322593688965,
+      "category": "general",
+      "complexity": "medium",
+      "status": "error",
+      "result_match": true,
+      "row_count": 0,
+      "column_names": [],
+      "generation_time_ms": 1611.6771697998047,
+      "notes": "Row count mismatch: got 0, expected ; Query executed but returned no rows",
+      "tags": [
+        "temporal",
+        "filter",
+        "recent"
+      ]
+    },
+    {
+      "test_id": "filter_001",
+      "question": "Show only active records",
+      "generated_sql": "select 'Insufficient data' as error",
+      "expected_sql": "SELECT * FROM entity_table WHERE is_active = true AND is_deleted = false",
+      "sql_executed": false,
+      "sql_error": "(duckdb.duckdb.IOException) IO Error: Cannot open database \"/Users/adityanbhatt/Documents/Data-inisights-copilot/backend-modmono/data/test.db\" in read-only mode: database does not exist\n(Background on this error at: https://sqlalche.me/e/20/e3q8)",
+      "execution_time_ms": 743.9630031585693,
+      "category": "general",
+      "complexity": "medium",
+      "status": "error",
+      "result_match": true,
+      "row_count": 0,
+      "column_names": [],
+      "generation_time_ms": 738.955020904541,
+      "notes": "Row count mismatch: got 0, expected ; Query executed but returned no rows",
+      "tags": [
+        "filter",
+        "status",
+        "basic"
+      ]
+    },
+    {
+      "test_id": "complex_001",
+      "question": "Find the top 5 categories by record count",
+      "generated_sql": "select category, count(*) as record_count from your_table_name group by category order by record_count desc limit 5",
+      "expected_sql": "SELECT category, COUNT(*) as count FROM entity_table GROUP BY category ORDER BY count DESC LIMIT 5",
+      "sql_executed": false,
+      "sql_error": "(duckdb.duckdb.IOException) IO Error: Cannot open database \"/Users/adityanbhatt/Documents/Data-inisights-copilot/backend-modmono/data/test.db\" in read-only mode: database does not exist\n(Background on this error at: https://sqlalche.me/e/20/e3q8)",
+      "execution_time_ms": 1846.3900089263916,
+      "category": "general",
+      "complexity": "medium",
+      "status": "error",
+      "result_match": false,
+      "row_count": 0,
+      "column_names": [],
+      "generation_time_ms": 1841.874122619629,
+      "notes": "Row count mismatch: got 0, expected 5",
+      "tags": [
+        "complex",
+        "ranking",
+        "limit"
+      ]
+    }
+  ],
+  "errors_by_type": {
+    "Unknown Error": [
+      "basic_001",
+      "basic_002",
+      "aggregation_001",
+      "temporal_001",
+      "filter_001",
+      "complex_001"
+    ]
+  },
+  "results_by_tag": {
+    "basic": {
+      "passed": 0,
+      "failed": 0,
+      "error": 3,
+      "skipped": 0
+    },
+    "count": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "aggregation": {
+      "passed": 0,
+      "failed": 0,
+      "error": 2,
+      "skipped": 0
+    },
+    "distinct": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "groupby": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "average": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "temporal": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "filter": {
+      "passed": 0,
+      "failed": 0,
+      "error": 2,
+      "skipped": 0
+    },
+    "recent": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "status": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "complex": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "ranking": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    },
+    "limit": {
+      "passed": 0,
+      "failed": 0,
+      "error": 1,
+      "skipped": 0
+    }
+  },
+  "results_by_category": {
+    "general": {
+      "passed": 0,
+      "failed": 0,
+      "error": 6,
+      "skipped": 0
+    }
+  },
+  "results_by_complexity": {
+    "medium": {
+      "passed": 0,
+      "failed": 0,
+      "error": 6,
+      "skipped": 0
+    }
+  },
+  "execution_stats": {
+    "total_execution_ms": 7903.240203857422,
+    "avg_execution_ms": 1317.2067006429036,
+    "min_execution_ms": 654.2551517486572,
+    "max_execution_ms": 1846.3900089263916,
+    "avg_generation_ms": 1312.3945792516072
+  }
+}

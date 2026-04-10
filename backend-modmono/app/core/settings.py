@@ -218,6 +218,15 @@ class Settings(BaseSettings):
         description="DuckDB files directory for uploaded file SQL queries"
     )
     
+    # ============================================
+    # Query Relevance Configuration
+    # ============================================
+    enable_query_relevance_check: bool = Field(
+        default=True,
+        description="Enable pre-filtering of queries for relevance before SQL generation"
+
+    )
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Ensure directories exist

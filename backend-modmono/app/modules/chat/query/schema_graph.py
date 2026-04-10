@@ -545,3 +545,163 @@ class SchemaGraph:
         self._join_path_cache.clear()
         self._introspect()
         logger.info("SchemaGraph refreshed")
+
+    # =========================================================================
+    # Distinct Value Sampling (prevents hallucinated filter values)
+    # =========================================================================
+    
+    # Constants for distinct value sampling
+    _CATEGORICAL_TYPES = {
+        "character varying", "varchar", "text", "char", "character",
+        "enum", "boolean", "bool"
+    }
+    _CATEGORICAL_NAME_PATTERNS = [
+        "status", "type", "category", "level", "state", "gender", "sex",
+        "risk", "stage", "grade", "classification", "priority", "mode",
+        "is_", "has_", "flag", "outcome", "result", "diagnosis"
+    ]
+    _DEFAULT_DISTINCT_LIMIT = 15
+    _MAX_COLUMNS_PER_TABLE = 10
+    _MAX_DISTINCT_THRESHOLD = 50
+
+    def _is_categorical_column(self, column: ColumnInfo) -> bool:
+        """Determine if a column is likely categorical based on type and name."""
+        dtype_lower = column.data_type.lower()
+        if any(cat_type in dtype_lower for cat_type in self._CATEGORICAL_TYPES):
+            return True
+        
+        col_name_lower = column.name.lower()
+        if any(pattern in col_name_lower for pattern in self._CATEGORICAL_NAME_PATTERNS):
+            return True
+        
+        return False
+
+    def _get_categorical_columns(self, table_name: str) -> List[ColumnInfo]:
+        """Get columns in a table that are likely categorical."""
+        table = self._tables.get(table_name)
+        if not table:
+            return []
+        
+        categorical = []
+        for col in table.columns:
+            if col.is_primary_key or col.is_foreign_key:
+                continue
+            if self._is_categorical_column(col):
+                categorical.append(col)
+        
+        return categorical[:self._MAX_COLUMNS_PER_TABLE]
+
+    def sample_distinct_values(
+        self,
+        table_name: str,
+        column_name: str,
+        limit: int = 15
+    ) -> List[str]:
+        """
+        Sample distinct values from a categorical column.
+        
+        Args:
+            table_name: Name of the table
+            column_name: Name of the column
+            limit: Maximum number of distinct values to return
+            
+        Returns:
+            List of distinct values as strings
+        """
+        if not hasattr(self, '_distinct_values_cache'):
+            self._distinct_values_cache: Dict[str, List[str]] = {}
+        
+        cache_key = f"{table_name}.{column_name}"
+        
+        if cache_key in self._distinct_values_cache:
+            return self._distinct_values_cache[cache_key]
+        
+        try:
+            with self.engine.connect() as conn:
+                count_query = text(f"""
+                    SELECT COUNT(DISTINCT "{column_name}") 
+                    FROM "{self.schema_name}"."{table_name}"
+                    WHERE "{column_name}" IS NOT NULL
+                """)
+                count_result = conn.execute(count_query)
+                distinct_count = count_result.scalar() or 0
+                
+                if distinct_count > self._MAX_DISTINCT_THRESHOLD:
+                    logger.debug(f"Skipping {cache_key}: too many distinct values ({distinct_count})")
+                    self._distinct_values_cache[cache_key] = []
+                    return []
+                
+                sample_query = text(f"""
+                    SELECT DISTINCT "{column_name}"::TEXT 
+                    FROM "{self.schema_name}"."{table_name}"
+                    WHERE "{column_name}" IS NOT NULL
+                    ORDER BY "{column_name}"::TEXT
+                    LIMIT :limit
+                """)
+                result = conn.execute(sample_query, {"limit": limit})
+                values = [str(row[0]) for row in result if row[0] is not None]
+                
+                self._distinct_values_cache[cache_key] = values
+                if values:
+                    logger.debug(f"Sampled {len(values)} distinct values for {cache_key}")
+                
+                return values
+                
+        except Exception as e:
+            logger.warning(f"Failed to sample distinct values for {cache_key}: {e}")
+            self._distinct_values_cache[cache_key] = []
+            return []
+
+    def sample_distinct_values_for_table(self, table_name: str, force_refresh: bool = False) -> Dict[str, List[str]]:
+        """Sample distinct values for all categorical columns in a table."""
+        if not hasattr(self, '_distinct_values_loaded'):
+            self._distinct_values_loaded: Set[str] = set()
+        
+        if not force_refresh and table_name in self._distinct_values_loaded:
+            prefix = f"{table_name}."
+            return {
+                key.replace(prefix, ""): values
+                for key, values in self._distinct_values_cache.items()
+                if key.startswith(prefix) and values
+            }
+        
+        categorical_columns = self._get_categorical_columns(table_name)
+        result = {}
+        
+        for col in categorical_columns:
+            values = self.sample_distinct_values(table_name, col.name)
+            if values:
+                result[col.name] = values
+        
+        self._distinct_values_loaded.add(table_name)
+        logger.info(f"Sampled distinct values for {table_name}: {len(result)} categorical columns")
+        
+        return result
+
+    def get_distinct_values_context(self, tables: Optional[List[str]] = None) -> str:
+        """
+        Get formatted distinct values context for prompt injection.
+        Prevents LLM hallucination by providing actual database values.
+        """
+        target_tables = tables or list(self._tables.keys())
+        parts = []
+        
+        for table_name in target_tables:
+            table_values = self.sample_distinct_values_for_table(table_name)
+            
+            if table_values:
+                table_parts = [f"VALID VALUES FOR {table_name}:"]
+                for col_name, values in table_values.items():
+                    if len(values) <= 10:
+                        values_str = ", ".join(f"'{v}'" for v in values)
+                    else:
+                        values_str = ", ".join(f"'{v}'" for v in values[:10])
+                        values_str += f", ... (+{len(values) - 10} more)"
+                    table_parts.append(f"  - {col_name}: {values_str}")
+                parts.append("\n".join(table_parts))
+        
+        if parts:
+            header = "CATEGORICAL COLUMN VALUES (use these exact values in WHERE clauses):"
+            return header + "\n\n" + "\n\n".join(parts)
+        
+        return ""

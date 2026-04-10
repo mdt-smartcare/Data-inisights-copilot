@@ -73,10 +73,16 @@ class MedicalContextConfig(BaseModel):
 class EmbeddingJobCreate(BaseModel):
     """Request model for starting a new embedding job.
     
-    Only config_id is required - all other settings are read from the agent_config table.
+    config_id is required. Other settings override the defaults from agent_config table.
     """
     config_id: int = Field(..., description="Agent configuration ID to generate embeddings for")
     incremental: bool = Field(default=False, description="Whether to run incrementally (skip existing)")
+    
+    # Optional overrides from frontend
+    batch_size: Optional[int] = Field(default=None, ge=1, le=1000, description="Batch size for embedding generation")
+    max_concurrent: Optional[int] = Field(default=None, ge=1, le=10, description="Max concurrent batches")
+    chunking: Optional[ChunkingConfig] = Field(default=None, description="Chunking configuration override")
+    parallelization: Optional[ParallelizationConfig] = Field(default=None, description="Parallelization config")
 
 
 class EmbeddingJobProgress(BaseModel):

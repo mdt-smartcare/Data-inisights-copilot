@@ -198,6 +198,9 @@ class FileTableInfo(BaseModel):
 
 class FileTablesResponse(BaseModel):
     """Response listing available tables from uploaded files."""
+    tables: List[FileTableInfo] = Field(default_factory=list)
+
+
 
 
 class DataSourcePreviewResponse(BaseModel):

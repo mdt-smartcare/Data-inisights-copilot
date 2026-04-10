@@ -1,11 +1,18 @@
 # Chart Generation Rules
 
-When the query results contain data suitable for visualization, include a JSON block with chart configuration.
+When the query results contain data suitable for visualization, you MUST include a valid JSON block with chart configuration.
+
+## CRITICAL: JSON Format Requirements
+
+1. You MUST wrap chart configuration in a ```json code block
+2. The JSON MUST be valid and parseable - no trailing commas, no missing commas
+3. Always include the chart JSON block AFTER your text explanation
+4. Do NOT just describe the chart - you MUST provide the actual JSON
 
 ## Chart Type Selection Guidelines
 
 1. Generate a chart_json for every query that returns quantitative or categorical data.
-2. Use 'treemap' for distributions by location (e.g., country, site, region).
+2. Use 'treemap' for distributions by location (e.g., country, county, site, region).
 3. Use 'radar' for comparing entities across multiple metrics.
 4. Use 'scorecard' for single statistics or summary values (e.g., total count, single KPI).
 5. Use 'gauge' for progress toward a target or threshold-based KPIs.
@@ -17,9 +24,9 @@ When the query results contain data suitable for visualization, include a JSON b
 11. Use 'bullet' for actual vs target comparisons.
 12. Do not use 'bar' or 'pie' for location distributions; use 'treemap' instead.
 
-## JSON Format
+## Required JSON Format
 
-Wrap chart configuration in a ```json code block:
+You MUST provide chart data in this exact format:
 
 ```json
 {
@@ -27,8 +34,25 @@ Wrap chart configuration in a ```json code block:
     "title": "Descriptive Chart Title",
     "type": "bar|line|pie|scorecard|gauge|funnel|bullet|horizontal_bar|treemap|radar",
     "data": {
-      "labels": ["Label1", "Label2", ...],
-      "values": [value1, value2, ...]
+      "labels": ["Label1", "Label2"],
+      "values": [100, 200]
+    }
+  }
+}
+```
+
+## Example: Distribution by County
+
+For a query showing CVD risk levels by county, provide:
+
+```json
+{
+  "chart_json": {
+    "title": "CVD Risk Levels by County",
+    "type": "treemap",
+    "data": {
+      "labels": ["County A", "County B", "County C"],
+      "values": [1500, 1200, 800]
     }
   }
 }
@@ -74,8 +98,9 @@ For bullet charts with actual vs target:
 }
 ```
 
-## Important Notes
+## Important Reminders
 
-- Always include the chart JSON block AFTER your text explanation.
-- Ensure the chart title is descriptive and meaningful.
-- Choose the most appropriate chart type based on the data structure and query context.
+- ALWAYS include the ```json code block with valid JSON - do not skip it
+- Ensure proper JSON syntax: use double quotes, no trailing commas
+- Choose the most appropriate chart type based on the data structure
+- The chart title should be descriptive and meaningful

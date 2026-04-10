@@ -183,3 +183,76 @@ async def submit_feedback(
                 feedback_id=feedback_id,
             )
         )
+
+
+@router.post("/sql-examples/load", response_model=BaseResponse[dict])
+async def load_sql_examples(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> BaseResponse[dict]:
+    """
+    Load SQL training examples into the vector store for few-shot learning.
+    
+    Loads examples from the training_examples.json file.
+    
+    Returns:
+        Count of loaded examples
+    """
+    import json
+    from pathlib import Path
+    from app.modules.sql_examples.store import get_sql_examples_store
+    
+    # Path to training examples
+    examples_file = Path(__file__).parent.parent / "sql_examples" / "training_examples.json"
+    
+    if not examples_file.exists():
+        return BaseResponse.ok(data={
+            "error": f"Training examples file not found: {examples_file}",
+            "loaded": 0
+        })
+    
+    try:
+        with open(examples_file, "r") as f:
+            data = json.load(f)
+        
+        examples = data.get("examples", [])
+        if not examples:
+            return BaseResponse.ok(data={"error": "No examples found in file", "loaded": 0})
+        
+        logger.info(f"Loading {len(examples)} SQL examples into vector store")
+        
+        store = get_sql_examples_store()
+        count = await store.add_examples_batch(examples)
+        total = await store.get_example_count()
+        
+        logger.info(f"Successfully loaded {count} SQL examples, total in store: {total}")
+        
+        return BaseResponse.ok(data={
+            "loaded": count,
+            "total": total,
+            "message": f"Successfully loaded {count} SQL examples"
+        })
+        
+    except Exception as e:
+        logger.error(f"Failed to load SQL examples: {e}", exc_info=True)
+        return BaseResponse.ok(data={"error": str(e), "loaded": 0})
+
+
+@router.get("/sql-examples/status", response_model=BaseResponse[dict])
+async def get_sql_examples_status(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> BaseResponse[dict]:
+    """
+    Get status of SQL examples vector store.
+    
+    Returns:
+        Health check information including example count
+    """
+    from app.modules.sql_examples.store import get_sql_examples_store
+    
+    try:
+        store = get_sql_examples_store()
+        health = await store.health_check()
+        return BaseResponse.ok(data=health)
+    except Exception as e:
+        logger.error(f"Failed to check SQL examples status: {e}")
+        return BaseResponse.ok(data={"healthy": False, "error": str(e)})

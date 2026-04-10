@@ -307,21 +307,26 @@ app.include_router(users_router, prefix=f"{settings.api_v1_prefix}/users", tags=
 
 # Observability & Audit
 from app.modules.observability.routes import router as observability_router
+from app.modules.observability.analytics_routes import router as analytics_router
 
 # Agents and Configs
 from app.modules.agents.routes import router as agents_router
 
 # Data Sources
 from app.modules.data_sources.routes import router as data_sources_router
+from app.modules.data_sources.ingestion_routes import router as ingestion_router
 
 # AI Models Registry
 from app.modules.ai_models.routes import router as ai_registry_router
 
 app.include_router(observability_router, prefix=f"{settings.api_v1_prefix}", tags=["Observability"])
+app.include_router(analytics_router, prefix=f"{settings.api_v1_prefix}", tags=["Analytics"])
 # Note: agents_router already has /agents, /config prefixes and tags internally
 app.include_router(agents_router, prefix=f"{settings.api_v1_prefix}")
 # Note: data_sources_router already has /data-sources prefix and tags internally
 app.include_router(data_sources_router, prefix=f"{settings.api_v1_prefix}")
+# Ingestion - compatibility layer for frontend (/ingestion/*)
+app.include_router(ingestion_router, prefix=f"{settings.api_v1_prefix}")
 # AI Registry - flexible provider/model management
 app.include_router(ai_registry_router, prefix=f"{settings.api_v1_prefix}")
 
@@ -333,7 +338,11 @@ app.include_router(embeddings_ws_router, prefix=f"{settings.api_v1_prefix}/ws", 
 
 # Chat - RAG query processing
 from app.modules.chat.routes import router as chat_router
+
+# Training - SQL examples management for few-shot learning
+from app.modules.sql_examples.routes import router as training_router
 app.include_router(chat_router, prefix=f"{settings.api_v1_prefix}", tags=["Chat"])
+app.include_router(training_router, prefix=f"{settings.api_v1_prefix}", tags=["Training"])
 
 
 # ============================================

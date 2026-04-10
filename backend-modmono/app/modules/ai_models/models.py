@@ -22,7 +22,7 @@ class AIModel(Base):
     
     Examples:
     - Cloud: openai/gpt-4o, anthropic/claude-3-opus
-    - Local: huggingface/BAAI/bge-m3, ollama/llama3
+    - Local: huggingface/BAAI/bge-base-en-v1.5, ollama/llama3
     
     model_id format: "{provider}/{model-name}"
     """

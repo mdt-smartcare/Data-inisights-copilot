@@ -27,6 +27,9 @@ from app.modules.agents.schemas import (
 )
 # Import data source repository for config validation
 from app.modules.data_sources.repository import DataSourceRepository
+from app.core.utils.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class AgentService:
@@ -787,6 +790,9 @@ class AgentConfigService:
         data = _config_to_dict(config)
         # Convert is_active int to bool
         data["is_active"] = bool(data.get("is_active", 0))
+        # Add data_source_type from related data_source if available
+        if hasattr(config, 'data_source') and config.data_source:
+            data["data_source_type"] = config.data_source.source_type
         return AgentConfigResponse(**data)
     
     async def _to_response_with_models(self, config) -> AgentConfigResponse:
@@ -796,6 +802,12 @@ class AgentConfigService:
         from .schemas import ModelInfo
         
         response = self._to_response(config)
+        
+        # If data_source_type not set, fetch from data source
+        if not response.data_source_type and config.data_source_id:
+            source = await self.sources.get_by_id(config.data_source_id)
+            if source:
+                response.data_source_type = source.source_type
         
         # Fetch model info for each model ID
         model_ids = [
@@ -860,7 +872,7 @@ class AgentConfigService:
         import os
         from langchain.schema import HumanMessage, SystemMessage
         from app.core.llm import create_llm_provider
-        from app.core.prompts import get_chart_generator_prompt
+        from app.core.prompts import get_chart_generator_prompt, get_database_generator_prompt, get_file_generator_prompt, get_reasoning_generator_prompt
         
         config = await self.configs.get_by_id(version_id)
         if not config:
@@ -875,9 +887,12 @@ class AgentConfigService:
         selected_columns = json.loads(config.selected_columns) if config.selected_columns else {}
         llm_config = json.loads(config.llm_config) if config.llm_config else {}
         
-        # Get data source type (database or file)
-        # For now, assume database as default
-        data_source_type = "database"
+        # Get data source type (database or file) from the config's data source
+        data_source_type = "database"  # default
+        if config.data_source_id:
+            source = await self.sources.get_by_id(config.data_source_id)
+            if source:
+                data_source_type = source.source_type
         
         # Build context for prompt generation
         context_parts = []
@@ -888,7 +903,16 @@ class AgentConfigService:
         
         if data_dictionary:
             context_parts.append("\nDATA DICTIONARY:")
-            context_parts.append(json.dumps(data_dictionary, indent=2))
+            # Extract content from wrapper if present (frontend stores as {"content": "..."})
+            if isinstance(data_dictionary, dict) and "content" in data_dictionary:
+                dict_content = data_dictionary["content"]
+                # If content is a string, use it directly; otherwise JSON dump it
+                if isinstance(dict_content, str):
+                    context_parts.append(dict_content)
+                else:
+                    context_parts.append(json.dumps(dict_content, indent=2))
+            else:
+                context_parts.append(json.dumps(data_dictionary, indent=2))
         
         data_context = "\n".join(context_parts) if context_parts else "No schema information provided."
         
@@ -964,66 +988,129 @@ class AgentConfigService:
         provider = create_llm_provider(provider_name, provider_config)
         llm = provider.get_langchain_llm()
         
-        # Build prompt
+        # Determine which template to use based on data source type
+        if data_source_type == "file":
+            generator_template = get_file_generator_prompt()
+        else:
+            generator_template = get_database_generator_prompt()
+        
+        # Build the data context for the template
+        data_dict_text = safe_context
+        
+        # Build prompt using the template
         system_role = "You are a Data Architect and AI System Prompt Engineer specializing in creating precise, production-ready system prompts."
         
-        instruction = f"""Your task is to engineer a highly rigorous SYSTEM PROMPT for a Data Analysis Assistant connected to a database.
+        # Inject data dictionary into the template
+        template_with_data = generator_template.replace("{data_dictionary}", data_dict_text)
+        
+        instruction = f"""{template_with_data}
 
-SCHEMA CONTEXT:
-{safe_context}
-
-CHART VISUALIZATION RULES (MUST BE INCLUDED IN THE GENERATED PROMPT):
+CHART VISUALIZATION RULES (MUST BE APPENDED TO THE GENERATED PROMPT):
 {chart_rules}
 
-REQUIREMENTS:
-1. Create a clear CORE IDENTITY section defining the agent's role
-2. Include the DATA DICTIONARY with all field definitions
-3. Add OPERATIONAL RULES for query handling
-4. Define RESPONSE FORMAT guidelines
-5. Include a Zero-Hallucination Mandate
-6. **CRITICAL**: Include a CHART VISUALIZATION section with the chart generation rules. This is a KEY FEATURE - the agent MUST know how to generate chart JSON for data visualization.
-
-The generated prompt MUST include:
-- Instructions for generating chart_json when query results contain quantitative or categorical data
-- Chart type selection guidelines (bar, line, pie, scorecard, gauge, treemap, funnel, bullet, horizontal_bar, radar)
-- The JSON format specification for chart generation
-
-Return ONLY the system prompt text.
+**CRITICAL**: The generated system prompt MUST include the CHART VISUALIZATION section with the chart generation rules above. This is a KEY FEATURE.
 
 ---
-ADDITIONALLY, after your system prompt, add a separator '---REASONING---' followed by a JSON object with:
-1. 'selection_reasoning': A dict mapping key schema elements to why they're important for queries.
-2. 'example_questions': A list of 5 representative questions this agent could answer based on the data.
 
-Example format after ---REASONING---:
-{{"selection_reasoning": {{"field_name": "reason"}}, "example_questions": ["Question 1?", "Question 2?"]}}"""
+## MANDATORY OUTPUT FORMAT
+
+Your response MUST contain TWO parts separated by the exact string '---REASONING---':
+
+### PART 1: System Prompt
+The complete system prompt text (everything before the separator).
+
+### PART 2: JSON Metadata (REQUIRED)
+After the '---REASONING---' separator, you MUST include a valid JSON object with:
+
+```json
+{{
+  "selection_reasoning": {{
+    "column_name_1": "Why this column is important for queries",
+    "column_name_2": "Why this column is important for queries"
+  }},
+  "example_questions": [
+    "What is the average BMI across all patients?",
+    "How many patients have high CVD risk level?",
+    "Show the distribution of patients by county",
+    "What is the trend of blood pressure readings over time?",
+    "Which facilities have the most assessments?"
+  ]
+}}
+```
+
+**IMPORTANT**: 
+- The example_questions MUST be 5 specific, realistic questions that users could ask about THIS dataset
+- Questions should cover different types: aggregations, distributions, trends, comparisons
+- The selection_reasoning should explain 3-5 key columns and why they matter for analysis
+
+DO NOT skip the ---REASONING--- section. It is mandatory."""
+
+        # First LLM call: Generate the system prompt
+        prompt_instruction = f"""{template_with_data}
+
+CHART VISUALIZATION RULES (MUST BE APPENDED TO THE GENERATED PROMPT):
+{chart_rules}
+
+**CRITICAL**: The generated system prompt MUST include the CHART VISUALIZATION section with the chart generation rules above. This is a KEY FEATURE.
+
+Return ONLY the system prompt text. Do not include any other text or explanations."""
 
         messages = [
             SystemMessage(content=system_role),
-            HumanMessage(content=instruction)
+            HumanMessage(content=prompt_instruction)
         ]
         
-        # Invoke LLM
+        # Invoke LLM for system prompt
         response = llm.invoke(messages)
-        full_text = response.content
+        prompt_content = response.content.strip()
         
-        # Parse output
-        if "---REASONING---" in full_text:
-            parts = full_text.split("---REASONING---")
-            prompt_content = parts[0].strip()
-            try:
-                reasoning_json = parts[1].strip()
-                reasoning_json = reasoning_json.replace("```json", "").replace("```", "").strip()
-                parsed = json.loads(reasoning_json)
-                reasoning = parsed.get("selection_reasoning", {})
-                questions = parsed.get("example_questions", [])
-            except (json.JSONDecodeError, IndexError):
-                reasoning = {}
-                questions = []
-        else:
-            prompt_content = full_text
-            reasoning = {}
-            questions = []
+        # Clean up the prompt content - remove any unwanted prefixes
+        import re
+        # Remove "### PART 1: System Prompt" or similar headers
+        pattern1 = r'^###?\s*PART\s*1[:\s]*System\s*Prompt\s*\n*'
+        prompt_content = re.sub(pattern1, '', prompt_content, flags=re.IGNORECASE).strip()
+        # Remove "### System Prompt" headers  
+        pattern2 = r'^###?\s*System\s*Prompt\s*\n*'
+        prompt_content = re.sub(pattern2, '', prompt_content, flags=re.IGNORECASE).strip()
+        # Ensure it starts with a proper header
+        if not prompt_content.startswith("#"):
+            prompt_content = "# SYSTEM PROMPT\n\n" + prompt_content
+        
+        # Second LLM call: Generate reasoning and example questions using template
+        reasoning_template = get_reasoning_generator_prompt()
+        reasoning_instruction = reasoning_template.replace("{data_dictionary}", data_dict_text)
+
+        reasoning_messages = [
+            SystemMessage(content="You are a data analyst. Return only valid JSON, no markdown formatting or extra text."),
+            HumanMessage(content=reasoning_instruction)
+        ]
+        
+        # Invoke LLM for reasoning/questions
+        reasoning = {}
+        questions = []
+        try:
+            logger.info("Invoking LLM for reasoning and example questions...")
+            reasoning_response = llm.invoke(reasoning_messages)
+            reasoning_text = reasoning_response.content.strip()
+            logger.debug(f"Raw reasoning response: {reasoning_text[:500]}...")
+            
+            # Clean up JSON - remove markdown code blocks if present
+            reasoning_text = reasoning_text.replace("```json", "").replace("```", "").strip()
+            
+            # Try to find JSON object in the response
+            import re
+            json_match = re.search(r'\{[\s\S]*\}', reasoning_text)
+            if json_match:
+                reasoning_text = json_match.group()
+            
+            parsed = json.loads(reasoning_text)
+            reasoning = parsed.get("selection_reasoning", {})
+            questions = parsed.get("example_questions", [])
+            logger.info(f"Successfully parsed reasoning with {len(reasoning)} items and {len(questions)} questions")
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse reasoning JSON: {e}. Response was: {reasoning_text[:200] if 'reasoning_text' in dir() else 'N/A'}")
+        except Exception as e:
+            logger.error(f"Error during reasoning generation: {type(e).__name__}: {e}")
         
         return {
             "draft_prompt": prompt_content,

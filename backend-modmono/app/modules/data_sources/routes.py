@@ -205,16 +205,37 @@ async def update_data_source(
     return BaseResponse.ok(data=source)
 
 
-@router.delete("/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{source_id}", response_model=BaseResponse[dict])
 async def delete_data_source(
     source_id: UUID,
     current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_data_source_service),
-) -> None:
-    """Delete a data source. Requires admin role."""
-    deleted = await service.delete_source(source_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Data source not found")
+) -> BaseResponse[dict]:
+    """
+    Delete a data source. Requires admin role.
+    
+    Returns error if data source is used by any agent configurations.
+    """
+    result = await service.delete_source(source_id)
+    
+    if not result.get("success"):
+        error_msg = result.get("error", "Data source not found")
+        dependent_agents = result.get("dependent_agents", [])
+        
+        if dependent_agents:
+            # Return 409 Conflict when data source is in use
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": error_msg,
+                    "dependent_agents": dependent_agents,
+                    "dependent_config_count": result.get("dependent_config_count", 0),
+                }
+            )
+        else:
+            raise HTTPException(status_code=404, detail=error_msg)
+    
+    return BaseResponse.ok(message="Data source deleted successfully")
 
 
 # ==========================================
@@ -308,12 +329,16 @@ async def upload_file(
                 processing_mode = "background"
                 from app.modules.data_sources.utils import (
                     normalize_table_name,
+                    extract_file_columns_fast,
                     get_file_row_count_estimate,
                     get_user_data_dir,
                 )
                 
                 table_name = normalize_table_name(file.filename)
                 row_count = get_file_row_count_estimate(tmp_path, file_type)
+                
+                # Extract columns BEFORE background processing so frontend can display them
+                columns, column_details = extract_file_columns_fast(tmp_path, file_type)
                 
                 # Copy to permanent location for background processing
                 permanent_source = get_user_data_dir(str(current_user.id)) / f"_source_{file.filename}"
@@ -330,16 +355,21 @@ async def upload_file(
                     original_filename=file.filename,
                 )
                 
-                message = f"Large file ({file_size / (1024*1024):.1f} MB). Processing in background."
+                message = f"Large file ({file_size / (1024*1024):.1f} MB). Processing in background. {len(columns)} columns detected."
                 
-                # Create data source record
+                # Create data source record with duckdb_file_path
                 import json
+                from app.modules.data_sources.utils import get_user_duckdb_path
+                duckdb_path = str(get_user_duckdb_path(str(current_user.id)))
+                
                 ds = await service.create_file_source(
                     title=title or file.filename,
                     original_file_path=str(permanent_source),
                     file_type=file_type,
                     description=description,
+                    duckdb_file_path=duckdb_path,
                     duckdb_table_name=table_name,
+                    columns_json=json.dumps(columns) if columns else None,
                     row_count=row_count,
                     created_by=current_user.id,
                 )
