@@ -7,6 +7,8 @@ This module provides sophisticated query processing for RAG-based SQL generation
 - PromptBuilder: Dynamic, schema-aware prompt construction
 - QueryPlanner: Two-stage query generation (NL → QueryPlan → SQL)
 - ReflectionService: SQL critique and self-correction
+- SchemaContextService: Dynamic schema context injection via vector search
+- QueryValidationLayer: SQL error catching and iterative retry system
 """
 
 from .models import (
@@ -32,6 +34,13 @@ from .prompt_builder import PromptBuilder
 from .query_planner import QueryPlanner
 from .reflection_service import ReflectionService
 from .data_dictionary import DataDictionary
+from .schema_context_service import SchemaContextService, get_schema_context_service
+from .query_validation_layer import (
+    QueryValidationLayer,
+    SQLValidationResult,
+    SQLErrorType,
+    validate_and_execute_sql,
+)
 
 __all__ = [
     # Models
@@ -57,4 +66,11 @@ __all__ = [
     "QueryPlanner",
     "ReflectionService",
     "DataDictionary",
+    # New Services
+    "SchemaContextService",
+    "get_schema_context_service",
+    "QueryValidationLayer",
+    "SQLValidationResult",
+    "SQLErrorType",
+    "validate_and_execute_sql",
 ]

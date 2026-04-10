@@ -24,3 +24,4 @@ copilot_env
 # Local output and settings
 .vscode/
 eval/reports/
+/Data Literacy 2.0

@@ -8,7 +8,7 @@ Run with: python -m app.scripts.seed_ai_models
 
 Models seeded:
 - LLM: OpenAI GPT-4o (cloud, requires API key)
-- Embedding: BAAI/bge-m3 (local, needs download)
+- Embedding: BAAI/bge-base-en-v1.5 (local, needs download)
 - Embedding: OpenAI text-embedding-3-small (cloud, requires API key)
 - Reranker: BAAI/bge-reranker-v2-m3 (local, needs download)
 """
@@ -78,7 +78,7 @@ SEED_MODELS = [
     # Embedding Models
     # ==========================================
     {
-        "model_id": "huggingface/BAAI/bge-m3",
+        "model_id": "huggingface/BAAI/bge-base-en-v1.5",
         "display_name": "BGE-M3 (Local)",
         "model_type": "embedding",
         "provider_name": "huggingface",
@@ -86,8 +86,8 @@ SEED_MODELS = [
         "description": "Best multilingual embedding model. Supports 100+ languages. Runs locally.",
         
         # Local config
-        "hf_model_id": "BAAI/bge-m3",
-        "local_path": "./data/models/BAAI/bge-m3",
+        "hf_model_id": "BAAI/bge-base-en-v1.5",
+        "local_path": "./data/models/BAAI/bge-base-en-v1.5",
         
         # Model specs
         "dimensions": 1024,
@@ -150,14 +150,14 @@ SEED_MODELS = [
         "model_type": "reranker",
         "provider_name": "huggingface",
         "deployment_type": "local",
-        "description": "Best multilingual reranker. Pairs perfectly with bge-m3 embeddings.",
+        "description": "Best multilingual reranker. Pairs perfectly with bge-base-en-v1.5 embeddings.",
         
         "hf_model_id": "BAAI/bge-reranker-v2-m3",
         "local_path": "./data/models/BAAI/bge-reranker-v2-m3",
         
         "max_input_tokens": 8192,
         
-        "compatibility_notes": "Use with bge-m3 embeddings for best results. Improves retrieval accuracy.",
+        "compatibility_notes": "Use with bge-base-en-v1.5 embeddings for best results. Improves retrieval accuracy.",
         
         "is_default": True,  # Set as default reranker
         "download_status": "not_downloaded",
@@ -210,7 +210,7 @@ async def seed_models(session: AsyncSession):
     print("SUMMARY - Default Models:")
     print("="*70)
     print(f"  LLM:       openai/gpt-4o (cloud, uses OPENAI_API_KEY env var)")
-    print(f"  Embedding: huggingface/BAAI/bge-m3 (local, needs download)")
+    print(f"  Embedding: huggingface/BAAI/bge-base-en-v1.5 (local, needs download)")
     print(f"  Reranker:  huggingface/BAAI/bge-reranker-v2-m3 (local, needs download)")
     print("="*70)
     print("\nNext steps:")

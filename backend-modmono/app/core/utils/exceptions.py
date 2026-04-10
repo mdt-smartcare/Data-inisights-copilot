@@ -324,3 +324,23 @@ def convert_app_exception_to_http(exc: AppException) -> HTTPException:
         status_code=exc.status_code,
         detail=exc.to_dict()
     )
+
+
+class IrrelevantQueryException(AppException):
+    """
+    Raised when a query cannot be answered by the database.
+    
+    Classifications:
+    - <IRRELEVANT:PII>: Query requests personally identifiable information
+    - <IRRELEVANT:CONTEXT>: Query topic not covered by database
+    - <IRRELEVANT:SYNTAX>: Query is malformed or invalid
+    """
+    def __init__(self, message: str, classification: str, **kwargs):
+        self.classification = classification
+        super().__init__(
+            message=message,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="IRRELEVANT_QUERY",
+            details={"classification": classification},
+            **kwargs
+        )

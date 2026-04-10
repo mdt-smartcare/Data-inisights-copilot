@@ -1,0 +1,166 @@
+{
+  "version": "1.0",
+  "description": "SQL Q&A pairs for few-shot training - DuckDB compatible",
+  "examples": [
+    {
+      "id": "temporal_001",
+      "category": "temporal_comparison",
+      "question": "Show each entity's initial and latest measurement values",
+      "sql": "WITH RankedMeasurements AS (\n    SELECT \n        entity_id,\n        measurement_date,\n        value,\n        ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY measurement_date ASC) AS first_rank,\n        ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY measurement_date DESC) AS last_rank\n    FROM measurements\n    WHERE value IS NOT NULL\n)\nSELECT \n    f.entity_id,\n    f.value AS initial_value,\n    l.value AS latest_value\nFROM RankedMeasurements f\nJOIN RankedMeasurements l ON f.entity_id = l.entity_id\nWHERE f.first_rank = 1 AND l.last_rank = 1;",
+      "description": "Pattern for comparing first vs last chronological values using ROW_NUMBER",
+      "tags": ["first_value", "last_value", "window_function", "temporal"]
+    },
+    {
+      "id": "temporal_002",
+      "category": "temporal_comparison",
+      "question": "Compare the first and most recent status for each record",
+      "sql": "WITH StatusRanked AS (\n    SELECT \n        record_id,\n        status,\n        recorded_at,\n        ROW_NUMBER() OVER (PARTITION BY record_id ORDER BY recorded_at ASC) AS asc_rank,\n        ROW_NUMBER() OVER (PARTITION BY record_id ORDER BY recorded_at DESC) AS desc_rank\n    FROM status_history\n)\nSELECT \n    first_rec.record_id,\n    first_rec.status AS first_status,\n    first_rec.recorded_at AS first_date,\n    last_rec.status AS last_status,\n    last_rec.recorded_at AS last_date\nFROM StatusRanked first_rec\nJOIN StatusRanked last_rec ON first_rec.record_id = last_rec.record_id\nWHERE first_rec.asc_rank = 1 AND last_rec.desc_rank = 1;",
+      "description": "Self-join pattern to get both first and last records in one query",
+      "tags": ["first_value", "last_value", "self_join", "status_change"]
+    },
+    {
+      "id": "window_001",
+      "category": "window_function_pattern",
+      "question": "Find records where the value increased from the previous entry",
+      "sql": "WITH ValueChanges AS (\n    SELECT \n        entity_id,\n        entry_date,\n        value,\n        LAG(value) OVER (PARTITION BY entity_id ORDER BY entry_date) AS prev_value\n    FROM entries\n)\nSELECT \n    entity_id,\n    entry_date,\n    value,\n    prev_value,\n    value - prev_value AS increase\nFROM ValueChanges\nWHERE prev_value IS NOT NULL AND value > prev_value;",
+      "description": "Use CTE to compute LAG, then filter in outer query - never use window functions in WHERE",
+      "tags": ["lag", "window_function", "cte_pattern", "comparison"]
+    },
+    {
+      "id": "window_002",
+      "category": "window_function_pattern",
+      "question": "Identify entries that differ from the next scheduled entry",
+      "sql": "WITH WithNext AS (\n    SELECT \n        id,\n        category,\n        scheduled_date,\n        LEAD(category) OVER (PARTITION BY entity_id ORDER BY scheduled_date) AS next_category,\n        LEAD(scheduled_date) OVER (PARTITION BY entity_id ORDER BY scheduled_date) AS next_date\n    FROM schedule\n)\nSELECT \n    id,\n    category,\n    scheduled_date,\n    next_category,\n    next_date\nFROM WithNext\nWHERE next_category IS NOT NULL AND category != next_category;",
+      "description": "LEAD function in CTE to look ahead, filter changes in outer query",
+      "tags": ["lead", "window_function", "cte_pattern", "change_detection"]
+    },
+    {
+      "id": "streak_001",
+      "category": "consecutive_streak",
+      "question": "Find consecutive periods where status remained the same",
+      "sql": "WITH Ranked AS (\n    SELECT \n        entity_id,\n        status,\n        record_date,\n        ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY record_date) AS overall_rank,\n        ROW_NUMBER() OVER (PARTITION BY entity_id, status ORDER BY record_date) AS status_rank\n    FROM records\n),\nStreakGroups AS (\n    SELECT \n        entity_id,\n        status,\n        record_date,\n        overall_rank - status_rank AS streak_group\n    FROM Ranked\n)\nSELECT \n    entity_id,\n    status,\n    streak_group,\n    COUNT(*) AS streak_length,\n    MIN(record_date) AS streak_start,\n    MAX(record_date) AS streak_end\nFROM StreakGroups\nGROUP BY entity_id, status, streak_group\nORDER BY entity_id, streak_start;",
+      "description": "ROW_NUMBER difference technique to identify consecutive sequences",
+      "tags": ["consecutive", "streak", "row_number_difference", "grouping"]
+    },
+    {
+      "id": "streak_002",
+      "category": "consecutive_streak",
+      "question": "Count consecutive days with activity for each user",
+      "sql": "WITH DailyActivity AS (\n    SELECT DISTINCT\n        user_id,\n        CAST(activity_timestamp AS DATE) AS activity_date\n    FROM activities\n),\nRanked AS (\n    SELECT \n        user_id,\n        activity_date,\n        ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY activity_date) AS seq_num,\n        activity_date - INTERVAL '1 day' * ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY activity_date) AS streak_base\n    FROM DailyActivity\n)\nSELECT \n    user_id,\n    MIN(activity_date) AS streak_start,\n    MAX(activity_date) AS streak_end,\n    COUNT(*) AS consecutive_days\nFROM Ranked\nGROUP BY user_id, streak_base\nHAVING COUNT(*) >= 3\nORDER BY consecutive_days DESC;",
+      "description": "Date-based streak detection using row number subtraction from date",
+      "tags": ["consecutive_days", "streak", "date_arithmetic", "activity"]
+    },
+    {
+      "id": "episode_001",
+      "category": "episode_detection",
+      "question": "Group events into episodes with gaps of more than 30 days",
+      "sql": "WITH WithGaps AS (\n    SELECT \n        entity_id,\n        event_date,\n        LAG(event_date) OVER (PARTITION BY entity_id ORDER BY event_date) AS prev_date\n    FROM events\n),\nEpisodeStarts AS (\n    SELECT \n        entity_id,\n        event_date,\n        CASE \n            WHEN prev_date IS NULL THEN 1\n            WHEN CAST(event_date AS DATE) - CAST(prev_date AS DATE) > 30 THEN 1\n            ELSE 0\n        END AS is_new_episode\n    FROM WithGaps\n),\nEpisodeNumbers AS (\n    SELECT \n        entity_id,\n        event_date,\n        SUM(is_new_episode) OVER (PARTITION BY entity_id ORDER BY event_date) AS episode_num\n    FROM EpisodeStarts\n)\nSELECT \n    entity_id,\n    episode_num,\n    MIN(event_date) AS episode_start,\n    MAX(event_date) AS episode_end,\n    COUNT(*) AS events_in_episode\nFROM EpisodeNumbers\nGROUP BY entity_id, episode_num\nORDER BY entity_id, episode_num;",
+      "description": "Gap-based episode detection using running sum of episode start flags",
+      "tags": ["episode", "gap_detection", "running_sum", "temporal_grouping"]
+    },
+    {
+      "id": "episode_002",
+      "category": "episode_detection",
+      "question": "Identify visit episodes separated by 90 or more days",
+      "sql": "WITH VisitGaps AS (\n    SELECT \n        client_id,\n        visit_date,\n        LAG(visit_date) OVER (PARTITION BY client_id ORDER BY visit_date) AS prev_visit\n    FROM visits\n),\nNewEpisodeFlags AS (\n    SELECT \n        client_id,\n        visit_date,\n        CASE \n            WHEN prev_visit IS NULL THEN 1\n            WHEN DATEDIFF('day', prev_visit, visit_date) >= 90 THEN 1\n            ELSE 0\n        END AS new_episode_flag\n    FROM VisitGaps\n),\nEpisodeAssigned AS (\n    SELECT \n        client_id,\n        visit_date,\n        SUM(new_episode_flag) OVER (PARTITION BY client_id ORDER BY visit_date) AS episode_id\n    FROM NewEpisodeFlags\n)\nSELECT \n    client_id,\n    episode_id,\n    COUNT(*) AS visit_count,\n    MIN(visit_date) AS first_visit,\n    MAX(visit_date) AS last_visit,\n    DATEDIFF('day', MIN(visit_date), MAX(visit_date)) AS episode_duration_days\nFROM EpisodeAssigned\nGROUP BY client_id, episode_id;",
+      "description": "Episode grouping with 90-day gap threshold using DATEDIFF",
+      "tags": ["episode", "visit_grouping", "datediff", "care_episode"]
+    },
+    {
+      "id": "stats_001",
+      "category": "statistical_analysis",
+      "question": "Find outliers using z-score greater than 2 standard deviations",
+      "sql": "WITH Stats AS (\n    SELECT \n        AVG(value) AS mean_val,\n        STDDEV(value) AS stddev_val\n    FROM measurements\n    WHERE value IS NOT NULL\n),\nWithZScore AS (\n    SELECT \n        m.entity_id,\n        m.measurement_date,\n        m.value,\n        s.mean_val,\n        s.stddev_val,\n        CASE \n            WHEN s.stddev_val > 0 THEN (m.value - s.mean_val) / s.stddev_val\n            ELSE 0\n        END AS z_score\n    FROM measurements m\n    CROSS JOIN Stats s\n    WHERE m.value IS NOT NULL\n)\nSELECT \n    entity_id,\n    measurement_date,\n    value,\n    ROUND(z_score, 2) AS z_score\nFROM WithZScore\nWHERE ABS(z_score) > 2\nORDER BY ABS(z_score) DESC;",
+      "description": "Z-score calculation using CTE for aggregates - never put AVG/STDDEV in WHERE",
+      "tags": ["z_score", "outlier", "statistics", "cte_aggregate"]
+    },
+    {
+      "id": "stats_002",
+      "category": "statistical_analysis",
+      "question": "Calculate percentile ranks for each value within groups",
+      "sql": "WITH GroupStats AS (\n    SELECT \n        group_id,\n        COUNT(*) AS group_count,\n        AVG(score) AS avg_score,\n        MIN(score) AS min_score,\n        MAX(score) AS max_score\n    FROM scores\n    GROUP BY group_id\n),\nWithRanks AS (\n    SELECT \n        s.entity_id,\n        s.group_id,\n        s.score,\n        gs.avg_score,\n        gs.group_count,\n        PERCENT_RANK() OVER (PARTITION BY s.group_id ORDER BY s.score) AS percentile_rank\n    FROM scores s\n    JOIN GroupStats gs ON s.group_id = gs.group_id\n)\nSELECT \n    entity_id,\n    group_id,\n    score,\n    ROUND(avg_score, 2) AS group_avg,\n    ROUND(percentile_rank * 100, 1) AS percentile\nFROM WithRanks\nWHERE percentile_rank >= 0.9\nORDER BY group_id, percentile_rank DESC;",
+      "description": "Percentile calculation with group statistics using CTEs",
+      "tags": ["percentile", "ranking", "group_statistics", "percent_rank"]
+    },
+    {
+      "id": "date_001",
+      "category": "date_calculation",
+      "question": "Find records from the last 90 days",
+      "sql": "SELECT \n    entity_id,\n    record_date,\n    value\nFROM records\nWHERE record_date >= CURRENT_DATE - INTERVAL '90 days'\nORDER BY record_date DESC;",
+      "description": "DuckDB date subtraction using INTERVAL syntax - not DATE_SUB",
+      "tags": ["date_filter", "interval", "recent_records", "duckdb_syntax"]
+    },
+    {
+      "id": "date_002",
+      "category": "date_calculation",
+      "question": "Calculate days between first and last event for each entity",
+      "sql": "WITH DateRange AS (\n    SELECT \n        entity_id,\n        MIN(event_date) AS first_event,\n        MAX(event_date) AS last_event\n    FROM events\n    GROUP BY entity_id\n)\nSELECT \n    entity_id,\n    first_event,\n    last_event,\n    DATEDIFF('day', first_event, last_event) AS days_between,\n    CAST(last_event AS DATE) - CAST(first_event AS DATE) AS days_alt\nFROM DateRange\nWHERE first_event != last_event\nORDER BY days_between DESC;",
+      "description": "DuckDB DATEDIFF requires 3 arguments: unit, start, end",
+      "tags": ["datediff", "date_arithmetic", "duration", "duckdb_syntax"]
+    },
+    {
+      "id": "rolling_001",
+      "category": "rolling_calculation",
+      "question": "Calculate 7-day trailing average for each entity",
+      "sql": "WITH DailyValues AS (\n    SELECT \n        entity_id,\n        CAST(recorded_at AS DATE) AS record_date,\n        AVG(value) AS daily_avg\n    FROM measurements\n    GROUP BY entity_id, CAST(recorded_at AS DATE)\n)\nSELECT \n    d1.entity_id,\n    d1.record_date,\n    d1.daily_avg AS current_value,\n    AVG(d2.daily_avg) AS trailing_7day_avg,\n    COUNT(d2.daily_avg) AS days_in_window\nFROM DailyValues d1\nLEFT JOIN DailyValues d2 \n    ON d1.entity_id = d2.entity_id\n    AND d2.record_date BETWEEN d1.record_date - INTERVAL '6 days' AND d1.record_date\nGROUP BY d1.entity_id, d1.record_date, d1.daily_avg\nHAVING COUNT(d2.daily_avg) >= 3\nORDER BY d1.entity_id, d1.record_date;",
+      "description": "Trailing average using self-join with date range",
+      "tags": ["rolling_average", "trailing_window", "self_join", "time_series"]
+    },
+    {
+      "id": "rolling_002",
+      "category": "rolling_calculation",
+      "question": "Compute 30-day moving sum of activities",
+      "sql": "WITH DailyCounts AS (\n    SELECT \n        entity_id,\n        CAST(activity_date AS DATE) AS activity_day,\n        COUNT(*) AS daily_count\n    FROM activities\n    GROUP BY entity_id, CAST(activity_date AS DATE)\n),\nAllDays AS (\n    SELECT \n        entity_id,\n        activity_day,\n        daily_count,\n        SUM(daily_count) OVER (\n            PARTITION BY entity_id \n            ORDER BY activity_day \n            ROWS BETWEEN 29 PRECEDING AND CURRENT ROW\n        ) AS rolling_30day_sum\n    FROM DailyCounts\n)\nSELECT \n    entity_id,\n    activity_day,\n    daily_count,\n    rolling_30day_sum\nFROM AllDays\nORDER BY entity_id, activity_day;",
+      "description": "Rolling sum using window function with ROWS BETWEEN",
+      "tags": ["rolling_sum", "moving_window", "window_frame", "time_series"]
+    },
+    {
+      "id": "transition_001",
+      "category": "state_transition",
+      "question": "Find entities whose category changed from first to last record",
+      "sql": "WITH Ranked AS (\n    SELECT \n        entity_id,\n        category,\n        recorded_at,\n        ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY recorded_at ASC) AS first_rank,\n        ROW_NUMBER() OVER (PARTITION BY entity_id ORDER BY recorded_at DESC) AS last_rank\n    FROM records\n)\nSELECT \n    f.entity_id,\n    f.category AS initial_category,\n    f.recorded_at AS first_date,\n    l.category AS final_category,\n    l.recorded_at AS last_date\nFROM Ranked f\nJOIN Ranked l ON f.entity_id = l.entity_id\nWHERE f.first_rank = 1 \n  AND l.last_rank = 1\n  AND f.category != l.category\nORDER BY f.entity_id;",
+      "description": "State transition detection comparing first and last category values",
+      "tags": ["state_change", "transition", "first_last_comparison", "category_change"]
+    },
+    {
+      "id": "transition_002",
+      "category": "state_transition",
+      "question": "Track status progression showing all transitions for each entity",
+      "sql": "WITH WithPrevious AS (\n    SELECT \n        entity_id,\n        status,\n        status_date,\n        LAG(status) OVER (PARTITION BY entity_id ORDER BY status_date) AS prev_status,\n        LAG(status_date) OVER (PARTITION BY entity_id ORDER BY status_date) AS prev_date\n    FROM status_log\n)\nSELECT \n    entity_id,\n    prev_status AS from_status,\n    status AS to_status,\n    prev_date AS transition_from,\n    status_date AS transition_to,\n    DATEDIFF('day', prev_date, status_date) AS days_in_previous_status\nFROM WithPrevious\nWHERE prev_status IS NOT NULL AND prev_status != status\nORDER BY entity_id, status_date;",
+      "description": "Track all status transitions using LAG in CTE",
+      "tags": ["transition_history", "status_change", "lag_pattern", "audit_trail"]
+    },
+    {
+      "id": "comparison_001",
+      "category": "comparison",
+      "question": "Compare each location's average to the regional average",
+      "sql": "WITH LocationAvg AS (\n    SELECT \n        location_id,\n        region_id,\n        AVG(metric_value) AS location_avg,\n        COUNT(*) AS location_count\n    FROM metrics\n    GROUP BY location_id, region_id\n),\nRegionAvg AS (\n    SELECT \n        region_id,\n        AVG(metric_value) AS region_avg,\n        COUNT(*) AS region_count\n    FROM metrics\n    GROUP BY region_id\n)\nSELECT \n    l.location_id,\n    l.region_id,\n    ROUND(l.location_avg, 2) AS location_average,\n    ROUND(r.region_avg, 2) AS region_average,\n    ROUND(l.location_avg - r.region_avg, 2) AS difference,\n    CASE \n        WHEN l.location_avg > r.region_avg THEN 'Above'\n        WHEN l.location_avg < r.region_avg THEN 'Below'\n        ELSE 'Equal'\n    END AS comparison\nFROM LocationAvg l\nJOIN RegionAvg r ON l.region_id = r.region_id\nORDER BY difference DESC;",
+      "description": "Compare sub-group averages to parent group averages using CTEs",
+      "tags": ["comparison", "hierarchy", "average", "benchmark"]
+    },
+    {
+      "id": "comparison_002",
+      "category": "comparison",
+      "question": "Find entities performing above the overall median",
+      "sql": "WITH OverallStats AS (\n    SELECT \n        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY score) AS median_score,\n        AVG(score) AS mean_score\n    FROM performance\n),\nEntityScores AS (\n    SELECT \n        entity_id,\n        AVG(score) AS entity_avg_score,\n        COUNT(*) AS record_count\n    FROM performance\n    GROUP BY entity_id\n)\nSELECT \n    e.entity_id,\n    ROUND(e.entity_avg_score, 2) AS entity_score,\n    ROUND(o.median_score, 2) AS overall_median,\n    ROUND(e.entity_avg_score - o.median_score, 2) AS above_median_by,\n    e.record_count\nFROM EntityScores e\nCROSS JOIN OverallStats o\nWHERE e.entity_avg_score > o.median_score\nORDER BY above_median_by DESC;",
+      "description": "Compare entity scores to overall median using PERCENTILE_CONT",
+      "tags": ["median", "percentile", "comparison", "above_average"]
+    },
+    {
+      "id": "dedup_001",
+      "category": "deduplication",
+      "question": "Get the most recent record for each entity with tie-breaking",
+      "sql": "WITH RankedRecords AS (\n    SELECT \n        entity_id,\n        record_id,\n        value,\n        updated_at,\n        created_at,\n        ROW_NUMBER() OVER (\n            PARTITION BY entity_id \n            ORDER BY updated_at DESC, created_at DESC, record_id DESC\n        ) AS rn\n    FROM records\n)\nSELECT \n    entity_id,\n    record_id,\n    value,\n    updated_at,\n    created_at\nFROM RankedRecords\nWHERE rn = 1\nORDER BY entity_id;",
+      "description": "Deduplication using ROW_NUMBER with multiple tie-breaker columns",
+      "tags": ["deduplication", "latest_record", "row_number", "tie_breaking"]
+    },
+    {
+      "id": "dedup_002",
+      "category": "deduplication",
+      "question": "Select one representative record per group based on priority",
+      "sql": "WITH PriorityRanked AS (\n    SELECT \n        group_id,\n        record_id,\n        source,\n        value,\n        recorded_at,\n        ROW_NUMBER() OVER (\n            PARTITION BY group_id \n            ORDER BY \n                CASE source \n                    WHEN 'primary' THEN 1 \n                    WHEN 'secondary' THEN 2 \n                    ELSE 3 \n                END,\n                recorded_at DESC,\n                record_id DESC\n        ) AS priority_rank\n    FROM records\n    WHERE value IS NOT NULL\n)\nSELECT \n    group_id,\n    record_id,\n    source,\n    value,\n    recorded_at\nFROM PriorityRanked\nWHERE priority_rank = 1\nORDER BY group_id;",
+      "description": "Priority-based deduplication with CASE expression in ORDER BY",
+      "tags": ["deduplication", "priority", "case_expression", "representative_record"]
+    }
+  ]
+}

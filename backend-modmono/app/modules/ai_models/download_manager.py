@@ -120,8 +120,8 @@ class DownloadManager:
         # Start download
         job_id = await manager.start_download(
             model_id=1,
-            hf_model_id="BAAI/bge-m3",
-            local_path="./data/models/BAAI/bge-m3"
+            hf_model_id="BAAI/bge-base-en-v1.5",
+            local_path="./data/models/BAAI/bge-base-en-v1.5"
         )
         
         # Check progress
@@ -153,7 +153,7 @@ class DownloadManager:
         
         Args:
             model_id: Database model ID
-            hf_model_id: HuggingFace model ID (e.g., 'BAAI/bge-m3')
+            hf_model_id: HuggingFace model ID (e.g., 'BAAI/bge-base-en-v1.5')
             local_path: Local directory to save model
             revision: Git revision (default 'main')
             on_complete: Optional callback(model_id, success, error_message)

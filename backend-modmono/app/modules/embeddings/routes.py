@@ -58,12 +58,24 @@ async def start_embedding_job(
         # Create job record
         job_id = await service.create_job(request, current_user.id)
         
-        # Start background job
+        # Start background job - pass batch_size and chunking from request
+        chunking_override = None
+        if request.chunking:
+            chunking_override = {
+                'parent_chunk_size': request.chunking.parent_chunk_size,
+                'parent_chunk_overlap': request.chunking.parent_chunk_overlap,
+                'child_chunk_size': request.chunking.child_chunk_size,
+                'child_chunk_overlap': request.chunking.child_chunk_overlap,
+            }
+        
         await service.start_job_background(
             job_id=job_id,
             config_id=request.config_id,
             user_id=current_user.id,
-            incremental=request.incremental
+            incremental=request.incremental,
+            batch_size=request.batch_size,
+            max_concurrent=request.max_concurrent,
+            chunking_override=chunking_override
         )
         
         logger.info(f"Started embedding job {job_id} for config {request.config_id}")

@@ -154,7 +154,7 @@ class PromptBuilder:
         return "RELEVANT SQL EXAMPLES:\n" + "\n\n".join(examples)
     
     def _build_constraints_section(self, dialect: str) -> str:
-        """Build the hard constraints section."""
+        """Build the hard constraints section with DuckDB-specific rules."""
         constraints = [
             "STRICT RULES:",
             "1. Use ONLY the exact column names shown in the schema above",
@@ -169,30 +169,79 @@ class PromptBuilder:
             "10. Do NOT invent tables or columns that are not in the schema",
         ]
         
-        if dialect == "postgresql":
+        if dialect == "duckdb":
+            constraints.extend([
+                "",
+                "CRITICAL DUCKDB SQL RULES (MUST FOLLOW):",
+                "",
+                "11. WINDOW FUNCTIONS IN WHERE/GROUP BY - USE CTE PATTERN:",
+                "    WRONG: WHERE LAG(col) OVER (...) IS NOT NULL",
+                "    WRONG: GROUP BY SUM(CASE WHEN LAG(col) OVER (...) ...)",
+                "    CORRECT:",
+                "    WITH computed AS (",
+                "        SELECT *, LAG(col) OVER (...) AS prev_col",
+                "        FROM table",
+                "    )",
+                "    SELECT * FROM computed WHERE prev_col IS NOT NULL",
+                "",
+                "12. AGGREGATES IN WHERE - USE SUBQUERY/CTE:",
+                "    WRONG: WHERE col > AVG(col) OR WHERE STDDEV(col) > 0",
+                "    CORRECT:",
+                "    WITH stats AS (SELECT AVG(col) AS avg_val FROM table)",
+                "    SELECT * FROM table, stats WHERE col > stats.avg_val",
+                "",
+                "13. DATE DIFFERENCE:",
+                "    WRONG: DATEDIFF(date1, date2)",
+                "    CORRECT: DATEDIFF('day', date1, date2) -- 3 arguments required",
+                "    ALSO OK: CAST(date2 AS DATE) - CAST(date1 AS DATE)",
+                "",
+                "14. DATE SUBTRACTION:",
+                "    WRONG: DATE_SUB(date, INTERVAL 90 DAY)",
+                "    CORRECT: CAST(date AS DATE) - INTERVAL '90 days'",
+                "",
+                "15. FIRST/LAST VALUE COMPARISON - ALWAYS USE CTE:",
+                "    WITH ranked AS (",
+                "        SELECT *,",
+                "            ROW_NUMBER() OVER (PARTITION BY id ORDER BY date ASC) AS first_rank,",
+                "            ROW_NUMBER() OVER (PARTITION BY id ORDER BY date DESC) AS last_rank",
+                "        FROM table",
+                "    )",
+                "    SELECT f.*, l.col AS last_col",
+                "    FROM ranked f",
+                "    JOIN ranked l ON f.id = l.id",
+                "    WHERE f.first_rank = 1 AND l.last_rank = 1",
+                "",
+                "16. CONSECUTIVE STREAK DETECTION - USE ROW_NUMBER DIFFERENCE:",
+                "    WITH ranked AS (",
+                "        SELECT *,",
+                "            ROW_NUMBER() OVER (PARTITION BY id ORDER BY date) -",
+                "            ROW_NUMBER() OVER (PARTITION BY id, category ORDER BY date) AS streak_group",
+                "        FROM table",
+                "    )",
+                "    SELECT id, category, COUNT(*) AS streak_length",
+                "    FROM ranked",
+                "    GROUP BY id, category, streak_group",
+                "",
+                "17. Use ILIKE for case-insensitive string comparisons",
+                "18. Boolean columns may be stored as strings: use = 'true' or = 'false'",
+            ])
+        elif dialect == "postgresql":
             constraints.extend([
                 "11. Use PostgreSQL syntax (e.g., ILIKE for case-insensitive, ::date for casting)",
                 "12. For boolean columns, compare with = true or = false",
             ])
-        elif dialect == "duckdb":
-            constraints.extend([
-                "11. Use DuckDB syntax (e.g., ILIKE for case-insensitive matching)",
-                "12. NULL handling: Use COALESCE or IS NOT NULL as needed",
-            ])
         
-        # Special query patterns
         constraints.extend([
             "",
             "SPECIAL QUERY PATTERNS:",
-            "- LOOKUP QUERIES (\"which org is X\", \"info about patient Y\"): "
-            "Return ALL relevant columns for the entity",
+            "- LOOKUP QUERIES: Return ALL relevant columns for the entity",
             "- AGGREGATION BY ENTITY: Filter first, then aggregate",
-            "- EXISTENCE CHECK: Use COUNT(*) or sample query",
             "- CARE CASCADE / FUNNEL: Use COUNT with CASE WHEN for sequential stages",
             "- COMPARISON: Use appropriate GROUP BY with aggregation",
         ])
         
         return "\n".join(constraints)
+
     
     def _build_question_section(self, question: str) -> str:
         """Build the question and output instruction section."""

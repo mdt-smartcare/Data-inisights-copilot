@@ -1,0 +1,106 @@
+{
+  "version": "1.0",
+  "description": "Sample SQL test cases for NL2SQL evaluation",
+  "test_cases": [
+    {
+      "test_id": "basic_001",
+      "question": "How many records are in the database?",
+      "expected_sql": "SELECT COUNT(*) FROM entity_table",
+      "tags": ["basic", "count", "aggregation"],
+      "description": "Basic count query"
+    },
+    {
+      "test_id": "basic_002",
+      "question": "Show me all unique categories",
+      "expected_sql": "SELECT DISTINCT category FROM entity_table",
+      "tags": ["basic", "distinct"],
+      "description": "Distinct values query"
+    },
+    {
+      "test_id": "aggregation_001",
+      "question": "What is the average value by category?",
+      "expected_sql": "SELECT category, AVG(value) FROM measurement_table GROUP BY category",
+      "tags": ["aggregation", "groupby", "average"],
+      "description": "Group by with average aggregation"
+    },
+    {
+      "test_id": "aggregation_002",
+      "question": "Count records per month",
+      "expected_sql": "SELECT DATE_TRUNC('month', created_at) as month, COUNT(*) FROM entity_table GROUP BY 1 ORDER BY 1",
+      "tags": ["aggregation", "temporal", "groupby"],
+      "description": "Monthly aggregation with date truncation"
+    },
+    {
+      "test_id": "temporal_001",
+      "question": "Show records from the last 30 days",
+      "expected_sql": "SELECT * FROM entity_table WHERE created_at >= CURRENT_DATE - INTERVAL '30 days'",
+      "tags": ["temporal", "filter", "recent"],
+      "description": "Time-based filtering"
+    },
+    {
+      "test_id": "temporal_002",
+      "question": "What is the trend over the past year?",
+      "expected_sql": "SELECT DATE_TRUNC('month', created_at), COUNT(*) FROM entity_table WHERE created_at >= CURRENT_DATE - INTERVAL '1 year' GROUP BY 1 ORDER BY 1",
+      "tags": ["temporal", "trend", "aggregation"],
+      "description": "Year-over-year trend analysis"
+    },
+    {
+      "test_id": "filter_001",
+      "question": "Show only active records",
+      "expected_sql": "SELECT * FROM entity_table WHERE is_active = true AND is_deleted = false",
+      "tags": ["filter", "status", "basic"],
+      "description": "Status-based filtering"
+    },
+    {
+      "test_id": "filter_002",
+      "question": "Find records with high values",
+      "expected_sql": "SELECT * FROM measurement_table WHERE value > (SELECT AVG(value) FROM measurement_table)",
+      "tags": ["filter", "subquery", "comparison"],
+      "description": "Subquery-based filtering"
+    },
+    {
+      "test_id": "join_001",
+      "question": "Show records with their location names",
+      "expected_sql": "SELECT e.*, l.name as location_name FROM entity_table e JOIN location_table l ON e.location_id = l.id",
+      "tags": ["join", "relationship"],
+      "description": "Basic join query"
+    },
+    {
+      "test_id": "complex_001",
+      "question": "What percentage of records are in each category?",
+      "expected_sql": "SELECT category, COUNT(*) * 100.0 / SUM(COUNT(*)) OVER () as percentage FROM entity_table GROUP BY category",
+      "tags": ["complex", "percentage", "window"],
+      "description": "Percentage calculation with window function"
+    },
+    {
+      "test_id": "complex_002",
+      "question": "Find the top 5 categories by record count",
+      "expected_sql": "SELECT category, COUNT(*) as count FROM entity_table GROUP BY category ORDER BY count DESC LIMIT 5",
+      "tags": ["complex", "ranking", "limit"],
+      "description": "Top-N query"
+    },
+    {
+      "test_id": "streak_001",
+      "question": "Find consecutive days with records",
+      "expected_sql": "WITH dated AS (SELECT DISTINCT DATE(created_at) as dt FROM entity_table), numbered AS (SELECT dt, ROW_NUMBER() OVER (ORDER BY dt) as rn FROM dated) SELECT MIN(dt) as start_date, MAX(dt) as end_date, COUNT(*) as streak_length FROM numbered GROUP BY dt - INTERVAL '1 day' * rn",
+      "tags": ["complex", "streak", "window", "cte"],
+      "description": "Consecutive streak detection"
+    },
+    {
+      "test_id": "comparison_001",
+      "question": "Compare this month to last month",
+      "expected_sql": "SELECT 'Current' as period, COUNT(*) FROM entity_table WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE) UNION ALL SELECT 'Previous', COUNT(*) FROM entity_table WHERE created_at >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND created_at < DATE_TRUNC('month', CURRENT_DATE)",
+      "tags": ["comparison", "temporal", "union"],
+      "description": "Period-over-period comparison"
+    },
+    {
+      "test_id": "skip_001",
+      "question": "This test should be skipped",
+      "expected_sql": "SELECT 1",
+      "tags": ["skip"],
+      "skip": true,
+      "skip_reason": "Example of a skipped test case",
+      "description": "Demonstrates skip functionality"
+    }
+  ]
+}

@@ -228,6 +228,9 @@ class AgentConfigResponse(BaseModel):
     agent_id: UUID
     data_source_id: UUID
     
+    # Data source type (derived from data_source)
+    data_source_type: Optional[str] = None  # 'database' or 'file'
+    
     # Data selection (parsed from JSON)
     # For files: List[str] of column names
     # For databases: Dict[table_name, List[column_names]]

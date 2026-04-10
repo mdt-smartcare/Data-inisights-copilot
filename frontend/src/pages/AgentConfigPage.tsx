@@ -357,13 +357,19 @@ const AgentConfigPage: React.FC = () => {
         setGenerating(true);
         setError(null);
         try {
+            // Save all relevant steps before generating to ensure DB has latest data
+            // This handles the case where user made changes in previous steps but didn't click "Next"
+            if (draft) {
+                await saveStep(2, getStepData(2)); // Schema selection
+                await saveStep(3, getStepData(3)); // Data dictionary
+                await saveStep(4, getStepData(4)); // Advanced settings
+            }
+
             // Generate prompt using endpoint that reads from saved DB data
-            // Settings were already saved when clicking "Next" on step 4
             const result = await generatePrompt(agent.id, hookVersionId);
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
             if (result.example_questions) setExampleQuestions(result.example_questions);
-            // Stay on step 5 - the button will change to "Publish" after generation
         } catch (err) {
             setError(handleApiError(err));
         } finally {

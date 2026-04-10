@@ -299,7 +299,15 @@ const ConfigPage: React.FC = () => {
 
                 if (emb) newSettings.embedding = { ...newSettings.embedding, ...emb };
                 if (llm) newSettings.llm = { ...newSettings.llm, ...llm };
-                if (chunk) newSettings.chunking = { ...newSettings.chunking, ...chunk };
+                if (chunk) {
+                    // Handle both snake_case (from DB) and camelCase keys
+                    newSettings.chunking = {
+                        parentChunkSize: chunk.parent_chunk_size ?? chunk.parentChunkSize ?? newSettings.chunking.parentChunkSize,
+                        parentChunkOverlap: chunk.parent_chunk_overlap ?? chunk.parentChunkOverlap ?? newSettings.chunking.parentChunkOverlap,
+                        childChunkSize: chunk.child_chunk_size ?? chunk.childChunkSize ?? newSettings.chunking.childChunkSize,
+                        childChunkOverlap: chunk.child_chunk_overlap ?? chunk.childChunkOverlap ?? newSettings.chunking.childChunkOverlap,
+                    };
+                }
                 if (ret) newSettings.retriever = { ...newSettings.retriever, ...ret };
                 setAdvancedSettings(newSettings);
 
@@ -1824,28 +1832,52 @@ const ConfigPage: React.FC = () => {
                 )
             }
 
-            {/* Embedding Settings Modal */}
+            {/* Embedding Settings Modal - uses saved config values from activeConfig */}
             <EmbeddingSettingsModal
                 isOpen={showEmbeddingSettings}
                 onClose={() => setShowEmbeddingSettings(false)}
                 onConfirm={handleStartEmbeddingWithSettings}
-                defaultSettings={{
-                    batch_size: 128,  // Optimized for GPU (MPS/CUDA) with local models
-                    max_concurrent: 5,
-                    chunking: {
-                        parent_chunk_size: advancedSettings.chunking.parentChunkSize,
-                        parent_chunk_overlap: advancedSettings.chunking.parentChunkOverlap,
-                        child_chunk_size: advancedSettings.chunking.childChunkSize,
-                        child_chunk_overlap: advancedSettings.chunking.childChunkOverlap,
-                    },
-                    parallelization: {
-                        num_workers: undefined,
-                        chunking_batch_size: undefined,
-                        delta_check_batch_size: 50000,
-                    },
-                    max_consecutive_failures: 5,
-                    retry_attempts: 3,
-                }}
+                defaultSettings={(() => {
+                    // CRITICAL: Read directly from activeConfig.chunking_config
+                    // The API returns chunking_config as an object with snake_case keys
+                    let savedChunking: any = null;
+                    
+                    if (activeConfig?.chunking_config) {
+                        savedChunking = typeof activeConfig.chunking_config === 'string' 
+                            ? JSON.parse(activeConfig.chunking_config) 
+                            : activeConfig.chunking_config;
+                        console.log('[ConfigPage] savedChunking from activeConfig:', savedChunking);
+                    }
+                    
+                    const savedEmbedding = activeConfig?.embedding_config
+                        ? (typeof activeConfig.embedding_config === 'string'
+                            ? JSON.parse(activeConfig.embedding_config)
+                            : activeConfig.embedding_config)
+                        : null;
+                    
+                    // Build chunking - use saved values if available, otherwise undefined to let modal use system defaults
+                    const chunkingValues = savedChunking ? {
+                        parent_chunk_size: savedChunking.parent_chunk_size ?? savedChunking.parentChunkSize,
+                        parent_chunk_overlap: savedChunking.parent_chunk_overlap ?? savedChunking.parentChunkOverlap,
+                        child_chunk_size: savedChunking.child_chunk_size ?? savedChunking.childChunkSize,
+                        child_chunk_overlap: savedChunking.child_chunk_overlap ?? savedChunking.childChunkOverlap,
+                    } : undefined;
+                    
+                    console.log('[ConfigPage] Final chunking for modal:', chunkingValues);
+                    
+                    return {
+                        batch_size: savedEmbedding?.batch_size || savedEmbedding?.batchSize || 128,
+                        max_concurrent: 5,
+                        chunking: chunkingValues,
+                        parallelization: {
+                            num_workers: undefined,
+                            chunking_batch_size: undefined,
+                            delta_check_batch_size: 50000,
+                        },
+                        max_consecutive_failures: 5,
+                        retry_attempts: 3,
+                    };
+                })()}
             />
         </div >
     );
