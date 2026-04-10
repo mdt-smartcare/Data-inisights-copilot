@@ -66,7 +66,15 @@ DUCKDB_SQL_RULES = """CRITICAL DUCKDB SQL RULES:
     - Use CAST(column_name AS TIMESTAMP) or column_name::TIMESTAMP
     - Example: WHERE CAST(created_at AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1 year'
     - Also cast before DATE_TRUNC: DATE_TRUNC('month', CAST(created_at AS TIMESTAMP))
-12. **CHECK COLUMN TYPES IN SCHEMA**: Before date/numeric operations, verify the column type. If VARCHAR contains dates, cast explicitly."""
+12. **CHECK COLUMN TYPES IN SCHEMA**: Before date/numeric operations, verify the column type. If VARCHAR contains dates, cast explicitly.
+13. **GREATEST/LEAST FOR ROW-WISE MIN/MAX**: To find min/max ACROSS COLUMNS in a single row, use GREATEST() and LEAST(), NOT max() or min():
+    - WRONG: max(col1, col2, col3) or min(col1, col2, col3) - These are AGGREGATE functions!
+    - CORRECT: GREATEST(col1, col2, col3) or LEAST(col1, col2, col3)
+    - Example: SELECT GREATEST(pulse_1, pulse_2, COALESCE(pulse_3, 0)) - LEAST(pulse_1, pulse_2, COALESCE(pulse_3, 0)) AS pulse_variance
+14. **COALESCE FOR NULL HANDLING**: Use COALESCE(column, default_value) to handle NULLs in calculations.
+15. **AGGREGATE vs ROW-WISE FUNCTIONS**: 
+    - max()/min() are AGGREGATE functions - they work ACROSS ROWS (vertical)
+    - GREATEST()/LEAST() are SCALAR functions - they work ACROSS COLUMNS in a single row (horizontal)"""
 
 # Query type classification keywords
 QUERY_TYPE_KEYWORDS = {
@@ -516,10 +524,8 @@ class SQLService:
         """
         engine = self._get_engine()
         
-        # Sanitize query - add LIMIT if not present
-        sql_upper = sql.upper()
-        if "LIMIT" not in sql_upper and "SELECT" in sql_upper:
-            sql = f"{sql.rstrip(';')} LIMIT {self._max_result_rows}"
+        # Do NOT add automatic LIMIT - data analysts need full results
+        # If user wants a limit, they will specify it in their question
         
         try:
             with engine.connect() as conn:
@@ -868,10 +874,8 @@ class SQLServiceForCSV(SQLService):
         """Execute SQL query against the CSV file."""
         import duckdb
         
-        # Add LIMIT if not present
-        sql_upper = sql.upper()
-        if "LIMIT" not in sql_upper and "SELECT" in sql_upper:
-            sql = f"{sql.rstrip(';')} LIMIT {self._max_result_rows}"
+        # Do NOT add automatic LIMIT - data analysts need full results
+        # If user wants a limit, they will specify it in their question
         
         try:
             csv_path_escaped = self._csv_path.replace("'", "''")

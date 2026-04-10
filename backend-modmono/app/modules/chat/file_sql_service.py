@@ -449,7 +449,7 @@ Columns:
         try:
             result = conn.execute(sql)
             columns = [desc[0] for desc in result.description]
-            rows_raw = result.fetchmany(10000)
+            rows_raw = result.fetchall()  # No limit - data analysts need all results
             
             # Convert to list of dicts
             rows = []
@@ -633,7 +633,7 @@ Response:"""
                 "answer": answer,
                 "sql": sql,
                 "columns": columns,
-                "rows": rows[:100],
+                "rows": rows,  # Return all rows - no artificial limit
                 "total_rows": len(rows),
                 "execution_time_ms": round(execution_time_ms, 2),
             }
@@ -680,7 +680,7 @@ Response:"""
                 "status": "success",
                 "sql": sql,
                 "columns": columns,
-                "rows": rows[:100],
+                "rows": rows,  # Return all rows - no artificial limit
                 "total_rows": len(rows),
                 "execution_time_ms": round(execution_time_ms, 2),
             }
@@ -782,7 +782,7 @@ def get_file_sql_service(user_id: str, allowed_tables: List[str] = None) -> File
                 "answer": answer,
                 "sql": validation_result.sql,
                 "columns": columns,
-                "rows": rows[:100],
+                "rows": rows,  # Return all rows - no artificial limit
                 "total_rows": count,
                 "execution_time_ms": round(validation_result.execution_time_ms, 2),
                 "attempts": validation_result.attempt_number,
