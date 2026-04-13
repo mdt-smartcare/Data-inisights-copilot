@@ -298,7 +298,7 @@ export const getActiveConfigMetadata = async (agentId?: string): Promise<any> =>
 // AGENT API
 // ============================================================================
 
-import type { Agent } from '../types';
+import type { Agent, GetUserAgentsResponse } from '../types';
 
 // Transform backend agent (title) to frontend agent (name)
 const transformAgent = (agent: any): Agent => ({
@@ -412,18 +412,23 @@ export const getAgentUsers = async (agentId: string): Promise<{ users: AgentUser
   return response.data?.data;
 };
 
-export const getUserAgents = async (userId: string): Promise<{ agents: Agent[]; is_admin: boolean; message?: string }> => {
+export const getUserAgents = async (userId: string): Promise<GetUserAgentsResponse> => {
   const response = await apiClient.get(`/api/v1/users/${userId}/agents`);
-  const data = response.data;
+  const data = response.data?.data || response.data;
   return {
-    ...data,
-    agents: (data.agents || []).map(transformAgent),
+    agents: (data.agents || []).map((agent: any) => ({
+      ...agent,
+      name: agent.title || agent.name,
+    })),
+    total: data.total || 0,
+    user_id: data.user_id || userId,
   };
 };
 
 export const getAllAgents = async (): Promise<Agent[]> => {
-  const response = await apiClient.get('/api/v1/agents/all');
-  const agents = response.data.agents || response.data;
+  const response = await apiClient.get('/api/v1/agents/search');
+  const data = response.data?.data || response.data;
+  const agents = data.agents || data;
   return Array.isArray(agents) ? agents.map(transformAgent) : [];
 };
 

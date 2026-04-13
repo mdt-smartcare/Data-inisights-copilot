@@ -7,7 +7,7 @@ import Alert from '../components/Alert';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { APP_CONFIG, CONFIRMATION_MESSAGES } from '../config';
 import { apiClient, getAgents, getAllAgents, getUserAgents, bulkAssignAgents, revokeUserAccess, handleApiError } from '../services/api';
-import type { Agent } from '../types';
+import type { Agent, UserAgentAssignment } from '../types';
 import { formatDateTime } from '../utils/datetime';
 
 interface UserData {
@@ -39,7 +39,7 @@ const UsersPage: React.FC = () => {
     // Agent Assignment State
     const [agentModalUser, setAgentModalUser] = useState<UserData | null>(null);
     const [allAgents, setAllAgents] = useState<Agent[]>([]);
-    const [userAgents, setUserAgents] = useState<Agent[]>([]);
+    const [userAgents, setUserAgents] = useState<UserAgentAssignment[]>([]);
     const [loadingAgents, setLoadingAgents] = useState(false);
     const [selectedAgentRoles, setSelectedAgentRoles] = useState<Record<string, 'admin' | 'user'>>({}); // Per-agent role map (agent IDs are UUIDs)
     const [assigning, setAssigning] = useState(false);
@@ -546,11 +546,11 @@ const UsersPage: React.FC = () => {
                                                                         <div className="flex items-center gap-2">
                                                                             <span className="font-medium text-gray-900 truncate">{agent.name}</span>
                                                                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                                                agent.user_role === 'admin' 
+                                                                                agent.role === 'admin' 
                                                                                     ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-200' 
                                                                                     : 'bg-amber-100 text-amber-700 ring-1 ring-amber-200'
                                                                             }`}>
-                                                                                {agent.user_role === 'admin' ? '⚙️ Configure' : '💬 Chat'}
+                                                                                {agent.role === 'admin' ? '⚙️ Configure' : '💬 Chat'}
                                                                             </span>
                                                                         </div>
                                                                     </div>
