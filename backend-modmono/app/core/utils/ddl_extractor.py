@@ -1276,7 +1276,10 @@ class DuckDBDDLExtractor:
         self.duckdb_path = duckdb_path
         self.table_name = table_name
         self.data_dictionary = data_dictionary or {}
-        self.conn = duckdb.connect(duckdb_path, read_only=True)
+        
+        # Connect without read_only flag to avoid conflicts with other connections
+        # DuckDB doesn't allow mixing read_only and read_write connections to same file
+        self.conn = duckdb.connect(duckdb_path)
     
     def _get_column_description(self, column_name: str) -> Optional[str]:
         """Get description for a column from data dictionary."""

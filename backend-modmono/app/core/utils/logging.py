@@ -132,9 +132,10 @@ def configure_logging(
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
     
-    # Apply sensitive data filter to Uvicorn access logs
-    uvicorn_access_logger = logging.getLogger("uvicorn.access")
-    uvicorn_access_logger.addFilter(sensitive_filter)
+    # Apply sensitive data filter to Uvicorn loggers to redact tokens
+    for logger_name in ["uvicorn", "uvicorn.error", "uvicorn.access", "uvicorn.asgi"]:
+        uvicorn_logger = logging.getLogger(logger_name)
+        uvicorn_logger.addFilter(sensitive_filter)
     
     # Processors for structlog
     shared_processors: list[Processor] = [
