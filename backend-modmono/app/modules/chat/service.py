@@ -407,7 +407,12 @@ class ChatService:
         tracing_ctx: TracingContext,
         fastapi_request: Optional[Request] = None,
     ) -> Tuple[str, List[SourceChunk], List[ReasoningStep], EmbeddingInfo]:
-        """Handle Intent C: Hybrid (SQL filter + vector search)."""
+        """
+        Handle Intent C: Hybrid queries.
+        
+        For schema-aware indexing (DDL per table), this falls back to SQL generation
+        since semantic schema retrieval is built into the SQL service.
+        """
         reasoning_steps = []
         
         if not sql_service:
@@ -416,7 +421,31 @@ class ChatService:
                 query, agent_config, tracing_ctx, fastapi_request
             )
         
-        # Step 1: Execute SQL filter to get IDs
+        # Check if we're using schema-aware indexing (no unstructured document vectors)
+        chunking_config = agent_config.get("chunking_config", {}) if agent_config else {}
+        if isinstance(chunking_config, str):
+            chunking_config = json.loads(chunking_config)
+        
+        use_schema_aware = chunking_config.get("use_schema_aware_indexing", True)
+        
+        if use_schema_aware:
+            # For schema-aware indexing, hybrid intent uses SQL generation
+            # The SQL service already has semantic schema retrieval built in
+            logger.info("Hybrid intent with schema-aware indexing - using SQL generation")
+            answer, sql_reasoning, chart_data = await self._handle_sql_intent(
+                query, sql_service, agent_config, tracing_ctx
+            )
+            
+            emb_info = EmbeddingInfo(
+                model="bge-base-en-v1.5",
+                dimensions=768,
+                search_method="hybrid_sql",
+                docs_retrieved=0,
+            )
+            
+            return answer, [], sql_reasoning, emb_info
+        
+        # Legacy path: SQL filter + vector search (for parent-child chunking)
         filter_ids = []
         if classification.sql_filter:
             tracing_ctx.add_span("sql_filter", input=classification.sql_filter)
@@ -455,10 +484,19 @@ class ChatService:
                 ))
         
         if not filter_ids:
-            # No IDs found, fall back to pure vector search
-            return await self._handle_vector_intent(
-                query, agent_config, tracing_ctx, fastapi_request
+            # No IDs found, fall back to SQL generation
+            logger.info("No filter IDs found, falling back to SQL generation")
+            answer, sql_reasoning, chart_data = await self._handle_sql_intent(
+                query, sql_service, agent_config, tracing_ctx
             )
+            
+            emb_info = EmbeddingInfo(
+                model="bge-base-en-v1.5",
+                dimensions=768,
+                search_method="hybrid_sql_fallback",
+                docs_retrieved=0,
+            )
+            return answer, [], sql_reasoning, emb_info
         
         await check_cancelled(fastapi_request)
         
