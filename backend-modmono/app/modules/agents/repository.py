@@ -15,14 +15,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database.base_repository import BaseRepository
+from app.core.utils.logging import get_logger
 from app.modules.agents.models import (
     AgentModel, AgentConfigModel, UserAgentModel
 )
+from app.modules.users.models import UserModel
 from app.modules.data_sources.models import DataSourceModel
 from app.modules.agents.schemas import (
     AgentCreate, AgentUpdate, AgentResponse,
-    DataSourceResponse, AgentConfigResponse
+    UserAgentResponse, AgentForUserResponse,
 )
+
+logger = get_logger(__name__)
 
 
 class AgentRepository(BaseRepository[AgentModel, AgentCreate, AgentUpdate, AgentResponse]):
@@ -472,16 +476,29 @@ class AgentConfigRepository:
         return config
     
     async def publish_draft(self, config_id: int) -> Optional[AgentConfigModel]:
-        """Publish a draft config (activates it but keeps status as draft until embedding completes)."""
+        """Publish a draft config. Only activates if it's the first config for this agent."""
         config = await self.get_by_id(config_id)
         if not config or config.status != "draft":
             return None
         
-        # Deactivate other configs
-        await self._deactivate_configs(config.agent_id)
+        # Check if there are any other configs for this agent (excluding this one)
+        count_query = (
+            select(func.count())
+            .select_from(AgentConfigModel)
+            .where(
+                and_(
+                    AgentConfigModel.agent_id == config.agent_id,
+                    AgentConfigModel.id != config_id,
+                )
+            )
+        )
+        result = await self.db.execute(count_query)
+        other_configs_count = result.scalar() or 0
         
-        # Activate but keep status as draft - will be set to published when embedding completes
-        config.is_active = 1
+        # Only auto-activate if this is the first config for the agent
+        if other_configs_count == 0:
+            config.is_active = 1
+        # Otherwise, keep is_active as 0 - user must manually activate via /config/{id}/activate
         
         await self.db.flush()
         await self.db.refresh(config)
@@ -593,17 +610,61 @@ class UserAgentRepository:
         
         return role_levels.get(access.role, 0) >= role_levels.get(min_role, 0)
     
-    async def get_agent_users(self, agent_id: UUID) -> List[UserAgentModel]:
-        """Get all users with access to an agent."""
-        query = select(UserAgentModel).where(UserAgentModel.agent_id == agent_id)
+    async def get_agent_users(self, agent_id: UUID) -> List[UserAgentResponse]:
+        """Get all users with access to an agent using explicit JOIN with specific columns."""
+        query = (
+            select(
+                # User agent columns
+                UserAgentModel.user_id,
+                UserAgentModel.user_id.label("id"),
+                UserAgentModel.agent_id,
+                UserAgentModel.role,
+                UserAgentModel.granted_at,
+                UserAgentModel.granted_by,
+                # User columns
+                UserModel.username,
+                UserModel.email,
+                UserModel.full_name,
+                UserModel.is_active,
+            )
+            .join(UserModel, UserAgentModel.user_id == UserModel.id)
+            .where(UserAgentModel.agent_id == agent_id)
+        )
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        rows = result.all()
+        
+        return [UserAgentResponse(**row._asdict()) for row in rows]
     
     async def get_user_agents(self, user_id: UUID) -> List[UserAgentModel]:
         """Get all agents a user has access to."""
         query = select(UserAgentModel).where(UserAgentModel.user_id == user_id)
         result = await self.db.execute(query)
         return list(result.scalars().all())
+    
+    async def get_user_agents_with_details(self, user_id: UUID) -> List[AgentForUserResponse]:
+        """Get all agents a user has access to with full agent details."""
+        query = (
+            select(
+                # Agent columns
+                AgentModel.id,
+                AgentModel.title,
+                AgentModel.description,
+                AgentModel.created_by,
+                AgentModel.created_at,
+                AgentModel.updated_at,
+                # User access columns
+                UserAgentModel.role,
+                UserAgentModel.granted_at,
+                UserAgentModel.granted_by,
+            )
+            .join(AgentModel, UserAgentModel.agent_id == AgentModel.id)
+            .where(UserAgentModel.user_id == user_id)
+            .order_by(AgentModel.title)
+        )
+        result = await self.db.execute(query)
+        rows = result.all()
+        
+        return [AgentForUserResponse(**row._asdict()) for row in rows]
 
 
 # ==========================================

@@ -172,11 +172,9 @@ class UserService:
         
         Raises:
             ResourceNotFoundError: If user not found
-        """
-        # Hash password if provided
-        if data.password:
-            data.password = hash_password(data.password)
         
+        Note: Password management is handled by Keycloak/OIDC.
+        """
         user = await self.repository.update(user_id, data)
         if not user:
             raise ResourceNotFoundError(resource_type="User", resource_id=user_id)

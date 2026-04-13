@@ -21,6 +21,19 @@ interface AuditLog {
     details?: Record<string, any>;
 }
 
+// Resource types available for filtering
+const RESOURCE_TYPES = [
+    { value: '', label: 'All Resources' },
+    { value: 'user', label: 'User' },
+    { value: 'agent', label: 'Agent' },
+    { value: 'agent_config', label: 'Agent Config' },
+    { value: 'datasource', label: 'Data Source' },
+    { value: 'aimodel', label: 'AI Model' },
+    { value: 'embedding_job', label: 'Embedding Job' },
+];
+
+const PAGE_SIZE = 50;
+
 const AuditLogsPage: React.FC = () => {
     const { user } = useAuth();
     const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -29,10 +42,15 @@ const AuditLogsPage: React.FC = () => {
     const [filters, setFilters] = useState({
         actor: '',
         action: '',
-        resource_type: ''
+        resource_type: '',
+        start_date: '',
+        end_date: ''
     });
     const [actionTypes, setActionTypes] = useState<string[]>([]);
+    const [totalCount, setTotalCount] = useState(0);
+    const [currentPage, setCurrentPage] = useState(1);
 
+    const totalPages = Math.ceil(totalCount / PAGE_SIZE);
     const hasAccess = canViewAllAuditLogs(user);
 
     useEffect(() => {
@@ -41,19 +59,28 @@ const AuditLogsPage: React.FC = () => {
             loadActionTypes();
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Run once on mount, not on hasAccess change
+    }, [currentPage]); // Reload when page changes
 
     const loadLogs = async () => {
         setLoading(true);
         setError(null);
         try {
+            const offset = (currentPage - 1) * PAGE_SIZE;
             const params = new URLSearchParams();
             if (filters.actor) params.set('actor', filters.actor);
             if (filters.action) params.set('action', filters.action);
             if (filters.resource_type) params.set('resource_type', filters.resource_type);
+            if (filters.start_date) params.set('start_date', filters.start_date);
+            if (filters.end_date) params.set('end_date', filters.end_date);
+            params.set('limit', String(PAGE_SIZE));
+            params.set('offset', String(offset));
 
-            const res = await apiClient.get(`/api/v1/audit?${params.toString()}`);
-            setLogs(res.data?.items || res.data || []);
+            const res = await apiClient.get(`/api/v1/audit/logs?${params.toString()}`);
+            setLogs(res.data || []);
+            
+            // Get total count
+            const countRes = await apiClient.get(`/api/v1/audit/logs/count?${params.toString()}`);
+            setTotalCount(countRes.data?.count || 0);
         } catch {
             // Silently fail - audit logs are non-critical
             setLogs([]);
@@ -74,7 +101,14 @@ const AuditLogsPage: React.FC = () => {
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
+        setCurrentPage(1);
         loadLogs();
+    };
+
+    const handlePageChange = (page: number) => {
+        if (page >= 1 && page <= totalPages) {
+            setCurrentPage(page);
+        }
     };
 
     const formatAction = (action: string) => {
@@ -87,10 +121,18 @@ const AuditLogsPage: React.FC = () => {
     };
 
     const getActionColor = (action: string) => {
-        if (action.includes('delete')) return 'text-red-600 bg-red-50';
-        if (action.includes('create')) return 'text-green-600 bg-green-50';
-        if (action.includes('update') || action.includes('edit')) return 'text-blue-600 bg-blue-50';
-        if (action.includes('publish')) return 'text-purple-600 bg-purple-50';
+        if (action.includes('deleted') || action.includes('revoked') || action.includes('demoted') || action.includes('deactivated')) 
+            return 'text-red-600 bg-red-50';
+        if (action.includes('created') || action.includes('registered') || action.includes('granted') || action.includes('promoted') || action.includes('activated')) 
+            return 'text-green-600 bg-green-50';
+        if (action.includes('updated') || action.includes('settings')) 
+            return 'text-blue-600 bg-blue-50';
+        if (action.includes('completed') || action.includes('partially_completed')) 
+            return 'text-purple-600 bg-purple-50';
+        if (action.includes('started')) 
+            return 'text-indigo-600 bg-indigo-50';
+        if (action.includes('failed') || action.includes('cancelled')) 
+            return 'text-orange-600 bg-orange-50';
         return 'text-gray-600 bg-gray-50';
     };
 
@@ -140,14 +182,14 @@ const AuditLogsPage: React.FC = () => {
                             <p className="text-gray-500 mt-1">View all system activity and changes</p>
                         </div>
                         <RefreshButton
-                            onClick={loadLogs}
+                            onClick={() => loadLogs()}
                             isLoading={loading}
                         />
                     </div>
 
                     {/* Filters */}
                     <form onSubmit={handleSearch} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Actor</label>
                                 <input
@@ -166,21 +208,42 @@ const AuditLogsPage: React.FC = () => {
                                     onChange={(e) => setFilters(f => ({ ...f, action: e.target.value }))}
                                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                                 >
-                                    <option value="">All Categories</option>
+                                    <option value="">All Actions</option>
                                     {Array.from(new Set(actionTypes.map(a => a.split('.')[0]))).filter(Boolean).map(cat => (
                                         <option key={cat} value={cat}>
-                                            {cat.charAt(0).toUpperCase() + cat.slice(1)}
+                                            {cat.charAt(0).toUpperCase() + cat.slice(1).replace(/_/g, ' ')}
                                         </option>
                                     ))}
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Resource Type</label>
-                                <input
-                                    type="text"
+                                <label htmlFor="resource-type-select" className="block text-sm font-medium text-gray-700 mb-1">Resource Type</label>
+                                <select
+                                    id="resource-type-select"
                                     value={filters.resource_type}
                                     onChange={(e) => setFilters(f => ({ ...f, resource_type: e.target.value }))}
-                                    placeholder="prompt, user, connection..."
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                                >
+                                    {RESOURCE_TYPES.map(rt => (
+                                        <option key={rt.value} value={rt.value}>{rt.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                                <input
+                                    type="date"
+                                    value={filters.start_date}
+                                    onChange={(e) => setFilters(f => ({ ...f, start_date: e.target.value }))}
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                                <input
+                                    type="date"
+                                    value={filters.end_date}
+                                    onChange={(e) => setFilters(f => ({ ...f, end_date: e.target.value }))}
                                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                                 />
                             </div>
@@ -192,13 +255,18 @@ const AuditLogsPage: React.FC = () => {
                                     Search
                                 </button>
                                 <RefreshButton
-                                    onClick={loadLogs}
+                                    onClick={() => loadLogs()}
                                     isLoading={loading}
                                     size="md"
                                     className="!px-4"
                                 />
                             </div>
                         </div>
+                        {totalCount > 0 && (
+                            <div className="mt-3 text-sm text-gray-500">
+                                Showing {((currentPage - 1) * PAGE_SIZE) + 1} - {Math.min(currentPage * PAGE_SIZE, totalCount)} of {totalCount} logs
+                            </div>
+                        )}
                     </form>
 
                     {error && (
@@ -263,6 +331,76 @@ const AuditLogsPage: React.FC = () => {
                                     </tbody>
                                 </table>
                             </div>
+                            
+                            {/* Pagination */}
+                            {totalPages > 1 && (
+                                <div className="px-4 py-4 border-t border-gray-200 bg-gray-50 flex items-center justify-between">
+                                    <div className="text-sm text-gray-500">
+                                        Page {currentPage} of {totalPages}
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => handlePageChange(1)}
+                                            disabled={currentPage === 1 || loading}
+                                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            First
+                                        </button>
+                                        <button
+                                            onClick={() => handlePageChange(currentPage - 1)}
+                                            disabled={currentPage === 1 || loading}
+                                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Previous
+                                        </button>
+                                        
+                                        {/* Page numbers */}
+                                        <div className="flex items-center gap-1">
+                                            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                                                let pageNum: number;
+                                                if (totalPages <= 5) {
+                                                    pageNum = i + 1;
+                                                } else if (currentPage <= 3) {
+                                                    pageNum = i + 1;
+                                                } else if (currentPage >= totalPages - 2) {
+                                                    pageNum = totalPages - 4 + i;
+                                                } else {
+                                                    pageNum = currentPage - 2 + i;
+                                                }
+                                                return (
+                                                    <button
+                                                        key={pageNum}
+                                                        onClick={() => handlePageChange(pageNum)}
+                                                        disabled={loading}
+                                                        className={`px-3 py-1.5 text-sm border rounded-md ${
+                                                            currentPage === pageNum
+                                                                ? 'bg-blue-600 text-white border-blue-600'
+                                                                : 'border-gray-300 bg-white hover:bg-gray-50'
+                                                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                                                    >
+                                                        {pageNum}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        
+                                        <button
+                                            onClick={() => handlePageChange(currentPage + 1)}
+                                            disabled={currentPage === totalPages || loading}
+                                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Next
+                                        </button>
+                                        <button
+                                            onClick={() => handlePageChange(totalPages)}
+                                            disabled={currentPage === totalPages || loading}
+                                            className="px-3 py-1.5 text-sm border border-gray-300 rounded-md bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            Last
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

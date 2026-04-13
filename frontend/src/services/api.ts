@@ -298,7 +298,7 @@ export const getActiveConfigMetadata = async (agentId?: string): Promise<any> =>
 // AGENT API
 // ============================================================================
 
-import type { Agent } from '../types';
+import type { Agent, GetUserAgentsResponse } from '../types';
 
 // Transform backend agent (title) to frontend agent (name)
 const transformAgent = (agent: any): Agent => ({
@@ -388,12 +388,11 @@ export const assignUserToAgent = async (agentId: string, userId: string, role: s
 
 export const bulkAssignAgents = async (userId: string, agentIds: string[], role: string = 'user'): Promise<{ status: string; assigned: string[]; failed: string[]; message: string }> => {
   const response = await apiClient.post('/api/v1/agents/bulk-assign', { user_id: userId, agent_ids: agentIds, role });
-  return response.data;
+  return response.data?.data || response.data;
 };
 
-export const revokeUserAccess = async (agentId: string, userId: string): Promise<{ status: string }> => {
-  const response = await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
-  return response.data;
+export const revokeUserAccess = async (agentId: string, userId: string): Promise<void> => {
+  await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
 };
 
 export interface AgentUser {
@@ -401,30 +400,34 @@ export interface AgentUser {
   username: string;
   email?: string;
   full_name?: string;
-  user_role: string;
+  role: string;
   is_active: boolean;
-  created_at?: string;
-  agent_role: string;
+  granted_at?: string;
   granted_by?: string;
 }
 
 export const getAgentUsers = async (agentId: string): Promise<{ users: AgentUser[]; agent_id: string }> => {
   const response = await apiClient.get(`/api/v1/agents/${agentId}/users`);
-  return response.data;
+  return response.data?.data;
 };
 
-export const getUserAgents = async (userId: string): Promise<{ agents: Agent[]; is_admin: boolean; message?: string }> => {
+export const getUserAgents = async (userId: string): Promise<GetUserAgentsResponse> => {
   const response = await apiClient.get(`/api/v1/users/${userId}/agents`);
-  const data = response.data;
+  const data = response.data?.data || response.data;
   return {
-    ...data,
-    agents: (data.agents || []).map(transformAgent),
+    agents: (data.agents || []).map((agent: any) => ({
+      ...agent,
+      name: agent.title || agent.name,
+    })),
+    total: data.total || 0,
+    user_id: data.user_id || userId,
   };
 };
 
 export const getAllAgents = async (): Promise<Agent[]> => {
-  const response = await apiClient.get('/api/v1/agents/all');
-  const agents = response.data.agents || response.data;
+  const response = await apiClient.get('/api/v1/agents/search');
+  const data = response.data?.data || response.data;
+  const agents = data.agents || data;
   return Array.isArray(agents) ? agents.map(transformAgent) : [];
 };
 
@@ -827,103 +830,13 @@ export interface ModelActivationResponse {
   system_settings_updated: boolean;
 }
 
-/** List all registered embedding models from the DB */
-export const getEmbeddingModels = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/embedding/models');
-  return response.data;
-};
-
-/** List all registered LLM models from the DB */
-export const getLLMModels = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/llm/models');
-  return response.data;
-};
-
-/** Get LLM models compatible with the active embedding model */
-export const getCompatibleLLMs = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/llm/models/compatible');
-  return response.data;
-};
-
-/** 
- * Activate an embedding model by ID 
- * Returns detailed info including rebuild warnings if dimensions change
- */
-export const activateEmbeddingModel = async (modelId: number): Promise<ModelActivationResponse> => {
-  const response = await apiClient.put(`/api/v1/settings/embedding/models/${modelId}/activate`);
-  return response.data;
-};
-
-/** Activate an LLM model by ID */
-export const activateLLMModel = async (modelId: number): Promise<ModelInfo> => {
-  const response = await apiClient.put(`/api/v1/settings/llm/models/${modelId}/activate`);
-  return response.data;
-};
-
-/** Register a new custom embedding model */
-export const registerEmbeddingModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/embedding/models', data);
-  return response.data;
-};
-
-/** Register a new custom LLM model */
-export const registerLLMModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/llm/models', data);
-  return response.data;
-};
-
 // ============================================================================
-// MODEL CATALOG API (NEW)
+// OLD EMBEDDING/LLM MODEL APIs - DEPRECATED
+// These APIs (/api/v1/settings/embedding/*, /api/v1/settings/llm/*) no longer exist.
+// Use the new AI Models API (/api/v1/ai-models/*) instead.
+// See: getAIModels, createAIModel, updateAIModel, deleteAIModel,
+//      getAIModelDefaults, setAIModelDefault, getAvailableModelsForAgentConfig
 // ============================================================================
-
-/**
- * Get the curated model catalog with pre-validated embedding models.
- * Each model includes dimensions, quality/speed ratings, and recommendations.
- */
-export const getModelCatalog = async (options?: {
-  category?: 'general' | 'multilingual' | 'fast' | 'medical';
-  localOnly?: boolean;
-}): Promise<CatalogModelInfo[]> => {
-  const params: Record<string, any> = {};
-  if (options?.category) params.category = options.category;
-  if (options?.localOnly) params.local_only = options.localOnly;
-
-  const response = await apiClient.get('/api/v1/settings/embedding/catalog', { params });
-  return response.data;
-};
-
-/**
- * Add a model from the curated catalog to the registry.
- * Ensures correct dimensions and settings are used automatically.
- */
-export const addModelFromCatalog = async (modelName: string): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/embedding/catalog/add', {
-    model_name: modelName,
-  });
-  return response.data;
-};
-
-/**
- * Validate that a model can be used.
- * For local models: checks if model can be downloaded
- * For API models: checks if API key is configured
- */
-export const validateModelAvailability = async (modelName: string): Promise<{
-  model_name: string;
-  available: boolean;
-  message: string;
-}> => {
-  const response = await apiClient.get(`/api/v1/settings/embedding/catalog/${encodeURIComponent(modelName)}/validate`);
-  return response.data;
-};
-
-/**
- * Get the currently active embedding model with full details.
- */
-export const getActiveEmbeddingModel = async (): Promise<ModelInfo> => {
-  const response = await apiClient.get('/api/v1/settings/embedding/models/active');
-  return response.data;
-};
 
 // ============================================================================
 // VECTOR DB SCHEDULE API
@@ -1021,13 +934,12 @@ export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ statu
 };
 
 // ============================================================================
-// SYSTEM SETTINGS API
+// SYSTEM SETTINGS API - DEPRECATED
+// The /api/v1/settings/* endpoints no longer exist.
+// Settings now come from:
+// - AI Models defaults: getAIModelDefaults()
+// - Agent configs: getAgent(), getDraftConfig()
 // ============================================================================
-
-export const getSystemSettings = async (category: string): Promise<Record<string, any>> => {
-  const response = await apiClient.get(`/api/v1/settings/${category}`);
-  return response.data;
-};
 
 // ============================================================================
 // FILE SQL API - DuckDB-based SQL queries on uploaded files

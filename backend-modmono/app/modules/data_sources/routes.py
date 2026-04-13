@@ -20,10 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database.session import get_db_session as get_db
 from app.core.auth.permissions import get_current_user, require_editor, require_admin
 from app.core.models.common import BaseResponse
+from app.modules.audit.helpers import AuditLogger, get_audit_logger
+from app.modules.audit.schemas import AuditAction
 from app.modules.users.schemas import User
 from app.modules.data_sources.service import DataSourceService
 from app.modules.data_sources.schemas import (
-    DatabaseSourceCreate, FileSourceCreate, DataSourceUpdate,
+    DatabaseSourceCreate, DataSourceUpdate,
     DataSourceResponse, DataSourceListResponse,
     TestConnectionRequest, TestConnectionResponse,
     # Ingestion schemas
@@ -55,6 +57,7 @@ async def create_database_source(
     data: DatabaseSourceCreate,
     current_user: User = Depends(require_editor),
     service: DataSourceService = Depends(get_data_source_service),
+    audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[DataSourceResponse]:
     """Create a database connection data source."""
     source = await service.create_database_source(
@@ -64,27 +67,21 @@ async def create_database_source(
         description=data.description,
         created_by=current_user.id,
     )
-    return BaseResponse.ok(data=source)
-
-
-@router.post("/file", response_model=BaseResponse[DataSourceResponse], status_code=status.HTTP_201_CREATED)
-async def create_file_source(
-    data: FileSourceCreate,
-    current_user: User = Depends(require_editor),
-    service: DataSourceService = Depends(get_data_source_service),
-) -> BaseResponse[DataSourceResponse]:
-    """Create a file-based data source."""
-    source = await service.create_file_source(
-        title=data.title,
-        original_file_path=data.original_file_path,
-        file_type=data.file_type,
-        description=data.description,
-        duckdb_file_path=data.duckdb_file_path,
-        duckdb_table_name=data.duckdb_table_name,
-        columns_json=data.columns_json,
-        row_count=data.row_count,
-        created_by=current_user.id,
+    
+    # Audit log: datasource.created
+    await audit.log(
+        action=AuditAction.DATASOURCE_CREATED,
+        actor=current_user,
+        resource_type="datasource",
+        resource_id=str(source.id),
+        resource_name=source.title,
+        details={
+            "type": "database",
+            "engine": data.db_engine_type,
+            "created_by": current_user.username
+        },
     )
+    
     return BaseResponse.ok(data=source)
 
 
@@ -197,11 +194,35 @@ async def update_data_source(
     data: DataSourceUpdate,
     current_user: User = Depends(require_editor),
     service: DataSourceService = Depends(get_data_source_service),
+    audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[DataSourceResponse]:
-    """Update a data source."""
+    """Update a data source. Only allowed if not used by any active config."""
+    
+    # Check if data source is used by active configs
+    is_in_use = await service.is_used_by_active_config(source_id)
+    if is_in_use:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot update data source while it is used by an active configuration. Deactivate the configuration first."
+        )
+    
     source = await service.update_source(source_id, data.model_dump(exclude_unset=True))
     if not source:
         raise HTTPException(status_code=404, detail="Data source not found")
+    
+    # Audit log: datasource.updated
+    await audit.log(
+        action=AuditAction.DATASOURCE_UPDATED,
+        actor=current_user,
+        resource_type="datasource",
+        resource_id=str(source_id),
+        resource_name=source.title,
+        details={
+            "fields_changed": list(data.model_dump(exclude_unset=True).keys()),
+            "updated_by": current_user.username
+        },
+    )
+    
     return BaseResponse.ok(data=source)
 
 
@@ -210,12 +231,17 @@ async def delete_data_source(
     source_id: UUID,
     current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_data_source_service),
+    audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[dict]:
     """
     Delete a data source. Requires admin role.
     
     Returns error if data source is used by any agent configurations.
     """
+    # Get source info before deletion for audit log
+    source = await service.get_source(source_id)
+    source_name = source.title if source else str(source_id)
+    
     result = await service.delete_source(source_id)
     
     if not result.get("success"):
@@ -234,6 +260,18 @@ async def delete_data_source(
             )
         else:
             raise HTTPException(status_code=404, detail=error_msg)
+    
+    # Audit log: datasource.deleted
+    await audit.log(
+        action=AuditAction.DATASOURCE_DELETED,
+        actor=current_user,
+        resource_type="datasource",
+        resource_id=str(source_id),
+        resource_name=source_name,
+        details={
+            "deleted_by": current_user.username
+        },
+    )
     
     return BaseResponse.ok(message="Data source deleted successfully")
 
@@ -272,6 +310,7 @@ async def upload_file(
     description: Optional[str] = Query(None, description="Optional description"),
     current_user: User = Depends(require_editor),
     service: DataSourceService = Depends(get_data_source_service),
+    audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[IngestionResponse]:
     """
     Upload a file and process it for SQL queries and RAG.
@@ -395,10 +434,14 @@ async def upload_file(
                     row_count = result.get("row_count")
                     data_source_id = UUID(result["data_source_id"]) if result.get("data_source_id") else None
         else:
-            # Non-SQL files - just create data source
+            # Non-SQL files (PDF, JSON) - copy to permanent location
+            from app.modules.data_sources.utils import get_user_data_dir
+            permanent_path = get_user_data_dir(str(current_user.id)) / f"_source_{file.filename}"
+            shutil.copy(tmp_path, permanent_path)
+            
             ds = await service.create_file_source(
                 title=title or file.filename,
-                original_file_path=tmp_path,
+                original_file_path=str(permanent_path),
                 file_type=file_type,
                 description=description,
                 created_by=current_user.id,
@@ -412,6 +455,23 @@ async def upload_file(
         
         # TODO: Integrate with document extractor for RAG previews
         # For now, return empty documents - RAG integration to be added
+        
+        # Audit log: datasource.created (for file uploads)
+        if data_source_id:
+            await audit.log(
+                action=AuditAction.DATASOURCE_CREATED,
+                actor=current_user,
+                resource_type="datasource",
+                resource_id=str(data_source_id),
+                resource_name=title or file.filename,
+                details={
+                    "type": "file",
+                    "file_type": file_type,
+                    "file_name": file.filename,
+                    "processing_mode": processing_mode,
+                    "created_by": current_user.username
+                },
+            )
         
         return BaseResponse.ok(data=IngestionResponse(
             status="success",

@@ -328,11 +328,44 @@ class UserAgentGrantRequest(BaseModel):
         return v
 
 
+class BulkAssignAgentsRequest(BaseModel):
+    """Request to bulk assign agents to a user."""
+    user_id: UUID
+    agent_ids: List[UUID]
+    role: str = Field(default="user", description="Role: user, editor, or admin")
+    
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        allowed = {"user", "editor", "admin"}
+        if v not in allowed:
+            raise ValueError(f"Role must be one of: {', '.join(allowed)}")
+        return v
+
+
+class BulkAssignAgentsResponse(BaseModel):
+    """Response for bulk agent assignment."""
+    status: str = "success"
+    assigned: List[str] = Field(default_factory=list, description="Successfully assigned agent IDs")
+    failed: List[str] = Field(default_factory=list, description="Failed agent IDs")
+    message: str = ""
+
+
 class UserAgentResponse(BaseModel):
-    """User-agent relationship response."""
+    """User-agent relationship response with user details."""
+    # User identification
+    id: UUID  # user_id for frontend compatibility
     user_id: UUID
     agent_id: UUID
-    role: str
+    
+    # User details
+    username: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    is_active: bool = True
+    
+    # Agent access details
+    role: Optional[str]=None  # Role on this specific agent (user, admin)
     granted_at: datetime
     granted_by: Optional[UUID] = None
     
@@ -343,6 +376,32 @@ class UserAgentListResponse(BaseModel):
     """List of users with access to an agent."""
     users: List[UserAgentResponse]
     total: int
+    agent_id: Optional[UUID] = None
+
+
+class AgentForUserResponse(BaseModel):
+    """Agent info with user's access role - used when listing agents for a user."""
+    # Agent details
+    id: UUID
+    title: str
+    description: Optional[str] = None
+    created_by: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
+    
+    # User's access to this agent
+    role: str = Field(description="User's role on this agent (user, editor, admin)")
+    granted_at: datetime
+    granted_by: Optional[UUID] = None
+    
+    model_config = {"from_attributes": True}
+
+
+class AgentsForUserListResponse(BaseModel):
+    """List of agents a user has access to."""
+    agents: List[AgentForUserResponse]
+    total: int
+    user_id: UUID
 
 
 # ==========================================

@@ -125,6 +125,41 @@ def map_keycloak_role(keycloak_roles: List[str]) -> str:
     return DEFAULT_ROLE
 
 
+def detect_role_change(old_role: Optional[str], new_role: Optional[str]) -> Optional[str]:
+    """
+    Detect if a role change is a promotion or demotion.
+    
+    Uses the ROLE_HIERARCHY to determine direction of change.
+    Only logs changes involving admin+ roles.
+    
+    Args:
+        old_role: Previous role
+        new_role: New role
+        
+    Returns:
+        'promoted' if promotion to admin+, 'demoted' if demotion from admin+, None otherwise
+    """
+    if not old_role or not new_role or old_role == new_role:
+        return None
+    
+    old_index = role_index(old_role)
+    new_index = role_index(new_role)
+    admin_index = role_index(Role.ADMIN.value)
+    
+    if new_index < old_index:
+        # Promotion (lower index = higher privilege)
+        # Only log if promoted TO admin or higher
+        if new_index <= admin_index:
+            return "promoted"
+    elif new_index > old_index:
+        # Demotion
+        # Only log if demoted FROM admin or higher
+        if old_index <= admin_index:
+            return "demoted"
+    
+    return None
+
+
 # ============================================
 # Permission Checks
 # ============================================
@@ -220,14 +255,50 @@ async def get_current_user(
                 keycloak_role = map_keycloak_role(claims.roles)
                 if keycloak_role == Role.SUPER_ADMIN.value and user.role != Role.SUPER_ADMIN.value:
                     # Promote to super_admin
+                    old_role = user.role
                     from app.modules.users.schemas import UserUpdate
                     await user_repo.update(user.id, UserUpdate(role=Role.SUPER_ADMIN.value))
                     user.role = Role.SUPER_ADMIN.value
+                    
+                    # Audit: Role promoted via Keycloak sync
+                    from app.modules.audit.schemas import AuditAction
+                    from app.modules.audit.helpers import log_audit
+                    await log_audit(
+                        session=session,
+                        action=AuditAction.ROLE_PROMOTED,
+                        actor=user,
+                        resource_type="user",
+                        resource_id=str(user.id),
+                        resource_name=user.username,
+                        details={
+                            "old_role": old_role,
+                            "new_role": Role.SUPER_ADMIN.value,
+                            "source": "keycloak_sync"
+                        },
+                    )
                 elif keycloak_role != Role.SUPER_ADMIN.value and user.role == Role.SUPER_ADMIN.value:
                     # Demote from super_admin
+                    old_role = user.role
                     from app.modules.users.schemas import UserUpdate
                     await user_repo.update(user.id, UserUpdate(role=keycloak_role))
                     user.role = keycloak_role
+                    
+                    # Audit: Role demoted via Keycloak sync
+                    from app.modules.audit.schemas import AuditAction
+                    from app.modules.audit.helpers import log_audit
+                    await log_audit(
+                        session=session,
+                        action=AuditAction.ROLE_DEMOTED,
+                        actor=user,
+                        resource_type="user",
+                        resource_id=str(user.id),
+                        resource_name=user.username,
+                        details={
+                            "old_role": old_role,
+                            "new_role": keycloak_role,
+                            "source": "keycloak_sync"
+                        },
+                    )
                 
                 return user
             else:
@@ -248,6 +319,25 @@ async def get_current_user(
                 ))
                 
                 logger.info(f"JIT provisioned new user: {user.email} with role {role}")
+                
+                # Audit: Log if admin/superadmin is registered via JIT provisioning
+                if can_manage_users(role):
+                    from app.modules.audit.schemas import AuditAction
+                    from app.modules.audit.helpers import log_audit
+                    await log_audit(
+                        session=session,
+                        action=AuditAction.ADMIN_REGISTERED,
+                        actor=user,
+                        resource_type="user",
+                        resource_id=str(user.id),
+                        resource_name=user.username,
+                        details={
+                            "role": role,
+                            "source": "jit_provisioning",
+                            "email": user.email
+                        },
+                    )
+                
                 return user
                 
         except HTTPException:

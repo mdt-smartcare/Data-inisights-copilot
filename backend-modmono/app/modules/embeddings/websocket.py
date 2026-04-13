@@ -221,10 +221,7 @@ def get_websocket_db_session():
     WebSocket handlers run outside the normal request lifecycle,
     so they need their own session management.
     """
-    database_url = (
-        f"postgresql+asyncpg://{settings.postgres_user}:{settings.postgres_password}"
-        f"@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
-    )
+    database_url = settings.postgres_async_uri
     
     engine = create_async_engine(database_url, pool_pre_ping=True)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)

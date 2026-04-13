@@ -5,7 +5,7 @@ import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { ArrowLeftIcon, CommandLineIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { getAgent, startEmbeddingJob, rollbackToVersion, getSystemSettings, handleApiError, getDraftConfig, getVectorDbStatusByConfig } from '../services/api';
+import { getAgent, startEmbeddingJob, rollbackToVersion, handleApiError, getDraftConfig, getVectorDbStatusByConfig } from '../services/api';
 import { canEditPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
 import type { PromptVersion, VectorDbStatus, AdvancedSettings, ActiveConfig } from '../contexts/AgentContext';
@@ -247,19 +247,10 @@ const AgentDashboardPage: React.FC = () => {
         if (!configId) return;
 
         try {
-            // Use settings from modal if provided, otherwise fetch defaults
-            let batchSize = settings?.batch_size || 50;
-            let maxConcurrent = settings?.max_concurrent || 5;
-
-            if (!settings) {
-                try {
-                    const systemSettings = await getSystemSettings('embedding');
-                    if (systemSettings?.batch_size) batchSize = systemSettings.batch_size;
-                    if (systemSettings?.max_concurrent) maxConcurrent = systemSettings.max_concurrent;
-                } catch (err) {
-                    console.warn('Failed to fetch embedding settings, using defaults', err);
-                }
-            }
+            // Use settings from modal if provided, otherwise use defaults
+            // Note: Old /api/v1/settings/embedding endpoint no longer exists
+            const batchSize = settings?.batch_size || 50;
+            const maxConcurrent = settings?.max_concurrent || 5;
 
             const result = await startEmbeddingJob({
                 config_id: configId,

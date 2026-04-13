@@ -4,8 +4,19 @@ FastAPI application entry point.
 This module initializes the FastAPI application with all middleware,
 routers, and lifecycle handlers.
 """
+import os
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+# Change the path to load a different .env file (e.g., ".env.production", ".env.local")
+_env_file = os.getenv("ENV_FILE", ".env")
+_env_path = Path(__file__).parent.parent / _env_file
+load_dotenv(_env_path, override=True)
+
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -306,7 +317,7 @@ app.include_router(auth_router, prefix=f"{settings.api_v1_prefix}/auth", tags=["
 app.include_router(users_router, prefix=f"{settings.api_v1_prefix}/users", tags=["Users"])
 
 # Observability & Audit
-from app.modules.observability.routes import router as observability_router
+from app.modules.audit.routes import router as audit_router
 from app.modules.observability.analytics_routes import router as analytics_router
 
 # Agents and Configs
@@ -319,7 +330,7 @@ from app.modules.data_sources.ingestion_routes import router as ingestion_router
 # AI Models Registry
 from app.modules.ai_models.routes import router as ai_registry_router
 
-app.include_router(observability_router, prefix=f"{settings.api_v1_prefix}", tags=["Observability"])
+app.include_router(audit_router, prefix=f"{settings.api_v1_prefix}", tags=["Audit"])
 app.include_router(analytics_router, prefix=f"{settings.api_v1_prefix}", tags=["Analytics"])
 # Note: agents_router already has /agents, /config prefixes and tags internally
 app.include_router(agents_router, prefix=f"{settings.api_v1_prefix}")
