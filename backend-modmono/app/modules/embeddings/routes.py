@@ -15,6 +15,8 @@ from app.core.database.session import get_db_session as get_db
 from app.core.auth.permissions import get_current_user, require_admin
 from app.core.models.common import BaseResponse
 from app.core.utils.logging import get_logger
+from app.modules.audit.helpers import AuditLogger, get_audit_logger
+from app.modules.audit.schemas import AuditAction
 from app.modules.users.schemas import User
 from app.modules.embeddings.service import EmbeddingJobService
 from app.modules.embeddings.schemas import (
@@ -41,7 +43,8 @@ async def start_embedding_job(
     request: EmbeddingJobCreate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(require_admin),
-    service: EmbeddingJobService = Depends(get_embedding_service)
+    service: EmbeddingJobService = Depends(get_embedding_service),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """
     Start a new embedding generation job.
@@ -79,6 +82,21 @@ async def start_embedding_job(
         )
         
         logger.info(f"Started embedding job {job_id} for config {request.config_id}")
+        
+        # Audit log: embedding.job_started
+        await audit.log(
+            action=AuditAction.EMBEDDING_JOB_STARTED,
+            actor=current_user,
+            resource_type="embedding_job",
+            resource_id=job_id,
+            resource_name=f"Embedding Job {job_id[:8]}",
+            details={
+                "config_id": request.config_id,
+                "incremental": request.incremental,
+                "batch_size": request.batch_size,
+                "started_by": current_user.username
+            },
+        )
         
         return EmbeddingJobResponse(
             status="started",
@@ -148,7 +166,8 @@ async def get_job_summary(
 async def cancel_job(
     job_id: str,
     current_user: User = Depends(require_admin),
-    service: EmbeddingJobService = Depends(get_embedding_service)
+    service: EmbeddingJobService = Depends(get_embedding_service),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """
     Cancel a running embedding job.
@@ -156,12 +175,30 @@ async def cancel_job(
     Requires Admin role or above.
     """
     try:
+        # Get job info before cancelling for audit log
+        progress = await service.get_progress(job_id)
+        
         success = await service.cancel_job(job_id)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Job {job_id} not found"
             )
+        
+        # Audit log: embedding.job_cancelled
+        await audit.log(
+            action=AuditAction.EMBEDDING_JOB_CANCELLED,
+            actor=current_user,
+            resource_type="embedding_job",
+            resource_id=job_id,
+            resource_name=f"Embedding Job {job_id[:8]}",
+            details={
+                "progress_at_cancellation": progress.progress_percent if progress else None,
+                "processed_documents": progress.processed_documents if progress else None,
+                "cancelled_by": current_user.username
+            },
+        )
+        
         return EmbeddingJobResponse(
             status="cancelled",
             job_id=job_id,

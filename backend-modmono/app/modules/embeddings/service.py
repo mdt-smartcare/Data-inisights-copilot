@@ -902,6 +902,50 @@ async def _update_job_status(job_id: str, status: EmbeddingJobStatus, phase: str
     async with _get_background_db_session() as session:
         repo = EmbeddingJobRepository(session)
         await repo.update_status(job_id, status, phase=phase, error_message=error_message)
+        
+        # Log audit for completed/failed jobs
+        if status in (EmbeddingJobStatus.COMPLETED, EmbeddingJobStatus.FAILED):
+            try:
+                job = await repo.get_by_id(job_id)
+                if job:
+                    from app.modules.audit.schemas import AuditAction
+                    from app.modules.audit.helpers import log_audit
+                    from app.modules.users.service import UserService
+                    from app.modules.users.repository import UserRepository
+                    
+                    # Try to get the user who started the job
+                    actor = None
+                    if job.started_by:
+                        user_repo = UserRepository(session)
+                        user_model = await user_repo.get_by_id(job.started_by)
+                        if user_model:
+                            from app.modules.users.schemas import User
+                            actor = User.model_validate(user_model)
+                    
+                    action = (AuditAction.EMBEDDING_JOB_COMPLETED 
+                              if status == EmbeddingJobStatus.COMPLETED 
+                              else AuditAction.EMBEDDING_JOB_FAILED)
+                    
+                    details = {
+                        "config_id": job.config_id,
+                        "total_documents": job.total_documents,
+                        "processed_documents": job.processed_documents,
+                        "total_vectors": job.total_vectors,
+                        "phase": phase or job.phase,
+                    }
+                    if error_message:
+                        details["error_message"] = error_message
+                    
+                    await log_audit(
+                        session=session,
+                        action=action,
+                        actor=actor,
+                        resource_type="embedding_job",
+                        resource_id=job_id,
+                        details=details,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to log audit for job {job_id}: {e}")
 
 
 async def _update_job_progress(job_id: str, processed: int, current_batch: int, total: int, phase: str, elapsed_seconds: float = 0):
