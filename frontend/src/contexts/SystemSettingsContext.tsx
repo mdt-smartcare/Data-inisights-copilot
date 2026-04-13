@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { getSystemSettings } from '../services/api';
 import { useAuth } from './AuthContext';
+// Note: Old getSystemSettings API removed - backend endpoints no longer exist
 
 /**
  * Advanced settings structure that matches the backend system settings.
@@ -120,88 +120,17 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     const [isLoaded, setIsLoaded] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    // Note: Old /api/v1/settings/* endpoints no longer exist in backend
+    // Settings now use fallback defaults. In the future, these could come from
+    // the AI Models API (/api/v1/ai-models/defaults) or agent configs.
     const refreshSettings = useCallback(async () => {
         setIsLoading(true);
         setError(null);
         
         try {
-            // Fetch all settings categories in parallel
-            const [embSettings, ragSettings, llmSettings, chunkingSettings] = await Promise.all([
-                getSystemSettings('embedding').catch(() => null),
-                getSystemSettings('rag').catch(() => null),
-                getSystemSettings('llm').catch(() => null),
-                getSystemSettings('chunking').catch(() => null)  // Separate chunking category
-            ]);
-
-            setAdvancedSettings(prev => {
-                const next = { ...prev };
-                
-                // Embedding settings
-                if (embSettings) {
-                    if (embSettings.model_name) {
-                        next.embedding = { ...next.embedding, model: embSettings.model_name };
-                    }
-                    // Embedding job settings
-                    if (embSettings.batch_size) {
-                        setEmbeddingJobSettings(ejs => ({ ...ejs, batchSize: embSettings.batch_size }));
-                    }
-                    if (embSettings.max_concurrent) {
-                        setEmbeddingJobSettings(ejs => ({ ...ejs, maxConcurrent: embSettings.max_concurrent }));
-                    }
-                }
-                
-                // Chunking settings (from dedicated chunking category)
-                if (chunkingSettings) {
-                    if (chunkingSettings.parent_chunk_size !== undefined) {
-                        next.chunking = { ...next.chunking, parentChunkSize: chunkingSettings.parent_chunk_size };
-                    }
-                    if (chunkingSettings.parent_chunk_overlap !== undefined) {
-                        next.chunking = { ...next.chunking, parentChunkOverlap: chunkingSettings.parent_chunk_overlap };
-                    }
-                    if (chunkingSettings.child_chunk_size !== undefined) {
-                        next.chunking = { ...next.chunking, childChunkSize: chunkingSettings.child_chunk_size };
-                    }
-                    if (chunkingSettings.child_chunk_overlap !== undefined) {
-                        next.chunking = { ...next.chunking, childChunkOverlap: chunkingSettings.child_chunk_overlap };
-                    }
-                }
-                
-                // RAG settings (retriever only - chunking moved to separate category)
-                if (ragSettings) {
-                    // Retriever
-                    if (ragSettings.top_k_initial !== undefined) {
-                        next.retriever = { ...next.retriever, topKInitial: ragSettings.top_k_initial };
-                    }
-                    if (ragSettings.top_k_final !== undefined) {
-                        next.retriever = { ...next.retriever, topKFinal: ragSettings.top_k_final };
-                    }
-                    if (ragSettings.hybrid_weights) {
-                        next.retriever = { ...next.retriever, hybridWeights: ragSettings.hybrid_weights };
-                    }
-                    if (ragSettings.rerank_enabled !== undefined) {
-                        next.retriever = { ...next.retriever, rerankEnabled: ragSettings.rerank_enabled };
-                    }
-                    if (ragSettings.reranker_model) {
-                        next.retriever = { ...next.retriever, rerankerModel: ragSettings.reranker_model };
-                    }
-                }
-                
-                // LLM settings
-                if (llmSettings) {
-                    if (llmSettings.temperature !== undefined) {
-                        next.llm = { ...next.llm, temperature: llmSettings.temperature };
-                    }
-                    if (llmSettings.max_tokens !== undefined) {
-                        next.llm = { ...next.llm, maxTokens: llmSettings.max_tokens };
-                    }
-                    if (llmSettings.model_name) {
-                        next.llm = { ...next.llm, model: llmSettings.model_name };
-                    }
-                }
-                
-                return next;
-            });
-            
+            // Use fallback settings - old backend endpoints removed
+            setAdvancedSettings(FALLBACK_SETTINGS);
+            setEmbeddingJobSettings(FALLBACK_EMBEDDING_JOB_SETTINGS);
             setIsLoaded(true);
         } catch (err) {
             console.error('Failed to load system settings:', err);

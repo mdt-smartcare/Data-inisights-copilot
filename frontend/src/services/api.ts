@@ -826,103 +826,13 @@ export interface ModelActivationResponse {
   system_settings_updated: boolean;
 }
 
-/** List all registered embedding models from the DB */
-export const getEmbeddingModels = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/embedding/models');
-  return response.data;
-};
-
-/** List all registered LLM models from the DB */
-export const getLLMModels = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/llm/models');
-  return response.data;
-};
-
-/** Get LLM models compatible with the active embedding model */
-export const getCompatibleLLMs = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/llm/models/compatible');
-  return response.data;
-};
-
-/** 
- * Activate an embedding model by ID 
- * Returns detailed info including rebuild warnings if dimensions change
- */
-export const activateEmbeddingModel = async (modelId: number): Promise<ModelActivationResponse> => {
-  const response = await apiClient.put(`/api/v1/settings/embedding/models/${modelId}/activate`);
-  return response.data;
-};
-
-/** Activate an LLM model by ID */
-export const activateLLMModel = async (modelId: number): Promise<ModelInfo> => {
-  const response = await apiClient.put(`/api/v1/settings/llm/models/${modelId}/activate`);
-  return response.data;
-};
-
-/** Register a new custom embedding model */
-export const registerEmbeddingModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/embedding/models', data);
-  return response.data;
-};
-
-/** Register a new custom LLM model */
-export const registerLLMModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/llm/models', data);
-  return response.data;
-};
-
 // ============================================================================
-// MODEL CATALOG API (NEW)
+// OLD EMBEDDING/LLM MODEL APIs - DEPRECATED
+// These APIs (/api/v1/settings/embedding/*, /api/v1/settings/llm/*) no longer exist.
+// Use the new AI Models API (/api/v1/ai-models/*) instead.
+// See: getAIModels, createAIModel, updateAIModel, deleteAIModel,
+//      getAIModelDefaults, setAIModelDefault, getAvailableModelsForAgentConfig
 // ============================================================================
-
-/**
- * Get the curated model catalog with pre-validated embedding models.
- * Each model includes dimensions, quality/speed ratings, and recommendations.
- */
-export const getModelCatalog = async (options?: {
-  category?: 'general' | 'multilingual' | 'fast' | 'medical';
-  localOnly?: boolean;
-}): Promise<CatalogModelInfo[]> => {
-  const params: Record<string, any> = {};
-  if (options?.category) params.category = options.category;
-  if (options?.localOnly) params.local_only = options.localOnly;
-
-  const response = await apiClient.get('/api/v1/settings/embedding/catalog', { params });
-  return response.data;
-};
-
-/**
- * Add a model from the curated catalog to the registry.
- * Ensures correct dimensions and settings are used automatically.
- */
-export const addModelFromCatalog = async (modelName: string): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/embedding/catalog/add', {
-    model_name: modelName,
-  });
-  return response.data;
-};
-
-/**
- * Validate that a model can be used.
- * For local models: checks if model can be downloaded
- * For API models: checks if API key is configured
- */
-export const validateModelAvailability = async (modelName: string): Promise<{
-  model_name: string;
-  available: boolean;
-  message: string;
-}> => {
-  const response = await apiClient.get(`/api/v1/settings/embedding/catalog/${encodeURIComponent(modelName)}/validate`);
-  return response.data;
-};
-
-/**
- * Get the currently active embedding model with full details.
- */
-export const getActiveEmbeddingModel = async (): Promise<ModelInfo> => {
-  const response = await apiClient.get('/api/v1/settings/embedding/models/active');
-  return response.data;
-};
 
 // ============================================================================
 // VECTOR DB SCHEDULE API
@@ -1020,13 +930,12 @@ export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ statu
 };
 
 // ============================================================================
-// SYSTEM SETTINGS API
+// SYSTEM SETTINGS API - DEPRECATED
+// The /api/v1/settings/* endpoints no longer exist.
+// Settings now come from:
+// - AI Models defaults: getAIModelDefaults()
+// - Agent configs: getAgent(), getDraftConfig()
 // ============================================================================
-
-export const getSystemSettings = async (category: string): Promise<Record<string, any>> => {
-  const response = await apiClient.get(`/api/v1/settings/${category}`);
-  return response.data;
-};
 
 // ============================================================================
 // FILE SQL API - DuckDB-based SQL queries on uploaded files
