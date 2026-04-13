@@ -10,10 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session
 from app.core.models.common import BaseResponse, PaginatedResponse
-from app.core.auth.permissions import require_admin, require_user, get_current_user
+from app.core.auth.permissions import require_admin, require_user, can_manage_users, detect_role_change
+from app.modules.audit.helpers import AuditLogger, get_audit_logger
+from app.modules.audit.schemas import AuditAction
 from app.modules.users.service import UserService
 from app.modules.users.schemas import (
-    User, UserCreate, UserUpdate, UserSearchParams
+    User, UserCreate, UserUpdate
 )
 
 router = APIRouter()
@@ -105,14 +107,16 @@ async def get_user(
 async def create_user(
     data: UserCreate,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin),
 ):
     """
     Create a new user.
     
     **Required Permission:** ADMIN
     
-    **Note:** Password must be at least 8 characters.
+    **Note:** This endpoint is not used by the frontend. User creation 
+    is handled via Keycloak/OIDC JIT provisioning. Kept for API-based 
+    user creation scenarios.
     """
     service = UserService(session)
     user = await service.create_user(data)
@@ -125,7 +129,8 @@ async def update_user(
     user_id: str,
     data: UserUpdate,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """
     Update user.
@@ -135,7 +140,42 @@ async def update_user(
     **Note:** Only non-null fields will be updated.
     """
     service = UserService(session)
+    
+    # Get existing user to detect role changes
+    existing_user = await service.get_user(user_id)
+    old_role = existing_user.role
+    
     user = await service.update_user(user_id, data)
+    
+    # Audit log: Detect role promotion/demotion
+    if data.role and data.role != old_role:
+        role_change = detect_role_change(old_role, data.role)
+        if role_change == "promoted":
+            await audit.log(
+                action=AuditAction.ROLE_PROMOTED,
+                actor=current_user,
+                resource_type="user",
+                resource_id=str(user.id),
+                resource_name=user.username,
+                details={
+                    "old_role": old_role,
+                    "new_role": data.role,
+                    "promoted_by": current_user.username
+                },
+            )
+        elif role_change == "demoted":
+            await audit.log(
+                action=AuditAction.ROLE_DEMOTED,
+                actor=current_user,
+                resource_type="user",
+                resource_id=str(user.id),
+                resource_name=user.username,
+                details={
+                    "old_role": old_role,
+                    "new_role": data.role,
+                    "demoted_by": current_user.username
+                },
+            )
     
     return BaseResponse.ok(data=user, message="User updated successfully")
 
@@ -165,7 +205,8 @@ async def delete_user(
 async def deactivate_user(
     user_id: str,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """
     Deactivate user account.
@@ -175,7 +216,25 @@ async def deactivate_user(
     Deactivated users cannot log in but their data is preserved.
     """
     service = UserService(session)
+    
+    # Get user info for audit logging
+    user = await service.get_user(user_id)
+    
     await service.deactivate_user(user_id)
+    
+    # Audit log: Only log if admin/superadmin is being deactivated
+    if can_manage_users(user.role):
+        await audit.log(
+            action=AuditAction.ADMIN_DEACTIVATED,
+            actor=current_user,
+            resource_type="user",
+            resource_id=str(user.id),
+            resource_name=user.username,
+            details={
+                "role": user.role,
+                "deactivated_by": current_user.username
+            },
+        )
     
     return BaseResponse.ok(message="User deactivated successfully")
 
@@ -184,7 +243,8 @@ async def deactivate_user(
 async def activate_user(
     user_id: str,
     session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin)
+    current_user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """
     Activate user account.
@@ -194,6 +254,24 @@ async def activate_user(
     Re-enables a previously deactivated user account.
     """
     service = UserService(session)
+    
+    # Get user info for audit logging
+    user = await service.get_user(user_id)
+    
     await service.activate_user(user_id)
+    
+    # Audit log: Only log if admin/superadmin is being activated
+    if can_manage_users(user.role):
+        await audit.log(
+            action=AuditAction.ADMIN_ACTIVATED,
+            actor=current_user,
+            resource_type="user",
+            resource_id=str(user.id),
+            resource_name=user.username,
+            details={
+                "role": user.role,
+                "activated_by": current_user.username
+            },
+        )
     
     return BaseResponse.ok(message="User activated successfully")
