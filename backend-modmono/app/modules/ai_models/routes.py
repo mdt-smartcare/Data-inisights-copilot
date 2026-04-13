@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session
 from app.core.auth.permissions import get_current_user, require_admin
+from app.modules.audit.helpers import AuditLogger, get_audit_logger
+from app.modules.audit.schemas import AuditAction
 from app.modules.users.schemas import User
 from app.modules.ai_models.service import AIModelService
 from app.modules.ai_models.schemas import (
@@ -52,12 +54,31 @@ async def list_models(
 async def create_model(
     data: AIModelCreate,
     db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(require_admin)
+    user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """Create a new AI model."""
     service = AIModelService(db)
     try:
-        return await service.create_model(data, user.id)
+        model = await service.create_model(data, user.id)
+        
+        # Audit log: aimodel.registered
+        await audit.log(
+            action=AuditAction.AIMODEL_REGISTERED,
+            actor=user,
+            resource_type="aimodel",
+            resource_id=str(model.id),
+            resource_name=model.display_name or model.model_id,
+            details={
+                "provider": model.provider_name,
+                "model_id": model.model_id,
+                "model_type": model.model_type,
+                "deployment_type": model.deployment_type,
+                "registered_by": user.username
+            },
+        )
+        
+        return model
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -88,7 +109,8 @@ async def set_default(
     model_type: str,
     data: SetDefaultRequest,
     db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(require_admin)
+    user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """Set default model for a type."""
     if model_type not in ['llm', 'embedding', 'reranker']:
@@ -96,7 +118,35 @@ async def set_default(
     
     service = AIModelService(db)
     try:
-        return await service.set_default(model_type, data.model_id)
+        # Get previous default for audit log
+        current_defaults = await service.get_defaults()
+        previous_default = None
+        if model_type == 'llm':
+            previous_default = current_defaults.llm.display_name if current_defaults.llm else None
+        elif model_type == 'embedding':
+            previous_default = current_defaults.embedding.display_name if current_defaults.embedding else None
+        elif model_type == 'reranker':
+            previous_default = current_defaults.reranker.display_name if current_defaults.reranker else None
+        
+        result = await service.set_default(model_type, data.model_id)
+        
+        # Audit log: aimodel.set_as_default
+        if data.model_id:
+            model = await service.get_model(data.model_id)
+            await audit.log(
+                action=AuditAction.AIMODEL_SET_AS_DEFAULT,
+                actor=user,
+                resource_type="aimodel",
+                resource_id=str(data.model_id),
+                resource_name=model.display_name if model else str(data.model_id),
+                details={
+                    "model_type": model_type,
+                    "previous_default": previous_default,
+                    "set_by": user.username
+                },
+            )
+        
+        return result
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -134,13 +184,33 @@ async def update_model(
     model_id: int,
     data: AIModelUpdate,
     db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(require_admin)
+    user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """Update an AI model."""
     service = AIModelService(db)
     model = await service.update_model(model_id, data)
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
+    
+    # Audit log: aimodel.updated
+    # Build fields changed - exclude api_key value for security
+    fields_changed = [k for k, v in data.model_dump(exclude_unset=True).items() if v is not None]
+    if 'api_key' in fields_changed:
+        fields_changed = [f if f != 'api_key' else 'api_key (updated)' for f in fields_changed]
+    
+    await audit.log(
+        action=AuditAction.AIMODEL_UPDATED,
+        actor=user,
+        resource_type="aimodel",
+        resource_id=str(model_id),
+        resource_name=model.display_name or model.model_id,
+        details={
+            "fields_changed": fields_changed,
+            "updated_by": user.username
+        },
+    )
+    
     return model
 
 
@@ -148,13 +218,35 @@ async def update_model(
 async def delete_model(
     model_id: int,
     db: AsyncSession = Depends(get_db_session),
-    user: User = Depends(require_admin)
+    user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
 ):
     """Delete an AI model."""
     service = AIModelService(db)
+    
+    # Get model info before deletion for audit log
+    model = await service.get_model(model_id)
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
     deleted = await service.delete_model(model_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Model not found")
+    
+    # Audit log: aimodel.deleted
+    await audit.log(
+        action=AuditAction.AIMODEL_DELETED,
+        actor=user,
+        resource_type="aimodel",
+        resource_id=str(model_id),
+        resource_name=model.display_name or model.model_id,
+        details={
+            "provider": model.provider_name,
+            "model_id": model.model_id,
+            "deleted_by": user.username
+        },
+    )
+    
     return {"message": "Model deleted"}
 
 

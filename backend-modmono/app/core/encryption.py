@@ -24,7 +24,7 @@ from cryptography.hazmat.backends import default_backend
 
 # Salt for key derivation - should be consistent across app instances
 # This is NOT a secret, just adds uniqueness to the key derivation
-_ENCRYPTION_SALT = b"fhir_rag_ai_models_v1"
+_ENCRYPTION_SALT = b"data_insights_copilot_ai_models_v1"
 
 
 @lru_cache(maxsize=1)

@@ -16,6 +16,7 @@ import {
   createDatabaseSource,
   deleteDataSource,
   uploadDataSourceFile,
+  updateDataSource,
   type DataSource,
 } from '../services/api';
 
@@ -68,6 +69,9 @@ export default function DataSourcesPage() {
     id: null,
     title: '',
   });
+
+  // Edit state
+  const [editingSource, setEditingSource] = useState<DataSource | null>(null);
 
   // ============================================
   // Data Loading
@@ -195,6 +199,77 @@ export default function DataSourcesPage() {
   };
 
   // ============================================
+  // Edit Handlers
+  // ============================================
+
+  const handleEditClick = (source: DataSource) => {
+    setEditingSource(source);
+    setFormState({
+      title: source.title,
+      description: source.description || '',
+      db_url: source.db_url || '',
+      db_engine_type: source.db_engine_type || 'postgresql',
+    });
+    setFormError(null);
+    // Open the appropriate modal based on source type
+    setModalType(source.source_type as 'database' | 'file');
+  };
+
+  const handleUpdateDataSource = async () => {
+    if (!editingSource) return;
+    if (!formState.title.trim()) {
+      setFormError('Name is required');
+      return;
+    }
+
+    try {
+      setFormLoading(true);
+      setFormError(null);
+
+      const updateData: { title?: string; description?: string; db_url?: string; db_engine_type?: string } = {};
+
+      // Only send changed fields
+      if (formState.title !== editingSource.title) {
+        updateData.title = formState.title;
+      }
+      if (formState.description !== (editingSource.description || '')) {
+        updateData.description = formState.description || undefined;
+      }
+      if (editingSource.source_type === 'database') {
+        if (formState.db_url !== editingSource.db_url) {
+          updateData.db_url = formState.db_url;
+        }
+        if (formState.db_engine_type !== editingSource.db_engine_type) {
+          updateData.db_engine_type = formState.db_engine_type;
+        }
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        setModalType(null);
+        resetForm();
+        return;
+      }
+
+      await updateDataSource(editingSource.id, updateData);
+      setModalType(null);
+      resetForm();
+      loadDataSources();
+    } catch (err: any) {
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+
+      if (status === 409) {
+        // Data source is in use by an active agent configuration
+        setFormError(detail || 'This data source is currently in use by an active agent configuration and cannot be modified.');
+      } else {
+        setFormError(detail || 'Failed to update data source');
+      }
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  // ============================================
   // Helpers
   // ============================================
 
@@ -208,6 +283,7 @@ export default function DataSourcesPage() {
     setFormError(null);
     setSelectedFile(null);
     setUploadProgress(null);
+    setEditingSource(null);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -435,6 +511,12 @@ export default function DataSourcesPage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button
+                          onClick={() => handleEditClick(source)}
+                          className="text-blue-600 hover:text-blue-900 mr-4"
+                        >
+                          Edit
+                        </button>
+                        <button
                           onClick={() => handleDeleteClick(source)}
                           className="text-red-600 hover:text-red-900"
                         >
@@ -456,9 +538,11 @@ export default function DataSourcesPage() {
           <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">Add Database Connection</h2>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  {editingSource ? 'Edit Database Connection' : 'Add Database Connection'}
+                </h2>
                 <button
-                  onClick={() => setModalType(null)}
+                  onClick={() => { setModalType(null); resetForm(); }}
                   className="text-gray-400 hover:text-gray-600"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -535,17 +619,17 @@ export default function DataSourcesPage() {
 
                 <div className="flex gap-3 pt-4">
                   <button
-                    onClick={() => setModalType(null)}
+                    onClick={() => { setModalType(null); resetForm(); }}
                     className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                   >
                     Cancel
                   </button>
                   <button
-                    onClick={handleCreateDatabase}
+                    onClick={editingSource ? handleUpdateDataSource : handleCreateDatabase}
                     disabled={formLoading || !formState.title || !formState.db_url}
                     className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {formLoading ? 'Creating...' : 'Create'}
+                    {formLoading ? (editingSource ? 'Saving...' : 'Creating...') : (editingSource ? 'Save Changes' : 'Create')}
                   </button>
                 </div>
               </div>
@@ -560,9 +644,11 @@ export default function DataSourcesPage() {
           <div className="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-gray-900">Upload File</h2>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  {editingSource ? 'Edit File Source' : 'Upload File'}
+                </h2>
                 <button
-                  onClick={() => setModalType(null)}
+                  onClick={() => { setModalType(null); resetForm(); }}
                   className="text-gray-400 hover:text-gray-600"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -578,67 +664,84 @@ export default function DataSourcesPage() {
               )}
 
               <div className="space-y-4">
-                {/* File Drop Zone */}
-                <div
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${selectedFile
-                    ? 'border-green-300 bg-green-50'
-                    : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
-                    }`}
-                >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    onChange={handleFileSelect}
-                    accept=".csv,.xlsx,.xls,.pdf,.json"
-                    className="hidden"
-                  />
-                  {selectedFile ? (
-                    <div className="flex flex-col items-center">
-                      <svg className="w-12 h-12 text-green-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                      <p className="text-sm font-medium text-gray-900">{selectedFile.name}</p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                      </p>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSelectedFile(null);
-                          if (fileInputRef.current) fileInputRef.current.value = '';
-                        }}
-                        className="mt-2 text-sm text-red-600 hover:text-red-800"
-                      >
-                        Remove
-                      </button>
+                {/* File Drop Zone - only show when creating */}
+                {!editingSource && (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${selectedFile
+                        ? 'border-green-300 bg-green-50'
+                        : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+                      }`}
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      onChange={handleFileSelect}
+                      accept=".csv,.xlsx,.xls,.pdf,.json"
+                      className="hidden"
+                    />
+                    {selectedFile ? (
+                      <div className="flex flex-col items-center">
+                        <svg className="w-12 h-12 text-green-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <p className="text-sm font-medium text-gray-900">{selectedFile.name}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+                        </p>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedFile(null);
+                            if (fileInputRef.current) fileInputRef.current.value = '';
+                          }}
+                          className="mt-2 text-sm text-red-600 hover:text-red-800"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center">
+                        <svg className="w-12 h-12 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                        </svg>
+                        <p className="text-sm text-gray-600">
+                          <span className="font-medium text-blue-600">Click to upload</span> or drag and drop
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          CSV, Excel (.xlsx), PDF, or JSON
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* File info when editing (read-only) */}
+                {editingSource && (
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <div className="text-sm text-gray-600">
+                      <p><span className="font-medium">File Type:</span> {editingSource.file_type?.toUpperCase()}</p>
+                      {editingSource.duckdb_table_name && (
+                        <p><span className="font-medium">Table:</span> <code className="text-xs bg-gray-200 px-1 rounded">{editingSource.duckdb_table_name}</code></p>
+                      )}
+                      {editingSource.row_count !== undefined && (
+                        <p><span className="font-medium">Rows:</span> {editingSource.row_count.toLocaleString()}</p>
+                      )}
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center">
-                      <svg className="w-12 h-12 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                          d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                      </svg>
-                      <p className="text-sm text-gray-600">
-                        <span className="font-medium text-blue-600">Click to upload</span> or drag and drop
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        CSV, Excel (.xlsx), PDF, or JSON
-                      </p>
-                    </div>
-                  )}
-                </div>
+                  </div>
+                )}
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Name
+                    Name {editingSource && <span className="text-red-500">*</span>}
                   </label>
                   <input
                     type="text"
                     value={formState.title}
                     onChange={(e) => setFormState(prev => ({ ...prev, title: e.target.value }))}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    placeholder="Data source name (optional)"
+                    placeholder={editingSource ? "Data source name" : "Data source name (optional)"}
                   />
                 </div>
 
@@ -655,8 +758,8 @@ export default function DataSourcesPage() {
                   />
                 </div>
 
-                {/* Upload Progress */}
-                {uploadProgress && (
+                {/* Upload Progress - only when creating */}
+                {!editingSource && uploadProgress && (
                   <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                     <div className="flex items-center gap-2 text-blue-700">
                       {formLoading && (
@@ -669,17 +772,19 @@ export default function DataSourcesPage() {
 
                 <div className="flex gap-3 pt-4">
                   <button
-                    onClick={() => setModalType(null)}
+                    onClick={() => { setModalType(null); resetForm(); }}
                     className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
                   >
                     Cancel
                   </button>
                   <button
-                    onClick={handleUploadFile}
-                    disabled={formLoading || !selectedFile}
+                    onClick={editingSource ? handleUpdateDataSource : handleUploadFile}
+                    disabled={formLoading || (editingSource ? !formState.title.trim() : !selectedFile)}
                     className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {formLoading ? 'Uploading...' : 'Upload'}
+                    {formLoading
+                      ? (editingSource ? 'Saving...' : 'Uploading...')
+                      : (editingSource ? 'Save Changes' : 'Upload')}
                   </button>
                 </div>
               </div>

@@ -99,11 +99,21 @@ class DataSourceService:
         """
         Delete a data source.
         
+        For file sources, also cleans up:
+        - Original uploaded file
+        - DuckDB table and associated CSV file
+        
         Returns:
             Dict with 'success' bool and optional 'error' message.
             If agent configs reference this source, returns list of dependent agents.
         """
+        import os
         from app.modules.agents.models import AgentConfigModel, AgentModel
+        
+        # Get the source first to access file paths for cleanup
+        source = await self.repo.get_by_id(source_id)
+        if not source:
+            return {"success": False, "error": "Data source not found"}
         
         # Check if any agent configs reference this data source
         query = (
@@ -124,9 +134,43 @@ class DataSourceService:
                 "dependent_config_count": len(dependent_configs),
             }
         
-        # Safe to delete
+        # Clean up files for file data sources
+        if source.source_type == "file":
+            # Delete DuckDB table (and associated CSV) if exists
+            if source.duckdb_table_name and source.created_by:
+                from app.modules.data_sources.utils import delete_duckdb_table
+                delete_duckdb_table(str(source.created_by), source.duckdb_table_name)
+            
+            # Delete original uploaded file if exists
+            if source.original_file_path and os.path.exists(source.original_file_path):
+                try:
+                    os.remove(source.original_file_path)
+                except Exception:
+                    pass  # Best effort cleanup
+        
+        # Delete the database record
         deleted = await self.repo.delete(source_id)
         return {"success": deleted}
+    
+    async def is_used_by_active_config(self, source_id: UUID) -> bool:
+        """
+        Check if data source is used by any active agent configuration.
+        
+        Used to prevent updates to data sources that are actively in use.
+        
+        Returns:
+            True if used by at least one active config, False otherwise.
+        """
+        from app.modules.agents.models import AgentConfigModel
+        
+        query = (
+            select(AgentConfigModel.id)
+            .where(AgentConfigModel.data_source_id == source_id)
+            .where(AgentConfigModel.is_active == True)
+            .limit(1)
+        )
+        result = await self.db.execute(query)
+        return result.scalar() is not None
     
     async def list_sources(
         self,

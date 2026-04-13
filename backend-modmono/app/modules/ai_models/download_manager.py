@@ -353,43 +353,18 @@ class DownloadManager:
     
     async def _get_expected_model_size(self, hf_model_id: str) -> Optional[int]:
         """
-        Try to get expected model size from HuggingFace API.
+        Get expected model size from HuggingFace API by summing file sizes.
         
-        Returns estimated total size in bytes, or None if unavailable.
+        Returns total size in bytes, or None if unavailable.
         """
         try:
-            info = await self._hf_service.get_model_info(hf_model_id)
-            if info:
-                # Common model sizes (estimates)
-                model_sizes = {
-                    'bge-base-en-v1.5': 2_200_000_000,  # ~2.2GB
-                    'bge-small': 130_000_000,  # ~130MB
-                    'bge-base': 440_000_000,  # ~440MB
-                    'bge-large': 1_340_000_000,  # ~1.34GB
-                    'bge-reranker-v2-m3': 1_100_000_000,  # ~1.1GB
-                    'bge-reranker-base': 280_000_000,  # ~280MB
-                    'e5-small': 130_000_000,
-                    'e5-base': 440_000_000,
-                    'e5-large': 1_340_000_000,
-                }
-                
-                # Check if we have a known estimate
-                model_name = hf_model_id.split('/')[-1].lower()
-                for key, size in model_sizes.items():
-                    if key in model_name:
-                        return size
-                
-                # Default estimate based on model type
-                if 'small' in model_name:
-                    return 150_000_000
-                elif 'base' in model_name:
-                    return 500_000_000
-                elif 'large' in model_name:
-                    return 1_500_000_000
-                else:
-                    return 1_000_000_000  # 1GB default estimate
+            files = await self._hf_service.get_model_files(hf_model_id)
+            if files:
+                total_size = sum(f.get('size', 0) for f in files if isinstance(f, dict))
+                if total_size > 0:
+                    return total_size
         except Exception as e:
-            logger.debug(f"Could not get model size estimate: {e}")
+            logger.debug(f"Could not get model size from API: {e}")
         
         return None
     

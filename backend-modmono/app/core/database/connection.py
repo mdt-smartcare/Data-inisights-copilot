@@ -368,6 +368,8 @@ async def create_tables() -> None:
     from app.modules.agents.models import AgentModel, AgentConfigModel, UserAgentModel  # noqa: F401
     from app.modules.data_sources.models import DataSourceModel  # noqa: F401
     from app.modules.observability.models import AuditLogModel  # noqa: F401
+    from app.modules.ai_models.models import AIModel  # noqa: F401
+    from app.modules.embeddings.models import EmbeddingJobModel  # noqa: F401
     
     logger.info("Creating database tables...")
     
