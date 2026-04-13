@@ -289,8 +289,10 @@ export const getActiveConfigMetadata = async (agentId?: string): Promise<any> =>
     // Map data_source info
     data_source_type: config.data_source?.source_type || config.data_source_type,
     connection_id: config.data_source?.connection_id || config.connection_id,
-    ingestion_file_name: config.data_source?.original_filename || config.ingestion_file_name,
+    ingestion_file_name: config.data_source?.title || config.data_source?.original_filename || config.ingestion_file_name,
     ingestion_file_type: config.data_source?.file_type || config.ingestion_file_type,
+    db_url: config.data_source?.db_url,
+    db_engine_type: config.data_source?.db_engine_type,
   };
 };
 

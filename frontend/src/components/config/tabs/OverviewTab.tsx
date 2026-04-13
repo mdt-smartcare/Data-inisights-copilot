@@ -5,7 +5,7 @@ import type { Agent } from '../../../types/agent';
 import { updateAgent, deleteAgent, handleApiError } from '../../../services/api';
 import { useToast } from '../../Toast';
 import ConfirmationModal from '../../ConfirmationModal';
-import { CpuChipIcon, CircleStackIcon, CubeTransparentIcon, AdjustmentsHorizontalIcon, SparklesIcon, PencilIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { CircleStackIcon, SparklesIcon, AdjustmentsHorizontalIcon, PencilIcon, TrashIcon, CheckIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { formatDate } from '../../../utils/datetime';
 
 interface OverviewTabProps {
@@ -134,115 +134,130 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         }
     }
 
+    // Helper to mask sensitive info in DB URL
+    const maskDbUrl = (url?: string) => {
+        if (!url) return '';
+        try {
+            // Simple regex to mask password in common DB URIs
+            // e.g., postgresql://user:password@host:port/db -> postgresql://user:****@host:port/db
+            return url.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:****@');
+        } catch {
+            return url;
+        }
+    };
+
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Agent Details Section - At top */}
-            {agent && (
-                <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-slate-50 rounded-lg flex items-center justify-center">
-                                <svg className="w-5 h-5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                                </svg>
-                            </div>
-                            <div>
-                                <h3 className="text-base font-semibold text-gray-900">Agent Details</h3>
-                                <p className="text-xs text-gray-500">Basic information</p>
-                            </div>
-                        </div>
-                        {canEdit && !isEditing && (
-                            <button
-                                onClick={handleStartEdit}
-                                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
-                            >
-                                <PencilIcon className="w-4 h-4" />
-                                Edit
-                            </button>
-                        )}
-                    </div>
 
-                    {isEditing ? (
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Agent Name <span className="text-red-500">*</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    value={editName}
-                                    onChange={(e) => setEditName(e.target.value)}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                                    placeholder="Enter agent name"
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Description
-                                </label>
-                                <textarea
-                                    value={editDescription}
-                                    onChange={(e) => setEditDescription(e.target.value)}
-                                    rows={2}
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-sm"
-                                    placeholder="Enter agent description (optional)"
-                                />
-                            </div>
-                            <div className="flex justify-end gap-2">
-                                <button
-                                    onClick={handleCancelEdit}
-                                    disabled={isSaving}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
-                                >
-                                    <XMarkIcon className="w-4 h-4" />
-                                    Cancel
-                                </button>
-                                <button
-                                    onClick={handleSaveEdit}
-                                    disabled={isSaving || !editName.trim()}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                                >
-                                    {isSaving ? (
-                                        <>
-                                            <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                            </svg>
-                                            Saving...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <CheckIcon className="w-4 h-4" />
-                                            Save
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <p className="text-xs font-medium text-gray-500 uppercase mb-1">Name</p>
-                                <p className="text-sm font-semibold text-gray-900">{agent.name}</p>
-                            </div>
-                            <div>
-                                <p className="text-xs font-medium text-gray-500 uppercase mb-1">Created</p>
-                                <p className="text-sm text-gray-700">
-                                    {agent.created_at ? formatDate(agent.created_at) : 'Unknown'}
-                                </p>
-                            </div>
-                            <div className="md:col-span-2">
-                                <p className="text-xs font-medium text-gray-500 uppercase mb-1">Description</p>
-                                <p className="text-sm text-gray-700">{agent.description || <span className="text-gray-400 italic">No description</span>}</p>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
 
             {/* Main Content Grid */}
+
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+                {/* Agent Details Section - At top */}
+                {agent && (
+                    <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+                        <div className="flex items-center justify-between mb-4">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-slate-50 rounded-lg flex items-center justify-center">
+                                    <svg className="w-5 h-5 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                                    </svg>
+                                </div>
+                                <div>
+                                    <h3 className="text-base font-semibold text-gray-900">Agent Details</h3>
+                                    <p className="text-xs text-gray-500">Basic information</p>
+                                </div>
+                            </div>
+                            {canEdit && !isEditing && (
+                                <button
+                                    onClick={handleStartEdit}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-blue-600 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors"
+                                >
+                                    <PencilIcon className="w-4 h-4" />
+                                    Edit
+                                </button>
+                            )}
+                        </div>
+
+                        {isEditing ? (
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Agent Name <span className="text-red-500">*</span>
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={editName}
+                                        onChange={(e) => setEditName(e.target.value)}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                        placeholder="Enter agent name"
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                        Description
+                                    </label>
+                                    <textarea
+                                        value={editDescription}
+                                        onChange={(e) => setEditDescription(e.target.value)}
+                                        rows={2}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-none text-sm"
+                                        placeholder="Enter agent description (optional)"
+                                    />
+                                </div>
+                                <div className="flex justify-end gap-2">
+                                    <button
+                                        onClick={handleCancelEdit}
+                                        disabled={isSaving}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+                                    >
+                                        <XMarkIcon className="w-4 h-4" />
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={handleSaveEdit}
+                                        disabled={isSaving || !editName.trim()}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
+                                    >
+                                        {isSaving ? (
+                                            <>
+                                                <svg className="animate-spin w-4 h-4" viewBox="0 0 24 24">
+                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                                </svg>
+                                                Saving...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <CheckIcon className="w-4 h-4" />
+                                                Save
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <p className="text-xs font-medium text-gray-500 uppercase mb-1">Name</p>
+                                    <p className="text-sm font-semibold text-gray-900">{agent.name}</p>
+                                </div>
+                                <div>
+                                    <p className="text-xs font-medium text-gray-500 uppercase mb-1">Created</p>
+                                    <p className="text-sm text-gray-700">
+                                        {agent.created_at ? formatDate(agent.created_at) : 'Unknown'}
+                                    </p>
+                                </div>
+                                <div className="md:col-span-2">
+                                    <p className="text-xs font-medium text-gray-500 uppercase mb-1">Description</p>
+                                    <p className="text-sm text-gray-700">{agent.description || <span className="text-gray-400 italic">No description</span>}</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
                 {/* Data Source Card */}
                 <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                     <div className="flex items-center gap-3 mb-4">
@@ -260,10 +275,20 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                             <span className="text-sm font-medium text-gray-900 capitalize">{activeConfig.data_source_type || 'Database'}</span>
                         </div>
                         {activeConfig.data_source_type === 'database' ? (
-                            <div className="flex justify-between py-2 border-b border-gray-100">
-                                <span className="text-sm text-gray-500">Connection</span>
-                                <span className="text-sm font-medium text-gray-900">{connectionName || 'Not set'}</span>
-                            </div>
+                            <>
+                                <div className="flex justify-between py-2 border-b border-gray-100">
+                                    <span className="text-sm text-gray-500">Connection</span>
+                                    <span className="text-sm font-medium text-gray-900">{connectionName || 'Not set'}</span>
+                                </div>
+                                {activeConfig.db_url && (
+                                    <div className="flex flex-col py-2 border-b border-gray-100">
+                                        <span className="text-sm text-gray-500 mb-1">Endpoint</span>
+                                        <span className="text-xs font-mono text-gray-600 break-all bg-gray-50 p-2 rounded-md border border-gray-100">
+                                            {maskDbUrl(activeConfig.db_url)}
+                                        </span>
+                                    </div>
+                                )}
+                            </>
                         ) : (
                             <div className="flex justify-between py-2 border-b border-gray-100">
                                 <span className="text-sm text-gray-500">File</span>
@@ -349,67 +374,6 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                     </div>
                 </div>
 
-                {/* Chunking Settings Card */}
-                <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                    <div className="flex items-center gap-3 mb-4">
-                        <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center">
-                            <CubeTransparentIcon className="w-5 h-5 text-orange-600" />
-                        </div>
-                        <div>
-                            <h3 className="text-base font-semibold text-gray-900">Chunking Settings</h3>
-                            <p className="text-xs text-gray-500">Document splitting</p>
-                        </div>
-                    </div>
-                    <div className="space-y-1">
-                        <div className="flex justify-between py-2 border-b border-gray-100">
-                            <span className="text-sm text-gray-500">Parent Chunk</span>
-                            <span className="text-sm font-medium text-gray-900">
-                                {chunkConf.parentChunkSize || chunkConf.parent_chunk_size || 512} tokens
-                            </span>
-                        </div>
-                        <div className="flex justify-between py-2 border-b border-gray-100">
-                            <span className="text-sm text-gray-500">Parent Overlap</span>
-                            <span className="text-sm font-medium text-gray-900">
-                                {chunkConf.parentChunkOverlap || chunkConf.parent_chunk_overlap || 100} tokens
-                            </span>
-                        </div>
-                        <div className="flex justify-between py-2 border-b border-gray-100">
-                            <span className="text-sm text-gray-500">Child Chunk</span>
-                            <span className="text-sm font-medium text-gray-900">
-                                {chunkConf.childChunkSize || chunkConf.child_chunk_size || 128} tokens
-                            </span>
-                        </div>
-                        <div className="flex justify-between py-2">
-                            <span className="text-sm text-gray-500">Child Overlap</span>
-                            <span className="text-sm font-medium text-gray-900">
-                                {chunkConf.childChunkOverlap || chunkConf.child_chunk_overlap || 25} tokens
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* LLM Settings Inline */}
-            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
-                        <CpuChipIcon className="w-5 h-5 text-blue-600" />
-                    </div>
-                    <div>
-                        <h3 className="text-base font-semibold text-gray-900">LLM Settings</h3>
-                        <p className="text-xs text-gray-500">Language model parameters</p>
-                    </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div className="text-center p-3 bg-gray-50 rounded-lg">
-                        <div className="text-xs text-gray-500 mb-1">Temperature</div>
-                        <div className="text-lg font-semibold text-gray-900">{llmConf.temperature ?? 0.0}</div>
-                    </div>
-                    <div className="text-center p-3 bg-gray-50 rounded-lg">
-                        <div className="text-xs text-gray-500 mb-1">Max Tokens</div>
-                        <div className="text-lg font-semibold text-gray-900">{llmConf.maxTokens || llmConf.max_tokens || 4096}</div>
-                    </div>
-                </div>
             </div>
 
             {/* Danger Zone - Delete Agent */}

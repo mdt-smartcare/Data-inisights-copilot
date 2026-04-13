@@ -42,22 +42,24 @@ export interface ActiveConfig {
     is_active?: boolean;
     status?: string;
     completed_step?: number;
-    
+    db_url?: string;
+    db_engine_type?: string;
+
     // Embedding status
     embedding_status?: string;
     embedding_path?: string;
     vector_collection_name?: string;
-    
+
     // Model IDs (FK to ai_models)
     llm_model_id?: number;
     embedding_model_id?: number;
     reranker_model_id?: number;
-    
+
     // Resolved model info (populated by backend)
     llm_model?: ModelInfo;
     embedding_model?: ModelInfo;
     reranker_model?: ModelInfo;
-    
+
     // Data source info
     data_source?: {
         id: string;
@@ -125,7 +127,7 @@ const AgentContext = createContext<AgentContextType | null>(null);
 export function AgentProvider({ children }: { children: ReactNode }) {
     // Get system settings from the centralized context (loaded from backend)
     const { advancedSettings: systemSettings } = useSystemSettings();
-    
+
     const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null);
     const [activeConfig, setActiveConfig] = useState<ActiveConfig | null>(null);
     const [history, setHistory] = useState<PromptVersion[]>([]);
@@ -133,7 +135,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     const [connectionName, setConnectionName] = useState<string>('');
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [isLoadingConfig, setIsLoadingConfig] = useState(false);
-    
+
     // Initialize with system settings from backend
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(systemSettings);
 
