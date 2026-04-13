@@ -196,7 +196,7 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
                 <div className="text-center">
                     <Link
                         to="/data-sources"
-                        className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600"
+                        className="inline-flex items-center gap-1 text-sm text-blue-500 hover:text-blue-600"
                     >
                         <PlusIcon className="w-4 h-4" />
                         Add new data source
