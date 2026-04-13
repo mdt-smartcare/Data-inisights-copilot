@@ -3,7 +3,6 @@ import {
     listAIModels, setAIModelDefault, handleApiError
 } from '../services/api';
 import type { AIModel, ModelType } from '../services/api';
-import ModelCatalog from './ModelCatalog';
 import AIModelSelector from './AIModelSelector';
 import { useAIRegistryModels } from '../hooks/useAIRegistryModels';
 
@@ -113,9 +112,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
     const [activeEmbedding, setActiveEmbedding] = useState<AIModel | null>(null);
     const [activeLLM, setActiveLLM] = useState<AIModel | null>(null);
 
-    // Model Catalog toggle
-    const [showModelCatalog, setShowModelCatalog] = useState(false);
-    
     // Track if we've already set the default reranker
     const hasSetDefaultReranker = React.useRef(false);
     // Track if we've synced embedding/LLM defaults
@@ -360,34 +356,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
             )}
 
             <div className="space-y-4 sm:space-y-6">
-                {/* Model Catalog Modal */}
-                {showModelCatalog && (
-                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                        <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-                            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                                <h2 className="text-lg font-semibold text-gray-900">Model Catalog</h2>
-                                <button
-                                    onClick={() => setShowModelCatalog(false)}
-                                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                                >
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
-                                </button>
-                            </div>
-                            <div className="flex-1 overflow-y-auto p-4">
-                                <ModelCatalog 
-                                    readOnly={readOnly} 
-                                    onModelActivated={() => {
-                                        loadModels();
-                                        setActivationMsg('✓ Model activated from catalog');
-                                        setTimeout(() => setActivationMsg(null), 4000);
-                                    }} 
-                                />
-                            </div>
-                        </div>
-                    </div>
-                )}
 
                 {/* Vector DB Naming Section - Outside accordion */}
                 <div className="p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
@@ -455,20 +423,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                             </svg>
                         </button>
-                        {/* Browse Catalog Button - beside header */}
-                        {!readOnly && (
-                            <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); setShowModelCatalog(true); }}
-                                className="ml-3 px-3 py-1.5 text-xs sm:text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5"
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                                </svg>
-                                <span className="hidden sm:inline">Browse Catalog</span>
-                                <span className="sm:hidden">Catalog</span>
-                            </button>
-                        )}
                     </div>
 
                     {/* Accordion Content */}
@@ -717,9 +671,9 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                                 </svg>
                             </div>
-                            <h3 className="text-lg font-medium text-gray-900">Chunking Strategy</h3>
+                            <h3 className="text-lg font-medium text-gray-900">Indexing Strategy</h3>
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-blue-100 text-blue-800">
-                                Parent: {localSettings.chunking.parentChunkSize} / Child: {localSettings.chunking.childChunkSize}
+                                Schema-Aware (DDL per table)
                             </span>
                         </div>
                         <svg 
