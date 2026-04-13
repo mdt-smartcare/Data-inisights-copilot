@@ -102,10 +102,6 @@ class DataSourceResponse(DataSourceBase):
     created_at: datetime
     updated_at: datetime
     
-    # Dependency info (populated in list/get views)
-    dependent_agents: List[str] = Field(default_factory=list, description="Names of agents using this source")
-    dependent_config_count: int = Field(default=0, description="Number of configurations using this source")
-    
     model_config = {"from_attributes": True}
 
 

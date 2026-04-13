@@ -656,21 +656,6 @@ class AgentConfigService:
                 status_code=404,
             )
         
-        # Data source lockdown: If agent has any published configs, data source cannot be changed
-        history = await self.configs.get_config_history(agent_id)
-        published_configs = [c for c in history if c.status != 'draft']
-        
-        if published_configs:
-            # Latest published config (history is ordered by version DESC)
-            latest_published = published_configs[0]
-            if str(latest_published.data_source_id) != str(data_source_id):
-                raise AppException(
-                    error_code=ErrorCode.VALIDATION_ERROR,
-                    message="Data source cannot be changed for an agent with existing published configurations. Please create a new agent if you need to use a different data source.",
-                    status_code=400,
-                )
-
-        
         if version_id:
             # Update existing version
             config = await self.configs.get_by_id(version_id)
@@ -962,16 +947,7 @@ class AgentConfigService:
         import os
         from langchain.schema import HumanMessage, SystemMessage
         from app.core.llm import create_llm_provider
-        from app.core.prompts import (
-            get_chart_generator_prompt, 
-            get_database_generator_prompt, 
-            get_file_generator_prompt, 
-            get_reasoning_generator_prompt,
-            get_intent_router_prompt,
-            get_query_planner_prompt,
-            get_sql_generator_prompt,
-            get_reflection_critique_prompt
-        )
+        from app.core.prompts import get_chart_generator_prompt, get_database_generator_prompt, get_file_generator_prompt, get_reasoning_generator_prompt
         
         config = await self.configs.get_by_id(version_id)
         if not config:
@@ -997,10 +973,8 @@ class AgentConfigService:
         context_parts = []
         
         if selected_columns:
-            # Compress similar tables to reduce token usage for large schemas
-            compressed_schema = self._compress_schema_for_prompt(selected_columns)
             context_parts.append("SELECTED SCHEMA:")
-            context_parts.append(compressed_schema)
+            context_parts.append(json.dumps(selected_columns, indent=2))
         
         if data_dictionary:
             context_parts.append("\nDATA DICTIONARY:")
@@ -1147,32 +1121,7 @@ After the '---REASONING---' separator, you MUST include a valid JSON object with
 DO NOT skip the ---REASONING--- section. It is mandatory."""
 
         # First LLM call: Generate the system prompt
-        pipeline_context = f"""
----
-PIPELINE DEFAULT PROMPTS CONTEXT:
-Below are instructions for the individual pipeline components. 
-CRITICAL META-INSTRUCTION: You are GENERATING the final system prompt that will be used. 
-You must synthesize the rules from the components below into your generated prompt.
-HOWEVER, DO NOT WRITE OUT THE SCHEMA OR DATA DICTIONARY! The schema is provided as context so you understand what rules apply, but DO NOT include it in your output. It will be automatically injected by the backend.
-You MUST extract the literal and concrete rules from the component prompts below (e.g., specific rules about CASTING dates, LIMIT clauses, GREATEST() function usage) and write them out fully into your generated prompt. Write a fully populated, exhaustive instruction manual for the agent.
-
-[INTENT ROUTER]
-{get_intent_router_prompt()}
-
-[QUERY PLANNER]
-{get_query_planner_prompt()}
-
-[SQL GENERATOR]
-{get_sql_generator_prompt()}
-
-[REFLECTION & CRITIQUE]
-{get_reflection_critique_prompt()}
----
-"""
-
         prompt_instruction = f"""{template_with_data}
-
-{pipeline_context}
 
 CHART VISUALIZATION RULES (MUST BE APPENDED TO THE GENERATED PROMPT):
 {chart_rules}
@@ -1190,9 +1139,6 @@ Return ONLY the system prompt text. Do not include any other text or explanation
         response = llm.invoke(messages)
         prompt_content = response.content.strip()
         
-        # Prepend the data dictionary explicitly to avoid having the LLM waste tokens rewriting it
-        prompt_content = f"## DATA DICTIONARY & SCHEMA\n{data_dict_text}\n\n{prompt_content}"
-
         # Clean up the prompt content - remove any unwanted prefixes
         import re
         # Remove "### PART 1: System Prompt" or similar headers
@@ -1246,55 +1192,3 @@ Return ONLY the system prompt text. Do not include any other text or explanation
             "reasoning": reasoning,
             "example_questions": questions,
         }
-
-    def _compress_schema_for_prompt(self, selected_columns: Dict[str, List[str]]) -> str:
-        """
-        Compress schema representation by grouping tables with identical column structures.
-        
-        This reduces token usage when many tables share the same columns (e.g., partitioned tables).
-        """
-        from collections import defaultdict
-        
-        column_signature_to_tables: Dict[tuple, List[str]] = defaultdict(list)
-        
-        for table_name, columns in selected_columns.items():
-            signature = tuple(sorted(columns))
-            column_signature_to_tables[signature].append(table_name)
-        
-        output_parts = []
-        
-        for signature, tables in column_signature_to_tables.items():
-            columns = list(signature)
-            
-            if len(tables) == 1:
-                output_parts.append(f"- `{tables[0]}`: {', '.join(f'`{c}`' for c in columns)}")
-            else:
-                common_prefix = self._find_common_prefix(tables)
-                if common_prefix and len(common_prefix) > 5:
-                    output_parts.append(
-                        f"- `{common_prefix}*` ({len(tables)} tables with identical structure): "
-                        f"{', '.join(f'`{c}`' for c in columns)}"
-                    )
-                    example_tables = tables[:3]
-                    if len(tables) > 3:
-                        output_parts.append(f"  (Examples: {', '.join(example_tables)}, ... and {len(tables) - 3} more)")
-                else:
-                    output_parts.append(
-                        f"- Tables with shared structure ({len(tables)} tables): "
-                        f"{', '.join(f'`{c}`' for c in columns)}"
-                    )
-                    output_parts.append(f"  Tables: {', '.join(tables[:10])}" + (", ..." if len(tables) > 10 else ""))
-        
-        return "\n".join(output_parts)
-    
-    def _find_common_prefix(self, strings: List[str]) -> str:
-        """Find the longest common prefix among a list of strings."""
-        if not strings:
-            return ""
-        prefix = strings[0]
-        for s in strings[1:]:
-            while not s.startswith(prefix) and prefix:
-                prefix = prefix[:-1]
-            if not prefix:
-                return ""
-        return prefix

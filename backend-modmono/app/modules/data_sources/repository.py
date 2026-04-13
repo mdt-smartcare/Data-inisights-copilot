@@ -24,33 +24,11 @@ class DataSourceRepository:
         await self.db.refresh(source)
         return source
     
-    async def get_by_id(self, source_id: UUID) -> Optional[Any]:
-        """Get data source by ID with dependency info."""
-        from app.modules.agents.models import AgentConfigModel, AgentModel
-        
-        stmt = (
-            select(
-                DataSourceModel,
-                func.count(AgentConfigModel.id).label("dependent_config_count"),
-                func.array_agg(AgentModel.title.distinct()).label("dependent_agents")
-            )
-            .outerjoin(AgentConfigModel, AgentConfigModel.data_source_id == DataSourceModel.id)
-            .outerjoin(AgentModel, AgentModel.id == AgentConfigModel.agent_id)
-            .where(DataSourceModel.id == source_id)
-            .group_by(DataSourceModel.id)
-        )
-        
-        result = await self.db.execute(stmt)
-        row = result.first()
-        
-        if not row:
-            return None
-            
-        source, count, agents = row
-        source.dependent_config_count = count
-        source.dependent_agents = [a for a in agents if a is not None] if agents else []
-        
-        return source
+    async def get_by_id(self, source_id: UUID) -> Optional[DataSourceModel]:
+        """Get data source by ID."""
+        query = select(DataSourceModel).where(DataSourceModel.id == source_id)
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
     
     async def get_by_title(self, title: str) -> Optional[DataSourceModel]:
         """Get data source by title."""
@@ -89,10 +67,8 @@ class DataSourceRepository:
         created_by: Optional[UUID] = None,
         skip: int = 0,
         limit: int = 50,
-    ) -> Tuple[List[Any], int]:
-        """Search data sources with filters and dependency info."""
-        from app.modules.agents.models import AgentConfigModel, AgentModel
-        
+    ) -> Tuple[List[DataSourceModel], int]:
+        """Search data sources with filters."""
         filters = []
         
         if query:
@@ -109,48 +85,19 @@ class DataSourceRepository:
         if created_by:
             filters.append(DataSourceModel.created_by == created_by)
         
-        # Base query for count
-        count_stmt = select(func.count(DataSourceModel.id))
+        base_query = select(DataSourceModel)
         if filters:
-            count_stmt = count_stmt.where(and_(*filters))
+            base_query = base_query.where(and_(*filters))
         
-        total = (await self.db.execute(count_stmt)).scalar_one()
+        # Count
+        count_query = select(func.count()).select_from(base_query.subquery())
+        total = (await self.db.execute(count_query)).scalar_one()
         
-        # Main query with joins for dependency info
-        # Note: postgresql array_agg returns NULL if no rows, or [NULL] if join matches but no title
-        # We use coalesce and array_remove to handle these cases if needed, 
-        # but here we'll just handle it in Python for simplicity.
-        stmt = (
-            select(
-                DataSourceModel,
-                func.count(AgentConfigModel.id).label("dependent_config_count"),
-                func.array_agg(AgentModel.title.distinct()).label("dependent_agents")
-            )
-            .outerjoin(AgentConfigModel, AgentConfigModel.data_source_id == DataSourceModel.id)
-            .outerjoin(AgentModel, AgentModel.id == AgentConfigModel.agent_id)
-        )
-        
-        if filters:
-            stmt = stmt.where(and_(*filters))
-            
-        stmt = (
-            stmt.group_by(DataSourceModel.id)
-            .offset(skip)
-            .limit(limit)
-            .order_by(DataSourceModel.created_at.desc())
-        )
-        
+        # Results
+        stmt = base_query.offset(skip).limit(limit).order_by(DataSourceModel.created_at.desc())
         result = await self.db.execute(stmt)
-        rows = result.all()
         
-        processed_sources = []
-        for source, count, agents in rows:
-            # Clean up agents list (filter out None)
-            source.dependent_config_count = count
-            source.dependent_agents = [a for a in agents if a is not None] if agents else []
-            processed_sources.append(source)
-        
-        return processed_sources, total
+        return list(result.scalars().all()), total
     
     async def get_by_type(
         self,

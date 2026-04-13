@@ -16,7 +16,6 @@ interface SchemaSelectionStepProps {
     onFileColumnsChange?: (columns: string[]) => void;
     selectedFileColumns?: string[];
     selectedDataSource?: DataSource | null;
-    onSchemaFetch?: (schema: DataSourceSchemaResponse) => void;
 }
 
 export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
@@ -27,20 +26,19 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     reasoning = {},
     onFileColumnsChange,
     selectedFileColumns = [],
-    selectedDataSource,
-    onSchemaFetch
+    selectedDataSource
 }) => {
     const { user } = useAuth();
     const canEdit = canEditPrompt(user);
-
+    
     // State for schema fetching
     const [schema, setSchema] = useState<DataSourceSchemaResponse | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-
+    
     // State for file preview data
     const [preview, setPreview] = useState<DataSourcePreviewResponse | null>(null);
-
+    
     // Selected state: Record<TableName, Set<ColumnName>> - internal use
     const [selected, setSelected] = useState<Record<string, Set<string>>>({});
     const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
@@ -83,7 +81,7 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                 .filter(([_, cols]) => cols.size > 0)
                 .map(([table]) => table)
         );
-
+        
         selectedTables.forEach(table => {
             const deps = dependencyMap.get(table);
             if (deps) {
@@ -93,7 +91,7 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                 }
             }
         });
-
+        
         return missing;
     }, [selected, dependencyMap]);
 
@@ -112,7 +110,7 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     const ensurePrimaryKeys = (tableName: string, columnSet: Set<string>): Set<string> => {
         // Only add PKs if there are other columns selected (table is "active")
         if (columnSet.size === 0) return columnSet;
-
+        
         const pkCols = primaryKeyMap.get(tableName) || new Set();
         const newSet = new Set(columnSet);
         pkCols.forEach(pk => newSet.add(pk));
@@ -128,15 +126,14 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     // Fetch schema function
     const fetchSchema = async () => {
         if (!selectedDataSource?.id) return;
-
+        
         setIsLoading(true);
         setError(null);
-
+        
         try {
             const result = await getDataSourceSchema(selectedDataSource.id);
             setSchema(result);
-            if (onSchemaFetch) onSchemaFetch(result);
-
+            
             // For file sources, also fetch preview data
             if (result.source_type === 'file') {
                 try {
@@ -147,12 +144,12 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                     // Preview is optional, continue without it
                 }
             }
-
+            
             // Check if we have saved selection from config
             const hasSavedSelection = initialSchema && Object.keys(initialSchema).length > 0;
-
+            
             let initialSelection: Record<string, Set<string>> = {};
-
+            
             if (hasSavedSelection) {
                 // Use saved selection from config
                 Object.entries(initialSchema!).forEach(([table, columns]) => {
@@ -221,10 +218,10 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     // PKs cannot be toggled off individually when table is selected
     const toggleColumn = (table: string, column: string, isPrimaryKey: boolean) => {
         const tableIsSelected = isTableSelected(table);
-
+        
         // If it's a PK and table is selected, don't allow toggle
         if (isPrimaryKey && tableIsSelected) return;
-
+        
         const currentSet = new Set(selected[table] || []);
         if (currentSet.has(column)) {
             currentSet.delete(column);
@@ -241,7 +238,7 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
 
     const toggleAllGlobal = () => {
         if (!schema) return;
-
+        
         // Check if completely everything is selected
         let allSelected = true;
         for (const table of schema.tables) {
@@ -306,66 +303,11 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
     }
 
     if (dataSourceType === 'database' && schema) {
-        // Check if there's a connection error from the backend
-        if ((schema as any).error) {
-            const errorMessage = (schema as any).error;
-            return (
-                <div className="w-full max-w-4xl mx-auto">
-                    <h2 className="text-lg sm:text-xl font-semibold mb-2 sm:mb-4">Select Tables & Columns</h2>
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-                        <div className="flex items-start gap-3">
-                            <svg className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-red-800 font-medium">Database Connection Error</p>
-                                <p className="text-red-700 text-sm mt-1 break-words">{errorMessage}</p>
-                                <div className="mt-4 text-sm text-gray-600">
-                                    <p className="font-medium">Common causes:</p>
-                                    <ul className="list-disc list-inside mt-1 space-y-1 text-xs">
-                                        <li>Database host is unreachable (check firewall/VPN)</li>
-                                        <li>Invalid connection URL format (missing port or database name)</li>
-                                        <li>Incorrect credentials</li>
-                                        <li>Database server is down</li>
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                        <button
-                            onClick={fetchSchema}
-                            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                        >
-                            Retry Connection
-                        </button>
-                    </div>
-                </div>
-            );
-        }
-
         if (schema.tables.length === 0) {
             return (
                 <div className="w-full max-w-4xl mx-auto">
                     <h2 className="text-lg sm:text-xl font-semibold mb-2 sm:mb-4">Select Tables & Columns</h2>
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-                        <div className="flex items-start gap-3">
-                            <svg className="w-6 h-6 text-yellow-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <div>
-                                <p className="text-yellow-800 font-medium">No tables found</p>
-                                <p className="text-yellow-700 text-sm mt-1">
-                                    Connected successfully, but no accessible tables were found.
-                                    The database may be empty or the user may not have permission to view tables.
-                                </p>
-                            </div>
-                        </div>
-                        <button
-                            onClick={fetchSchema}
-                            className="mt-4 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700"
-                        >
-                            Refresh
-                        </button>
-                    </div>
+                    <div className="text-gray-500 italic text-sm">No tables found in this database.</div>
                 </div>
             );
         }
@@ -386,7 +328,7 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                                 <div className="text-sm">
                                     <p className="font-medium text-red-800">Missing table dependencies</p>
                                     <p className="text-red-700 text-xs mt-1">
-                                        Some selected tables have foreign key references to tables that are not selected.
+                                        Some selected tables have foreign key references to tables that are not selected. 
                                         This may cause issues with data analysis.
                                     </p>
                                 </div>
@@ -481,7 +423,7 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                                                 // PKs are disabled only when table has selections
                                                 const isPKDisabled = isPK && tableHasSelections;
                                                 const isDisabled = !canEdit || isPKDisabled;
-
+                                                
                                                 return (
                                                     <div key={col.column_name} className={`flex items-center group min-w-0 ${isPK && tableHasSelections ? 'bg-yellow-50 rounded px-1' : ''}`}>
                                                         <input
@@ -525,10 +467,10 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
         // For files, use schema from API or fallback to fileUploadResult
         const columns = schema?.tables?.[0]?.columns?.map(c => c.column_name) || preview?.columns || fileUploadResult?.columns || [];
         const columnDetails = preview?.column_details || fileUploadResult?.column_details;
-
+        
         // Get documents from either fileUploadResult (fresh upload) or preview API (existing source)
-        const documents = fileUploadResult?.documents?.length
-            ? fileUploadResult.documents
+        const documents = fileUploadResult?.documents?.length 
+            ? fileUploadResult.documents 
             : preview?.documents || [];
         const totalDocuments = fileUploadResult?.total_documents || preview?.total_documents || 0;
         const fileName = schema?.file_name || preview?.file_name || fileUploadResult?.file_name || 'your file';
@@ -545,7 +487,6 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                 </p>
 
                 <FileColumnSelector
-                    key={columns.join(',')}
                     columns={columns}
                     columnDetails={columnDetails}
                     selectedColumns={selectedFileColumns}

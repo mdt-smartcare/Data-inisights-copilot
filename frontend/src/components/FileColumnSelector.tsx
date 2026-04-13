@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 
 interface ColumnDetail {
     name: string;
@@ -62,11 +62,27 @@ const FileColumnSelector: React.FC<FileColumnSelectorProps> = ({
         }
         return new Set(items.map(c => c.name));
     });
-
-
-
-    // Initial state is correctly set via useState initializer. 
-    // Synchronous state updates in response to prop changes are handled by the 'key' prop in parent.
+    
+    // Track if we've initialized
+    const initializedRef = useRef(false);
+    
+    // Sync selection with parent's selectedColumns prop
+    useEffect(() => {
+        if (selectedColumns && selectedColumns.length > 0) {
+            setSelected(new Set(selectedColumns));
+            initializedRef.current = true;
+        }
+    }, [selectedColumns]);
+    
+    // Auto-select all columns when items are loaded and no selection exists (new upload case)
+    useEffect(() => {
+        if (!initializedRef.current && items.length > 0 && (!selectedColumns || selectedColumns.length === 0)) {
+            const all = items.map(c => c.name);
+            setSelected(new Set(all));
+            onSelectionChange(all);
+            initializedRef.current = true;
+        }
+    }, [items.length, selectedColumns, onSelectionChange]);
 
     const allSelected = selected.size === items.length && items.length > 0;
     const noneSelected = selected.size === 0;

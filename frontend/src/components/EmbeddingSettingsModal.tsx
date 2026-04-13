@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Cog6ToothIcon, XMarkIcon, InformationCircleIcon, PencilIcon } from '@heroicons/react/24/outline';
 import type { ChunkingConfig, ParallelizationConfig, MedicalContextConfig } from '../types/rag';
 import { useSystemSettings } from '../contexts/SystemSettingsContext';
 
-export interface EmbeddingSettings {
+interface EmbeddingSettings {
     batch_size: number;
     max_concurrent: number;
     chunking: ChunkingConfig;
@@ -37,18 +37,18 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
     defaultSettings,
 }) => {
     // Get settings from system settings context (loaded from backend)
-    const { getEmbeddingModalDefaults, ensureLoaded } = useSystemSettings();
-
+    const { getEmbeddingModalDefaults, isLoading: settingsLoading, ensureLoaded } = useSystemSettings();
+    
     // Ensure settings are loaded when modal opens
     useEffect(() => {
         if (isOpen) {
             ensureLoaded();
         }
     }, [isOpen, ensureLoaded]);
-
+    
     // Build config from system settings
     const systemDefaults = getEmbeddingModalDefaults();
-
+    
     const defaultConfig: EmbeddingSettings = {
         batch_size: systemDefaults.batch_size,
         max_concurrent: systemDefaults.max_concurrent,
@@ -76,9 +76,46 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
     const [editChunking, setEditChunking] = useState(false);
     const [incremental, setIncremental] = useState(true);
 
-
-    // Note: Modal state initialization should ideally happen in the parent or via the 'key' prop
-    // to avoid setState-in-effect which causes lint errors and extra renders.
+    // Track if modal was previously open to detect open transitions
+    const wasOpenRef = useRef(false);
+    
+    // KEY FIX: Reinitialize settings when modal OPENS (transition from closed to open)
+    useEffect(() => {
+        const justOpened = isOpen && !wasOpenRef.current;
+        wasOpenRef.current = isOpen;
+        
+        if (justOpened) {
+            // Modal just opened - use defaultSettings from parent (saved config)
+            console.log('[EmbeddingModal] Opened with defaultSettings.chunking:', defaultSettings?.chunking);
+            
+            const newDefaults = getEmbeddingModalDefaults();
+            setSettings({
+                batch_size: defaultSettings?.batch_size ?? newDefaults.batch_size,
+                max_concurrent: defaultSettings?.max_concurrent ?? newDefaults.max_concurrent,
+                chunking: defaultSettings?.chunking ? {
+                    parent_chunk_size: defaultSettings.chunking.parent_chunk_size,
+                    parent_chunk_overlap: defaultSettings.chunking.parent_chunk_overlap,
+                    child_chunk_size: defaultSettings.chunking.child_chunk_size,
+                    child_chunk_overlap: defaultSettings.chunking.child_chunk_overlap,
+                } : {
+                    parent_chunk_size: newDefaults.chunking.parent_chunk_size,
+                    parent_chunk_overlap: newDefaults.chunking.parent_chunk_overlap,
+                    child_chunk_size: newDefaults.chunking.child_chunk_size,
+                    child_chunk_overlap: newDefaults.chunking.child_chunk_overlap,
+                },
+                parallelization: defaultSettings?.parallelization ?? newDefaults.parallelization,
+                medical_context_config: defaultSettings?.medical_context_config ?? {
+                    medical_context: {},
+                    clinical_flag_prefixes: ['is_', 'has_', 'was_', 'history_of_', 'confirmed_', 'requires_', 'on_'],
+                    use_yaml_defaults: true,
+                },
+                max_consecutive_failures: defaultSettings?.max_consecutive_failures ?? newDefaults.max_consecutive_failures,
+                retry_attempts: defaultSettings?.retry_attempts ?? newDefaults.retry_attempts,
+            });
+            setEditChunking(false);
+            setShowAdvanced(false);
+        }
+    }, [isOpen, defaultSettings, getEmbeddingModalDefaults]);
 
     if (!isOpen) return null;
 
@@ -200,16 +237,17 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
                             </div>
                             <button
                                 onClick={() => setEditChunking(!editChunking)}
-                                className={`text-xs font-medium flex items-center gap-1 px-2 py-1 rounded transition-colors ${editChunking
-                                    ? 'text-blue-700 bg-blue-100 hover:bg-blue-200'
-                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
-                                    }`}
+                                className={`text-xs font-medium flex items-center gap-1 px-2 py-1 rounded transition-colors ${
+                                    editChunking 
+                                        ? 'text-blue-700 bg-blue-100 hover:bg-blue-200' 
+                                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
+                                }`}
                             >
                                 <PencilIcon className="w-3 h-3" />
                                 {editChunking ? 'Editing' : 'Edit'}
                             </button>
                         </div>
-
+                        
                         {editChunking ? (
                             // Editable Mode
                             <div className="px-3 pb-3 grid grid-cols-2 gap-3 animate-in fade-in duration-200">
@@ -402,7 +440,7 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
                                         <span className="text-gray-600">Use server defaults</span>
                                     </label>
                                 </div>
-
+                                
                                 {/* Medical abbreviation mappings */}
                                 <div className="mb-3">
                                     <label className="text-xs font-medium text-gray-600 mb-2 block">
@@ -662,10 +700,11 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
                         </button>
                         <button
                             onClick={handleConfirm}
-                            className={`px-5 py-2 rounded-lg font-semibold text-white transition-all text-sm ${incremental
-                                ? 'bg-indigo-600 hover:bg-indigo-700'
-                                : 'bg-red-600 hover:bg-red-700'
-                                }`}
+                            className={`px-5 py-2 rounded-lg font-semibold text-white transition-all text-sm ${
+                                incremental
+                                    ? 'bg-indigo-600 hover:bg-indigo-700'
+                                    : 'bg-red-600 hover:bg-red-700'
+                            }`}
                         >
                             {incremental ? 'Start Update' : 'Rebuild DB'}
                         </button>

@@ -235,7 +235,7 @@ export const getPromptHistory = async (agentId?: string): Promise<any> => {
   const response = await apiClient.get(`/api/v1/config/${agentId}/history`);
   // Response: { success, message, data: { configs: [], total } }
   const configs = response.data?.data?.configs || response.data?.configs || [];
-
+  
   // Transform backend configs to frontend PromptVersion format
   return configs.map((config: any) => ({
     id: config.id,
@@ -262,20 +262,20 @@ export const getActiveConfigMetadata = async (agentId?: string): Promise<any> =>
   // Response: { success, message, data: { ...config } }
   const config = response.data?.data || response.data;
   if (!config) return null;
-
+  
   // Transform backend field names to frontend expectations
   return {
     ...config,
     // Map system_prompt to prompt_text for compatibility
     prompt_text: config.system_prompt || config.prompt_text || '',
     // Map selected_columns to schema_selection
-    schema_selection: config.selected_columns
+    schema_selection: config.selected_columns 
       ? (typeof config.selected_columns === 'string' ? config.selected_columns : JSON.stringify(config.selected_columns))
       : config.schema_selection,
     // Map rag_config to retriever_config
     retriever_config: config.rag_config || config.retriever_config,
     // Ensure embedding_config is stringified if it's an object
-    embedding_config: config.embedding_config
+    embedding_config: config.embedding_config 
       ? (typeof config.embedding_config === 'string' ? config.embedding_config : JSON.stringify(config.embedding_config))
       : null,
     // Ensure llm_config is stringified if it's an object
@@ -289,10 +289,8 @@ export const getActiveConfigMetadata = async (agentId?: string): Promise<any> =>
     // Map data_source info
     data_source_type: config.data_source?.source_type || config.data_source_type,
     connection_id: config.data_source?.connection_id || config.connection_id,
-    ingestion_file_name: config.data_source?.title || config.data_source?.original_filename || config.ingestion_file_name,
+    ingestion_file_name: config.data_source?.original_filename || config.ingestion_file_name,
     ingestion_file_type: config.data_source?.file_type || config.ingestion_file_type,
-    db_url: config.data_source?.db_url,
-    db_engine_type: config.data_source?.db_engine_type,
   };
 };
 
@@ -578,7 +576,10 @@ export const getConnectionSchema = async (id: number): Promise<{ status: string;
 import type {
   EmbeddingJobProgress,
   EmbeddingJobSummary,
-  EmbeddingJobCreate
+  EmbeddingJobCreate,
+  Notification,
+  NotificationPreferences,
+  NotificationPreferencesUpdate
 } from '../types/rag';
 
 /**
@@ -627,6 +628,87 @@ export const listEmbeddingJobs = async (params?: {
   return response.data;
 };
 
+// ============================================================================
+// NOTIFICATIONS API
+// ============================================================================
+
+/**
+ * Get notifications for the current user.
+ */
+export const getNotifications = async (params?: {
+  status_filter?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<Notification[]> => {
+  const response = await apiClient.get('/api/v1/notifications', { params });
+  return response.data;
+};
+
+/**
+ * Get count of unread notifications.
+ */
+export const getUnreadNotificationCount = async (): Promise<{ count: number }> => {
+  const response = await apiClient.get('/api/v1/notifications/unread-count');
+  return response.data;
+};
+
+/**
+ * Get total count of notifications (for pagination).
+ */
+export const getNotificationCount = async (params?: {
+  status_filter?: string;
+}): Promise<{ count: number }> => {
+  const response = await apiClient.get('/api/v1/notifications/count', { params });
+  return response.data;
+};
+
+/**
+ * Get a specific notification.
+ */
+export const getNotification = async (notificationId: number): Promise<Notification> => {
+  const response = await apiClient.get(`/api/v1/notifications/${notificationId}`);
+  return response.data;
+};
+
+/**
+ * Mark a notification as read.
+ */
+export const markNotificationAsRead = async (notificationId: number): Promise<{ success: boolean }> => {
+  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/read`);
+  return response.data;
+};
+
+/**
+ * Mark all notifications as read.
+ */
+export const markAllNotificationsAsRead = async (): Promise<{ success: boolean; marked_count: number }> => {
+  const response = await apiClient.post('/api/v1/notifications/read-all');
+  return response.data;
+};
+
+/**
+ * Dismiss a notification.
+ */
+export const dismissNotification = async (notificationId: number): Promise<{ success: boolean }> => {
+  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/dismiss`);
+  return response.data;
+};
+
+/**
+ * Get notification preferences for the current user.
+ */
+export const getNotificationPreferences = async (): Promise<NotificationPreferences> => {
+  const response = await apiClient.get('/api/v1/notifications/preferences');
+  return response.data;
+};
+
+/**
+ * Update notification preferences.
+ */
+export const updateNotificationPreferences = async (preferences: NotificationPreferencesUpdate): Promise<{ success: boolean }> => {
+  const response = await apiClient.put('/api/v1/notifications/preferences', preferences);
+  return response.data;
+};
 
 // ============================================================================
 // OBSERVABILITY API
@@ -1375,9 +1457,6 @@ export interface DataSource {
   created_by?: string;
   created_at: string;
   updated_at: string;
-  // Dependency info
-  dependent_agents?: string[];
-  dependent_config_count?: number;
 }
 
 export interface DataSourceListResponse {
@@ -1514,15 +1593,15 @@ export const uploadDataSourceFile = async (
 ): Promise<DataSourceUploadResponse> => {
   const formData = new FormData();
   formData.append('file', file);
-
+  
   const params = new URLSearchParams();
   if (title) params.append('title', title);
   if (description) params.append('description', description);
-
-  const url = params.toString()
+  
+  const url = params.toString() 
     ? `/api/v1/data-sources/upload?${params.toString()}`
     : '/api/v1/data-sources/upload';
-
+  
   const response = await apiClient.post(url, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120 * 1000, // 2 min for large files
@@ -1964,12 +2043,12 @@ export interface AIModel {
   model_type: ModelType;
   provider_name: string;
   deployment_type: DeploymentType;
-
+  
   // Cloud config
   api_base_url?: string;
   has_api_key: boolean;
   api_key_env_var?: string;
-
+  
   // Local config
   local_path?: string;
   download_status: DownloadStatus;
@@ -1978,21 +2057,21 @@ export interface AIModel {
   download_queue_position?: number;
   hf_model_id?: string;
   hf_revision?: string;
-
+  
   // Model specs
   context_length?: number;
   max_input_tokens?: number;
   dimensions?: number;
-
+  
   // RAG hints
   recommended_chunk_size?: number;
   compatibility_notes?: string;
-
+  
   // Status
   is_active: boolean;
   is_default: boolean;
   is_ready: boolean;
-
+  
   description?: string;
   created_at: string;
   updated_at: string;
@@ -2005,26 +2084,26 @@ export interface AIModelCreate {
   model_type: ModelType;
   provider_name: string;
   deployment_type: DeploymentType;
-
+  
   // Cloud config
   api_base_url?: string;
   api_key?: string;
   api_key_env_var?: string;
-
+  
   // Local config
   local_path?: string;
   hf_model_id?: string;
   hf_revision?: string;
-
+  
   // Model specs
   context_length?: number;
   max_input_tokens?: number;
   dimensions?: number;
-
+  
   // RAG hints
   recommended_chunk_size?: number;
   compatibility_notes?: string;
-
+  
   description?: string;
   is_default?: boolean;
 }

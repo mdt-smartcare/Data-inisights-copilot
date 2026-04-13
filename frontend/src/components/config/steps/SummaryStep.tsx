@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import EmbeddingProgress from '../../EmbeddingProgress';
-import {
-    CircleStackIcon,
-    ArrowPathIcon,
-    CheckCircleIcon,
+import { 
+    CircleStackIcon, 
+    ArrowPathIcon, 
+    CheckCircleIcon, 
     XCircleIcon,
     ClockIcon,
     ArrowRightIcon
@@ -22,6 +22,7 @@ interface EmbeddingJob {
 }
 
 interface SummaryStepProps {
+    agentId?: string;
     configId?: number;
     embeddingJobId: string | null;
     onStartEmbedding: (incremental: boolean) => void;
@@ -32,6 +33,7 @@ interface SummaryStepProps {
 }
 
 export const SummaryStep: React.FC<SummaryStepProps> = ({
+    agentId,
     configId,
     embeddingJobId,
     onStartEmbedding,
@@ -156,7 +158,7 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
                                 {hasCompletedJob ? 'Knowledge Base Ready' : 'Action Required: Build Knowledge Base'}
                             </h3>
                             <p className={`text-xs sm:text-sm mb-3 sm:mb-4 ${hasCompletedJob ? 'text-gray-600' : 'text-amber-700'}`}>
-                                {hasCompletedJob
+                                {hasCompletedJob 
                                     ? 'Your agent is ready to answer questions. You can rebuild or update the knowledge base anytime.'
                                     : <>Your configuration is saved, but <strong>the agent cannot answer questions yet</strong>. You must create the Vector Database to enable the agent's knowledge base.</>
                                 }
@@ -164,10 +166,11 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
                             <div className="flex flex-col sm:flex-row flex-wrap gap-2 sm:gap-3">
                                 <button
                                     onClick={() => onStartEmbedding(false)}
-                                    className={`w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg font-semibold transition-colors shadow-md flex items-center justify-center gap-2 text-sm ${hasCompletedJob
-                                        ? 'bg-indigo-600 text-white hover:bg-indigo-700'
-                                        : 'bg-amber-600 text-white hover:bg-amber-700'
-                                        }`}
+                                    className={`w-full sm:w-auto px-4 sm:px-6 py-2.5 sm:py-3 rounded-lg font-semibold transition-colors shadow-md flex items-center justify-center gap-2 text-sm ${
+                                        hasCompletedJob 
+                                            ? 'bg-indigo-600 text-white hover:bg-indigo-700' 
+                                            : 'bg-amber-600 text-white hover:bg-amber-700'
+                                    }`}
                                 >
                                     <svg className="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
@@ -190,7 +193,7 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
                         <ClockIcon className="w-4 h-4 text-gray-500" />
                         Recent Embedding Jobs
                     </h3>
-                    <button
+                    <button 
                         onClick={fetchEmbeddingJobs}
                         className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
                         title="Refresh"
@@ -239,7 +242,7 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
                                         </div>
                                         {(['EMBEDDING', 'PREPARING', 'VALIDATING', 'STORING'].includes(job.status)) && job.total_documents > 0 && (
                                             <div className="mt-1.5 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                                                <div
+                                                <div 
                                                     className="h-full bg-blue-500 rounded-full transition-all duration-300"
                                                     style={{ width: `${Math.round((job.processed_documents / job.total_documents) * 100)}%` }}
                                                 />

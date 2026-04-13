@@ -120,7 +120,7 @@ export const AIModelSelector: React.FC<AIModelSelectorProps> = ({
           </label>
         </div>
       )}
-
+      
       {/* Select */}
       <div className="relative">
         <select
@@ -143,7 +143,7 @@ export const AIModelSelector: React.FC<AIModelSelectorProps> = ({
               {models.map(model => (
                 <option key={model.id} value={model.model_id}>
                   {model.display_name}
-                  {model.is_default ? ' (Default) ' : ''}
+                  {model.is_default ? ' ⭐' : ''}
                   {model.dimensions ? ` (${model.dimensions}d)` : ''}
                   {model.context_length ? ` (${Math.round(model.context_length / 1000)}k ctx)` : ''}
                 </option>
@@ -151,7 +151,7 @@ export const AIModelSelector: React.FC<AIModelSelectorProps> = ({
             </>
           )}
         </select>
-
+        
         {/* Dropdown Arrow */}
         <div className="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
           <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -166,8 +166,9 @@ export const AIModelSelector: React.FC<AIModelSelectorProps> = ({
           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${PROVIDER_COLORS[selectedModel.provider_name] || PROVIDER_COLORS.local}`}>
             {selectedModel.provider_name}
           </span>
-          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${selectedModel.deployment_type === 'local' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
-            }`}>
+          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+            selectedModel.deployment_type === 'local' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'
+          }`}>
             {selectedModel.deployment_type}
           </span>
           {selectedModel.is_default && (

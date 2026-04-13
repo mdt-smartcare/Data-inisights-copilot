@@ -9,10 +9,8 @@
  * No providers needed - everything is on the model.
  */
 import { useState, useEffect, useCallback } from 'react';
+import { ChatHeader } from '../components/chat';
 import ConfirmationModal from '../components/ConfirmationModal';
-import ChatHeader from '../components/chat/ChatHeader';
-import { APP_CONFIG } from '../config';
-
 import {
   listAIModels,
   createAIModel,
@@ -72,8 +70,8 @@ export default function AIRegistryPage() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-50">
-      <ChatHeader title={APP_CONFIG.APP_NAME} />
-
+      <ChatHeader title="AI Models" />
+      
       <main className="flex-1 overflow-y-auto p-6">
         <div className="max-w-6xl mx-auto">
           {/* Error Banner */}
@@ -91,10 +89,11 @@ export default function AIRegistryPage() {
                 <button
                   key={tab}
                   onClick={() => setActiveTab(tab)}
-                  className={`py-3 px-1 border-b-2 font-medium text-sm ${activeTab === tab
-                    ? 'border-indigo-500 text-indigo-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                    }`}
+                  className={`py-3 px-1 border-b-2 font-medium text-sm ${
+                    activeTab === tab
+                      ? 'border-indigo-500 text-indigo-600'
+                      : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  }`}
                 >
                   {tab === 'models' && ' Models'}
                   {tab === 'huggingface' && ' HuggingFace'}
@@ -128,7 +127,7 @@ function ModelsTab({ onError }: TabProps) {
   const [showForm, setShowForm] = useState(false);
   const [editingModel, setEditingModel] = useState<AIModel | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; model: AIModel | null }>({ show: false, model: null });
-
+  
   // Filters
   const [filterType, setFilterType] = useState<string>('');
   const [filterDeployment, setFilterDeployment] = useState<string>('');
@@ -139,7 +138,7 @@ function ModelsTab({ onError }: TabProps) {
       const params: Record<string, string | boolean | undefined> = {};
       if (filterType) params.model_type = filterType;
       if (filterDeployment) params.deployment_type = filterDeployment;
-
+      
       const response = await listAIModels(params);
       setModels(response.models);
     } catch (err) {
@@ -173,15 +172,15 @@ function ModelsTab({ onError }: TabProps) {
       for (const modelId of downloadingIds) {
         try {
           const progress = await getDownloadProgress(modelId);
-          setModels(prev => prev.map(m =>
-            m.id === modelId
-              ? {
-                ...m,
-                download_status: progress.status,
-                download_progress: progress.progress,
-                download_error: progress.error,
-                download_queue_position: progress.queue_position
-              }
+          setModels(prev => prev.map(m => 
+            m.id === modelId 
+              ? { 
+                  ...m, 
+                  download_status: progress.status, 
+                  download_progress: progress.progress, 
+                  download_error: progress.error,
+                  download_queue_position: progress.queue_position
+                }
               : m
           ));
           // Stop tracking if completed or failed
@@ -339,18 +338,20 @@ function ModelCard({ model, onEdit, onDelete, onDownload, onCancelDownload }: Mo
             {model.is_default && (
               <span className="px-2 py-0.5 bg-yellow-100 text-yellow-800 text-xs rounded-full">Default</span>
             )}
-            <span className={`px-2 py-0.5 text-xs rounded-full ${model.model_type === 'llm' ? 'bg-purple-100 text-purple-800' :
+            <span className={`px-2 py-0.5 text-xs rounded-full ${
+              model.model_type === 'llm' ? 'bg-purple-100 text-purple-800' :
               model.model_type === 'embedding' ? 'bg-blue-100 text-blue-800' :
-                'bg-green-100 text-green-800'
-              }`}>
+              'bg-green-100 text-green-800'
+            }`}>
               {(model.model_type || 'unknown').toUpperCase()}
             </span>
-            <span className={`px-2 py-0.5 text-xs rounded-full ${model.deployment_type === 'cloud' ? 'bg-sky-100 text-sky-800' : 'bg-orange-100 text-orange-800'
-              }`}>
+            <span className={`px-2 py-0.5 text-xs rounded-full ${
+              model.deployment_type === 'cloud' ? 'bg-sky-100 text-sky-800' : 'bg-orange-100 text-orange-800'
+            }`}>
               {model.deployment_type}
             </span>
           </div>
-
+          
           <p className="text-sm text-gray-500 mb-2">
             <span className="font-mono">{model.model_id}</span>
             {model.provider_name && <span className="ml-2">({model.provider_name})</span>}
@@ -381,8 +382,8 @@ function ModelCard({ model, onEdit, onDelete, onDownload, onCancelDownload }: Mo
               {model.download_status === 'downloading' && (
                 <div className="flex items-center gap-2">
                   <div className="w-24 h-2 bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-blue-500 transition-all"
+                    <div 
+                      className="h-full bg-blue-500 transition-all" 
                       style={{ width: `${model.download_progress}%` }}
                     />
                   </div>
@@ -469,7 +470,7 @@ function ModelForm({ model, onClose, onSaved, onError }: ModelFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-
+    
     try {
       if (model) {
         const updateData: AIModelUpdate = {
@@ -500,7 +501,7 @@ function ModelForm({ model, onClose, onSaved, onError }: ModelFormProps) {
         <div className="p-6 border-b">
           <h2 className="text-xl font-semibold">{model ? 'Edit Model' : 'Add Model'}</h2>
         </div>
-
+        
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {/* Basic Info */}
           <div className="grid grid-cols-2 gap-4">
@@ -706,7 +707,7 @@ function HuggingFaceTab({ onError }: TabProps) {
 
   const handleSearch = async () => {
     if (!query.trim()) return;
-
+    
     setLoading(true);
     try {
       const response = await searchHuggingFace({ query, model_type: modelType, limit: 20 });
@@ -728,7 +729,7 @@ function HuggingFaceTab({ onError }: TabProps) {
         auto_download: autoDownload,
       });
       // Mark as registered
-      setResults(prev => prev.map(m =>
+      setResults(prev => prev.map(m => 
         m.model_id === hfModel.model_id ? { ...m, is_registered: true } : m
       ));
     } catch (err: unknown) {
@@ -867,7 +868,7 @@ function DefaultsTab({ onError }: TabProps) {
         return (
           <div key={type} className="bg-white border rounded-lg p-6">
             <h3 className="font-semibold text-gray-900 mb-4">Default {label}</h3>
-
+            
             {typeModels.length === 0 ? (
               <p className="text-gray-500">No ready {label.toLowerCase()} models available</p>
             ) : (
@@ -885,8 +886,9 @@ function DefaultsTab({ onError }: TabProps) {
                       <span className="font-medium">{model.display_name}</span>
                       <span className="ml-2 text-sm text-gray-500 font-mono">{model.model_id}</span>
                     </div>
-                    <span className={`px-2 py-0.5 text-xs rounded-full ${model.deployment_type === 'cloud' ? 'bg-sky-100 text-sky-800' : 'bg-orange-100 text-orange-800'
-                      }`}>
+                    <span className={`px-2 py-0.5 text-xs rounded-full ${
+                      model.deployment_type === 'cloud' ? 'bg-sky-100 text-sky-800' : 'bg-orange-100 text-orange-800'
+                    }`}>
                       {model.deployment_type}
                     </span>
                   </label>

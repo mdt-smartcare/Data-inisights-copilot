@@ -13,18 +13,15 @@ import {
     handleApiError,
     startEmbeddingJob,
     getDataSource,
-    getConfigHistory,
-    getSystemSettings,
-    type DataSource,
-    type DataSourceSchemaResponse
+    type DataSource
 } from '../services/api';
 import type { IngestionResponse } from '../services/api';
-import { canPublishPrompt } from '../utils/permissions';
+import { canEditPrompt, canPublishPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
 import type { AdvancedSettings } from '../contexts/AgentContext';
 
 // Utility to convert snake_case keys to camelCase
-const snakeToCamel = (str: string): string =>
+const snakeToCamel = (str: string): string => 
     str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
 
 const toCamelCaseKeys = <T extends Record<string, unknown>>(obj: T | null | undefined): Record<string, unknown> | null => {
@@ -66,6 +63,7 @@ const AgentConfigPage: React.FC = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const { user, isLoading: isAuthLoading } = useAuth();
     const { success: showSuccess, error: showError } = useToast();
+    const canEdit = canEditPrompt(user);
     const canPublish = canPublishPrompt(user);
 
     // Draft config hook
@@ -76,10 +74,13 @@ const AgentConfigPage: React.FC = () => {
         isSaving,
         isPublishing,
         error: draftError,
+        currentStep: draftStep,
         loadDraft,
         loadVersion,
         createNewDraft,
         saveStep,
+        setCurrentStep: setDraftStep,
+        createDraftFromConfig,
         publish,
     } = useConfigDraft();
 
@@ -102,13 +103,11 @@ const AgentConfigPage: React.FC = () => {
     const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
     const [fileUploadResult, setFileUploadResult] = useState<IngestionResponse | null>(null);
     const [selectedFileColumns, setSelectedFileColumns] = useState<string[]>([]);
-    const [fullSchema, setFullSchema] = useState<DataSourceSchemaResponse | null>(null);
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
-    const [isDataSourceLocked, setIsDataSourceLocked] = useState(false);
 
     // Refs for auto-scrolling steps
     const stepsContainerRef = useRef<HTMLDivElement>(null);
@@ -126,33 +125,15 @@ const AgentConfigPage: React.FC = () => {
     useEffect(() => {
         // Skip if already loaded
         if (initialLoadDoneRef.current) return;
-
+        
         const loadAgentAndConfig = async () => {
             if (!id) return;
             initialLoadDoneRef.current = true;
             setIsLoadingAgent(true);
             try {
-                // Fetch agent and system settings in parallel
-                const [foundAgent] = await Promise.all([
-                    getAgent(id),
-                    Promise.all([
-                        getSystemSettings('embedding').catch(() => null),
-                        getSystemSettings('rag').catch(() => null),
-                        getSystemSettings('llm').catch(() => null),
-                        getSystemSettings('chunking').catch(() => null)
-                    ])
-                ]);
+                const foundAgent = await getAgent(id);
                 setAgent(foundAgent);
-
-                // Check if agent has published configs to lock data source
-                try {
-                    const history = await getConfigHistory(id);
-                    const hasPublished = history.configs.some(c => c.status === 'published');
-                    setIsDataSourceLocked(hasPublished);
-                } catch (err) {
-                    console.error('Failed to fetch config history:', err);
-                }
-
+                
                 // If versionId is in URL, load that specific version
                 // Otherwise, check for existing draft
                 let config = null;
@@ -161,7 +142,7 @@ const AgentConfigPage: React.FC = () => {
                 } else {
                     config = await loadDraft(id);
                 }
-
+                
                 if (config) {
                     setHasDraft(true);
                     // Use URL step if present, otherwise go to next step after last completed
@@ -204,7 +185,7 @@ const AgentConfigPage: React.FC = () => {
                             setDataSourceType('file');
                         }
                     }
-                    if (config.data_dictionary?.content) setDataDictionary(config.data_dictionary.content as string);
+                    if (config.data_dictionary?.content) setDataDictionary(config.data_dictionary.content);
                     // Pre-fill advanced settings from config (normalize snake_case to camelCase)
                     if (config.llm_config || config.embedding_config || config.chunking_config || config.rag_config ||
                         config.embedding_model_id || config.llm_model_id || config.reranker_model_id) {
@@ -234,24 +215,8 @@ const AgentConfigPage: React.FC = () => {
             }
         };
         loadAgentAndConfig();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
-
-    // Fetch schema if it's missing but we have a data source (e.g. on reload)
-    useEffect(() => {
-        if (selectedDataSource?.id && !fullSchema && dataSourceType === 'database') {
-            const fetchSchema = async () => {
-                try {
-                    const { getDataSourceSchema } = await import('../services/api');
-                    const schema = await getDataSourceSchema(selectedDataSource.id);
-                    setFullSchema(schema);
-                } catch (err) {
-                    console.error('Failed to auto-fetch schema:', err);
-                }
-            };
-            fetchSchema();
-        }
-    }, [selectedDataSource, fullSchema, dataSourceType]);
 
     // Sync state to window for API use (temporary solution)
     useEffect(() => {
@@ -277,16 +242,16 @@ const AgentConfigPage: React.FC = () => {
         const currentStepParam = searchParams.get('step');
         const currentVersionParam = searchParams.get('versionId');
         const newParams: Record<string, string> = { step: currentStep.toString() };
-
+        
         // Add versionId to URL if we have one
         if (hookVersionId) {
             newParams.versionId = hookVersionId.toString();
         }
-
+        
         // Only update if something changed
         const stepChanged = currentStep.toString() !== currentStepParam;
         const versionChanged = hookVersionId?.toString() !== currentVersionParam;
-
+        
         if (stepChanged || versionChanged) {
             setSearchParams(newParams, { replace: true });
         }
@@ -347,7 +312,7 @@ const AgentConfigPage: React.FC = () => {
                 setError("Please select a data source.");
                 return;
             }
-
+            
             // Create new draft when starting (if no draft was loaded on page init)
             if (!draft && agent) {
                 const newDraft = await createNewDraft(agent.id, selectedDataSource.id);
@@ -366,7 +331,7 @@ const AgentConfigPage: React.FC = () => {
             const stepData = getStepData(currentStep);
             await saveStep(currentStep, stepData);
         }
-
+        
         if (currentStep === 2 && dataSourceType === 'database') {
             // For databases, schema selection is temporarily skipped
             // Just proceed to next step
@@ -419,7 +384,7 @@ const AgentConfigPage: React.FC = () => {
         try {
             // Use the new step-based publish API
             const published = await publish(draftPrompt, exampleQuestions);
-
+            
             if (published) {
                 setSuccessMessage(`Configuration published successfully!`);
                 setCurrentStep(6); // Move to Summary
@@ -459,7 +424,7 @@ const AgentConfigPage: React.FC = () => {
         }
     };
 
-    if (isAuthLoading || isLoadingAgent || isDraftLoading) {
+    if (isAuthLoading || isLoadingAgent) {
         return (
             <div className="flex flex-col h-screen bg-gray-50">
                 <ChatHeader title={APP_CONFIG.APP_NAME} />
@@ -542,7 +507,7 @@ const AgentConfigPage: React.FC = () => {
                                         className="flex flex-col items-center z-10"
                                     >
                                         <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm font-medium transition-colors duration-200 
-                                                ${currentStep >= step.id ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-300 text-gray-400'}`}>
+                                            ${currentStep >= step.id ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-300 text-gray-400'}`}>
                                             {step.id}
                                         </div>
                                         <span className={`text-[10px] sm:text-xs mt-1 sm:mt-2 font-medium text-center whitespace-nowrap ${currentStep >= step.id ? 'text-blue-600' : 'text-gray-400'}`}>
@@ -586,7 +551,6 @@ const AgentConfigPage: React.FC = () => {
                                     onFileColumnsInit={setSelectedFileColumns}
                                     selectedDataSource={selectedDataSource}
                                     setSelectedDataSource={setSelectedDataSource}
-                                    isLocked={isDataSourceLocked}
                                 />
                             )}
 
@@ -601,7 +565,6 @@ const AgentConfigPage: React.FC = () => {
                                     onFileColumnsChange={setSelectedFileColumns}
                                     selectedFileColumns={selectedFileColumns}
                                     selectedDataSource={selectedDataSource}
-                                    onSchemaFetch={setFullSchema}
                                 />
                             )}
 
@@ -611,8 +574,6 @@ const AgentConfigPage: React.FC = () => {
                                     dataDictionary={dataDictionary}
                                     setDataDictionary={setDataDictionary}
                                     fileUploadResult={fileUploadResult}
-                                    schema={fullSchema}
-                                    selectedSchema={selectedSchema}
                                 />
                             )}
 
@@ -634,17 +595,12 @@ const AgentConfigPage: React.FC = () => {
                                     exampleQuestions={exampleQuestions}
                                     onGeneratePrompt={handleGenerate}
                                     isGenerating={generating}
-                                    agent={agent}
-                                    dataDictionary={dataDictionary}
-                                    schema={fullSchema}
-                                    selectedSchema={selectedSchema}
-                                    advancedSettings={advancedSettings}
-                                    dataSourceType={dataSourceType}
                                 />
                             )}
 
                             {currentStep === 6 && (
                                 <SummaryStep
+                                    agentId={agent.id}
                                     configId={draft?.id}
                                     embeddingJobId={embeddingJobId}
                                     onStartEmbedding={handleStartEmbedding}
@@ -707,7 +663,7 @@ const AgentConfigPage: React.FC = () => {
                                     )
                                 ) : (
                                     // No prompt yet - show disabled placeholder (actual button is in the step component)
-                                    <div className="text-black-400">
+                                    <div className="text-gray-400 text-sm">
                                         Generate a prompt to continue
                                     </div>
                                 )
@@ -723,7 +679,7 @@ const AgentConfigPage: React.FC = () => {
                                     onClick={handleNext}
                                     disabled={generating || isPublishing || (currentStep === 1 && !selectedDataSource)}
                                     className={`w-full sm:w-auto px-4 sm:px-6 py-2 rounded-md font-medium text-white text-sm sm:text-base transition-colors duration-200 flex items-center justify-center
-                                            ${generating || isPublishing || (currentStep === 1 && !selectedDataSource) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                        ${generating || isPublishing || (currentStep === 1 && !selectedDataSource) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                 >
                                     Next
                                 </button>

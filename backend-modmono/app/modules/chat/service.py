@@ -212,16 +212,8 @@ class ChatService:
                     )
                 
                 # Step 5: Generate follow-up questions (async, don't block)
-                # Get conversation history for context-aware followups
-                conversation_history = self._memory.get_context(session_id, max_messages=5)
-                
                 followup_task = asyncio.create_task(
-                    generate_followups_background(
-                        query, 
-                        answer, 
-                        conversation_history=conversation_history,
-                        timeout=2.0
-                    )
+                    generate_followups_background(query, answer, timeout=2.0)
                 )
                 
                 # Step 6: Save to conversation memory
@@ -407,12 +399,7 @@ class ChatService:
         tracing_ctx: TracingContext,
         fastapi_request: Optional[Request] = None,
     ) -> Tuple[str, List[SourceChunk], List[ReasoningStep], EmbeddingInfo]:
-        """
-        Handle Intent C: Hybrid queries.
-        
-        For schema-aware indexing (DDL per table), this falls back to SQL generation
-        since semantic schema retrieval is built into the SQL service.
-        """
+        """Handle Intent C: Hybrid (SQL filter + vector search)."""
         reasoning_steps = []
         
         if not sql_service:
@@ -421,31 +408,7 @@ class ChatService:
                 query, agent_config, tracing_ctx, fastapi_request
             )
         
-        # Check if we're using schema-aware indexing (no unstructured document vectors)
-        chunking_config = agent_config.get("chunking_config", {}) if agent_config else {}
-        if isinstance(chunking_config, str):
-            chunking_config = json.loads(chunking_config)
-        
-        use_schema_aware = chunking_config.get("use_schema_aware_indexing", True)
-        
-        if use_schema_aware:
-            # For schema-aware indexing, hybrid intent uses SQL generation
-            # The SQL service already has semantic schema retrieval built in
-            logger.info("Hybrid intent with schema-aware indexing - using SQL generation")
-            answer, sql_reasoning, chart_data = await self._handle_sql_intent(
-                query, sql_service, agent_config, tracing_ctx
-            )
-            
-            emb_info = EmbeddingInfo(
-                model="bge-base-en-v1.5",
-                dimensions=768,
-                search_method="hybrid_sql",
-                docs_retrieved=0,
-            )
-            
-            return answer, [], sql_reasoning, emb_info
-        
-        # Legacy path: SQL filter + vector search (for parent-child chunking)
+        # Step 1: Execute SQL filter to get IDs
         filter_ids = []
         if classification.sql_filter:
             tracing_ctx.add_span("sql_filter", input=classification.sql_filter)
@@ -484,19 +447,10 @@ class ChatService:
                 ))
         
         if not filter_ids:
-            # No IDs found, fall back to SQL generation
-            logger.info("No filter IDs found, falling back to SQL generation")
-            answer, sql_reasoning, chart_data = await self._handle_sql_intent(
-                query, sql_service, agent_config, tracing_ctx
+            # No IDs found, fall back to pure vector search
+            return await self._handle_vector_intent(
+                query, agent_config, tracing_ctx, fastapi_request
             )
-            
-            emb_info = EmbeddingInfo(
-                model="bge-base-en-v1.5",
-                dimensions=768,
-                search_method="hybrid_sql_fallback",
-                docs_retrieved=0,
-            )
-            return answer, [], sql_reasoning, emb_info
         
         await check_cancelled(fastapi_request)
         
@@ -651,7 +605,6 @@ class ChatService:
         
         return {
             "agent_id": str(config.agent_id),
-            "config_id": config.id,  # Add config ID for vector collection name
             "data_source_id": config.data_source_id,
             "embedding_config": config.embedding_config or {},
             "rag_config": config.rag_config or {},
@@ -660,7 +613,6 @@ class ChatService:
             "system_prompt": config.system_prompt,
             "llm_model_id": config.llm_model_id,
             "embedding_model_id": config.embedding_model_id,
-            "vector_collection_name": config.vector_collection_name,  # Add vector collection name
         }
     
     async def _get_embedding_model(
@@ -707,28 +659,12 @@ class ChatService:
         return await loop.run_in_executor(None, embedding_model.embed_query, query)
     
     def _get_vector_db_name(self, agent_config: Optional[Dict[str, Any]]) -> str:
-        """Get the vector database collection name for the agent."""
+        """Get the vector database name for the agent."""
         if agent_config:
-            # First, check for explicitly set vector_collection_name (set by embedding job)
-            vector_collection = agent_config.get("vector_collection_name")
-            if vector_collection:
-                return vector_collection
-            
-            # Fallback: construct from agent_id and config_id (matches embedding service pattern)
-            agent_id = agent_config.get("agent_id")
-            config_id = agent_config.get("config_id")
-            if agent_id and config_id:
-                return f"agent_{agent_id}_config_{config_id}"
-            
-            # Legacy fallback: check embedding_config
             embedding_config = agent_config.get("embedding_config", {})
             if isinstance(embedding_config, str):
                 embedding_config = json.loads(embedding_config)
-            legacy_name = embedding_config.get("vector_db_name")
-            # Ignore malformed names that look like file paths
-            if legacy_name and not legacy_name.startswith("var_") and "/" not in legacy_name:
-                return legacy_name
-        
+            return embedding_config.get("vector_db_name", "default_collection")
         return "default_collection"
     
     async def _search_vectors(

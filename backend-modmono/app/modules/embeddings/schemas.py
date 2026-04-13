@@ -28,49 +28,16 @@ class EmbeddingJobStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-class ChunkingStrategy(str, Enum):
-    """Available chunking strategies for embedding."""
-    SCHEMA_AWARE = "schema_aware"  # Table-level DDL indexing (recommended)
-    PARENT_CHILD = "parent_child"  # Legacy small-to-big retrieval (deprecated)
-
-
 # ============================================
 # Configuration DTOs
 # ============================================
 
-class SchemaIndexingConfig(BaseModel):
-    """
-    Configuration for table-level, schema-aware indexing.
-    
-    Each complete DDL statement acts as a single, unbroken chunk.
-    This preserves relational boundaries and provides better context for SQL generation.
-    """
-    strategy: ChunkingStrategy = Field(
-        default=ChunkingStrategy.SCHEMA_AWARE,
-        description="Indexing strategy: 'schema_aware' for DDL-based indexing (recommended)"
-    )
-    include_row_counts: bool = Field(default=True, description="Include row counts in DDL metadata")
-    include_relationships: bool = Field(default=True, description="Generate a relationships overview document")
-    enrich_with_data_dictionary: bool = Field(default=True, description="Enrich DDL with column descriptions")
-
-
 class ChunkingConfig(BaseModel):
-    """
-    Configuration for chunking strategy.
-    
-    DEFAULT: Table-level, schema-aware indexing where each complete DDL statement 
-    acts as a single, unbroken chunk.
-    
-    DEPRECATED: Parent-child chunking (Parent: 512 / Child: 128) is no longer used.
-    """
-    use_schema_aware_indexing: bool = Field(default=True, description="Use table-level DDL indexing (recommended)")
-    schema_indexing: Optional[SchemaIndexingConfig] = Field(default=None, description="Schema-aware indexing config")
-    # Legacy settings (deprecated, only used if use_schema_aware_indexing=False)
-    parent_chunk_size: int = Field(default=512, ge=100, le=2000, description="[DEPRECATED] Parent chunk size")
-    parent_chunk_overlap: int = Field(default=100, ge=0, le=500, description="[DEPRECATED] Parent overlap")
-    child_chunk_size: int = Field(default=128, ge=50, le=500, description="[DEPRECATED] Child chunk size")
-    child_chunk_overlap: int = Field(default=25, ge=0, le=100, description="[DEPRECATED] Child overlap")
-    use_parent_child_chunking: bool = Field(default=False, description="[DEPRECATED] Defaults to False")
+    """Configuration for parent-child chunking strategy."""
+    parent_chunk_size: int = Field(default=512, ge=100, le=2000, description="Parent chunk size in tokens")
+    parent_chunk_overlap: int = Field(default=100, ge=0, le=500, description="Parent chunk overlap in tokens")
+    child_chunk_size: int = Field(default=128, ge=50, le=500, description="Child chunk size in tokens")
+    child_chunk_overlap: int = Field(default=25, ge=0, le=100, description="Child chunk overlap in tokens")
 
 
 class ParallelizationConfig(BaseModel):

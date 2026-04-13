@@ -449,7 +449,7 @@ Columns:
         try:
             result = conn.execute(sql)
             columns = [desc[0] for desc in result.description]
-            rows_raw = result.fetchall()  # No limit - data analysts need all results
+            rows_raw = result.fetchmany(10000)
             
             # Convert to list of dicts
             rows = []
@@ -474,59 +474,6 @@ Columns:
         finally:
             conn.close()
     
-
-    def _auto_aggregate_for_chart(
-        self, 
-        rows: List[Dict], 
-        columns: List[str], 
-        question_lower: str
-    ) -> Optional[Dict]:
-        """
-        Auto-aggregate raw data for meaningful chart visualization.
-        
-        When a query returns many raw rows (e.g., "list all female patients"),
-        we need to aggregate the data to create useful charts.
-        """
-        from collections import Counter
-        
-        # Find good categorical columns to aggregate by
-        categorical_candidates = []
-        for col in columns:
-            col_lower = col.lower()
-            # Prioritize location/category columns for aggregation
-            if any(term in col_lower for term in [
-                'facility', 'region', 'district', 'county', 'country', 'site',
-                'status', 'type', 'category', 'level', 'program', 'diagnosis'
-            ]):
-                categorical_candidates.append(col)
-        
-        if not categorical_candidates:
-            # Fallback: find any column with reasonable cardinality
-            for col in columns[:10]:  # Check first 10 columns
-                unique_values = set(str(row.get(col, '')) for row in rows[:1000])
-                if 2 <= len(unique_values) <= 50:
-                    categorical_candidates.append(col)
-                    break
-        
-        if not categorical_candidates:
-            return None
-        
-        # Use the best candidate column
-        agg_col = categorical_candidates[0]
-        
-        # Count occurrences
-        counter = Counter(str(row.get(agg_col, 'Unknown')) for row in rows)
-        
-        # Get top 20 categories
-        top_categories = counter.most_common(20)
-        
-        return {
-            "aggregation_column": agg_col,
-            "data": [{"label": label, "count": count} for label, count in top_categories],
-            "total_rows": len(rows),
-            "other_count": sum(count for label, count in counter.most_common()[20:])
-        }
-
     def _format_response(
         self, 
         question: str, 
@@ -541,15 +488,6 @@ Columns:
             return "No results found for your query."
         
         question_lower = question.lower()
-        total_rows = len(rows)
-        
-        # Detect if results are raw data (many rows, many columns) vs aggregated data
-        is_raw_data = total_rows > 100 and len(columns) > 5
-        
-        # For raw data with many rows, auto-aggregate for meaningful charts
-        aggregated_summary = None
-        if is_raw_data:
-            aggregated_summary = self._auto_aggregate_for_chart(rows, columns, question_lower)
         
         # Detect if this is a rate/percentage question
         is_rate_question = any(word in question_lower for word in [
@@ -600,22 +538,7 @@ Columns:
 ```"""
         
         # For more complex results, use LLM to format with chart
-        # If we have aggregated summary, use that for charting instead of raw rows
-        if aggregated_summary:
-            agg_col = aggregated_summary["aggregation_column"]
-            agg_data = aggregated_summary["data"]
-            other_count = aggregated_summary.get("other_count", 0)
-            
-            chart_data_text = f"AGGREGATED DATA for chart (by {agg_col}):\n"
-            for item in agg_data:
-                chart_data_text += f"  {item['label']}: {item['count']:,}\n"
-            if other_count > 0:
-                chart_data_text += f"  (Other): {other_count:,}\n"
-            chart_data_text += f"\nTotal: {total_rows:,} rows"
-            
-            result_preview = chart_data_text
-        else:
-            result_preview = json.dumps(rows[:15], indent=2, default=str)
+        result_preview = json.dumps(rows[:15], indent=2, default=str)
         
         chart_hint = ""
         if any(word in question_lower for word in ['cascade', 'funnel', 'journey', 'stages', 'flow']):
@@ -639,9 +562,9 @@ Also, generate a JSON chart specification for visualization.
 Question: {question}
 SQL Query: {sql}
 Execution Time: {execution_time_ms:.2f}ms
-Total Rows: {total_rows:,}
+Total Rows: {len(rows)}
 
-{"AGGREGATED DATA FOR VISUALIZATION:" if aggregated_summary else "Results (sample):"}
+Results (first 15 rows):
 {result_preview}
 
 {f"IMPORTANT: {chart_hint}" if chart_hint else ""}
@@ -710,7 +633,7 @@ Response:"""
                 "answer": answer,
                 "sql": sql,
                 "columns": columns,
-                "rows": rows,  # Return all rows - no artificial limit
+                "rows": rows[:100],
                 "total_rows": len(rows),
                 "execution_time_ms": round(execution_time_ms, 2),
             }
@@ -757,7 +680,7 @@ Response:"""
                 "status": "success",
                 "sql": sql,
                 "columns": columns,
-                "rows": rows,  # Return all rows - no artificial limit
+                "rows": rows[:100],
                 "total_rows": len(rows),
                 "execution_time_ms": round(execution_time_ms, 2),
             }
@@ -859,7 +782,7 @@ def get_file_sql_service(user_id: str, allowed_tables: List[str] = None) -> File
                 "answer": answer,
                 "sql": validation_result.sql,
                 "columns": columns,
-                "rows": rows,  # Return all rows - no artificial limit
+                "rows": rows[:100],
                 "total_rows": count,
                 "execution_time_ms": round(validation_result.execution_time_ms, 2),
                 "attempts": validation_result.attempt_number,
