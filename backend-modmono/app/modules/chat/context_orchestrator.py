@@ -219,9 +219,10 @@ class ContextOrchestrator:
     def __init__(
         self,
         config_id: Optional[int] = None,
+        agent_id: Optional[str] = None,
         dialect: str = "postgresql",
         db_url: Optional[str] = None,
-        embedding_model: str = "huggingface/BAAI/bge-large-en-v1.5",
+        embedding_model: str = "huggingface/BAAI/bge-base-en-v1.5",
         api_key: Optional[str] = None,
         max_context_tokens: int = MAX_CONTEXT_TOKENS,
     ):
@@ -230,6 +231,7 @@ class ContextOrchestrator:
         
         Args:
             config_id: Agent configuration ID for schema vectors
+            agent_id: Agent UUID for fallback collection lookup
             dialect: Target SQL dialect
             db_url: Database URL for live FK inspection (optional)
             embedding_model: Model for semantic search
@@ -237,6 +239,7 @@ class ContextOrchestrator:
             max_context_tokens: Maximum token budget for context
         """
         self.config_id = config_id
+        self.agent_id = agent_id
         self.dialect = dialect
         self.db_url = db_url
         self.embedding_model = embedding_model
@@ -256,6 +259,7 @@ class ContextOrchestrator:
             
             self._schema_retriever = SchemaRetriever(
                 config_id=self.config_id,
+                agent_id=self.agent_id,
                 embedding_model=self.embedding_model,
                 api_key=self.api_key,
             )
@@ -559,7 +563,7 @@ async def get_orchestrated_context(
     dialect: str = "postgresql",
     max_tables: int = DEFAULT_TOP_K_TABLES,
     max_examples: int = 3,
-    embedding_model: str = "huggingface/BAAI/bge-large-en-v1.5",
+    embedding_model: str = "huggingface/BAAI/bge-base-en-v1.5",
     api_key: Optional[str] = None,
 ) -> AssembledContext:
     """
