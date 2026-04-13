@@ -254,6 +254,7 @@ async def delete_data_source(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "message": error_msg,
+                    "reason": f"This data source is currently linked to the following agents: {', '.join(dependent_agents)}. Please reconfigure these agents before deleting.",
                     "dependent_agents": dependent_agents,
                     "dependent_config_count": result.get("dependent_config_count", 0),
                 }

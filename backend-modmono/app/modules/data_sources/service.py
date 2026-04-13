@@ -1,10 +1,12 @@
 """
 Business logic for data source management.
 """
+import asyncio
+import time
 from typing import Optional, Dict, Any, List
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, create_engine, inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.data_sources.repository import DataSourceRepository
@@ -15,6 +17,11 @@ from app.modules.data_sources.schemas import (
 
 class DataSourceService:
     """Service for data source management."""
+    
+    # Class-level cache for database schemas to avoid redundant slow lookups
+    # Maps source_id -> (timestamp, schema_data)
+    _schema_cache = {}
+    _CACHE_TTL = 300  # 5 minutes cache TTL
     
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -235,91 +242,31 @@ class DataSourceService:
         Used in Step 2 of config wizard to show available tables/columns for selection.
         Includes primary key and foreign key information for databases.
         """
-        import json
-        from sqlalchemy import create_engine, inspect
-        
+        # Check cache first
+        now = time.time()
+        if source_id in self._schema_cache:
+            timestamp, cached_schema = self._schema_cache[source_id]
+            if now - timestamp < self._CACHE_TTL:
+                return cached_schema
+
         source = await self.repo.get_by_id(source_id)
         if not source:
             raise ValueError(f"Data source {source_id} not found")
         
         source_type = source.source_type
-        tables_info = []
-        relationships = []  # Foreign key relationships between tables
         
         if source_type == "database":
-            # Fetch schema from database connection
-            if not source.db_url:
-                raise ValueError("Database URL not configured")
+            # Use asyncio.to_thread to run the blocking SQLAlchemy reflection code
+            schema_info = await asyncio.to_thread(self._reflect_schema_sync, source)
             
-            # Normalize common typos in database URL dialects
-            db_url = source.db_url
-            db_url = db_url.replace("postgressql://", "postgresql://")
-            db_url = db_url.replace("postgress://", "postgresql://")
-            db_url = db_url.replace("postgres://", "postgresql://")
+            # Cache the result
+            self._schema_cache[source_id] = (time.time(), schema_info)
+            return schema_info
             
-            try:
-                engine = create_engine(db_url, pool_pre_ping=True, pool_size=1)
-                inspector = inspect(engine)
-                
-                table_names = inspector.get_table_names()
-                
-                for table_name in table_names:
-                    # Get primary key columns
-                    pk_constraint = inspector.get_pk_constraint(table_name)
-                    pk_columns = set(pk_constraint.get("constrained_columns", []) if pk_constraint else [])
-                    
-                    # Get foreign keys for this table
-                    foreign_keys = inspector.get_foreign_keys(table_name)
-                    fk_columns = {}  # column_name -> referenced table info
-                    
-                    for fk in foreign_keys:
-                        ref_table = fk.get("referred_table")
-                        ref_columns = fk.get("referred_columns", [])
-                        constrained_columns = fk.get("constrained_columns", [])
-                        
-                        for i, col in enumerate(constrained_columns):
-                            fk_columns[col] = {
-                                "referenced_table": ref_table,
-                                "referenced_column": ref_columns[i] if i < len(ref_columns) else None,
-                            }
-                        
-                        # Add to relationships list
-                        if ref_table and constrained_columns:
-                            relationships.append({
-                                "from_table": table_name,
-                                "from_columns": constrained_columns,
-                                "to_table": ref_table,
-                                "to_columns": ref_columns,
-                            })
-                    
-                    columns = []
-                    for col in inspector.get_columns(table_name):
-                        col_name = col["name"]
-                        col_info = {
-                            "column_name": col_name,
-                            "data_type": str(col["type"]),
-                            "is_nullable": col.get("nullable", True),
-                            "is_primary_key": col_name in pk_columns,
-                        }
-                        
-                        # Add foreign key info if applicable
-                        if col_name in fk_columns:
-                            col_info["foreign_key"] = fk_columns[col_name]
-                        
-                        columns.append(col_info)
-                    
-                    tables_info.append({
-                        "table_name": table_name,
-                        "columns": columns,
-                        "primary_key_columns": list(pk_columns),
-                    })
-                
-                engine.dispose()
-                
-            except Exception as e:
-                raise ValueError(f"Failed to fetch database schema: {str(e)}")
+        # Handle file sources
+        tables_info = []
         
-        elif source_type == "file":
+        if source_type == "file":
             # For file sources, parse columns from columns_json, duckdb, or original file
             table_name = source.duckdb_table_name or source.title or "data"
             columns = []
@@ -327,6 +274,7 @@ class DataSourceService:
             if source.columns_json:
                 # Parse stored column info
                 try:
+                    import json
                     col_list = json.loads(source.columns_json)
                     for col_name in col_list:
                         columns.append({
@@ -336,7 +284,7 @@ class DataSourceService:
                             "is_primary_key": False,
                             "foreign_key": None,
                         })
-                except json.JSONDecodeError:
+                except Exception:
                     pass
             
             if not columns and source.duckdb_file_path:
@@ -388,14 +336,246 @@ class DataSourceService:
         file_name = None
         if source.original_file_path:
             file_name = source.original_file_path.split("/")[-1].split("\\")[-1]
-        
-        return {
+            
+        result = {
             "source_type": source_type,
-            "tables": tables_info,
-            "relationships": relationships,
+            "title": source.title,
             "file_name": file_name,
-            "row_count": source.row_count,
+            "tables": tables_info,
+            "relationships": [],
         }
+        
+        # Cache the result for file sources too
+        self._schema_cache[source_id] = (time.time(), result)
+        return result
+
+    def _reflect_schema_sync(self, source, max_tables: int = 500) -> Dict[str, Any]:
+        """
+        Synchronous helper for schema reflection, intended to run in a threadPool.
+        """
+        import logging
+        import traceback
+        
+        db_url = source.db_url
+        logging.info(f"Starting schema reflection for: {source.title}")
+        
+        # Normalize common typos in database URL dialects
+        db_url = db_url.replace("postgressql://", "postgresql://")
+        db_url = db_url.replace("postgress://", "postgresql://")
+        db_url = db_url.replace("postgres://", "postgresql://")
+        
+        # Fix malformed URLs with extra ://
+        if "@://" in db_url:
+            db_url = db_url.replace("@://", "@")
+            logging.warning(f"Fixed malformed URL (removed extra ://)")
+        
+        tables_info = []
+        relationships = []
+        total_tables_in_db = 0
+        
+        try:
+            is_postgresql = "postgresql" in source.db_engine_type.lower()
+            
+            connect_args = {"connect_timeout": 30} if is_postgresql else {}
+            
+            logging.info(f"Connecting to database...")
+            engine = create_engine(db_url, pool_pre_ping=True, pool_size=1, connect_args=connect_args)
+            
+            with engine.connect() as conn:
+                logging.info("Connection established")
+                
+                if is_postgresql:
+                    try:
+                        conn.execute(text("SET statement_timeout = '30s'"))
+                    except:
+                        pass
+                    
+                    # Count tables
+                    count_result = conn.execute(text("""
+                        SELECT COUNT(*) FROM information_schema.tables 
+                        WHERE table_type = 'BASE TABLE'
+                        AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                        AND table_schema NOT LIKE 'pg_temp%'
+                    """))
+                    total_tables_in_db = count_result.scalar() or 0
+                    logging.info(f"Total tables found: {total_tables_in_db}")
+                    
+                    if total_tables_in_db == 0:
+                        # List available schemas for debugging
+                        schema_result = conn.execute(text("SELECT schema_name FROM information_schema.schemata"))
+                        schemas = [r[0] for r in schema_result]
+                        logging.info(f"Available schemas: {schemas}")
+                        
+                        # Try without schema filter
+                        alt_count = conn.execute(text("""
+                            SELECT COUNT(*) FROM information_schema.tables WHERE table_type = 'BASE TABLE'
+                        """))
+                        alt_total = alt_count.scalar() or 0
+                        logging.info(f"Total tables (no schema filter): {alt_total}")
+                    
+                    # Get tables
+                    result = conn.execute(text("""
+                        SELECT table_schema, table_name 
+                        FROM information_schema.tables 
+                        WHERE table_type = 'BASE TABLE'
+                        AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                        AND table_schema NOT LIKE 'pg_temp%'
+                        ORDER BY table_schema, table_name
+                        LIMIT :limit
+                    """), {"limit": max_tables})
+                    discovered_tables = [(row[0], row[1]) for row in result]
+                    logging.info(f"Tables to process: {len(discovered_tables)}")
+                    
+                    if discovered_tables:
+                        # Batch fetch columns
+                        all_columns = {}
+                        col_result = conn.execute(text("""
+                            SELECT table_schema, table_name, column_name, data_type, is_nullable
+                            FROM information_schema.columns
+                            WHERE (table_schema, table_name) IN (
+                                SELECT table_schema, table_name FROM information_schema.tables 
+                                WHERE table_type = 'BASE TABLE'
+                                AND table_schema NOT IN ('pg_catalog', 'information_schema')
+                                AND table_schema NOT LIKE 'pg_temp%'
+                                LIMIT :limit
+                            )
+                            ORDER BY table_schema, table_name, ordinal_position
+                        """), {"limit": max_tables})
+                        
+                        for row in col_result:
+                            key = (row[0], row[1])
+                            if key not in all_columns:
+                                all_columns[key] = []
+                            all_columns[key].append({
+                                "column_name": row[2],
+                                "data_type": row[3],
+                                "is_nullable": row[4] == 'YES',
+                            })
+
+                        # Batch fetch PRIMARY KEYS
+                        pk_result = conn.execute(text("""
+                            SELECT kcu.table_schema, kcu.table_name, kcu.column_name
+                            FROM information_schema.table_constraints AS tc
+                            JOIN information_schema.key_column_usage AS kcu
+                              ON tc.constraint_name = kcu.constraint_name
+                              AND tc.table_schema = kcu.table_schema
+                            WHERE tc.constraint_type = 'PRIMARY KEY'
+                            AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')
+                            AND tc.table_schema NOT LIKE 'pg_temp%'
+                        """))
+                        
+                        pk_map = {}
+                        for row in pk_result:
+                            key = (row[0], row[1])
+                            if key not in pk_map:
+                                pk_map[key] = set()
+                            pk_map[key].add(row[2])
+
+                        # Batch fetch FOREIGN KEYS
+                        fk_result = conn.execute(text("""
+                            SELECT
+                                tc.table_schema, 
+                                tc.table_name, 
+                                kcu.column_name, 
+                                ccu.table_schema AS foreign_table_schema,
+                                ccu.table_name AS foreign_table_name,
+                                ccu.column_name AS foreign_column_name
+                            FROM 
+                                information_schema.table_constraints AS tc 
+                                JOIN information_schema.key_column_usage AS kcu
+                                  ON tc.constraint_name = kcu.constraint_name
+                                  AND tc.table_schema = kcu.table_schema
+                                JOIN information_schema.constraint_column_usage AS ccu
+                                  ON ccu.constraint_name = tc.constraint_name
+                                  AND ccu.table_schema = tc.table_schema
+                            WHERE tc.constraint_type = 'FOREIGN KEY'
+                            AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')
+                            AND tc.table_schema NOT LIKE 'pg_temp%'
+                        """))
+                        
+                        fk_map = {}
+                        for row in fk_result:
+                            key = (row[0], row[1], row[2]) # (schema, table, col)
+                            fk_map[key] = {
+                                "referenced_table": f"{row[3]}.{row[4]}" if row[3] != 'public' else row[4],
+                                "referenced_column": row[5]
+                            }
+                            
+                            # Add to relationships list
+                            relationships.append({
+                                "from_table": f"{row[0]}.{row[1]}" if row[0] != 'public' else row[1],
+                                "from_columns": [row[2]],
+                                "to_table": f"{row[3]}.{row[4]}" if row[3] != 'public' else row[4],
+                                "to_columns": [row[5]]
+                            })
+                        
+                        # Build tables_info
+                        for schema, table_name in discovered_tables:
+                            key = (schema, table_name)
+                            full_name = f"{schema}.{table_name}" if schema != 'public' else table_name
+                            columns = []
+                            table_pks = pk_map.get(key, set())
+                            
+                            for col in all_columns.get(key, []):
+                                col_name = col["column_name"]
+                                is_pk = col_name in table_pks
+                                fk_info = fk_map.get((schema, table_name, col_name))
+                                
+                                columns.append({
+                                    "column_name": col_name,
+                                    "data_type": col["data_type"],
+                                    "is_nullable": col["is_nullable"],
+                                    "is_primary_key": is_pk,
+                                    "foreign_key": fk_info,
+                                })
+                            
+                            tables_info.append({
+                                "table_name": full_name,
+                                "columns": columns,
+                                "primary_key_columns": list(table_pks),
+                            })
+                else:
+                    inspector = inspect(engine)
+                    all_tables = inspector.get_table_names()
+                    total_tables_in_db = len(all_tables)
+                    for tbl in all_tables[:max_tables]:
+                        try:
+                            cols = inspector.get_columns(tbl)
+                            tables_info.append({
+                                "table_name": tbl,
+                                "columns": [{"column_name": c["name"], "data_type": str(c["type"]), "is_nullable": True, "is_primary_key": False, "foreign_key": None} for c in cols],
+                                "primary_key_columns": [],
+                            })
+                        except Exception as e:
+                            logging.warning(f"Failed for {tbl}: {e}")
+                
+                engine.dispose()
+            
+            logging.info(f"Schema complete: {len(tables_info)} tables")
+            
+            result = {
+                "source_type": "database",
+                "title": source.title,
+                "file_name": None,
+                "tables": tables_info,
+                "relationships": [],
+                "total_tables_in_db": total_tables_in_db,
+            }
+            if total_tables_in_db > max_tables:
+                result["truncated"] = True
+                result["message"] = f"Showing {max_tables} of {total_tables_in_db} tables."
+            return result
+            
+        except Exception as e:
+            logging.error(f"Schema error: {e}")
+            logging.error(traceback.format_exc())
+            return {
+                "source_type": "database",
+                "title": getattr(source, 'title', 'Database'),
+                "tables": [],
+                "relationships": [],
+                "error": str(e)
+            }
 
     async def get_preview(self, source_id: UUID, limit: int = 10) -> Dict[str, Any]:
         """

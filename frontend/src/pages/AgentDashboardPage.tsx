@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChatHeader } from '../components/chat';
 import { APP_CONFIG } from '../config';
@@ -8,20 +8,15 @@ import { ArrowLeftIcon, CommandLineIcon, UserGroupIcon, Cog6ToothIcon } from '@h
 import { getAgent, startEmbeddingJob, rollbackToVersion, handleApiError, getDraftConfig, getVectorDbStatusByConfig } from '../services/api';
 import { canEditPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
-import type { PromptVersion, VectorDbStatus, AdvancedSettings, ActiveConfig } from '../contexts/AgentContext';
+import type { PromptVersion, VectorDbStatus, ActiveConfig } from '../contexts/AgentContext';
 
 // Import tab components
 import { OverviewTab, KnowledgeTab, SandboxTab, UsersTab, MonitoringTab, HistoryTab, ConfigHistoryTab } from '../components/config/tabs';
+import type { EmbeddingSettings } from '../components/EmbeddingSettingsModal';
 
 // Import hooks for data fetching
 import { getActiveConfigMetadata, getPromptHistory, listEmbeddingJobs, getConnections } from '../services/api';
 
-const defaultAdvancedSettings: AdvancedSettings = {
-    embedding: { model: 'BAAI/bge-m3' },
-    llm: { temperature: 0.0, maxTokens: 4096 },
-    chunking: { parentChunkSize: 512, parentChunkOverlap: 100, childChunkSize: 128, childChunkOverlap: 25 },
-    retriever: { topKInitial: 50, topKFinal: 10, hybridWeights: [0.75, 0.25], rerankEnabled: true, rerankerModel: 'BAAI/bge-reranker-base' }
-};
 
 const AgentDashboardPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -39,13 +34,12 @@ const AgentDashboardPage: React.FC = () => {
     const [history, setHistory] = useState<PromptVersion[]>([]);
     const [vectorDbStatus, setVectorDbStatus] = useState<VectorDbStatus | null>(null);
     const [connectionName, setConnectionName] = useState('');
-    const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [isRollingBack, setIsRollingBack] = useState(false);
 
     // Dashboard tab state
     const [dashboardTab, setDashboardTab] = useState('overview');
-    
+
     // Draft state - track if a draft config exists
     const [draftConfig, setDraftConfig] = useState<{ id: number } | null>(null);
     const [isCheckingDraft, setIsCheckingDraft] = useState(true); // Start true to check on load
@@ -53,7 +47,7 @@ const AgentDashboardPage: React.FC = () => {
     /**
      * Check for existing draft config on agent load.
      */
-    const checkForDraft = async (agentId: string) => {
+    const checkForDraft = useCallback(async (agentId: string) => {
         setIsCheckingDraft(true);
         try {
             const existingDraft = await getDraftConfig(agentId);
@@ -64,7 +58,7 @@ const AgentDashboardPage: React.FC = () => {
         } finally {
             setIsCheckingDraft(false);
         }
-    };
+    }, []); // getDraftConfig is an import
 
     /**
      * Handle Edit/Create Config button click.
@@ -72,7 +66,7 @@ const AgentDashboardPage: React.FC = () => {
      */
     const handleEditConfig = () => {
         if (!agent?.id) return;
-        
+
         if (draftConfig?.id) {
             // Navigate to edit existing draft
             navigate(`/agents/${agent.id}/config?versionId=${draftConfig.id}`);
@@ -118,7 +112,7 @@ const AgentDashboardPage: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [id, navigate]);
+    }, [id, navigate, showError]);
 
     // Function to reload agent data (called after update)
     const reloadAgent = async () => {
@@ -137,30 +131,17 @@ const AgentDashboardPage: React.FC = () => {
 
         const loadConfig = async () => {
             if (!agent) return;
-            
+
             // Check for existing draft
             checkForDraft(agent.id);
-            
+
             try {
                 const config = await getActiveConfigMetadata(agent.id);
                 if (!isMounted) return;
 
                 if (config) {
                     setActiveConfig(config);
-
-                    // Parse and set advanced settings from config
                     const parseConf = (c: any) => c ? (typeof c === 'string' ? JSON.parse(c) : c) : null;
-                    const newSettings = { ...defaultAdvancedSettings };
-                    const emb = parseConf(config.embedding_config);
-                    const llm = parseConf(config.llm_config);
-                    const chunk = parseConf(config.chunking_config);
-                    const ret = parseConf(config.retriever_config);
-
-                    if (emb) newSettings.embedding = { ...newSettings.embedding, ...emb };
-                    if (llm) newSettings.llm = { ...newSettings.llm, ...llm };
-                    if (chunk) newSettings.chunking = { ...newSettings.chunking, ...chunk };
-                    if (ret) newSettings.retriever = { ...newSettings.retriever, ...ret };
-                    setAdvancedSettings(newSettings);
 
                     // Set connection name from data_source title (no separate lookup needed)
                     if (config.data_source?.title) {
@@ -240,9 +221,9 @@ const AgentDashboardPage: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [agent?.id]);
+    }, [agent?.id, checkForDraft]);
 
-    const handleStartEmbedding = async (incremental: boolean = true, settings?: any) => {
+    const handleStartEmbedding = async (incremental: boolean = true, settings?: EmbeddingSettings) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
         if (!configId) return;
 
@@ -408,7 +389,6 @@ const AgentDashboardPage: React.FC = () => {
                                     <OverviewTab
                                         activeConfig={activeConfig}
                                         connectionName={connectionName}
-                                        advancedSettings={advancedSettings}
                                         agent={agent || undefined}
                                         canEdit={canEdit}
                                         onAgentUpdate={reloadAgent}

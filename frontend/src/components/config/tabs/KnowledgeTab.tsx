@@ -27,7 +27,7 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
     onEmbeddingCancel
 }) => {
     const [showSettingsModal, setShowSettingsModal] = useState(false);
-    
+
     // Get system settings from context (loaded from backend Settings page)
     const { getEmbeddingModalDefaults } = useSystemSettings();
 
@@ -100,6 +100,7 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
         <div className="space-y-8">
             {/* Embedding Settings Modal */}
             <EmbeddingSettingsModal
+                key={showSettingsModal ? 'open' : 'closed'}
                 isOpen={showSettingsModal}
                 onClose={() => setShowSettingsModal(false)}
                 onConfirm={handleEmbeddingConfirm}

@@ -8,12 +8,14 @@ interface DataSourceSelectorProps {
     selectedId: string | null;
     onSelect: (dataSource: DataSource) => void;
     filterType?: 'database' | 'file' | null;
+    disabled?: boolean;
 }
 
 const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
     selectedId,
     onSelect,
     filterType = null,
+    disabled = false,
 }) => {
     const [dataSources, setDataSources] = useState<DataSource[]>([]);
     const [loading, setLoading] = useState(true);
@@ -41,7 +43,7 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
 
     const filteredSources = dataSources.filter(ds => {
         const matchesType = typeFilter === 'all' || ds.source_type === typeFilter;
-        const matchesSearch = !searchQuery || 
+        const matchesSearch = !searchQuery ||
             ds.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
             (ds.description?.toLowerCase().includes(searchQuery.toLowerCase()));
         return matchesType && matchesSearch;
@@ -126,10 +128,11 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
                         return (
                             <button
                                 key={ds.id}
-                                onClick={() => onSelect(ds)}
-                                className={`w-full flex items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-gray-50 ${
-                                    isSelected ? 'bg-blue-50 hover:bg-blue-50' : ''
-                                }`}
+                                onClick={() => !disabled && onSelect(ds)}
+                                disabled={disabled}
+                                className={`w-full flex items-start gap-3 px-3 py-3 text-left transition-colors ${disabled ? 'cursor-not-allowed opacity-75' : 'hover:bg-gray-50'
+                                    } ${isSelected ? 'bg-blue-50 border-blue-500' : ''
+                                    }`}
                             >
                                 {/* Selection indicator */}
                                 <div className="flex-shrink-0 pt-0.5">
@@ -141,10 +144,9 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
                                 </div>
 
                                 {/* Icon */}
-                                <div className={`flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center ${
-                                    ds.source_type === 'database' ? 'bg-blue-100' : 'bg-green-100'
-                                }`}>
-                                    {ds.source_type === 'database' 
+                                <div className={`flex-shrink-0 w-9 h-9 rounded-md flex items-center justify-center ${ds.source_type === 'database' ? 'bg-blue-100' : 'bg-green-100'
+                                    }`}>
+                                    {ds.source_type === 'database'
                                         ? <CircleStackIcon className="w-5 h-5 text-blue-600" />
                                         : <DocumentTextIcon className="w-5 h-5 text-green-600" />
                                     }
@@ -156,12 +158,11 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
                                         <span className="font-medium text-gray-900 text-sm">
                                             {ds.title}
                                         </span>
-                                        <span className={`flex-shrink-0 px-1.5 py-0.5 text-xs rounded ${
-                                            ds.source_type === 'database'
-                                                ? 'bg-blue-100 text-blue-700'
-                                                : 'bg-green-100 text-green-700'
-                                        }`}>
-                                            {ds.source_type === 'database' 
+                                        <span className={`flex-shrink-0 px-1.5 py-0.5 text-xs rounded ${ds.source_type === 'database'
+                                            ? 'bg-blue-100 text-blue-700'
+                                            : 'bg-green-100 text-green-700'
+                                            }`}>
+                                            {ds.source_type === 'database'
                                                 ? (ds.db_engine_type || 'DB')
                                                 : (ds.file_type?.toUpperCase() || 'File')
                                             }
@@ -169,6 +170,11 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
                                         {ds.row_count !== undefined && ds.row_count !== null && (
                                             <span className="text-xs text-gray-400">
                                                 {ds.row_count.toLocaleString()} rows
+                                            </span>
+                                        )}
+                                        {isSelected && disabled && (
+                                            <span className="ml-auto inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-900 border border-blue-300">
+                                                Agent configured with current data source
                                             </span>
                                         )}
                                     </div>
@@ -196,7 +202,7 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
                 <div className="text-center">
                     <Link
                         to="/data-sources"
-                        className="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-blue-600"
+                        className="inline-flex items-center gap-1 text-sm text-blue-500 hover:text-blue-600"
                     >
                         <PlusIcon className="w-4 h-4" />
                         Add new data source

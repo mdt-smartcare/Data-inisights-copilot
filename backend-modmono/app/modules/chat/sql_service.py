@@ -66,7 +66,21 @@ DUCKDB_SQL_RULES = """CRITICAL DUCKDB SQL RULES:
     - Use CAST(column_name AS TIMESTAMP) or column_name::TIMESTAMP
     - Example: WHERE CAST(created_at AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1 year'
     - Also cast before DATE_TRUNC: DATE_TRUNC('month', CAST(created_at AS TIMESTAMP))
-12. **CHECK COLUMN TYPES IN SCHEMA**: Before date/numeric operations, verify the column type. If VARCHAR contains dates, cast explicitly."""
+12. **CHECK COLUMN TYPES IN SCHEMA**: Before date/numeric operations, verify the column type. If VARCHAR contains dates, cast explicitly.
+13. **GREATEST/LEAST FOR ROW-WISE MIN/MAX**: To find min/max ACROSS COLUMNS in a single row, use GREATEST() and LEAST(), NOT max() or min():
+    - WRONG: max(col1, col2, col3) or min(col1, col2, col3) - These are AGGREGATE functions!
+    - CORRECT: GREATEST(col1, col2, col3) or LEAST(col1, col2, col3)
+    - Example: SELECT GREATEST(pulse_1, pulse_2, COALESCE(pulse_3, 0)) - LEAST(pulse_1, pulse_2, COALESCE(pulse_3, 0)) AS pulse_variance
+14. **COALESCE FOR NULL HANDLING**: Use COALESCE(column, default_value) to handle NULLs in calculations.
+15. **AGGREGATE vs ROW-WISE FUNCTIONS**: 
+    - max()/min() are AGGREGATE functions - they work ACROSS ROWS (vertical)
+    - GREATEST()/LEAST() are SCALAR functions - they work ACROSS COLUMNS in a single row (horizontal)
+16. **TIMEZONE-AWARE TIMESTAMPS**: If a timestamp column contains timezone info (e.g., "+0300", "UTC", "Z"), you MUST use TIMESTAMPTZ, not TIMESTAMP:
+    - WRONG: CAST(created_at AS TIMESTAMP) - fails with "timestamp that is not UTC" error
+    - CORRECT: CAST(created_at AS TIMESTAMPTZ) or created_at::TIMESTAMPTZ
+    - Example: DATE_TRUNC('month', CAST(created_at AS TIMESTAMPTZ))
+    - For columns like 'created_at', 'updated_at', always prefer TIMESTAMPTZ to be safe
+17. **PREFER DEDICATED DATE COLUMNS**: If a table has both a date column (like 'ymd', 'date', 'assessment_date') AND a timestamp column (like 'created_at'), prefer the dedicated date column for date-based queries as it avoids timezone issues."""
 
 # Query type classification keywords
 QUERY_TYPE_KEYWORDS = {
@@ -127,6 +141,8 @@ class SQLService:
         schema: Optional[str] = None,
         max_result_rows: int = 100,
         enable_few_shot: bool = True,
+        config_id: Optional[int] = None,
+        agent_id: Optional[str] = None,
     ):
         """
         Initialize SQL service with a database URL.
@@ -136,6 +152,8 @@ class SQLService:
             schema: Optional schema name for table discovery
             max_result_rows: Maximum rows to return (default 100)
             enable_few_shot: Enable few-shot example retrieval (default True)
+            config_id: Optional agent config ID for semantic schema retrieval
+            agent_id: Optional agent ID for per-agent SQL examples and data dictionary
         """
         self._db_url = db_url
         self._schema = schema
@@ -145,6 +163,8 @@ class SQLService:
         self._table_names: List[str] = []
         self._settings = get_settings()
         self._enable_few_shot = enable_few_shot
+        self._config_id = config_id  # For semantic schema retrieval
+        self._agent_id = agent_id  # For per-agent SQL examples and data dictionary
         
         # Initialize query relevance checker
         self._enable_relevance_check = getattr(self._settings, 'enable_query_relevance_check', True)
@@ -157,21 +177,21 @@ class SQLService:
                 logger.warning(f"Failed to initialize relevance checker: {e}")
                 self._relevance_checker = None
         
-        # Initialize SQL examples store for few-shot learning
+        # Initialize SQL examples store for few-shot learning (per-agent)
         self._sql_examples_store: Optional[SQLExamplesStore] = None
         if enable_few_shot:
             try:
-                self._sql_examples_store = get_sql_examples_store()
-                logger.info("SQL Examples Store initialized for few-shot learning")
+                self._sql_examples_store = get_sql_examples_store(agent_id=agent_id)
+                logger.info("SQL Examples Store initialized for few-shot learning", agent_id=agent_id)
             except Exception as e:
                 logger.warning(f"Failed to initialize SQL examples store: {e}")
                 self._sql_examples_store = None
         
-        # Initialize data dictionary for semantic enrichment
+        # Initialize data dictionary for semantic enrichment (per-agent)
         self._data_dictionary: Optional[DataDictionary] = None
         try:
-            self._data_dictionary = get_data_dictionary()
-            logger.info("Data dictionary initialized for semantic enrichment")
+            self._data_dictionary = get_data_dictionary(agent_id=agent_id)
+            logger.info("Data dictionary initialized for semantic enrichment", agent_id=agent_id)
         except Exception as e:
             logger.warning(f"Failed to initialize data dictionary: {e}")
             self._data_dictionary = None
@@ -329,15 +349,21 @@ class SQLService:
         if self._engine is not None:
             return self._engine
         
+        # Normalize the database URL (handle postgres:// -> postgresql://)
+        db_url = self._db_url
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+            logger.debug(f"Normalized database URL from postgres:// to postgresql://")
+        
         # Check cache
-        if self._db_url in _ENGINE_CACHE:
-            self._engine = _ENGINE_CACHE[self._db_url]
+        if db_url in _ENGINE_CACHE:
+            self._engine = _ENGINE_CACHE[db_url]
             return self._engine
         
         # Create new engine
         try:
             # Handle DuckDB specially
-            if self._db_url.startswith("duckdb://"):
+            if db_url.startswith("duckdb://"):
                 # DuckDB uses different connection parameters
                 file_path = self._db_url.replace("duckdb://", "")
                 self._engine = create_engine(
@@ -347,15 +373,15 @@ class SQLService:
             else:
                 # PostgreSQL, MySQL, etc.
                 self._engine = create_engine(
-                    self._db_url,
+                    db_url,
                     pool_size=5,
                     max_overflow=10,
                     pool_timeout=30,
                     pool_recycle=3600,
                 )
             
-            _ENGINE_CACHE[self._db_url] = self._engine
-            logger.info("Database engine created", db_url=self._db_url[:50] + "...")
+            _ENGINE_CACHE[db_url] = self._engine
+            logger.info("Database engine created", db_url=db_url[:50] + "...")
             return self._engine
             
         except Exception as e:
@@ -499,30 +525,84 @@ class SQLService:
             logger.error(f"Failed to get schema context: {e}")
             return f"Tables: {', '.join(tables)}"
 
+
+    async def get_semantic_schema_context(
+        self,
+        query: str,
+        top_k: int = 5,
+    ) -> str:
+        """
+        Get semantically relevant schema context for a specific query using vector search.
+        
+        Instead of blindly loading the first N tables, this method uses the SchemaRetriever
+        to fetch only the tables that are semantically relevant to the user's query.
+        Falls back to blind loading if vector search is not available.
+        
+        Args:
+            query: The natural language query to find relevant tables for
+            top_k: Number of relevant tables to retrieve (default 5)
+            
+        Returns:
+            Formatted DDL context string with relevant tables
+        """
+        # Try semantic retrieval if config_id is available
+        if self._config_id:
+            try:
+                from app.modules.embeddings.schema_retriever import get_ddl_context_for_sql
+                
+                # Use vector search to get relevant table DDLs
+                ddl_context = await get_ddl_context_for_sql(
+                    query=query,
+                    config_id=self._config_id,
+                    top_k=top_k,
+                    compact=False,
+                )
+                
+                if ddl_context and ddl_context.strip():
+                    logger.info(f"Retrieved semantic schema context for query (top_k={top_k})")
+                    return ddl_context
+                else:
+                    logger.warning("Semantic schema retrieval returned empty, falling back to blind loading")
+                    
+            except ImportError as e:
+                logger.warning(f"SchemaRetriever not available, falling back to blind loading: {e}")
+            except Exception as e:
+                logger.warning(f"Semantic schema retrieval failed, falling back to blind loading: {e}")
+        
+        # Fallback: use traditional blind schema loading
+        logger.debug("Using fallback blind schema loading (no config_id or semantic retrieval failed)")
+        return self.get_schema_context(max_tables=top_k)
+
     @property
     def cached_schema(self) -> str:
         """Get cached schema or generate it."""
         return self.get_schema_context()
     
-    def execute_query(self, sql: str) -> Tuple[List[Dict[str, Any]], int]:
+    def execute_query(self, sql: str, timeout_seconds: int = 30) -> Tuple[List[Dict[str, Any]], int]:
         """
         Execute a SQL query and return results.
         
         Args:
             sql: SQL query to execute
+            timeout_seconds: Query timeout in seconds (default 30s)
             
         Returns:
             Tuple of (results as list of dicts, total row count)
         """
         engine = self._get_engine()
         
-        # Sanitize query - add LIMIT if not present
-        sql_upper = sql.upper()
-        if "LIMIT" not in sql_upper and "SELECT" in sql_upper:
-            sql = f"{sql.rstrip(';')} LIMIT {self._max_result_rows}"
+        # Do NOT add automatic LIMIT - data analysts need full results
+        # If user wants a limit, they will specify it in their question
         
         try:
             with engine.connect() as conn:
+                # Set statement timeout for PostgreSQL to prevent long-running queries
+                if not self._is_duckdb():
+                    try:
+                        conn.execute(text(f"SET statement_timeout = '{timeout_seconds}s'"))
+                    except Exception as e:
+                        logger.debug(f"Could not set statement_timeout: {e}")
+                
                 result = conn.execute(text(sql))
                 rows = result.fetchall()
                 columns = result.keys()
@@ -534,6 +614,15 @@ class SQLService:
                 return results, len(results)
                 
         except Exception as e:
+            error_str = str(e)
+            # Provide helpful message for timeout errors
+            if "canceling statement due to statement timeout" in error_str.lower() or "timeout" in error_str.lower():
+                logger.warning(f"Query timed out after {timeout_seconds}s", sql=sql[:200])
+                raise TimeoutError(
+                    f"Query timed out after {timeout_seconds} seconds. "
+                    f"The query may be too complex or the table too large. "
+                    f"Try adding filters (WHERE clause) or limiting results (LIMIT)."
+                )
             logger.error(f"Query execution failed: {e}", sql=sql[:200])
             raise
     
@@ -567,15 +656,22 @@ class SQLService:
         
         return "Query executed but returned no data."
     
-    async def query_async(self, natural_language_query: str) -> str:
+    async def query_async(
+        self,
+        natural_language_query: str,
+        max_retries: int = 3,
+    ) -> str:
         """
         Execute a natural language query using LLM to generate SQL (async version).
         
         This is the main entry point for Intent A (SQL-only) queries with few-shot learning.
         Includes relevance checking to filter out irrelevant queries early.
+        Implements retry logic: if SQL execution fails, the error is appended to the
+        prompt and the LLM is asked to fix the query (up to max_retries attempts).
         
         Args:
             natural_language_query: User's question in natural language
+            max_retries: Maximum number of retry attempts (default 3)
             
         Returns:
             Formatted response string with query results
@@ -639,7 +735,11 @@ class SQLService:
                     _relevance_stats["passed"]
                 )
         
-        schema = self.get_schema_context()
+        # Use semantic schema retrieval based on the query (not blind loading)
+        schema = await self.get_semantic_schema_context(
+            query=natural_language_query,
+            top_k=5,  # Retrieve top 5 most relevant tables
+        )
         
         # Get few-shot examples
         few_shot_examples = []
@@ -673,41 +773,97 @@ class SQLService:
         
         full_system_prompt = "\n\n".join(system_prompt_parts)
         
-        # Generate SQL using LLM
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", full_system_prompt),
-            ("user", "{question}")
-        ])
-        
+        # Create LLM provider
         try:
             provider = create_llm_provider("openai", {
                 "model": "gpt-4o-mini",
                 "temperature": 0,
             })
             llm = provider.get_langchain_llm()
-            
-            chain = prompt | llm
-            response = chain.invoke({
-                "schema": schema,
-                "question": natural_language_query
-            })
-            
-            # Extract SQL from response (remove markdown code blocks if present)
-            sql = response.content.strip()
-            sql = re.sub(r'^```sql\s*', '', sql)
-            sql = re.sub(r'\s*```$', '', sql)
-            
-            logger.debug(f"Generated SQL: {sql[:200]}...")
-            
-            # Execute the generated SQL
-            results, count = self.execute_query(sql)
-            
-            # Format results for response
-            return self._format_results(results, count)
-            
         except Exception as e:
-            logger.error(f"Natural language query failed: {e}")
-            return f"Failed to execute query: {str(e)}"
+            logger.error(f"Failed to create LLM provider: {e}")
+            return f"Failed to initialize LLM: {str(e)}"
+        
+        # =========================================================================
+        # RETRY LOOP: Generate SQL, execute, retry on error with error feedback
+        # =========================================================================
+        previous_error: Optional[str] = None
+        last_sql: Optional[str] = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Build prompt - include previous error if this is a retry
+                if previous_error and last_sql:
+                    # Add error context for retry attempts
+                    error_context = f"""
+
+PREVIOUS ATTEMPT FAILED:
+SQL that failed:
+```sql
+{last_sql}
+```
+
+Previous Error: {previous_error}
+
+Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
+"""
+                    retry_prompt = ChatPromptTemplate.from_messages([
+                        ("system", full_system_prompt + error_context),
+                        ("user", "{question}")
+                    ])
+                    chain = retry_prompt | llm
+                    logger.info(f"Retry attempt {attempt + 1}/{max_retries} with error feedback")
+                else:
+                    # First attempt - normal prompt
+                    prompt = ChatPromptTemplate.from_messages([
+                        ("system", full_system_prompt),
+                        ("user", "{question}")
+                    ])
+                    chain = prompt | llm
+                
+                # Generate SQL using LLM
+                response = chain.invoke({
+                    "schema": schema,
+                    "question": natural_language_query
+                })
+                
+                # Extract SQL from response (remove markdown code blocks if present)
+                sql = response.content.strip()
+                sql = re.sub(r'^```sql\s*', '', sql)
+                sql = re.sub(r'^```\s*', '', sql)
+                sql = re.sub(r'\s*```$', '', sql)
+                sql = sql.strip()
+                last_sql = sql
+                
+                logger.info("LLM generated SQL", attempt=attempt + 1, generated_sql=sql, question=natural_language_query[:100])
+                
+                # Execute the generated SQL using read-only session
+                results, count = self.execute_query(sql)
+                
+                # Success! Format and return results
+                logger.info(f"Query succeeded on attempt {attempt + 1}")
+                return self._format_results(results, count)
+                
+            except Exception as e:
+                error_str = str(e)
+                previous_error = error_str
+                
+                logger.warning(
+                    f"SQL execution failed on attempt {attempt + 1}/{max_retries}: {error_str[:200]}"
+                )
+                
+                # If this was the last attempt, return error
+                if attempt == max_retries - 1:
+                    logger.error(
+                        f"All {max_retries} attempts failed. Last error: {error_str}"
+                    )
+                    return f"Failed to execute query after {max_retries} attempts. Last error: {error_str}"
+                
+                # Otherwise, continue to next iteration with error feedback
+                continue
+        
+        # Should not reach here, but just in case
+        return f"Failed to execute query: Unknown error after {max_retries} attempts"
     
     def query(self, natural_language_query: str) -> str:
         """
@@ -868,10 +1024,8 @@ class SQLServiceForCSV(SQLService):
         """Execute SQL query against the CSV file."""
         import duckdb
         
-        # Add LIMIT if not present
-        sql_upper = sql.upper()
-        if "LIMIT" not in sql_upper and "SELECT" in sql_upper:
-            sql = f"{sql.rstrip(';')} LIMIT {self._max_result_rows}"
+        # Do NOT add automatic LIMIT - data analysts need full results
+        # If user wants a limit, they will specify it in their question
         
         try:
             csv_path_escaped = self._csv_path.replace("'", "''")
@@ -907,7 +1061,9 @@ class SQLServiceFactory:
     async def from_data_source_id(
         data_source_id: UUID,
         db_session,
-        enable_few_shot: bool = True
+        enable_few_shot: bool = True,
+        config_id: Optional[int] = None,
+        agent_id: Optional[str] = None,
     ) -> Optional[SQLService]:
         """
         Create a SQLService from a data source ID.
@@ -916,6 +1072,8 @@ class SQLServiceFactory:
             data_source_id: UUID of the data source
             db_session: Async SQLAlchemy session
             enable_few_shot: Enable few-shot example retrieval
+            config_id: Optional agent config ID for semantic schema retrieval
+            agent_id: Optional agent ID for per-agent SQL examples and data dictionary
             
         Returns:
             SQLService instance or None if not found
@@ -944,7 +1102,7 @@ class SQLServiceFactory:
                     logger.warning(f"Data source {data_source_id} has no db_url configured")
                     return None
                     
-                return SQLService(db_url=db_url, enable_few_shot=enable_few_shot)
+                return SQLService(db_url=db_url, enable_few_shot=enable_few_shot, config_id=config_id, agent_id=agent_id)
                 
             elif data_source.source_type == "file":
                 # Use DuckDB for file-based data sources
@@ -952,7 +1110,9 @@ class SQLServiceFactory:
                 if duckdb_path:
                     return SQLService(
                         db_url=f"duckdb://{duckdb_path}",
-                        enable_few_shot=enable_few_shot
+                        enable_few_shot=enable_few_shot,
+                        config_id=config_id,
+                        agent_id=agent_id,
                     )
                 
                 # Fallback: Create DuckDB service that reads CSV directly
@@ -1011,7 +1171,9 @@ class SQLServiceFactory:
             return await SQLServiceFactory.from_data_source_id(
                 config.data_source_id,
                 db_session,
-                enable_few_shot=enable_few_shot
+                enable_few_shot=enable_few_shot,
+                config_id=config.id,  # Pass config ID for semantic schema retrieval
+                agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples
             )
             
         except Exception as e:

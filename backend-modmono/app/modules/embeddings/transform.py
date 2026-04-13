@@ -2,21 +2,19 @@
 Advanced Data Transformer for RAG Embedding Pipeline.
 
 Provides:
-- Parent-Child (Small-to-Big) chunking strategy
-- TabularDictionarySplitter for structured data (~50x faster than regex)
 - Vectorized document creation with medical context enrichment
 - In-memory docstore with pickle persistence (matching old backend's approach)
+
+Note: Character/token-based chunking has been removed as part of Phase 1 cleanup.
+Database schemas are now processed without chunking.
 """
 import pandas as pd
 import hashlib
 import json
 import pickle
-import multiprocessing
 from typing import Dict, List, Any, Tuple, Optional, Iterator
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from langchain_core.documents import Document
 from langchain_core.stores import BaseStore
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from datetime import datetime
 from pathlib import Path
 
@@ -28,51 +26,6 @@ DEFAULT_CLINICAL_FLAG_PREFIXES = (
     'is_', 'has_', 'was_', 'history_of_', 'flag_', 
     'confirmed_', 'requires_', 'on_'
 )
-
-_SPLITTER_CACHE: Dict[str, Any] = {}
-
-
-def _get_cached_splitter(chunk_size: int, chunk_overlap: int) -> RecursiveCharacterTextSplitter:
-    cache_key = f"{chunk_size}_{chunk_overlap}"
-    if cache_key not in _SPLITTER_CACHE:
-        _SPLITTER_CACHE[cache_key] = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-            encoding_name="cl100k_base",
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap
-        )
-    return _SPLITTER_CACHE[cache_key]
-
-
-class TabularDictionarySplitter:
-    """Zero-regex splitter for structured tabular documents. ~50x faster than regex."""
-    
-    def __init__(self, keys_per_chunk: int = 10, chunk_overlap_keys: int = 2):
-        self.keys_per_chunk = keys_per_chunk
-        self.chunk_overlap_keys = chunk_overlap_keys
-    
-    def split_documents(self, documents: List[Document]) -> List[Document]:
-        result = []
-        for doc in documents:
-            lines = [line for line in doc.page_content.split('\n') if line.strip()]
-            if len(lines) <= self.keys_per_chunk:
-                result.append(doc)
-                continue
-            step = max(1, self.keys_per_chunk - self.chunk_overlap_keys)
-            for i in range(0, len(lines), step):
-                chunk_lines = lines[i:i + self.keys_per_chunk]
-                if not chunk_lines:
-                    break
-                result.append(Document(page_content='\n'.join(chunk_lines), metadata=dict(doc.metadata)))
-                if i + self.keys_per_chunk >= len(lines):
-                    break
-        return result
-
-
-def _get_tabular_splitter(keys_per_chunk: int = 10, chunk_overlap_keys: int = 2) -> TabularDictionarySplitter:
-    cache_key = f"tabular_{keys_per_chunk}_{chunk_overlap_keys}"
-    if cache_key not in _SPLITTER_CACHE:
-        _SPLITTER_CACHE[cache_key] = TabularDictionarySplitter(keys_per_chunk, chunk_overlap_keys)
-    return _SPLITTER_CACHE[cache_key]
 
 
 class SimpleInMemoryStore(BaseStore[str, Document]):
@@ -190,84 +143,31 @@ class AdvancedDataTransformer:
             logger.info(f"Generated docs for {table_name}: {len(df)} rows")
         return all_docs
 
-    def _get_adaptive_parallelization(self, doc_count: int) -> Tuple[int, int]:
-        cpu_count = multiprocessing.cpu_count()
-        if self.num_workers_override and self.batch_size_override:
-            return self.num_workers_override, self.batch_size_override
-        if doc_count < 1000:
-            return 1, doc_count
-        elif doc_count < 50000:
-            return min(4, max(2, cpu_count // 4)), 2000
-        else:
-            return max(2, cpu_count // 2), 5000
-
-    def perform_parent_child_chunking(self, documents: List[Document], 
-                                       on_progress=None, check_cancellation=None) -> Tuple[List[Document], BaseStore]:
-        parent_config = self.config.get('chunking', {}).get('parent_splitter', {'chunk_size': 512, 'chunk_overlap': 100})
-        child_config = self.config.get('chunking', {}).get('child_splitter', {'chunk_size': 128, 'chunk_overlap': 25})
+    def store_documents(self, documents: List[Document]) -> 'SimpleInMemoryStore':
+        """
+        Store documents in docstore without chunking.
         
-        doc_count = len(documents)
-        num_workers, batch_size = self._get_adaptive_parallelization(doc_count)
+        Each document is stored as-is with a stable ID based on content hash.
         
-        # Stage 1: Parent splitting
-        if num_workers == 1:
-            splitter = _get_cached_splitter(parent_config.get('chunk_size', 512), parent_config.get('chunk_overlap', 100))
-            parent_docs = splitter.split_documents(documents)
-        else:
-            batches = []
-            for i in range(0, doc_count, batch_size):
-                batches.append([(d.page_content, dict(d.metadata)) for d in documents[i:i+batch_size]])
-            parent_docs = []
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                futures = [executor.submit(_parallel_split_worker, batch, parent_config) for batch in batches]
-                for future in as_completed(futures):
-                    parent_docs.extend(future.result())
-        
-        logger.info(f"Parent splitting complete: {len(parent_docs)} parent docs")
-        
-        # Stage 2: Index parents in memory
+        Args:
+            documents: List of documents to store
+            
+        Returns:
+            SimpleInMemoryStore containing the documents
+        """
         docstore = SimpleInMemoryStore()
-        parent_data = []
-        for doc in parent_docs:
+        doc_data = []
+        
+        for doc in documents:
             meta_str = json.dumps(doc.metadata, sort_keys=True, default=str)
             stable_id = hashlib.sha256(f"{doc.page_content}{meta_str}".encode()).hexdigest()
-            parent_data.append((stable_id, doc))
-        docstore.mset(parent_data)
-        logger.info(f"Indexed {len(parent_data)} parents in memory")
+            doc_data.append((stable_id, doc))
         
-        # Stage 2.5: Persist docstore to pickle if path provided
+        docstore.mset(doc_data)
+        logger.info(f"Stored {len(doc_data)} documents in docstore")
+        
+        # Persist docstore to pickle if path provided
         if self.docstore_path:
             docstore.save_to_pickle(self.docstore_path)
         
-        # Stage 3: Child splitting
-        child_tuples = _child_split_worker(parent_data, child_config)
-        child_documents = [Document(page_content=c, metadata=m) for c, m in child_tuples]
-        
-        logger.info(f"Chunking complete: {len(parent_docs)} parents -> {len(child_documents)} children")
-        return child_documents, docstore
-
-
-def _parallel_split_worker(doc_tuples: List[Tuple[str, Dict]], config: Dict) -> List[Document]:
-    docs = [Document(page_content=c, metadata=m) for c, m in doc_tuples]
-    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-        encoding_name="cl100k_base",
-        chunk_size=config.get('chunk_size', 512),
-        chunk_overlap=config.get('chunk_overlap', 100)
-    )
-    return splitter.split_documents(docs)
-
-
-def _child_split_worker(parent_batch: List[Tuple[str, Document]], config: Dict) -> List[Tuple[str, dict]]:
-    has_tabular = any(doc.metadata.get('source_table') for _, doc in parent_batch)
-    if has_tabular:
-        splitter = _get_tabular_splitter(config.get('chunk_size', 128) // 20, config.get('chunk_overlap', 25) // 20)
-    else:
-        splitter = _get_cached_splitter(config.get('chunk_size', 128), config.get('chunk_overlap', 25))
-    
-    all_children = []
-    for parent_id, doc in parent_batch:
-        for child in splitter.split_documents([doc]):
-            meta = dict(child.metadata)
-            meta["doc_id"] = parent_id
-            all_children.append((child.page_content, meta))
-    return all_children
+        return docstore

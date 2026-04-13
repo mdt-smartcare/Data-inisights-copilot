@@ -427,7 +427,7 @@ class EmbeddingJobService:
                     api_key = decrypt_value(ai_model.api_key_encrypted)
         
         if not model_name:
-            model_name = emb_config.get('model', 'huggingface/BAAI/bge-large-en-v1.5')
+            model_name = emb_config.get('model', 'huggingface/BAAI/bge-base-en-v1.5')
         
         # Use passed batch_size first (from create_job), then chunking_config, then embedding_config
         if batch_size is None:
@@ -990,7 +990,7 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
     
     Supports:
     - OpenAI: openai/text-embedding-3-small, openai/text-embedding-3-large
-    - HuggingFace local: huggingface/BAAI/bge-large-en-v1.5
+    - HuggingFace local: huggingface/BAAI/bge-base-en-v1.5
     - Azure: azure/text-embedding-ada-002
     """
     global _EMBEDDING_MODEL_CACHE
@@ -1483,7 +1483,7 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
         await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No config_id provided")
         return
     
-    embedding_model = job_config.get("embedding_model", "huggingface/BAAI/bge-large-en-v1.5")
+    embedding_model = job_config.get("embedding_model", "huggingface/BAAI/bge-base-en-v1.5")
     api_key = job_config.get("api_key")
     api_base_url = job_config.get("api_base_url")
     chunking_config = job_config.get("chunking_config") or {}
@@ -1502,10 +1502,11 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
     parent_chunk_overlap = chunking_config.get('parent_chunk_overlap') or chunking_config.get('parentChunkOverlap', 100)
     child_chunk_size = chunking_config.get('child_chunk_size') or chunking_config.get('childChunkSize', 128)
     child_chunk_overlap = chunking_config.get('child_chunk_overlap') or chunking_config.get('childChunkOverlap', 25)
-    use_parent_child_chunking = chunking_config.get('use_parent_child_chunking', True)
+    use_schema_aware_indexing = chunking_config.get('use_schema_aware_indexing', True)  # Default: schema-aware DDL indexing
+    use_parent_child_chunking = chunking_config.get('use_parent_child_chunking', False)  # DEPRECATED: row-level chunking
     
     logger.info(f"Job {job_id} config: model={embedding_model}, batch_size={batch_size}, incremental={incremental}")
-    logger.info(f"Job {job_id} chunking: parent={parent_chunk_size}/{parent_chunk_overlap}, child={child_chunk_size}/{child_chunk_overlap}, enabled={use_parent_child_chunking}")
+    logger.info(f"Job {job_id} indexing: schema_aware={use_schema_aware_indexing}, parent_child={use_parent_child_chunking}")
     
     job_start_time = time.time()
     
@@ -1565,50 +1566,116 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
         vector_db_name = f"agent_{agent_id}_config_{config_id}"
         
         # =================================================================
-        # PHASE 1: Extract raw data
+        # PHASE 1: Extract documents based on indexing strategy
         # =================================================================
-        await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Extracting documents...")
         
-        try:
-            if source_type == 'database':
-                if not selected_columns:
-                    await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No columns selected.")
-                    return
-                total_count, raw_documents = await _extract_documents_from_postgres(db_url=db_url, selected_columns=selected_columns, batch_size=1000)
-            else:
-                columns_to_embed = []
-                if selected_columns and isinstance(selected_columns, dict):
-                    columns_to_embed = selected_columns.get(duckdb_table_name, [])
-                    if not columns_to_embed:
-                        for cols in selected_columns.values():
-                            columns_to_embed = cols
-                            break
-                
-                if not columns_to_embed:
-                    await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No columns selected.")
-                    return
-                
-                total_count, raw_documents = await _extract_documents_from_duckdb(
-                    duckdb_path=duckdb_path, table_name=duckdb_table_name,
-                    columns=columns_to_embed, batch_size=1000, job_id=job_id
-                )
-        except Exception as e:
-            logger.error(f"Extraction failed: {e}")
-            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message=f"Extraction failed: {str(e)[:400]}")
-            return
-        
-        if not raw_documents:
-            await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No documents found.")
-            return
-        
-        logger.info(f"Job {job_id}: Extracted {len(raw_documents)} raw documents in {time.time() - job_start_time:.1f}s")
-        
-        # =================================================================
-        # PHASE 2: Parent-Child Chunking (if enabled)
-        # =================================================================
-        if use_parent_child_chunking:
-            await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Applying parent-child chunking...")
+        # Schema-aware indexing: Extract DDL as single unbroken chunks per table
+        if use_schema_aware_indexing and not use_parent_child_chunking:
+            await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Extracting table schemas (DDL)...")
+            logger.info(f"Job {job_id}: Using SCHEMA-AWARE indexing (table-level DDL chunks)")
             
+            try:
+                from app.core.utils.ddl_extractor import DDLExtractor, DuckDBDDLExtractor
+                
+                documents = []
+                
+                if source_type == 'database':
+                    # Detect schema from selected_columns keys (e.g., 'rnacen.table_name')
+                    db_schema = None
+                    if selected_columns:
+                        for table_key in selected_columns.keys():
+                            if "." in table_key:
+                                db_schema = table_key.split(".")[0]
+                                logger.info(f"Job {job_id}: Detected database schema '{db_schema}' from selected_columns")
+                                break
+                    
+                    extractor = DDLExtractor(
+                        db_url=db_url,
+                        data_dictionary=data_dictionary if isinstance(data_dictionary, dict) else {},
+                        schema_name=db_schema,  # Pass the detected schema
+                    )
+                    try:
+                        # Pass tables_filter to help with schema detection if schema wasn't detected above
+                        tables_filter = list(selected_columns.keys()) if selected_columns else None
+                        documents = extractor.extract_all_tables(include_row_counts=True, tables_filter=tables_filter)
+                        relationships_doc = extractor.extract_relationships_document()
+                        documents.append(relationships_doc)
+                        logger.info(f"Job {job_id}: Extracted {len(documents)} DDL documents from database")
+                    finally:
+                        extractor.close()
+                        
+                else:  # DuckDB file source
+                    extractor = DuckDBDDLExtractor(
+                        duckdb_path=duckdb_path,
+                        table_name=duckdb_table_name,
+                        data_dictionary=data_dictionary if isinstance(data_dictionary, dict) else {},
+                    )
+                    try:
+                        ddl_doc = extractor.extract_ddl_document()
+                        documents = [ddl_doc]
+                        logger.info(f"Job {job_id}: Extracted DDL document for table: {duckdb_table_name}")
+                    finally:
+                        extractor.close()
+                
+                if not documents:
+                    await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No DDL documents extracted.")
+                    return
+                
+                total_documents = len(documents)
+                batch_count = (total_documents + batch_size - 1) // batch_size
+                logger.info(f"Job {job_id}: Schema-aware indexing complete: {total_documents} DDL documents ({batch_count} batches)")
+                
+            except Exception as e:
+                logger.error(f"Job {job_id}: Schema extraction failed: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message=f"Schema extraction failed: {str(e)[:400]}")
+                return
+        
+        else:
+            # Legacy row-level extraction
+            await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Extracting documents...")
+            
+            try:
+                if source_type == 'database':
+                    if not selected_columns:
+                        await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No columns selected.")
+                        return
+                    total_count, raw_documents = await _extract_documents_from_postgres(db_url=db_url, selected_columns=selected_columns, batch_size=1000)
+                else:
+                    columns_to_embed = []
+                    if selected_columns and isinstance(selected_columns, dict):
+                        columns_to_embed = selected_columns.get(duckdb_table_name, [])
+                        if not columns_to_embed:
+                            for cols in selected_columns.values():
+                                columns_to_embed = cols
+                                break
+                    
+                    if not columns_to_embed:
+                        await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No columns selected.")
+                        return
+                    
+                    total_count, raw_documents = await _extract_documents_from_duckdb(
+                        duckdb_path=duckdb_path, table_name=duckdb_table_name,
+                        columns=columns_to_embed, batch_size=1000, job_id=job_id
+                    )
+            except Exception as e:
+                logger.error(f"Extraction failed: {e}")
+                await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message=f"Extraction failed: {str(e)[:400]}")
+                return
+            
+            if not raw_documents:
+                await _update_job_status(job_id, EmbeddingJobStatus.FAILED, error_message="No documents found.")
+                return
+            
+            logger.info(f"Job {job_id}: Extracted {len(raw_documents)} raw documents in {time.time() - job_start_time:.1f}s")
+            
+            # =================================================================
+            # PHASE 2: Parent-Child Chunking (if enabled - DEPRECATED)
+            # =================================================================
+            if use_parent_child_chunking:
+                await _update_job_status(job_id, EmbeddingJobStatus.PREPARING, phase="Applying parent-child chunking...")
+                
             try:
                 from langchain_core.documents import Document as LCDocument
                 from app.modules.embeddings.transform import AdvancedDataTransformer
@@ -1642,7 +1709,7 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
                 
                 loop = asyncio.get_event_loop()
                 def run_chunking():
-                    return transformer.perform_parent_child_chunking(documents=lc_documents)
+                    return transformer.store_documents(documents=lc_documents)
                 
                 chunking_start = time.time()
                 child_documents, parent_docstore = await loop.run_in_executor(None, run_chunking)
@@ -1665,13 +1732,13 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
                 logger.error(traceback.format_exc())
                 documents = raw_documents
                 total_documents = len(documents)
-        else:
-            documents = raw_documents
-            total_documents = len(documents)
-        
-        batch_count = (total_documents + batch_size - 1) // batch_size
-        logger.info(f"Job {job_id}: {total_documents} documents ready for embedding ({batch_count} batches)")
-        
+            else:
+                documents = raw_documents
+                total_documents = len(documents)
+            
+            batch_count = (total_documents + batch_size - 1) // batch_size
+            logger.info(f"Job {job_id}: {total_documents} documents ready for embedding ({batch_count} batches)")
+            
         async with _get_background_db_session() as session:
             from sqlalchemy import update as sql_update
             from app.modules.embeddings.models import EmbeddingJobModel

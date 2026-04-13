@@ -15,6 +15,10 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 import duckdb
+import threading
+
+# Global lock for DuckDB write operations to prevent concurrent access issues
+_duckdb_write_lock = threading.Lock()
 
 from app.core.config import get_settings
 
@@ -211,47 +215,53 @@ def register_csv_in_duckdb(
     """
     Register a CSV file in DuckDB as a virtual table.
     DuckDB queries CSV directly from disk without loading into RAM.
+    
+    Uses a lock to prevent concurrent connection conflicts.
     """
     db_path = get_user_duckdb_path(user_id)
-    conn = duckdb.connect(str(db_path))
     
-    try:
-        # Create metadata table
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS _file_metadata (
-                table_name VARCHAR PRIMARY KEY,
-                original_filename VARCHAR,
-                file_type VARCHAR,
-                csv_path VARCHAR,
-                row_count BIGINT,
-                columns JSON,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+    # Use lock to prevent "different configuration" errors when multiple
+    # connections try to access the same database file
+    with _duckdb_write_lock:
+        conn = duckdb.connect(str(db_path), read_only=False)
         
-        # Remove old entry
-        conn.execute("DELETE FROM _file_metadata WHERE table_name = ?", [table_name])
+        try:
+            # Create metadata table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS _file_metadata (
+                    table_name VARCHAR PRIMARY KEY,
+                    original_filename VARCHAR,
+                    file_type VARCHAR,
+                    csv_path VARCHAR,
+                    row_count BIGINT,
+                    columns JSON,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Remove old entry
+            conn.execute("DELETE FROM _file_metadata WHERE table_name = ?", [table_name])
+            
+            # Drop old view
+            conn.execute(f"DROP VIEW IF EXISTS {table_name}")
+            
+            # Create VIEW that reads directly from CSV (virtualized)
+            csv_path_escaped = str(csv_path).replace("'", "''")
+            conn.execute(f"""
+                CREATE VIEW {table_name} AS 
+                SELECT * FROM read_csv_auto('{csv_path_escaped}', header=true)
+            """)
+            
+            # Store metadata
+            conn.execute("""
+                INSERT INTO _file_metadata (table_name, original_filename, file_type, csv_path, row_count, columns)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, [table_name, original_filename, 'csv', str(csv_path), row_count, json.dumps(columns)])
+            
+            logger.info(f"Registered CSV as DuckDB view: {table_name} ({row_count:,} rows)")
         
-        # Drop old view
-        conn.execute(f"DROP VIEW IF EXISTS {table_name}")
-        
-        # Create VIEW that reads directly from CSV (virtualized)
-        csv_path_escaped = str(csv_path).replace("'", "''")
-        conn.execute(f"""
-            CREATE VIEW {table_name} AS 
-            SELECT * FROM read_csv_auto('{csv_path_escaped}', header=true)
-        """)
-        
-        # Store metadata
-        conn.execute("""
-            INSERT INTO _file_metadata (table_name, original_filename, file_type, csv_path, row_count, columns)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, [table_name, original_filename, 'csv', str(csv_path), row_count, json.dumps(columns)])
-        
-        logger.info(f"Registered CSV as DuckDB view: {table_name} ({row_count:,} rows)")
-        
-    finally:
-        conn.close()
+        finally:
+            conn.close()
 
 
 def process_file_for_duckdb(
@@ -467,7 +477,8 @@ def delete_duckdb_table(user_id: str, table_name: str) -> bool:
         return False
     
     try:
-        conn = duckdb.connect(str(db_path))
+        with _duckdb_write_lock:
+            conn = duckdb.connect(str(db_path), read_only=False)
         
         csv_info = conn.execute(
             "SELECT csv_path FROM _file_metadata WHERE table_name = ?",

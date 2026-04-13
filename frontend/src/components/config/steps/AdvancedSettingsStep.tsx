@@ -7,7 +7,7 @@ import type { AdvancedSettings as AdvancedSettingsType } from '../../../contexts
 
 interface AdvancedSettingsStepProps {
     advancedSettings: AdvancedSettingsType;
-    setAdvancedSettings: (settings: AdvancedSettingsType) => void;
+    setAdvancedSettings: React.Dispatch<React.SetStateAction<AdvancedSettingsType>>;
     dataSourceType: 'database' | 'file';
     connectionName: string;
     connectionId: number | null;
@@ -35,7 +35,7 @@ export const AdvancedSettingsStep: React.FC<AdvancedSettingsStepProps> = ({
     useEffect(() => {
         if (!isLoaded) return;
 
-        setAdvancedSettings(prev => {
+        setAdvancedSettings((prev: AdvancedSettingsType) => {
             const next = { ...prev };
             // Only apply defaults if values haven't been set yet (using default values as check)
             if (systemSettings.embedding.model && !prev.embedding.model) {

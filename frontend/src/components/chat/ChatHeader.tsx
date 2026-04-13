@@ -3,8 +3,6 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { canManageUsers, canViewAllAuditLogs, canViewConfig, getRoleDisplayName } from '../../utils/permissions';
 import logo from '../../assets/logo.svg';
-// NotificationCenter disabled - backend API not yet implemented
-// import NotificationCenter from '../NotificationCenter';
 
 interface ChatHeaderProps {
   title?: string;
@@ -144,7 +142,7 @@ export default function ChatHeader({
                 {/* Backdrop */}
                 <div className="fixed inset-0 bg-black/30" />
                 {/* Menu */}
-                <div 
+                <div
                   className="fixed top-12 right-2 w-44 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50"
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -165,10 +163,8 @@ export default function ChatHeader({
               </div>
             )}
           </div>
-          
-          {/* NotificationCenter disabled - backend API not yet implemented */}
-          {/* <NotificationCenter /> */}
-          
+
+
           {user && (
             <div className="relative" ref={menuRef}>
               {/* User Menu Button */}
@@ -208,7 +204,7 @@ export default function ChatHeader({
                     {/* Backdrop */}
                     <div className="fixed inset-0 bg-black/40" />
                     {/* Top Sheet Menu */}
-                    <div 
+                    <div
                       className="fixed top-0 left-0 right-0 bg-white rounded-b-2xl shadow-2xl py-4 px-4 pt-12 z-50 animate-in slide-in-from-top duration-200"
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -225,7 +221,7 @@ export default function ChatHeader({
                           <div className="text-sm text-blue-600 font-medium mt-1">{getRoleDisplayName(user.role)}</div>
                         </div>
                         {/* Close button */}
-                        <button 
+                        <button
                           onClick={() => setShowUserMenu(false)}
                           className="p-2 rounded-full hover:bg-gray-100 transition-colors"
                         >
@@ -277,7 +273,7 @@ export default function ChatHeader({
                           </button>
                         )}
                       </div>
-                      
+
                       {/* Handle bar at bottom */}
                       <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mt-4" />
                     </div>

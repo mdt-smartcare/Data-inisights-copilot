@@ -71,6 +71,8 @@ class IntentClassifier:
         'min', 'max', 'minimum', 'maximum',
         'group by', 'grouped', 'per', 'each',
         'statistics', 'stats', 'numbers', 'metrics',
+        'frequency', 'frequently', 'how often', 'occurrences',
+        'assessment', 'assessments',
     ]
     
     # Keywords indicating Vector/RAG queries (semantic search)

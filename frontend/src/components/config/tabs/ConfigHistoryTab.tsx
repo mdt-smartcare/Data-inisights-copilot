@@ -427,24 +427,22 @@ const ConfigDetailModal: React.FC<ConfigDetailModalProps> = ({ config, isLoading
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
                     {/* Status Row */}
                     <div className="flex items-center gap-4">
-                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                            config.is_active
-                                ? 'bg-green-100 text-green-700'
-                                : config.status === 'draft'
+                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${config.is_active
+                            ? 'bg-green-100 text-green-700'
+                            : config.status === 'draft'
                                 ? 'bg-yellow-100 text-yellow-700'
                                 : 'bg-gray-100 text-gray-600'
-                        }`}>
+                            }`}>
                             {config.is_active ? 'Active' : config.status === 'draft' ? 'Draft' : 'Published'}
                         </span>
-                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                            config.embedding_status === 'completed'
-                                ? 'bg-green-100 text-green-700'
-                                : config.embedding_status === 'in_progress'
+                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${config.embedding_status === 'completed'
+                            ? 'bg-green-100 text-green-700'
+                            : config.embedding_status === 'in_progress'
                                 ? 'bg-yellow-100 text-yellow-700'
                                 : config.embedding_status === 'failed'
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-gray-100 text-gray-600'
-                        }`}>
+                                    ? 'bg-red-100 text-red-700'
+                                    : 'bg-gray-100 text-gray-600'
+                            }`}>
                             Vector DB: {(config.embedding_status || 'not_started').replace('_', ' ')}
                         </span>
                     </div>
@@ -537,32 +535,6 @@ const ConfigDetailModal: React.FC<ConfigDetailModalProps> = ({ config, isLoading
                                     <span className="font-medium text-gray-900">
                                         {ragConf.rerankEnabled || ragConf.rerank_enabled ? 'Enabled' : 'Disabled'}
                                     </span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Chunking Settings */}
-                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                            <div className="flex items-center gap-2 mb-3">
-                                <CubeTransparentIcon className="w-5 h-5 text-orange-600" />
-                                <h4 className="font-semibold text-gray-900">Chunking Settings</h4>
-                            </div>
-                            <div className="space-y-2 text-sm">
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">Parent Chunk</span>
-                                    <span className="font-medium text-gray-900">{String(chunkConf.parentChunkSize || chunkConf.parent_chunk_size || 512)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">Parent Overlap</span>
-                                    <span className="font-medium text-gray-900">{String(chunkConf.parentChunkOverlap || chunkConf.parent_chunk_overlap || 100)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">Child Chunk</span>
-                                    <span className="font-medium text-gray-900">{String(chunkConf.childChunkSize || chunkConf.child_chunk_size || 128)}</span>
-                                </div>
-                                <div className="flex justify-between">
-                                    <span className="text-gray-500">Child Overlap</span>
-                                    <span className="font-medium text-gray-900">{String(chunkConf.childChunkOverlap || chunkConf.child_chunk_overlap || 25)}</span>
                                 </div>
                             </div>
                         </div>

@@ -175,7 +175,7 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
     embedding_function: Any = Field(default=None)
     vector_store: Any = Field(default=None)
     docstore: Any = Field(default=None)
-    child_splitter: Any = Field(default=None)
+
     child_chunk_retriever: Any = Field(default=None)
     sparse_retriever: Any = Field(default=None)
     reranker: Any = Field(default=None)
@@ -207,13 +207,6 @@ class AdvancedRAGRetriever(BaseRetriever, BaseModel):
         self.vector_store = self._load_vector_store()
         self.docstore = self._load_docstore()
         
-        # Create child splitter
-        child_splitter_config = self.config.get('chunking', {}).get('child_splitter', {
-            'chunk_size': 128,
-            'chunk_overlap': 25
-        })
-        from langchain_text_splitters import RecursiveCharacterTextSplitter
-        self.child_splitter = RecursiveCharacterTextSplitter(**child_splitter_config)
         
         # Initialize retrievers
         self._setup_retrievers()

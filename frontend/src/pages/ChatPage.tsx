@@ -41,11 +41,11 @@ export default function ChatPage() {
   const [agents, setAgents] = useState<any[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
-  
+
   // Agent switch confirmation modal state
   const [showSwitchConfirmation, setShowSwitchConfirmation] = useState(false);
-  const [pendingAgentId, setPendingAgentId] = useState<string>("");
-  
+  const [pendingAgentId, setPendingAgentId] = useState<string | undefined>(undefined);
+
   // RAG availability state
   const [ragAvailable, setRagAvailable] = useState(false);
   const [agenticHybridAvailable, setAgenticHybridAvailable] = useState(false);
@@ -71,7 +71,7 @@ export default function ChatPage() {
             return;
           }
         }
-        
+
         // Auto-select ONLY if there is exactly 1 agent
         if (agentList.length === 1) {
           setSelectedAgentId(agentList[0].id);
@@ -106,13 +106,13 @@ export default function ChatPage() {
       try {
         // Fetch agent-specific config including example questions
         const config = await getActiveConfigMetadata(selectedAgentId);
-        
+
         if (config && config.example_questions) {
           try {
-            const parsed = typeof config.example_questions === 'string' 
-              ? JSON.parse(config.example_questions) 
+            const parsed = typeof config.example_questions === 'string'
+              ? JSON.parse(config.example_questions)
               : config.example_questions;
-            
+
             if (Array.isArray(parsed) && parsed.length > 0) {
               setSuggestions(parsed);
               console.log(`Loaded ${parsed.length} example questions for agent ${selectedAgentId}`);
@@ -122,7 +122,7 @@ export default function ChatPage() {
             console.warn("Failed to parse example questions", e);
           }
         }
-        
+
         // Fallback to defaults if no agent-specific questions
         setSuggestions(DEFAULT_SUGGESTIONS);
       } catch (err) {
@@ -130,7 +130,7 @@ export default function ChatPage() {
         setSuggestions(DEFAULT_SUGGESTIONS);
       }
     };
-    
+
     loadAgentSuggestions();
   }, [selectedAgentId]);
 
@@ -138,18 +138,18 @@ export default function ChatPage() {
   useEffect(() => {
     if (selectedAgentId !== undefined) {
       // Agent selected or changed
-      
+
       // 1. Abort any in-flight request from previous agent (Approach 3)
       if (abortControllerRef.current) {
         console.log('Aborting previous request due to agent switch');
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
-      
+
       // 2. Reset session ID for new agent (Approach 1)
       console.log(`Agent ${selectedAgentId} selected - creating new session`);
       setSessionId(crypto.randomUUID());
-      
+
       // 3. Optional: Clear messages for clean slate
       // Uncomment if you want messages to clear on agent switch
       // setMessages([]);
@@ -179,7 +179,7 @@ export default function ChatPage() {
         console.error('Failed to check RAG availability', err);
       }
     };
-    
+
     checkRagAvailability();
   }, [selectedAgentId, agents]);
 
@@ -187,9 +187,9 @@ export default function ChatPage() {
     mutationFn: (data: { query: string; session_id: string; query_mode?: QueryMode; signal: AbortSignal }) => {
       // Store which agent this request is for
       requestAgentIdRef.current = selectedAgentId;
-      
-      return chatService.sendMessage({ 
-        ...data, 
+
+      return chatService.sendMessage({
+        ...data,
         agent_id: selectedAgentId,
         signal: data.signal
       });
@@ -226,7 +226,7 @@ export default function ChatPage() {
         agenticHybridResult: data.agentic_hybrid_result as AgenticHybridResult,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      
+
       // Clear abort controller after successful response
       abortControllerRef.current = null;
     },
@@ -236,7 +236,7 @@ export default function ChatPage() {
         console.log('Request cancelled - no error shown');
         return;
       }
-      
+
       console.error('Chat error:', error);
       const errorMessage: Message = {
         id: Date.now().toString(),
@@ -245,7 +245,7 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
-      
+
       // Clear abort controller on error
       abortControllerRef.current = null;
     },
@@ -279,7 +279,7 @@ export default function ChatPage() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    
+
     setMessages([]);
     setSessionId(crypto.randomUUID()); // Generate new session for fresh start
   };
@@ -321,15 +321,15 @@ export default function ChatPage() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    
+
     // Clear messages and switch agent
     setMessages([]);
     setSelectedAgentId(pendingAgentId);
     setSessionId(crypto.randomUUID());
-    
+
     // Close modal and reset
     setShowSwitchConfirmation(false);
-    setPendingAgentId("");
+    setPendingAgentId(undefined);
   };
 
   // Cancel agent switch

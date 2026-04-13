@@ -8,6 +8,11 @@ Supports both Qdrant (preferred) and ChromaDB backends with automatic fallback.
 
 IMPORTANT: This store should NOT contain any actual patient data, names,
 or identifiable information. Only store generic question patterns and SQL templates.
+
+PER-AGENT SUPPORT:
+- Each agent can have its own SQL examples scoped by agent_id
+- Global examples (agent_id=None) serve as fallback for all agents
+- Agent-specific examples are prioritized over global ones in retrieval
 """
 import hashlib
 import threading
@@ -27,8 +32,8 @@ logger = get_logger(__name__)
 # Collection name for SQL examples
 SQL_EXAMPLES_COLLECTION = "sql_examples"
 
-# Singleton instance
-_sql_examples_store_instance: Optional["SQLExamplesStore"] = None
+# Singleton instances per agent (None = global)
+_sql_examples_store_instances: Dict[Optional[str], "SQLExamplesStore"] = {}
 _sql_examples_store_lock = threading.Lock()
 
 
@@ -46,12 +51,14 @@ class SQLExamplesStore:
         - Deterministic IDs using SHA256 hash for deduplication
         - Category and tag-based filtering
         - Configurable similarity threshold
+        - Per-agent example scoping with global fallback
     
     Example usage:
-        store = get_sql_examples_store()
+        # Get store for a specific agent
+        store = get_sql_examples_store(agent_id="uuid-here")
         
-        # Add a curated example
-        store.add_example(
+        # Add a curated example for this agent
+        await store.add_example(
             question="Show patient's initial and latest systolic pressure",
             sql="WITH PatientReadings AS (...) SELECT ...",
             category="blood_pressure",
@@ -59,8 +66,8 @@ class SQLExamplesStore:
             description="Compare first and last BP readings"
         )
         
-        # Retrieve similar examples for few-shot prompting
-        examples = store.get_similar_examples(
+        # Retrieve similar examples (includes agent-specific + global)
+        examples = await store.get_similar_examples(
             question="Compare first and last BP readings",
             top_k=3,
             min_score=0.7
@@ -71,7 +78,8 @@ class SQLExamplesStore:
         self,
         collection_name: str = SQL_EXAMPLES_COLLECTION,
         embedding_model: str = "text-embedding-ada-002",
-        preferred_backend: Optional[str] = None
+        preferred_backend: Optional[str] = None,
+        agent_id: Optional[str] = None
     ):
         """
         Initialize the SQL Examples Store.
@@ -81,7 +89,9 @@ class SQLExamplesStore:
             embedding_model: OpenAI embedding model to use (default: "text-embedding-ada-002")
             preferred_backend: Preferred vector store backend ("qdrant" or "chroma").
                              If None, uses VECTOR_STORE_TYPE env var.
+            agent_id: Agent ID for scoping examples. None = global store.
         """
+        self.agent_id = agent_id
         self.collection_name = collection_name
         self.embedding_model = embedding_model
         self.settings = get_settings()
@@ -97,10 +107,11 @@ class SQLExamplesStore:
         self._openai_client = None
         
         logger.info(
-            f"SQLExamplesStore initialized",
+            "SQLExamplesStore initialized",
             collection=self.collection_name,
             backend=self.backend_type,
-            embedding_model=self.embedding_model
+            embedding_model=self.embedding_model,
+            agent_id=self.agent_id
         )
     
     def _init_vector_store(self) -> None:
@@ -148,15 +159,7 @@ class SQLExamplesStore:
         return self._openai_client
     
     def _generate_embedding(self, text: str) -> List[float]:
-        """
-        Generate embedding for a text string using OpenAI.
-        
-        Args:
-            text: Text to embed
-            
-        Returns:
-            List of floats representing the embedding vector
-        """
+        """Generate embedding for a text string using OpenAI."""
         client = self._get_openai_client()
         response = client.embeddings.create(
             model=self.embedding_model,
@@ -165,15 +168,7 @@ class SQLExamplesStore:
         return response.data[0].embedding
     
     def _generate_embeddings_batch(self, texts: List[str]) -> List[List[float]]:
-        """
-        Generate embeddings for multiple texts in a single API call.
-        
-        Args:
-            texts: List of texts to embed
-            
-        Returns:
-            List of embedding vectors
-        """
+        """Generate embeddings for multiple texts in a single API call."""
         if not texts:
             return []
         
@@ -182,26 +177,18 @@ class SQLExamplesStore:
             model=self.embedding_model,
             input=texts
         )
-        # Sort by index to maintain order
         sorted_data = sorted(response.data, key=lambda x: x.index)
         return [item.embedding for item in sorted_data]
     
     @staticmethod
-    def _generate_id(question: str, sql: str) -> str:
+    def _generate_id(question: str, sql: str, agent_id: Optional[str] = None) -> str:
         """
         Generate a deterministic ID using SHA256 hash.
         
-        This ensures deduplication - adding the same question+sql pair
-        twice will overwrite rather than create duplicates.
-        
-        Args:
-            question: The natural language question
-            sql: The SQL query
-            
-        Returns:
-            SHA256 hash string
+        Includes agent_id in hash to allow same Q&A for different agents.
         """
-        content = f"{question.strip().lower()}|{sql.strip()}"
+        agent_prefix = f"{agent_id}|" if agent_id else "global|"
+        content = f"{agent_prefix}{question.strip().lower()}|{sql.strip()}"
         return hashlib.sha256(content.encode()).hexdigest()
     
     async def add_example(
@@ -210,38 +197,37 @@ class SQLExamplesStore:
         sql: str,
         category: str = "general",
         tags: Optional[List[str]] = None,
-        description: str = ""
+        description: str = "",
+        agent_id: Optional[str] = None
     ) -> bool:
         """
         Add a single Q&A example to the store.
         
         Args:
-            question: Natural language question (e.g., "Show patient's BP readings")
+            question: Natural language question
             sql: Corresponding SQL query
-            category: Category for filtering (e.g., "blood_pressure", "medications")
+            category: Category for filtering
             tags: List of tags for additional filtering
-            description: Optional description of what this example demonstrates
+            description: Optional description
+            agent_id: Agent ID to scope this example. Uses store's agent_id if not provided.
             
         Returns:
             True if successful, False otherwise
         """
         try:
-            # Generate deterministic ID
-            example_id = self._generate_id(question, sql)
-            
-            # Generate embedding for the question
+            effective_agent_id = agent_id if agent_id is not None else self.agent_id
+            example_id = self._generate_id(question, sql, effective_agent_id)
             embedding = self._generate_embedding(question)
             
-            # Build metadata
             metadata = {
                 "question": question,
                 "sql": sql,
                 "category": category,
                 "tags": ",".join(tags) if tags else "",
-                "description": description
+                "description": description,
+                "agent_id": effective_agent_id or ""
             }
             
-            # Store in vector DB
             await self._vector_store.upsert_batch(
                 ids=[example_id],
                 documents=[question],
@@ -250,10 +236,11 @@ class SQLExamplesStore:
             )
             
             logger.info(
-                f"Added SQL example",
+                "Added SQL example",
                 example_id=example_id[:12],
                 category=category,
-                question_preview=question[:50]
+                question_preview=question[:50],
+                agent_id=effective_agent_id
             )
             return True
             
@@ -261,52 +248,38 @@ class SQLExamplesStore:
             logger.error(f"Failed to add SQL example: {e}", exc_info=True)
             return False
     
-    async def add_examples_batch(self, examples: List[Dict[str, Any]]) -> int:
-        """
-        Add multiple Q&A examples in batch.
-        
-        More efficient than calling add_example repeatedly as it batches
-        the embedding API calls.
-        
-        Args:
-            examples: List of dicts with keys:
-                - question (required): Natural language question
-                - sql (required): SQL query
-                - category (optional): Category string
-                - tags (optional): List of tag strings
-                - description (optional): Description string
-                
-        Returns:
-            Number of examples successfully added
-        """
+    async def add_examples_batch(
+        self, 
+        examples: List[Dict[str, Any]],
+        agent_id: Optional[str] = None
+    ) -> int:
+        """Add multiple Q&A examples in batch."""
         if not examples:
             return 0
         
         try:
-            # Validate and prepare examples
+            default_agent_id = agent_id if agent_id is not None else self.agent_id
+            
             valid_examples = []
             for ex in examples:
                 if "question" not in ex or "sql" not in ex:
-                    logger.warning(f"Skipping invalid example (missing question or sql): {ex}")
+                    logger.warning(f"Skipping invalid example: {ex}")
                     continue
                 valid_examples.append(ex)
             
             if not valid_examples:
                 return 0
             
-            # Extract questions for batch embedding
             questions = [ex["question"] for ex in valid_examples]
-            
-            # Generate embeddings in batch
             embeddings = self._generate_embeddings_batch(questions)
             
-            # Prepare data for vector store
             ids = []
             documents = []
             metadatas = []
             
             for ex, embedding in zip(valid_examples, embeddings):
-                example_id = self._generate_id(ex["question"], ex["sql"])
+                ex_agent_id = ex.get("agent_id", default_agent_id)
+                example_id = self._generate_id(ex["question"], ex["sql"], ex_agent_id)
                 ids.append(example_id)
                 documents.append(ex["question"])
                 
@@ -316,11 +289,11 @@ class SQLExamplesStore:
                     "sql": ex["sql"],
                     "category": ex.get("category", "general"),
                     "tags": ",".join(tags) if isinstance(tags, list) else str(tags),
-                    "description": ex.get("description", "")
+                    "description": ex.get("description", ""),
+                    "agent_id": ex_agent_id or ""
                 }
                 metadatas.append(metadata)
             
-            # Upsert to vector store
             await self._vector_store.upsert_batch(
                 ids=ids,
                 documents=documents,
@@ -328,7 +301,7 @@ class SQLExamplesStore:
                 metadatas=metadatas
             )
             
-            logger.info(f"Added {len(ids)} SQL examples in batch")
+            logger.info(f"Added {len(ids)} SQL examples in batch", agent_id=default_agent_id)
             return len(ids)
             
         except Exception as e:
@@ -340,7 +313,8 @@ class SQLExamplesStore:
         question: str,
         top_k: int = 3,
         category_filter: Optional[str] = None,
-        min_score: float = 0.0
+        min_score: float = 0.0,
+        include_global: bool = True
     ) -> List[Dict[str, Any]]:
         """
         Retrieve similar Q&A examples for few-shot prompting.
@@ -350,44 +324,43 @@ class SQLExamplesStore:
             top_k: Maximum number of examples to return
             category_filter: Optional category to filter by
             min_score: Minimum similarity score (0.0 to 1.0)
+            include_global: Include global examples in addition to agent-specific ones
             
         Returns:
-            List of dicts containing:
-                - question: The example question
-                - sql: The example SQL
-                - category: The category
-                - tags: List of tags
-                - description: Description
-                - score: Similarity score (0.0 to 1.0)
+            List of example dicts with question, sql, category, tags, description, score, agent_id
         """
         try:
-            # Generate embedding for the query
             query_embedding = self._generate_embedding(question)
             
-            # Build filter if category specified
-            filter_dict = None
+            filter_dict = {}
             if category_filter:
-                filter_dict = {"category": category_filter}
+                filter_dict["category"] = category_filter
             
             # Search vector store
             results = await self._vector_store.search(
                 query_embedding=query_embedding,
-                top_k=top_k,
-                filter_dict=filter_dict
+                top_k=top_k * 2 if self.agent_id and include_global else top_k,
+                filter_dict=filter_dict if filter_dict else None
             )
             
-            # Process and filter results
             examples = []
             for result in results:
                 score = result.get("score", 0.0)
-                
-                # Skip if below minimum score
                 if score < min_score:
                     continue
                 
                 metadata = result.get("metadata", {})
+                result_agent_id = metadata.get("agent_id", "")
                 
-                # Parse tags back to list
+                # Filter by agent: include if matches agent_id or is global (when include_global)
+                if self.agent_id:
+                    if result_agent_id != self.agent_id and result_agent_id != "":
+                        if not include_global:
+                            continue
+                        # Skip non-matching, non-global examples
+                        if result_agent_id and result_agent_id != self.agent_id:
+                            continue
+                
                 tags_str = metadata.get("tags", "")
                 tags = [t.strip() for t in tags_str.split(",") if t.strip()]
                 
@@ -397,13 +370,24 @@ class SQLExamplesStore:
                     "category": metadata.get("category", "general"),
                     "tags": tags,
                     "description": metadata.get("description", ""),
-                    "score": score
+                    "score": score,
+                    "agent_id": result_agent_id
                 })
+            
+            # Sort: agent-specific first, then by score
+            if self.agent_id and include_global:
+                examples.sort(key=lambda x: (
+                    0 if x["agent_id"] == self.agent_id else 1,
+                    -x["score"]
+                ))
+            
+            examples = examples[:top_k]
             
             logger.debug(
                 f"Retrieved {len(examples)} similar SQL examples",
                 query_preview=question[:50],
-                top_score=examples[0]["score"] if examples else 0
+                top_score=examples[0]["score"] if examples else 0,
+                agent_id=self.agent_id
             )
             
             return examples
@@ -413,12 +397,7 @@ class SQLExamplesStore:
             return []
     
     async def get_example_count(self) -> int:
-        """
-        Get the total number of examples in the store.
-        
-        Returns:
-            Number of stored examples
-        """
+        """Get the total number of examples in the store."""
         try:
             count = await self._vector_store.get_collection_count()
             return count
@@ -426,48 +405,43 @@ class SQLExamplesStore:
             logger.error(f"Failed to get example count: {e}", exc_info=True)
             return 0
     
-    async def clear(self) -> None:
+    async def clear(self, agent_only: bool = False) -> None:
         """
-        Clear all examples from the store.
+        Clear examples from the store.
         
-        WARNING: This deletes all stored Q&A pairs. Use with caution.
+        Args:
+            agent_only: If True and agent_id is set, only clear agent-specific examples.
         """
         try:
-            await self._vector_store.delete_collection()
-            # Reinitialize the vector store
-            self._init_vector_store()
-            logger.info(f"Cleared all SQL examples from collection: {self.collection_name}")
+            if agent_only and self.agent_id:
+                logger.warning(f"Clearing examples for agent {self.agent_id}")
+                # Note: Requires vector store to support delete_by_metadata
+                if hasattr(self._vector_store, 'delete_by_metadata'):
+                    await self._vector_store.delete_by_metadata({"agent_id": self.agent_id})
+                else:
+                    logger.warning("Vector store doesn't support filtered delete")
+            else:
+                await self._vector_store.delete_collection()
+                self._init_vector_store()
+            logger.info("Cleared SQL examples", agent_id=self.agent_id if agent_only else "ALL")
         except Exception as e:
             logger.error(f"Failed to clear SQL examples: {e}", exc_info=True)
             raise
     
-    async def delete_example(self, question: str, sql: str) -> bool:
-        """
-        Delete a specific example by question and SQL.
-        
-        Args:
-            question: The question of the example to delete
-            sql: The SQL of the example to delete
-            
-        Returns:
-            True if deleted, False otherwise
-        """
+    async def delete_example(self, question: str, sql: str, agent_id: Optional[str] = None) -> bool:
+        """Delete a specific example by question and SQL."""
         try:
-            example_id = self._generate_id(question, sql)
+            effective_agent_id = agent_id if agent_id is not None else self.agent_id
+            example_id = self._generate_id(question, sql, effective_agent_id)
             await self._vector_store.delete_by_source_ids([example_id])
-            logger.info(f"Deleted SQL example: {example_id[:12]}")
+            logger.info(f"Deleted SQL example: {example_id[:12]}", agent_id=effective_agent_id)
             return True
         except Exception as e:
             logger.error(f"Failed to delete SQL example: {e}", exc_info=True)
             return False
     
     async def health_check(self) -> Dict[str, Any]:
-        """
-        Check the health of the SQL examples store.
-        
-        Returns:
-            Dict with health status information
-        """
+        """Check the health of the SQL examples store."""
         try:
             exists = await self._vector_store.collection_exists()
             count = await self._vector_store.get_collection_count() if exists else 0
@@ -478,52 +452,62 @@ class SQLExamplesStore:
                 "collection": self.collection_name,
                 "collection_exists": exists,
                 "example_count": count,
-                "embedding_model": self.embedding_model
+                "embedding_model": self.embedding_model,
+                "agent_id": self.agent_id
             }
         except Exception as e:
             return {
                 "healthy": False,
                 "backend": self.backend_type,
                 "collection": self.collection_name,
+                "agent_id": self.agent_id,
                 "error": str(e)
             }
 
 
 def get_sql_examples_store(
+    agent_id: Optional[str] = None,
     collection_name: str = SQL_EXAMPLES_COLLECTION,
     embedding_model: str = "text-embedding-ada-002"
 ) -> SQLExamplesStore:
     """
-    Get the singleton SQLExamplesStore instance.
+    Get a SQLExamplesStore instance for the specified agent.
     
-    Thread-safe singleton pattern ensures only one instance exists.
+    Thread-safe singleton pattern ensures only one instance per agent_id.
     
     Args:
+        agent_id: Agent ID for scoping examples. None = global store.
         collection_name: Name of the vector collection
         embedding_model: OpenAI embedding model to use
         
     Returns:
-        SQLExamplesStore singleton instance
+        SQLExamplesStore instance for the specified agent
     """
-    global _sql_examples_store_instance
+    global _sql_examples_store_instances
     
     with _sql_examples_store_lock:
-        if _sql_examples_store_instance is None:
-            _sql_examples_store_instance = SQLExamplesStore(
+        if agent_id not in _sql_examples_store_instances:
+            _sql_examples_store_instances[agent_id] = SQLExamplesStore(
                 collection_name=collection_name,
-                embedding_model=embedding_model
+                embedding_model=embedding_model,
+                agent_id=agent_id
             )
-        return _sql_examples_store_instance
+        return _sql_examples_store_instances[agent_id]
 
 
-def reset_sql_examples_store() -> None:
+def reset_sql_examples_store(agent_id: Optional[str] = None) -> None:
     """
-    Reset the singleton instance.
+    Reset the store instance for a specific agent or all stores.
     
-    Useful for testing or when configuration changes.
+    Args:
+        agent_id: Agent ID to reset. If None, resets ALL stores.
     """
-    global _sql_examples_store_instance
+    global _sql_examples_store_instances
     
     with _sql_examples_store_lock:
-        _sql_examples_store_instance = None
-        logger.info("SQLExamplesStore singleton reset")
+        if agent_id is None:
+            _sql_examples_store_instances.clear()
+            logger.info("All SQLExamplesStore instances reset")
+        elif agent_id in _sql_examples_store_instances:
+            del _sql_examples_store_instances[agent_id]
+            logger.info(f"SQLExamplesStore reset for agent: {agent_id}")
