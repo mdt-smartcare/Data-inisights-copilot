@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChatHeader } from '../components/chat';
 import { APP_CONFIG } from '../config';
@@ -47,7 +47,7 @@ const AgentDashboardPage: React.FC = () => {
     /**
      * Check for existing draft config on agent load.
      */
-    const checkForDraft = async (agentId: string) => {
+    const checkForDraft = useCallback(async (agentId: string) => {
         setIsCheckingDraft(true);
         try {
             const existingDraft = await getDraftConfig(agentId);
@@ -58,7 +58,7 @@ const AgentDashboardPage: React.FC = () => {
         } finally {
             setIsCheckingDraft(false);
         }
-    };
+    }, []); // getDraftConfig is an import
 
     /**
      * Handle Edit/Create Config button click.
@@ -221,7 +221,7 @@ const AgentDashboardPage: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [agent?.id, checkForDraft, getActiveConfigMetadata, getPromptHistory]);
+    }, [agent?.id, checkForDraft]);
 
     const handleStartEmbedding = async (incremental: boolean = true, settings?: EmbeddingSettings) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
