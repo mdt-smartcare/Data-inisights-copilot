@@ -212,8 +212,16 @@ class ChatService:
                     )
                 
                 # Step 5: Generate follow-up questions (async, don't block)
+                # Get conversation history for context-aware followups
+                conversation_history = self._memory.get_context(session_id, max_messages=5)
+                
                 followup_task = asyncio.create_task(
-                    generate_followups_background(query, answer, timeout=2.0)
+                    generate_followups_background(
+                        query, 
+                        answer, 
+                        conversation_history=conversation_history,
+                        timeout=2.0
+                    )
                 )
                 
                 # Step 6: Save to conversation memory

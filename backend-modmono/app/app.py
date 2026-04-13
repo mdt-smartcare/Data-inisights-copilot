@@ -333,16 +333,24 @@ app.include_router(ai_registry_router, prefix=f"{settings.api_v1_prefix}")
 # Embeddings - job management and progress tracking
 from app.modules.embeddings.routes import router as embeddings_router
 from app.modules.embeddings.websocket import router as embeddings_ws_router
+from app.modules.embeddings.schema_routes import router as schema_router
 app.include_router(embeddings_router, prefix=f"{settings.api_v1_prefix}", tags=["Embedding Jobs"])
 app.include_router(embeddings_ws_router, prefix=f"{settings.api_v1_prefix}/ws", tags=["WebSocket"])
+app.include_router(schema_router, prefix=f"{settings.api_v1_prefix}", tags=["Schema Vectorization"])
 
 # Chat - RAG query processing
 from app.modules.chat.routes import router as chat_router
 
 # Training - SQL examples management for few-shot learning
 from app.modules.sql_examples.routes import router as training_router
+from app.modules.sql_examples.few_shot_routes import router as fewshot_router
+from app.modules.chat.context_routes import router as context_router
+from app.modules.chat.sql_executor_routes import router as sql_executor_router
 app.include_router(chat_router, prefix=f"{settings.api_v1_prefix}", tags=["Chat"])
 app.include_router(training_router, prefix=f"{settings.api_v1_prefix}", tags=["Training"])
+app.include_router(fewshot_router, prefix=f"{settings.api_v1_prefix}", tags=["Few-Shot Examples"])
+app.include_router(context_router, prefix=f"{settings.api_v1_prefix}", tags=["Context Orchestration"])
+app.include_router(sql_executor_router, prefix=f"{settings.api_v1_prefix}", tags=["SQL Execution"])
 
 
 # ============================================
