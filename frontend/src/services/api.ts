@@ -1463,6 +1463,9 @@ export interface DataSource {
   created_by?: string;
   created_at: string;
   updated_at: string;
+  // Dependency info
+  dependent_agents?: string[];
+  dependent_config_count?: number;
 }
 
 export interface DataSourceListResponse {

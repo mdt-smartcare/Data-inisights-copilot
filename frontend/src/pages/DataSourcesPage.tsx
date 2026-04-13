@@ -42,10 +42,10 @@ export default function DataSourcesPage() {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  
+
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>('all');
-  
+
   // Modal state
   const [modalType, setModalType] = useState<ModalType>(null);
   const [formState, setFormState] = useState<FormState>({
@@ -56,12 +56,12 @@ export default function DataSourcesPage() {
   });
   const [formError, setFormError] = useState<string | null>(null);
   const [formLoading, setFormLoading] = useState(false);
-  
+
   // File upload state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  
+
   // Delete confirmation
   const [deleteConfirm, setDeleteConfirm] = useState<{ show: boolean; id: string | null; title: string }>({
     show: false,
@@ -90,7 +90,7 @@ export default function DataSourcesPage() {
 
   useEffect(() => {
     loadDataSources();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   // ============================================
@@ -147,13 +147,13 @@ export default function DataSourcesPage() {
       setFormLoading(true);
       setFormError(null);
       setUploadProgress('Uploading...');
-      
+
       await uploadDataSourceFile(
         selectedFile,
         formState.title || undefined,
         formState.description || undefined
       );
-      
+
       setUploadProgress('Processing complete!');
       setTimeout(() => {
         setModalType(null);
@@ -184,7 +184,12 @@ export default function DataSourcesPage() {
       setDeleteConfirm({ show: false, id: null, title: '' });
       loadDataSources();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to delete data source');
+      const errorData = err.response?.data?.detail;
+      if (err.response?.status === 409 && errorData?.reason) {
+        setError(errorData.reason);
+      } else {
+        setError(errorData?.message || err.response?.data?.detail || 'Failed to delete data source');
+      }
       setDeleteConfirm({ show: false, id: null, title: '' });
     }
   };
@@ -217,14 +222,14 @@ export default function DataSourcesPage() {
     if (type === 'database') {
       return (
         <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
             d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
         </svg>
       );
     }
     return (
       <svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
           d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
       </svg>
     );
@@ -247,7 +252,7 @@ export default function DataSourcesPage() {
   return (
     <div className="flex flex-col h-screen bg-gray-50">
       <ChatHeader title={APP_CONFIG.APP_NAME} />
-      
+
       <div className="flex-1 overflow-auto">
         <div className="max-w-6xl mx-auto px-4 py-6">
           {/* Header */}
@@ -273,7 +278,7 @@ export default function DataSourcesPage() {
                 className="inline-flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
               >
                 <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                     d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                 </svg>
                 Upload File
@@ -287,11 +292,10 @@ export default function DataSourcesPage() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  activeTab === tab
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${activeTab === tab
+                  ? 'bg-white text-gray-900 shadow-sm'
+                  : 'text-gray-600 hover:text-gray-900'
+                  }`}
               >
                 {tab === 'all' ? 'All Sources' : tab === 'database' ? 'Databases' : 'Files'}
               </button>
@@ -317,7 +321,7 @@ export default function DataSourcesPage() {
           {!loading && dataSources.length === 0 && (
             <div className="text-center py-12 bg-white rounded-lg border border-gray-200">
               <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                   d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
               </svg>
               <h3 className="mt-2 text-sm font-medium text-gray-900">No data sources</h3>
@@ -359,6 +363,9 @@ export default function DataSourcesPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Created
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Used By
+                    </th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Actions
                     </th>
@@ -381,11 +388,10 @@ export default function DataSourcesPage() {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          source.source_type === 'database'
-                            ? 'bg-blue-100 text-blue-800'
-                            : 'bg-green-100 text-green-800'
-                        }`}>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${source.source_type === 'database'
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-green-100 text-green-800'
+                          }`}>
                           {source.source_type === 'database' ? source.db_engine_type || 'Database' : source.file_type?.toUpperCase() || 'File'}
                         </span>
                       </td>
@@ -409,6 +415,23 @@ export default function DataSourcesPage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {formatDate(source.created_at)}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {source.dependent_config_count && source.dependent_config_count > 0 ? (
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-orange-600">
+                              {source.dependent_config_count} Agent{source.dependent_config_count > 1 ? 's' : ''}
+                            </span>
+                            <span
+                              className="text-xs text-gray-500 truncate max-w-[150px] cursor-help"
+                              title={source.dependent_agents?.join(', ')}
+                            >
+                              {source.dependent_agents?.join(', ')}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-gray-400 italic">Not in use</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         <button
@@ -558,11 +581,10 @@ export default function DataSourcesPage() {
                 {/* File Drop Zone */}
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
-                    selectedFile
-                      ? 'border-green-300 bg-green-50'
-                      : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
-                  }`}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${selectedFile
+                    ? 'border-green-300 bg-green-50'
+                    : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
+                    }`}
                 >
                   <input
                     ref={fileInputRef}
@@ -594,7 +616,7 @@ export default function DataSourcesPage() {
                   ) : (
                     <div className="flex flex-col items-center">
                       <svg className="w-12 h-12 text-gray-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} 
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                           d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                       </svg>
                       <p className="text-sm text-gray-600">
