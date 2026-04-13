@@ -6,8 +6,8 @@ from typing import Optional, List, Dict, Any, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.observability.repository import AuditLogRepository
-from app.modules.observability.schemas import AuditLogResponse, AuditLogCreate, AuditAction
+from app.modules.audit.repository import AuditLogRepository
+from app.modules.audit.schemas import AuditLogResponse, AuditLogCreate, AuditAction
 from app.core.utils.logging import get_logger
 
 logger = get_logger(__name__)

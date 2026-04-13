@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session
 from app.core.auth.permissions import require_admin
-from app.modules.observability.service import AuditService
-from app.modules.observability.schemas import AuditLogResponse, AuditLogCountResponse, AuditAction
+from app.modules.audit.service import AuditService
+from app.modules.audit.schemas import AuditLogResponse, AuditLogCountResponse, AuditAction
 from app.modules.users.schemas import User
 from app.core.utils.logging import get_logger
 

@@ -8,8 +8,8 @@ import json
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.modules.observability.models import AuditLogModel
-from app.modules.observability.schemas import AuditLogResponse, AuditLogCreate
+from app.modules.audit.models import AuditLogModel
+from app.modules.audit.schemas import AuditLogResponse, AuditLogCreate
 from app.core.utils.logging import get_logger
 
 logger = get_logger(__name__)
