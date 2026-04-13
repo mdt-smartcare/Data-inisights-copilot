@@ -74,7 +74,13 @@ DUCKDB_SQL_RULES = """CRITICAL DUCKDB SQL RULES:
 14. **COALESCE FOR NULL HANDLING**: Use COALESCE(column, default_value) to handle NULLs in calculations.
 15. **AGGREGATE vs ROW-WISE FUNCTIONS**: 
     - max()/min() are AGGREGATE functions - they work ACROSS ROWS (vertical)
-    - GREATEST()/LEAST() are SCALAR functions - they work ACROSS COLUMNS in a single row (horizontal)"""
+    - GREATEST()/LEAST() are SCALAR functions - they work ACROSS COLUMNS in a single row (horizontal)
+16. **TIMEZONE-AWARE TIMESTAMPS**: If a timestamp column contains timezone info (e.g., "+0300", "UTC", "Z"), you MUST use TIMESTAMPTZ, not TIMESTAMP:
+    - WRONG: CAST(created_at AS TIMESTAMP) - fails with "timestamp that is not UTC" error
+    - CORRECT: CAST(created_at AS TIMESTAMPTZ) or created_at::TIMESTAMPTZ
+    - Example: DATE_TRUNC('month', CAST(created_at AS TIMESTAMPTZ))
+    - For columns like 'created_at', 'updated_at', always prefer TIMESTAMPTZ to be safe
+17. **PREFER DEDICATED DATE COLUMNS**: If a table has both a date column (like 'ymd', 'date', 'assessment_date') AND a timestamp column (like 'created_at'), prefer the dedicated date column for date-based queries as it avoids timezone issues."""
 
 # Query type classification keywords
 QUERY_TYPE_KEYWORDS = {
@@ -806,7 +812,7 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 sql = sql.strip()
                 last_sql = sql
                 
-                logger.debug(f"Generated SQL (attempt {attempt + 1}): {sql[:200]}...")
+                logger.info("LLM generated SQL", attempt=attempt + 1, generated_sql=sql, question=natural_language_query[:100])
                 
                 # Execute the generated SQL using read-only session
                 results, count = self.execute_query(sql)
