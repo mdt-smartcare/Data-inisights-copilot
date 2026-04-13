@@ -217,39 +217,82 @@ class DataSourceService:
                 engine = create_engine(db_url, pool_pre_ping=True, pool_size=1)
                 inspector = inspect(engine)
                 
-                table_names = inspector.get_table_names()
+                try:
+                    table_names = inspector.get_table_names()
+                except Exception as e:
+                    # Fallback for table names if inspector fails
+                    if "postgresql" in source.db_engine_type.lower():
+                        from sqlalchemy import text
+                        with engine.connect() as conn:
+                            result = conn.execute(text(
+                                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+                            ))
+                            table_names = [row[0] for row in result]
+                    else:
+                        raise e
                 
                 for table_name in table_names:
                     # Get primary key columns
-                    pk_constraint = inspector.get_pk_constraint(table_name)
-                    pk_columns = set(pk_constraint.get("constrained_columns", []) if pk_constraint else [])
+                    pk_columns = set()
+                    try:
+                        pk_constraint = inspector.get_pk_constraint(table_name)
+                        pk_columns = set(pk_constraint.get("constrained_columns", []) if pk_constraint else [])
+                    except Exception:
+                        # PK info is optional for reflection
+                        pass
                     
                     # Get foreign keys for this table
-                    foreign_keys = inspector.get_foreign_keys(table_name)
                     fk_columns = {}  # column_name -> referenced table info
-                    
-                    for fk in foreign_keys:
-                        ref_table = fk.get("referred_table")
-                        ref_columns = fk.get("referred_columns", [])
-                        constrained_columns = fk.get("constrained_columns", [])
-                        
-                        for i, col in enumerate(constrained_columns):
-                            fk_columns[col] = {
-                                "referenced_table": ref_table,
-                                "referenced_column": ref_columns[i] if i < len(ref_columns) else None,
-                            }
-                        
-                        # Add to relationships list
-                        if ref_table and constrained_columns:
-                            relationships.append({
-                                "from_table": table_name,
-                                "from_columns": constrained_columns,
-                                "to_table": ref_table,
-                                "to_columns": ref_columns,
-                            })
+                    try:
+                        foreign_keys = inspector.get_foreign_keys(table_name)
+                        for fk in foreign_keys:
+                            ref_table = fk.get("referred_table")
+                            ref_columns = fk.get("referred_columns", [])
+                            constrained_columns = fk.get("constrained_columns", [])
+                            
+                            for i, col in enumerate(constrained_columns):
+                                fk_columns[col] = {
+                                    "referenced_table": ref_table,
+                                    "referenced_column": ref_columns[i] if i < len(ref_columns) else None,
+                                }
+                            
+                            # Add to relationships list
+                            if ref_table and constrained_columns:
+                                relationships.append({
+                                    "from_table": table_name,
+                                    "from_columns": constrained_columns,
+                                    "to_table": ref_table,
+                                    "to_columns": ref_columns,
+                                })
+                    except Exception:
+                        # FK info is optional for reflection
+                        pass
                     
                     columns = []
-                    for col in inspector.get_columns(table_name):
+                    try:
+                        raw_columns = inspector.get_columns(table_name)
+                    except Exception as e:
+                        # Fallback for column reflection if inspector fails (e.g. pg_collation permissions)
+                        if "postgresql" in source.db_engine_type.lower():
+                            from sqlalchemy import text
+                            with engine.connect() as conn:
+                                query = text("""
+                                    SELECT column_name, data_type, is_nullable
+                                    FROM information_schema.columns
+                                    WHERE table_name = :table AND table_schema = 'public'
+                                """)
+                                res = conn.execute(query, {"table": table_name})
+                                raw_columns = [
+                                    {
+                                        "name": row[0],
+                                        "type": row[1],
+                                        "nullable": row[2] == 'YES'
+                                    } for row in res
+                                ]
+                        else:
+                            raise e
+
+                    for col in raw_columns:
                         col_name = col["name"]
                         col_info = {
                             "column_name": col_name,
@@ -273,6 +316,9 @@ class DataSourceService:
                 engine.dispose()
                 
             except Exception as e:
+                # Log the actual error for debugging
+                import logging
+                logging.error(f"Schema reflection error: {str(e)}")
                 raise ValueError(f"Failed to fetch database schema: {str(e)}")
         
         elif source_type == "file":
