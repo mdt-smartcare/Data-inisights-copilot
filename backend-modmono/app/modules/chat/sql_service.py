@@ -136,6 +136,7 @@ class SQLService:
         max_result_rows: int = 100,
         enable_few_shot: bool = True,
         config_id: Optional[int] = None,
+        agent_id: Optional[str] = None,
     ):
         """
         Initialize SQL service with a database URL.
@@ -146,6 +147,7 @@ class SQLService:
             max_result_rows: Maximum rows to return (default 100)
             enable_few_shot: Enable few-shot example retrieval (default True)
             config_id: Optional agent config ID for semantic schema retrieval
+            agent_id: Optional agent ID for per-agent SQL examples and data dictionary
         """
         self._db_url = db_url
         self._schema = schema
@@ -156,6 +158,7 @@ class SQLService:
         self._settings = get_settings()
         self._enable_few_shot = enable_few_shot
         self._config_id = config_id  # For semantic schema retrieval
+        self._agent_id = agent_id  # For per-agent SQL examples and data dictionary
         
         # Initialize query relevance checker
         self._enable_relevance_check = getattr(self._settings, 'enable_query_relevance_check', True)
@@ -168,21 +171,21 @@ class SQLService:
                 logger.warning(f"Failed to initialize relevance checker: {e}")
                 self._relevance_checker = None
         
-        # Initialize SQL examples store for few-shot learning
+        # Initialize SQL examples store for few-shot learning (per-agent)
         self._sql_examples_store: Optional[SQLExamplesStore] = None
         if enable_few_shot:
             try:
-                self._sql_examples_store = get_sql_examples_store()
-                logger.info("SQL Examples Store initialized for few-shot learning")
+                self._sql_examples_store = get_sql_examples_store(agent_id=agent_id)
+                logger.info("SQL Examples Store initialized for few-shot learning", agent_id=agent_id)
             except Exception as e:
                 logger.warning(f"Failed to initialize SQL examples store: {e}")
                 self._sql_examples_store = None
         
-        # Initialize data dictionary for semantic enrichment
+        # Initialize data dictionary for semantic enrichment (per-agent)
         self._data_dictionary: Optional[DataDictionary] = None
         try:
-            self._data_dictionary = get_data_dictionary()
-            logger.info("Data dictionary initialized for semantic enrichment")
+            self._data_dictionary = get_data_dictionary(agent_id=agent_id)
+            logger.info("Data dictionary initialized for semantic enrichment", agent_id=agent_id)
         except Exception as e:
             logger.warning(f"Failed to initialize data dictionary: {e}")
             self._data_dictionary = None
@@ -1031,6 +1034,7 @@ class SQLServiceFactory:
         db_session,
         enable_few_shot: bool = True,
         config_id: Optional[int] = None,
+        agent_id: Optional[str] = None,
     ) -> Optional[SQLService]:
         """
         Create a SQLService from a data source ID.
@@ -1040,6 +1044,7 @@ class SQLServiceFactory:
             db_session: Async SQLAlchemy session
             enable_few_shot: Enable few-shot example retrieval
             config_id: Optional agent config ID for semantic schema retrieval
+            agent_id: Optional agent ID for per-agent SQL examples and data dictionary
             
         Returns:
             SQLService instance or None if not found
@@ -1068,7 +1073,7 @@ class SQLServiceFactory:
                     logger.warning(f"Data source {data_source_id} has no db_url configured")
                     return None
                     
-                return SQLService(db_url=db_url, enable_few_shot=enable_few_shot, config_id=config_id)
+                return SQLService(db_url=db_url, enable_few_shot=enable_few_shot, config_id=config_id, agent_id=agent_id)
                 
             elif data_source.source_type == "file":
                 # Use DuckDB for file-based data sources
@@ -1078,6 +1083,7 @@ class SQLServiceFactory:
                         db_url=f"duckdb://{duckdb_path}",
                         enable_few_shot=enable_few_shot,
                         config_id=config_id,
+                        agent_id=agent_id,
                     )
                 
                 # Fallback: Create DuckDB service that reads CSV directly
@@ -1138,6 +1144,7 @@ class SQLServiceFactory:
                 db_session,
                 enable_few_shot=enable_few_shot,
                 config_id=config.id,  # Pass config ID for semantic schema retrieval
+                agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples
             )
             
         except Exception as e:
