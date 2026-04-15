@@ -60,6 +60,7 @@ class AIModelCreate(AIModelBase):
 
 class AIModelUpdate(BaseModel):
     """Update an existing AI model."""
+    model_id: Optional[str] = Field(None, min_length=1, max_length=500, description="Unique ID: provider/model-name")
     display_name: Optional[str] = Field(None, min_length=1, max_length=200)
     
     # Cloud config
@@ -82,6 +83,13 @@ class AIModelUpdate(BaseModel):
     description: Optional[str] = None
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
+
+    @field_validator('model_id')
+    @classmethod
+    def validate_model_id(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and '/' not in v:
+            raise ValueError("model_id must be in format 'provider/model-name'")
+        return v
 
 
 class AIModelResponse(BaseModel):

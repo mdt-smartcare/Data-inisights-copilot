@@ -1886,6 +1886,7 @@ export interface AIModelCreate {
 }
 
 export interface AIModelUpdate {
+  model_id?: string;
   display_name?: string;
   api_base_url?: string;
   api_key?: string;

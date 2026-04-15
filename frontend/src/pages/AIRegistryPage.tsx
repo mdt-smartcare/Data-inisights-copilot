@@ -473,6 +473,7 @@ function ModelForm({ model, onClose, onSaved, onError }: ModelFormProps) {
     try {
       if (model) {
         const updateData: AIModelUpdate = {
+          model_id: form.model_id !== model.model_id ? form.model_id : undefined,
           display_name: form.display_name,
           api_base_url: form.api_base_url || undefined,
           api_key: form.api_key || undefined,
@@ -513,7 +514,6 @@ function ModelForm({ model, onClose, onSaved, onError }: ModelFormProps) {
                 placeholder="openai/gpt-4o"
                 className="w-full px-3 py-2 border rounded-lg"
                 required
-                disabled={!!model}
               />
               <p className="text-xs text-gray-500 mt-1">Format: provider/model-name</p>
             </div>
