@@ -1,50 +1,41 @@
 #!/bin/bash
-# Quick start script for backend development
+# Development server startup script
 
-echo "🚀 Starting Data Insights Copilot Backend..."
-echo "=========================================="
-echo ""
+# Exit on error
+set -e
 
-# Ensure we are in the backend directory
-cd "$(dirname "$0")"
-
-# Check if .env exists
-if [ ! -f .env ]; then
-    echo "⚠️  .env file not found!"
-    if [ -f ../.env.example ]; then
-        echo "📝 Copying from root .env.example..."
-        cp ../.env.example .env
-    elif [ -f .env.example ]; then
-         echo "📝 Copying from backend .env.example..."
-         cp .env.example .env
-    else
-        echo "❌ No .env.example found. Please create .env manually."
-        exit 1
-    fi
+# Load environment variables
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
 fi
 
-# Activate Virtual Environment
-if [ -d "venv" ]; then
-    source venv/bin/activate
-elif [ -d "../venv" ]; then
-    source ../venv/bin/activate
+# Default values
+HOST=${HOST:-0.0.0.0}
+PORT=${PORT:-8000}
+RELOAD=${RELOAD:-true}
+
+# Color codes
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}Starting FHIR RAG API Development Server...${NC}"
+echo -e "${GREEN}Host: ${HOST}${NC}"
+echo -e "${GREEN}Port: ${PORT}${NC}"
+echo -e "${GREEN}Reload: ${RELOAD}${NC}"
+echo ""
+
+# Run uvicorn with reload for development
+if [ "$RELOAD" = "true" ]; then
+    uvicorn app.app:app \
+        --host "$HOST" \
+        --port "$PORT" \
+        --reload \
+        --reload-dir app \
+        --log-level debug
 else
-    echo "⚠️  Virtual environment not found."
-    echo "🔨 Creating new venv..."
-    python3 -m venv venv
-    source venv/bin/activate
-    echo "📦 Installing dependencies..."
-    pip install -r requirements.txt
+    uvicorn app.app:app \
+        --host "$HOST" \
+        --port "$PORT" \
+        --log-level info
 fi
-
-echo ""
-echo "✓ Environment activated"
-echo "✓ Starting FastAPI server on http://0.0.0.0:8000"
-echo ""
-echo "📚 API Documentation: http://localhost:8000/api/v1/docs"
-echo "=========================================="
-echo ""
-
-# Run from project root to ensure correct module resolution
-cd ..
-python -m uvicorn backend.app:app --reload --host 0.0.0.0 --port 8000

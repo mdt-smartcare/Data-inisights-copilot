@@ -64,7 +64,6 @@ services:
       QDRANT_URL: http://qdrant:6333
     volumes:
       - ./backend:/app/backend
-      - ./backend/models:/app/backend/models
       - ./backend/data:/app/backend/data
       - ./backend/logs:/app/backend/logs
       - ./migrations:/app/migrations
@@ -158,62 +157,8 @@ services:
       - copilot_network
     restart: unless-stopped
 
-  # Celery Worker for Embedding
-  embedding_worker:
-    image: data_insights_backend:latest
-    container_name: data_insights_embedding_worker
-    command: celery -A backend.pipeline.workers.embedding_worker.celery_app worker --loglevel=info --concurrency=2
-    env_file:
-      - .env
-    environment:
-      # PostgreSQL Database (for app config, users, settings)
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_DB: ${POSTGRES_DB:-copilot}
-      POSTGRES_USER: ${POSTGRES_USER:-copilot_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-copilot_password}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
-      QDRANT_URL: http://qdrant:6333
-      MODELS_PATH: ./models
-    volumes:
-      - ./backend:/app/backend
-      - ./backend/models:/app/backend/models
-      - ./backend/data:/app/backend/data
-      - ./backend/logs:/app/backend/logs
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
-    networks:
-      - copilot_network
-    restart: unless-stopped
-
-  # Flower - Celery Monitoring UI
-  flower:
-    image: mher/flower:2.0
-    container_name: data_insights_flower
-    command: celery --broker=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672// flower --port=5555 --broker_api=http://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:15672/api/
-    ports:
-      - "5555:5555"
-    environment:
-      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
-      FLOWER_UNAUTHENTICATED_API: "true"
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    networks:
-      - copilot_network
-    restart: unless-stopped
+  # NOTE: Celery Worker and Flower removed - new backend uses in-process async embedding
+  # Re-add if Celery task queue is needed in the future
 
   # ===========================================
   # Langfuse Observability Stack

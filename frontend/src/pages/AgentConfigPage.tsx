@@ -14,7 +14,6 @@ import {
     startEmbeddingJob,
     getDataSource,
     getConfigHistory,
-    getSystemSettings,
     type DataSource,
     type DataSourceSchemaResponse
 } from '../services/api';
@@ -132,15 +131,9 @@ const AgentConfigPage: React.FC = () => {
             initialLoadDoneRef.current = true;
             setIsLoadingAgent(true);
             try {
-                // Fetch agent and system settings in parallel
+                // Fetch agent
                 const [foundAgent] = await Promise.all([
                     getAgent(id),
-                    Promise.all([
-                        getSystemSettings('embedding').catch(() => null),
-                        getSystemSettings('rag').catch(() => null),
-                        getSystemSettings('llm').catch(() => null),
-                        getSystemSettings('chunking').catch(() => null)
-                    ])
                 ]);
                 setAgent(foundAgent);
 

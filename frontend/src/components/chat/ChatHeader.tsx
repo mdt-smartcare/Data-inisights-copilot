@@ -67,7 +67,6 @@ export default function ChatHeader({
     { path: '/agents', label: 'Agents', show: canViewConfig(user) },
     { path: '/data-sources', label: 'Data Sources', show: canViewConfig(user) },
     { path: '/ai-registry', label: 'AI Registry', show: canViewConfig(user) },
-    { path: '/data-management', label: 'Data Management', show: canViewConfig(user) },
     { path: '/users', label: 'Users', show: canManageUsers(user) },
     { path: '/audit', label: 'Audit', show: canViewAllAuditLogs(user) },
   ];

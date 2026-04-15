@@ -12,7 +12,6 @@ import AgentConfigPage from './pages/AgentConfigPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import CallbackPage from './pages/CallbackPage';
-import DataManagementPage from './pages/DataManagementPage';
 import DataSourcesPage from './pages/DataSourcesPage';
 import AIRegistryPage from './pages/AIRegistryPage';
 
@@ -158,15 +157,6 @@ function App() {
                   element={
                     <ProtectedRoute allowedRoles={['admin']}>
                       <AuditLogsPage />
-                    </ProtectedRoute>
-                  }
-                />
-
-                <Route
-                  path="/data-management"
-                  element={
-                    <ProtectedRoute allowedRoles={['admin']}>
-                      <DataManagementPage />
                     </ProtectedRoute>
                   }
                 />

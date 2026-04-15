@@ -58,7 +58,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Production: Gunicorn with Uvicorn workers (4 workers, scalable)
-CMD ["gunicorn", "backend.app:app", \
+CMD ["gunicorn", "backend.app.app:app", \
     "--worker-class", "uvicorn.workers.UvicornWorker", \
     "--workers", "4", \
     "--bind", "0.0.0.0:8000", \

@@ -852,14 +852,6 @@ export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ statu
 };
 
 // ============================================================================
-// SYSTEM SETTINGS API - DEPRECATED
-// The /api/v1/settings/* endpoints no longer exist.
-// Settings now come from:
-// - AI Models defaults: getAIModelDefaults()
-// - Agent configs: getAgent(), getDraftConfig()
-// ============================================================================
-
-// ============================================================================
 // FILE SQL API - DuckDB-based SQL queries on uploaded files
 // ============================================================================
 
@@ -897,39 +889,6 @@ export interface NaturalLanguageQueryResult {
   execution_time_ms?: number;
   error?: string;
 }
-
-/**
- * List all uploaded file tables available for SQL querying.
- */
-export const getFileSqlTables = async (): Promise<{ tables: FileTable[] }> => {
-  const response = await apiClient.get('/api/v1/ingestion/sql/tables');
-  return response.data;
-};
-
-/**
- * Execute a raw SQL query against uploaded file data using DuckDB.
- * Only SELECT queries are allowed for security.
- */
-export const executeFileSqlQuery = async (query: string): Promise<SQLQueryResult> => {
-  const response = await apiClient.post('/api/v1/ingestion/sql/query', { query });
-  return response.data;
-};
-
-/**
- * Delete a specific uploaded file table and its data.
- */
-export const deleteFileSqlTable = async (tableName: string): Promise<{ status: string; message: string }> => {
-  const response = await apiClient.delete(`/api/v1/ingestion/sql/tables/${tableName}`);
-  return response.data;
-};
-
-/**
- * Delete all uploaded file tables for the current user.
- */
-export const deleteAllFileSqlTables = async (): Promise<{ status: string; message: string }> => {
-  const response = await apiClient.delete('/api/v1/ingestion/sql/tables');
-  return response.data;
-};
 
 /**
  * Get the schema (columns and types) of a specific table.
@@ -1200,29 +1159,6 @@ export interface AgenticHybridResult {
   error?: string;
 }
 
-export interface WorkflowCapabilities {
-  status: string;
-  workflows: {
-    sql: {
-      available: boolean;
-      tables: string[];
-      description: string;
-    };
-    rag: {
-      available: boolean;
-      tables: string[];
-      description: string;
-    };
-    agentic_hybrid: {
-      available: boolean;
-      description: string;
-      example_queries: string[];
-    };
-  };
-  recommended_endpoint: string;
-  message?: string;
-}
-
 /**
  * Unified query endpoint with automatic intent routing.
  * Automatically determines optimal retrieval strategy (SQL, RAG, or Hybrid).
@@ -1268,86 +1204,6 @@ export const agenticHybridQuery = async (
     question,
     table_name: tableName,
     rag_top_k: ragTopK,
-  });
-  return response.data;
-};
-
-/**
- * Check which query workflows are available for the current user.
- * Returns status of SQL, RAG, and Agentic Hybrid capabilities.
- */
-export const getWorkflowCapabilities = async (): Promise<WorkflowCapabilities> => {
-  const response = await apiClient.get('/api/v1/ingestion/query/workflow-status');
-  return response.data;
-};
-
-// ============================================================================
-// VECTOR DB REGISTRY API - Central management of all vector databases
-// ============================================================================
-
-export interface VectorDbRegistryItem {
-  id: number;
-  name: string;
-  data_source_id: string | null;
-  created_at: string | null;
-  created_by: string | null;
-  embedding_model: string | null;
-  llm: string | null;
-  version: string;
-  last_full_run: string | null;
-  last_incremental_run: string | null;
-  disk_size_bytes: number;
-  disk_size_formatted: string;
-  document_count: number;
-  vector_count: number;
-  last_updated: string | null;
-  chroma_exists: boolean;
-  schedule: {
-    enabled: boolean;
-    schedule_type: string;
-    next_run_at: string | null;
-    last_run_at: string | null;
-    last_run_status: string | null;
-  } | null;
-  health_status: 'healthy' | 'warning' | 'error' | 'missing' | 'orphaned';
-}
-
-export interface OrphanedVectorDb {
-  name: string;
-  path: string;
-  disk_size_bytes: number;
-  disk_size_formatted: string;
-  vector_count: number;
-  health_status: 'orphaned';
-}
-
-export interface VectorDbRegistryResponse {
-  status: string;
-  total_vector_dbs: number;
-  total_disk_size_bytes: number;
-  total_disk_size_formatted: string;
-  vector_dbs: VectorDbRegistryItem[];
-  orphaned_dbs: OrphanedVectorDb[];
-}
-
-/**
- * Get all vector databases with their disk sizes, document counts, and sync status.
- * Provides a centralized registry view for IT admins.
- */
-export const getVectorDbRegistry = async (): Promise<VectorDbRegistryResponse> => {
-  const response = await apiClient.get('/api/v1/vector-db/registry');
-  return response.data;
-};
-
-/**
- * Delete a vector database from the registry and optionally remove its files.
- */
-export const deleteVectorDb = async (
-  vectorDbName: string,
-  deleteFiles: boolean = true
-): Promise<{ status: string; message: string; files_deleted: boolean }> => {
-  const response = await apiClient.delete(`/api/v1/vector-db/registry/${vectorDbName}`, {
-    params: { delete_files: deleteFiles }
   });
   return response.data;
 };
