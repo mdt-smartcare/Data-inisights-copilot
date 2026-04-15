@@ -14,6 +14,7 @@ import {
     startEmbeddingJob,
     getDataSource,
     getConfigHistory,
+
     type DataSource,
     type DataSourceSchemaResponse
 } from '../services/api';
@@ -132,16 +133,20 @@ const AgentConfigPage: React.FC = () => {
             setIsLoadingAgent(true);
             try {
                 // Fetch agent
-                const [foundAgent] = await Promise.all([
-                    getAgent(id),
-                ]);
+                const foundAgent = await getAgent(id);
                 setAgent(foundAgent);
 
                 // Check if agent has published configs to lock data source
+                let publishedDataSourceId: string | null = null;
                 try {
                     const history = await getConfigHistory(id);
-                    const hasPublished = history.configs.some(c => c.status === 'published');
+                    const configs = history?.configs || [];
+                    const publishedConfig = configs.find(c => c.status === 'published');
+                    const hasPublished = !!publishedConfig;
                     setIsDataSourceLocked(hasPublished);
+                    if (publishedConfig?.data_source_id) {
+                        publishedDataSourceId = publishedConfig.data_source_id;
+                    }
                 } catch (err) {
                     console.error('Failed to fetch config history:', err);
                 }
@@ -216,6 +221,17 @@ const AgentConfigPage: React.FC = () => {
                             ...(config.llm_model_id && { llmModelId: config.llm_model_id }),
                             ...(config.reranker_model_id && { rerankerModelId: config.reranker_model_id }),
                         }));
+                    }
+                } else if (publishedDataSourceId) {
+                    // No draft exists, but there's a published config with a locked data source
+                    // Pre-populate the data source so user can see it and proceed
+                    try {
+                        const ds = await getDataSource(publishedDataSourceId);
+                        setSelectedDataSource(ds);
+                        setDataSourceType(ds.source_type);
+                        setConnectionName(ds.title);
+                    } catch {
+                        console.error('Failed to fetch locked data source');
                     }
                 }
             } catch (err) {
