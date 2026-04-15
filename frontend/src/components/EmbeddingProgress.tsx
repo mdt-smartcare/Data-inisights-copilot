@@ -334,7 +334,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     const displayBatch = isComplete ? progress.total_batches : progress.current_batch;
 
     return (
-        <div className={`embedding-progress embedding-progress--${progress.status.toLowerCase()}`}>
+        <div className={`embedding-progress embedding-progress--${(progress.status || 'unknown').toLowerCase()}`}>
             {/* Header */}
             <div className="embedding-progress__header">
                 <div className="embedding-progress__title">

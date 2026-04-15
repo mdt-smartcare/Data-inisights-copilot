@@ -14,6 +14,7 @@ interface ConfigSummaryProps {
         embedding: {
             model: string;
             vectorDbName?: string;
+            vectorDbType?: 'qdrant' | 'chroma' | string;
         };
         llm: {
             model?: string;
@@ -172,10 +173,17 @@ const ConfigSummary: React.FC<ConfigSummaryProps> = ({
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:gap-3">
+                    <div className="grid grid-cols-3 gap-2 sm:flex sm:gap-3">
+                        <div className="px-2 py-1.5 sm:px-3 sm:py-2 bg-white/10 rounded-lg border border-white/10">
+                            <p className="text-[8px] sm:text-[9px] font-bold text-blue-300 uppercase">Vector DB</p>
+                            <p className="text-[10px] sm:text-xs font-bold text-white uppercase truncate flex items-center gap-1">
+                                <span className={`w-1.5 h-1.5 rounded-full ${settings.embedding.vectorDbType === 'chroma' ? 'bg-amber-400' : 'bg-emerald-400'}`}></span>
+                                {settings.embedding.vectorDbType === 'chroma' ? 'ChromaDB' : 'Qdrant'}
+                            </p>
+                        </div>
                         <div className="px-2 py-1.5 sm:px-3 sm:py-2 bg-white/10 rounded-lg border border-white/10">
                             <p className="text-[8px] sm:text-[9px] font-bold text-blue-300 uppercase">Model</p>
-                            <p className="text-[10px] sm:text-xs font-bold text-white truncate max-w-[100px] sm:max-w-[120px]">{settings.embedding.model}</p>
+                            <p className="text-[10px] sm:text-xs font-bold text-white truncate max-w-[80px] sm:max-w-[100px]">{settings.embedding.model}</p>
                         </div>
                         <div className="px-2 py-1.5 sm:px-3 sm:py-2 bg-white/10 rounded-lg border border-white/10">
                             <p className="text-[8px] sm:text-[9px] font-bold text-blue-300 uppercase">Provider</p>

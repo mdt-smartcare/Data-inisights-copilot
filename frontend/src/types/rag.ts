@@ -67,7 +67,7 @@ export interface ChunkingConfig {
 export interface ParallelizationConfig {
     num_workers?: number;           // 1-16, null = auto
     chunking_batch_size?: number;   // 100-50000, null = auto
-    delta_check_batch_size: number; // 1000-100000, default 50000
+    delta_check_batch_size?: number; // 1000-100000, default 50000
 }
 
 /**
@@ -78,100 +78,29 @@ export interface MedicalContextConfig {
     // Medical abbreviation mappings (column_name -> human_readable_name)
     // Example: {"bp": "Blood Pressure", "hr": "Heart Rate"}
     medical_context: Record<string, string>;
-    
+
     // Clinical boolean flag prefixes to recognize
     // Example: ["is_", "has_", "history_of_"]
     clinical_flag_prefixes: string[];
-    
+
     // Whether to merge with YAML defaults
     use_yaml_defaults: boolean;
 }
 
 /**
  * Request model for starting a new embedding job.
- * All optional fields have sensible defaults on the backend.
+ * Only config_id is required - all settings are read from agent_config table.
  */
 export interface EmbeddingJobCreate {
     config_id: number;
-    
-    // Batch Processing Config
-    batch_size?: number;            // 10-500, default 50
-    max_concurrent?: number;        // 1-20, default 5
-    incremental?: boolean;          // default true
-    
-    // Chunking Config (optional)
+    incremental?: boolean;  // default false
+    batch_size?: number;
+    max_concurrent?: number;
     chunking?: ChunkingConfig;
-    
-    // Parallelization Config (optional)
     parallelization?: ParallelizationConfig;
-    
-    // Medical Context Config (optional - improves clinical data search)
     medical_context_config?: MedicalContextConfig;
-    
-    // Circuit Breaker Config
-    max_consecutive_failures?: number;  // 1-20, default 5
-    retry_attempts?: number;            // 1-10, default 3
-}
-
-// ============================================
-// Notification Types
-// ============================================
-
-export type NotificationType =
-    | 'embedding_started'
-    | 'embedding_progress'
-    | 'embedding_complete'
-    | 'embedding_failed'
-    | 'embedding_cancelled'
-    | 'config_published'
-    | 'config_rolled_back'
-    | 'schema_change_detected';
-
-export type NotificationPriority = 'low' | 'medium' | 'high' | 'critical';
-
-export type NotificationStatus = 'unread' | 'read' | 'dismissed';
-
-export interface Notification {
-    id: number;
-    user_id: number;
-    type: NotificationType;
-    priority: NotificationPriority;
-    title: string;
-    message: string | null;
-    action_url: string | null;
-    action_label: string | null;
-    status: NotificationStatus;
-    related_entity_type: string | null;
-    related_entity_id: number | null;
-    channels: string[];
-    read_at: string | null;
-    created_at: string;
-}
-
-export interface NotificationPreferences {
-    in_app_enabled: boolean;
-    email_enabled: boolean;
-    webhook_enabled: boolean;
-    webhook_url: string | null;
-    webhook_format: 'slack' | 'teams' | 'generic';
-    notification_types: Record<string, boolean>;
-    quiet_hours_enabled: boolean;
-    quiet_hours_start: string | null;
-    quiet_hours_end: string | null;
-    quiet_hours_timezone: string;
-}
-
-export interface NotificationPreferencesUpdate {
-    in_app_enabled?: boolean;
-    email_enabled?: boolean;
-    webhook_enabled?: boolean;
-    webhook_url?: string;
-    webhook_format?: 'slack' | 'teams' | 'generic';
-    notification_types?: Record<string, boolean>;
-    quiet_hours_enabled?: boolean;
-    quiet_hours_start?: string;
-    quiet_hours_end?: string;
-    quiet_hours_timezone?: string;
+    max_consecutive_failures?: number;
+    retry_attempts?: number;
 }
 
 // ============================================
@@ -211,53 +140,3 @@ export interface WebSocketJobFinishedMessage {
 }
 
 export type WebSocketMessage = WebSocketProgressMessage | WebSocketJobFinishedMessage;
-
-// ============================================
-// Notification WebSocket Message Types
-// ============================================
-
-export interface WebSocketNewNotificationMessage {
-    event: 'new_notification';
-    timestamp: string;
-    notification: Notification;
-}
-
-export interface WebSocketNotificationReadMessage {
-    event: 'notification_read';
-    timestamp: string;
-    notification_id: number;
-}
-
-export interface WebSocketNotificationDismissedMessage {
-    event: 'notification_dismissed';
-    timestamp: string;
-    notification_id: number;
-}
-
-export interface WebSocketAllReadMessage {
-    event: 'all_read';
-    timestamp: string;
-}
-
-export interface WebSocketConnectedMessage {
-    event: 'connected';
-    timestamp: string;
-}
-
-export interface WebSocketHeartbeatMessage {
-    event: 'heartbeat';
-    timestamp: string;
-}
-
-export interface WebSocketPongMessage {
-    event: 'pong';
-}
-
-export type WebSocketNotificationMessage =
-    | WebSocketNewNotificationMessage
-    | WebSocketNotificationReadMessage
-    | WebSocketNotificationDismissedMessage
-    | WebSocketAllReadMessage
-    | WebSocketConnectedMessage
-    | WebSocketHeartbeatMessage
-    | WebSocketPongMessage;

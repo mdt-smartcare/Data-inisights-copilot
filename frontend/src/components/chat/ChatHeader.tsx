@@ -3,7 +3,6 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { canManageUsers, canViewAllAuditLogs, canViewConfig, getRoleDisplayName } from '../../utils/permissions';
 import logo from '../../assets/logo.svg';
-import NotificationCenter from '../NotificationCenter';
 
 interface ChatHeaderProps {
   title?: string;
@@ -66,7 +65,8 @@ export default function ChatHeader({
   const navLinks = [
     { path: '/chat', label: 'Chat', show: true },
     { path: '/agents', label: 'Agents', show: canViewConfig(user) },
-    { path: '/data-management', label: 'Data Management', show: canViewConfig(user) },
+    { path: '/data-sources', label: 'Data Sources', show: canViewConfig(user) },
+    { path: '/ai-registry', label: 'AI Registry', show: canViewConfig(user) },
     { path: '/users', label: 'Users', show: canManageUsers(user) },
     { path: '/audit', label: 'Audit', show: canViewAllAuditLogs(user) },
   ];
@@ -141,7 +141,7 @@ export default function ChatHeader({
                 {/* Backdrop */}
                 <div className="fixed inset-0 bg-black/30" />
                 {/* Menu */}
-                <div 
+                <div
                   className="fixed top-12 right-2 w-44 bg-white rounded-lg shadow-xl border border-gray-200 py-1 z-50"
                   onClick={(e) => e.stopPropagation()}
                 >
@@ -162,9 +162,8 @@ export default function ChatHeader({
               </div>
             )}
           </div>
-          
-          <NotificationCenter />
-          
+
+
           {user && (
             <div className="relative" ref={menuRef}>
               {/* User Menu Button */}
@@ -176,12 +175,12 @@ export default function ChatHeader({
               >
                 {/* User Avatar */}
                 <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-semibold text-xs sm:text-sm shadow-sm flex-shrink-0">
-                  {(user.full_name || user.username).charAt(0).toUpperCase()}
+                  {(user.full_name || user.username || user.email || 'U').charAt(0).toUpperCase()}
                 </div>
 
                 {/* User Info - hidden on mobile */}
                 <div className="text-left hidden md:block">
-                  <div className="text-sm font-medium text-gray-900 truncate max-w-[120px]">{user.full_name || user.username}</div>
+                  <div className="text-sm font-medium text-gray-900 truncate max-w-[120px]">{user.full_name || user.username || user.email || 'User'}</div>
                   <div className="text-xs text-gray-500">{getRoleDisplayName(user.role)}</div>
                 </div>
 
@@ -204,24 +203,24 @@ export default function ChatHeader({
                     {/* Backdrop */}
                     <div className="fixed inset-0 bg-black/40" />
                     {/* Top Sheet Menu */}
-                    <div 
+                    <div
                       className="fixed top-0 left-0 right-0 bg-white rounded-b-2xl shadow-2xl py-4 px-4 pt-12 z-50 animate-in slide-in-from-top duration-200"
                       onClick={(e) => e.stopPropagation()}
                     >
                       {/* User Profile Section */}
                       <div className="flex items-center gap-4 pb-4 border-b border-gray-100">
                         <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-semibold text-2xl shadow-md flex-shrink-0">
-                          {(user.full_name || user.username).charAt(0).toUpperCase()}
+                          {(user.full_name || user.username || user.email || 'U').charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-lg font-semibold text-gray-900 truncate">{user.full_name || user.username}</div>
+                          <div className="text-lg font-semibold text-gray-900 truncate">{user.full_name || user.username || user.email || 'User'}</div>
                           {user.email && (
                             <div className="text-sm text-gray-500 truncate mt-0.5">{user.email}</div>
                           )}
                           <div className="text-sm text-blue-600 font-medium mt-1">{getRoleDisplayName(user.role)}</div>
                         </div>
                         {/* Close button */}
-                        <button 
+                        <button
                           onClick={() => setShowUserMenu(false)}
                           className="p-2 rounded-full hover:bg-gray-100 transition-colors"
                         >
@@ -273,7 +272,7 @@ export default function ChatHeader({
                           </button>
                         )}
                       </div>
-                      
+
                       {/* Handle bar at bottom */}
                       <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mt-4" />
                     </div>
@@ -285,10 +284,10 @@ export default function ChatHeader({
                     <div className="px-4 py-4 border-b border-gray-100">
                       <div className="flex items-center gap-4">
                         <div className="w-14 h-14 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white font-semibold text-xl shadow-md flex-shrink-0">
-                          {(user.full_name || user.username).charAt(0).toUpperCase()}
+                          {(user.full_name || user.username || user.email || 'U').charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="text-base font-semibold text-gray-900 truncate">{user.full_name || user.username}</div>
+                          <div className="text-base font-semibold text-gray-900 truncate">{user.full_name || user.username || user.email || 'User'}</div>
                           {user.email && (
                             <div className="text-sm text-gray-500 truncate mt-0.5">{user.email}</div>
                           )}

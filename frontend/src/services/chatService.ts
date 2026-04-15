@@ -148,12 +148,13 @@ export const chatService = {
     const { signal, ...requestData } = request;
 
     // Pass everything except signal, including agent_id
-    const response = await apiClient.post<ChatResponse>(
+    const response = await apiClient.post<{ success: boolean; data: ChatResponse; message: string }>(
       API_ENDPOINTS.CHAT,
       requestData,
       { signal }  // Pass signal to axios config
     );
-    return response.data;
+    // Backend wraps response in { success, data, message } - extract inner data
+    return response.data.data;
   },
 
   getConversationHistory: async (conversationId: string) => {

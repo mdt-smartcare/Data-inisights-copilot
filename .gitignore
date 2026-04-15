@@ -19,7 +19,9 @@ __pycache__/
 backend/embedding_test_output.txt
 /models
 /backend/venv
+copilot_env
 
 # Local output and settings
 .vscode/
 eval/reports/
+/Data Literacy 2.0

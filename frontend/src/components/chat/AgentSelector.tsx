@@ -43,7 +43,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
     }, []);
 
     const getAgentIcon = (type: string) => {
-        switch (type.toLowerCase()) {
+        switch ((type || 'default').toLowerCase()) {
             case 'sql':
                 return <CircleStackIcon className="w-5 h-5" />;
             default:

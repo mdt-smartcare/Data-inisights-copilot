@@ -1,0 +1,109 @@
+{
+  "examples": [
+    {
+      "question": "What is the total number of patients screened for blood pressure?",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS total_screened FROM clinical_data_latest WHERE avg_systolic IS NOT NULL AND avg_diastolic IS NOT NULL",
+      "category": "aggregation",
+      "tags": ["count", "screening", "blood_pressure"],
+      "description": "Count distinct patients with BP readings"
+    },
+    {
+      "question": "Show the total population screened for BP",
+      "sql": "SELECT COUNT(*) AS total_screened FROM clinical_data_latest WHERE avg_systolic IS NOT NULL OR avg_diastolic IS NOT NULL",
+      "category": "aggregation",
+      "tags": ["count", "screening", "blood_pressure"],
+      "description": "Total records with any BP measurement"
+    },
+    {
+      "question": "How many patients have elevated blood pressure?",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS elevated_bp_count FROM clinical_data_latest WHERE avg_systolic >= 140 OR avg_diastolic >= 90",
+      "category": "aggregation",
+      "tags": ["count", "blood_pressure", "elevated"],
+      "description": "Count patients with high BP (systolic >= 140 or diastolic >= 90)"
+    },
+    {
+      "question": "What is the average systolic blood pressure by gender?",
+      "sql": "SELECT gender, AVG(avg_systolic) AS avg_systolic, COUNT(*) AS patient_count FROM clinical_data_latest WHERE avg_systolic IS NOT NULL GROUP BY gender",
+      "category": "aggregation",
+      "tags": ["average", "blood_pressure", "gender", "group_by"],
+      "description": "Average systolic BP grouped by gender"
+    },
+    {
+      "question": "Show blood pressure distribution by age group",
+      "sql": "SELECT CASE WHEN age < 30 THEN 'Under 30' WHEN age BETWEEN 30 AND 50 THEN '30-50' WHEN age BETWEEN 51 AND 70 THEN '51-70' ELSE 'Over 70' END AS age_group, AVG(avg_systolic) AS avg_systolic, AVG(avg_diastolic) AS avg_diastolic, COUNT(*) AS patient_count FROM clinical_data_latest WHERE age IS NOT NULL GROUP BY 1 ORDER BY 1",
+      "category": "aggregation",
+      "tags": ["blood_pressure", "age", "distribution", "group_by"],
+      "description": "BP stats by age brackets using CASE expression"
+    },
+    {
+      "question": "Compare initial and latest blood pressure readings for patients",
+      "sql": "WITH ranked_readings AS (SELECT patient_id, avg_systolic, avg_diastolic, created_at, ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at ASC) AS first_rank, ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at DESC) AS last_rank FROM clinical_data_latest WHERE avg_systolic IS NOT NULL) SELECT f.patient_id, f.avg_systolic AS initial_systolic, l.avg_systolic AS latest_systolic, l.avg_systolic - f.avg_systolic AS systolic_change FROM ranked_readings f JOIN ranked_readings l ON f.patient_id = l.patient_id WHERE f.first_rank = 1 AND l.last_rank = 1 LIMIT 100",
+      "category": "temporal_comparison",
+      "tags": ["comparison", "blood_pressure", "window_function", "cte"],
+      "description": "Compare first and last BP readings using ROW_NUMBER in CTE"
+    },
+    {
+      "question": "Find patients with consecutive high blood pressure readings",
+      "sql": "WITH numbered AS (SELECT patient_id, avg_systolic, created_at, ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at) AS rn FROM clinical_data_latest WHERE avg_systolic >= 140), grouped AS (SELECT patient_id, avg_systolic, created_at, rn, rn - ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at) AS grp FROM numbered) SELECT patient_id, COUNT(*) AS consecutive_high_readings, MIN(created_at) AS streak_start, MAX(created_at) AS streak_end FROM grouped GROUP BY patient_id, grp HAVING COUNT(*) >= 3 ORDER BY consecutive_high_readings DESC",
+      "category": "consecutive_streak",
+      "tags": ["consecutive", "blood_pressure", "window_function", "cte"],
+      "description": "Detect consecutive high BP readings using ROW_NUMBER difference technique"
+    },
+    {
+      "question": "What is the monthly trend of patient screenings?",
+      "sql": "SELECT DATE_TRUNC('month', created_at) AS month, COUNT(DISTINCT patient_id) AS patients_screened, AVG(avg_systolic) AS avg_systolic FROM clinical_data_latest WHERE created_at IS NOT NULL GROUP BY DATE_TRUNC('month', created_at) ORDER BY month",
+      "category": "rolling_calculation",
+      "tags": ["trend", "monthly", "date_trunc", "group_by"],
+      "description": "Monthly screening stats using DATE_TRUNC"
+    },
+    {
+      "question": "Show the latest reading for each patient",
+      "sql": "WITH latest AS (SELECT patient_id, avg_systolic, avg_diastolic, created_at, ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at DESC) AS rn FROM clinical_data_latest) SELECT patient_id, avg_systolic, avg_diastolic, created_at FROM latest WHERE rn = 1 LIMIT 100",
+      "category": "deduplication",
+      "tags": ["latest", "dedup", "window_function", "cte"],
+      "description": "Get most recent reading per patient using ROW_NUMBER in CTE"
+    },
+    {
+      "question": "Count patients by risk level",
+      "sql": "SELECT risk_level, COUNT(DISTINCT patient_id) AS patient_count FROM clinical_data_latest WHERE risk_level IS NOT NULL GROUP BY risk_level ORDER BY patient_count DESC",
+      "category": "aggregation",
+      "tags": ["count", "risk_level", "group_by"],
+      "description": "Patient distribution by risk level"
+    },
+    {
+      "question": "Find patients screened in the last 90 days",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS recent_patients FROM clinical_data_latest WHERE created_at >= CURRENT_DATE - INTERVAL '90 days'",
+      "category": "aggregation",
+      "tags": ["count", "date_filter", "interval"],
+      "description": "Count patients screened in last 90 days using INTERVAL syntax"
+    },
+    {
+      "question": "What percentage of patients have hypertension?",
+      "sql": "SELECT ROUND(100.0 * SUM(CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN 1 ELSE 0 END) / COUNT(*), 2) AS hypertension_percentage FROM clinical_data_latest WHERE avg_systolic IS NOT NULL",
+      "category": "statistical_analysis",
+      "tags": ["percentage", "hypertension", "case_when"],
+      "description": "Calculate percentage with hypertension using CASE WHEN"
+    },
+    {
+      "question": "Show top 10 sites by patient count",
+      "sql": "SELECT site_id, COUNT(DISTINCT patient_id) AS patient_count FROM clinical_data_latest WHERE site_id IS NOT NULL GROUP BY site_id ORDER BY patient_count DESC LIMIT 10",
+      "category": "aggregation",
+      "tags": ["top_n", "site", "group_by"],
+      "description": "Top sites ranked by patient volume"
+    },
+    {
+      "question": "Calculate BMI statistics by gender",
+      "sql": "SELECT gender, AVG(bmi) AS avg_bmi, MIN(bmi) AS min_bmi, MAX(bmi) AS max_bmi, COUNT(*) AS count FROM clinical_data_latest WHERE bmi IS NOT NULL AND gender IS NOT NULL GROUP BY gender",
+      "category": "aggregation",
+      "tags": ["bmi", "statistics", "gender", "group_by"],
+      "description": "BMI aggregation statistics by gender"
+    },
+    {
+      "question": "Find patients with glucose readings above normal",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS high_glucose_patients FROM clinical_data_latest WHERE glucose_value > 100",
+      "category": "aggregation",
+      "tags": ["count", "glucose", "filter"],
+      "description": "Count patients with elevated glucose"
+    }
+  ]
+}

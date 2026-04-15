@@ -36,7 +36,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
         setError(null);
         try {
             const response = await getAgentUsers(agentId);
-            setAgentUsers(response.users);
+            setAgentUsers(response.users || []);
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -182,7 +182,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="flex items-center">
                                             <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold">
-                                                {(agentUser.full_name || agentUser.username).charAt(0).toUpperCase()}
+                                                {(agentUser.full_name || agentUser.username || agentUser.email || 'U').charAt(0).toUpperCase()}
                                             </div>
                                             <div className="ml-4">
                                                 <div className="text-sm font-medium text-gray-900">{agentUser.full_name || agentUser.username}</div>
@@ -192,10 +192,10 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
-                                            ${agentUser.user_role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
-                                            ${agentUser.user_role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
+                                            ${agentUser.role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
+                                            ${agentUser.role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
                                         `}>
-                                            {getRoleDisplayName(agentUser.user_role)}
+                                            {getRoleDisplayName(agentUser.role)}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
@@ -204,7 +204,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {agentUser.created_at ? formatDateTime(agentUser.created_at) : '-' }
+                                        {agentUser.granted_at ? formatDateTime(agentUser.granted_at) : '-' }
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         {agentUser.username !== user?.username && (

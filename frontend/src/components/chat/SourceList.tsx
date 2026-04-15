@@ -18,8 +18,8 @@ export default function SourceList({ sources }: SourceListProps) {
           >
             <span className="font-medium text-blue-600">[{idx + 1}]</span>{' '}
             <span className="text-gray-700">
-              {source.content.substring(0, 100)}
-              {source.content.length > 100 && '...'}
+              {(source.content || '').substring(0, 100)}
+              {(source.content || '').length > 100 && '...'}
             </span>
             {source.score && (
               <span className="text-[10px] text-gray-500 ml-1.5">

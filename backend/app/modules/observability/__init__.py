@@ -1,0 +1,1 @@
+"""Observability module: Application monitoring and logging."""

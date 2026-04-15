@@ -28,8 +28,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
  */
 async function fetchUserProfile(): Promise<User | null> {
   try {
-    const response = await apiClient.get<User>('/api/v1/auth/me');
-    return response.data;
+    const response = await apiClient.get<{ status: string; message: string; data: User }>('/api/v1/auth/me');
+    return response.data?.data || null;
   } catch (error) {
     console.error('Error fetching user profile:', error);
     return null;

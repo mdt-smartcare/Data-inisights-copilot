@@ -10,7 +10,7 @@
  * Represents an authenticated user's profile data
  */
 export interface User {
-  username: string;      // Primary identifier for the user
+  username?: string;     // Username (may be email for OIDC users)
   email?: string;        // Optional email address
   full_name?: string;    // Optional display name
   role?: string;         // Optional user role (e.g., 'admin', 'user')

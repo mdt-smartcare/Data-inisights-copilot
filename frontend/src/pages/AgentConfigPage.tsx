@@ -1,26 +1,38 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChatHeader } from '../components/chat';
 import Alert from '../components/Alert';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
+import { useConfigDraft } from '../hooks';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
 import {
-    getAgents,
-    generateSystemPrompt,
-    publishSystemPrompt,
-    getPromptHistory,
-    getActiveConfigMetadata,
+    getAgent,
+    generatePrompt,
     handleApiError,
     startEmbeddingJob,
-    getSystemSettings,
-    getConnections
+    getDataSource,
+    getConfigHistory,
+
+    type DataSource,
+    type DataSourceSchemaResponse
 } from '../services/api';
 import type { IngestionResponse } from '../services/api';
-import { canEditPrompt, canPublishPrompt } from '../utils/permissions';
+import { canPublishPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
-import type { AdvancedSettings, PromptVersion } from '../contexts/AgentContext';
+import type { AdvancedSettings } from '../contexts/AgentContext';
+
+// Utility to convert snake_case keys to camelCase
+const snakeToCamel = (str: string): string =>
+    str.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+const toCamelCaseKeys = <T extends Record<string, unknown>>(obj: T | null | undefined): Record<string, unknown> | null => {
+    if (!obj || typeof obj !== 'object') return null;
+    return Object.fromEntries(
+        Object.entries(obj).map(([key, value]) => [snakeToCamel(key), value])
+    );
+};
 
 // Import step components
 import {
@@ -37,15 +49,15 @@ const steps = [
     { id: 2, name: 'Select Schema' },
     { id: 3, name: 'Data Dictionary' },
     { id: 4, name: 'Advanced Settings' },
-    { id: 5, name: 'Review & Publish' },
-    { id: 6, name: 'Summary' }
+    { id: 5, name: 'System Prompt' },
+    { id: 6, name: 'Knowledge Base' }
 ];
 
 const defaultAdvancedSettings: AdvancedSettings = {
-    embedding: { model: 'BAAI/bge-m3' },
-    llm: { temperature: 0.0, maxTokens: 4096 },
+    embedding: { model: 'huggingface/BAAI/bge-m3' },
+    llm: { model: 'openai/gpt-4o-mini', temperature: 0.0, maxTokens: 4096 },
     chunking: { parentChunkSize: 512, parentChunkOverlap: 100, childChunkSize: 128, childChunkOverlap: 25 },
-    retriever: { topKInitial: 50, topKFinal: 10, hybridWeights: [0.75, 0.25], rerankEnabled: true, rerankerModel: 'BAAI/bge-reranker-base' }
+    retriever: { topKInitial: 50, topKFinal: 10, hybridWeights: [0.75, 0.25], rerankEnabled: true, rerankerModel: 'huggingface/BAAI/bge-reranker-v2-m3' }
 };
 
 const AgentConfigPage: React.FC = () => {
@@ -54,18 +66,35 @@ const AgentConfigPage: React.FC = () => {
     const [searchParams, setSearchParams] = useSearchParams();
     const { user, isLoading: isAuthLoading } = useAuth();
     const { success: showSuccess, error: showError } = useToast();
-    const canEdit = canEditPrompt(user);
     const canPublish = canPublishPrompt(user);
+
+    // Draft config hook
+    const {
+        draft,
+        versionId: hookVersionId,
+        isLoading: isDraftLoading,
+        isSaving,
+        isPublishing,
+        error: draftError,
+        loadDraft,
+        loadVersion,
+        createNewDraft,
+        saveStep,
+        publish,
+    } = useConfigDraft();
 
     // Agent state
     const [agent, setAgent] = useState<Agent | null>(null);
     const [isLoadingAgent, setIsLoadingAgent] = useState(true);
 
-    // Wizard state
+    // Wizard state  
     const initialStep = searchParams.get('step') ? parseInt(searchParams.get('step')!) : 1;
+    const urlVersionId = searchParams.get('versionId') ? parseInt(searchParams.get('versionId')!) : null;
     const [currentStep, setCurrentStep] = useState(initialStep);
+    const [hasDraft, setHasDraft] = useState(false);
 
     // Config state
+    const [selectedDataSource, setSelectedDataSource] = useState<DataSource | null>(null);
     const [connectionId, setConnectionId] = useState<number | null>(null);
     const [connectionName, setConnectionName] = useState('');
     const [selectedSchema, setSelectedSchema] = useState<Record<string, string[]>>({});
@@ -73,12 +102,13 @@ const AgentConfigPage: React.FC = () => {
     const [dataSourceType, setDataSourceType] = useState<'database' | 'file'>('database');
     const [fileUploadResult, setFileUploadResult] = useState<IngestionResponse | null>(null);
     const [selectedFileColumns, setSelectedFileColumns] = useState<string[]>([]);
+    const [fullSchema, setFullSchema] = useState<DataSourceSchemaResponse | null>(null);
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
-    const [history, setHistory] = useState<PromptVersion[]>([]);
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
+    const [isDataSourceLocked, setIsDataSourceLocked] = useState(false);
 
     // Refs for auto-scrolling steps
     const stepsContainerRef = useRef<HTMLDivElement>(null);
@@ -86,181 +116,151 @@ const AgentConfigPage: React.FC = () => {
 
     // Status
     const [generating, setGenerating] = useState(false);
-    const [publishing, setPublishing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
-    const [isEditMode, setIsEditMode] = useState(false);
-    const [isLoadingConfig, setIsLoadingConfig] = useState(true); // Start true - assume we need to load config
 
-    // Load agent
+    // Track if initial load has been done
+    const initialLoadDoneRef = useRef(false);
+
+    // Load agent and draft/version - only runs once on mount
     useEffect(() => {
-        const loadAgent = async () => {
+        // Skip if already loaded
+        if (initialLoadDoneRef.current) return;
+
+        const loadAgentAndConfig = async () => {
             if (!id) return;
+            initialLoadDoneRef.current = true;
             setIsLoadingAgent(true);
             try {
-                const agents = await getAgents();
-                const foundAgent = agents.find((a: Agent) => a.id === id);
-                if (foundAgent) {
-                    setAgent(foundAgent);
+                // Fetch agent
+                const foundAgent = await getAgent(id);
+                setAgent(foundAgent);
+
+                // Check if agent has published configs to lock data source
+                let publishedDataSourceId: string | null = null;
+                try {
+                    const history = await getConfigHistory(id);
+                    const configs = history?.configs || [];
+                    const publishedConfig = configs.find(c => c.status === 'published');
+                    const hasPublished = !!publishedConfig;
+                    setIsDataSourceLocked(hasPublished);
+                    if (publishedConfig?.data_source_id) {
+                        publishedDataSourceId = publishedConfig.data_source_id;
+                    }
+                } catch (err) {
+                    console.error('Failed to fetch config history:', err);
+                }
+
+                // If versionId is in URL, load that specific version
+                // Otherwise, check for existing draft
+                let config = null;
+                if (urlVersionId) {
+                    config = await loadVersion(id, urlVersionId);
                 } else {
-                    showError('Agent Not Found', 'The requested agent could not be found.');
-                    navigate('/agents');
+                    config = await loadDraft(id);
+                }
+
+                if (config) {
+                    setHasDraft(true);
+                    // Use URL step if present, otherwise go to next step after last completed
+                    const urlStep = searchParams.get('step');
+                    if (!urlStep) {
+                        setCurrentStep(Math.min((config.completed_step || 0) + 1, 6));
+                    }
+                    // Pre-fill state from config - fetch full data source to get type
+                    let sourceType: 'database' | 'file' = 'database';
+                    if (config.data_source_id) {
+                        try {
+                            const ds = await getDataSource(config.data_source_id);
+                            setSelectedDataSource(ds);
+                            sourceType = ds.source_type;
+                            setDataSourceType(ds.source_type);
+                        } catch {
+                            // Fallback to minimal object if fetch fails
+                            setSelectedDataSource({ id: config.data_source_id } as DataSource);
+                        }
+                    }
+                    if (config.system_prompt) setDraftPrompt(config.system_prompt);
+                    if (config.example_questions) setExampleQuestions(config.example_questions);
+                    // Handle selected_columns - now always object format { table_name: columns[] }
+                    if (config.selected_columns) {
+                        if (typeof config.selected_columns === 'object' && !Array.isArray(config.selected_columns)) {
+                            const schemaObj = config.selected_columns as Record<string, string[]>;
+                            if (sourceType === 'file') {
+                                // For files: extract columns from the single table entry
+                                const firstTable = Object.keys(schemaObj)[0];
+                                if (firstTable) {
+                                    setSelectedFileColumns(schemaObj[firstTable]);
+                                }
+                            } else {
+                                // Database: keep the full schema mapping
+                                setSelectedSchema(schemaObj);
+                            }
+                        } else if (Array.isArray(config.selected_columns)) {
+                            // Legacy format: flat array (file source)
+                            setSelectedFileColumns(config.selected_columns);
+                            setDataSourceType('file');
+                        }
+                    }
+                    if (config.data_dictionary?.content) setDataDictionary(config.data_dictionary.content as string);
+                    // Pre-fill advanced settings from config (normalize snake_case to camelCase)
+                    if (config.llm_config || config.embedding_config || config.chunking_config || config.rag_config ||
+                        config.embedding_model_id || config.llm_model_id || config.reranker_model_id) {
+                        const llmNorm = toCamelCaseKeys(config.llm_config);
+                        const embNorm = toCamelCaseKeys(config.embedding_config);
+                        const chunkNorm = toCamelCaseKeys(config.chunking_config);
+                        const ragNorm = toCamelCaseKeys(config.rag_config);
+                        setAdvancedSettings(prev => ({
+                            ...prev,
+                            ...(llmNorm && { llm: { ...prev.llm, ...llmNorm } }),
+                            ...(embNorm && { embedding: { ...prev.embedding, ...embNorm } }),
+                            ...(chunkNorm && { chunking: { ...prev.chunking, ...chunkNorm } }),
+                            ...(ragNorm && { retriever: { ...prev.retriever, ...ragNorm } }),
+                            // Restore model IDs from config
+                            ...(config.embedding_model_id && { embeddingModelId: config.embedding_model_id }),
+                            ...(config.llm_model_id && { llmModelId: config.llm_model_id }),
+                            ...(config.reranker_model_id && { rerankerModelId: config.reranker_model_id }),
+                        }));
+                    }
+                } else if (publishedDataSourceId) {
+                    // No draft exists, but there's a published config with a locked data source
+                    // Pre-populate the data source so user can see it and proceed
+                    try {
+                        const ds = await getDataSource(publishedDataSourceId);
+                        setSelectedDataSource(ds);
+                        setDataSourceType(ds.source_type);
+                        setConnectionName(ds.title);
+                    } catch {
+                        console.error('Failed to fetch locked data source');
+                    }
                 }
             } catch (err) {
                 console.error('Failed to load agent', err);
-                showError('Error', 'Failed to load agent.');
+                showError('Agent Not Found', 'The requested agent could not be found.');
                 navigate('/agents');
             } finally {
                 setIsLoadingAgent(false);
             }
         };
-        loadAgent();
-    }, [id, navigate, showError]);
+        loadAgentAndConfig();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [id]);
 
-    // Load existing config and defaults
+    // Fetch schema if it's missing but we have a data source (e.g. on reload)
     useEffect(() => {
-        const loadConfig = async () => {
-            if (!agent) return;
-            setIsLoadingConfig(true);
-
-            // Load existing config first to determine if this is edit mode
-            try {
-                const config = await getActiveConfigMetadata(agent.id);
-                if (config) {
-                    // Mark as edit mode since we have existing config
-                    setIsEditMode(true);
-
-                    // Pre-fill state from existing config
-                    if (config.connection_id) {
-                        setConnectionId(config.connection_id);
-                        // Fetch connection name
-                        try {
-                            const conns = await getConnections();
-                            const c = conns.find((x: any) => x.id === config.connection_id);
-                            if (c) setConnectionName(c.name);
-                        } catch (e) {
-                            console.error("Failed to fetch connection name", e);
-                        }
-                    }
-                    if (config.schema_selection) {
-                        try {
-                            const parsed = JSON.parse(config.schema_selection);
-                            // For file source, schema_selection is an array of column names
-                            if (config.data_source_type === 'file' && Array.isArray(parsed)) {
-                                setSelectedFileColumns(parsed);
-                            } else {
-                                setSelectedSchema(parsed);
-                            }
-                        } catch (e) {
-                            console.error("Failed to parse schema", e);
-                        }
-                    }
-                    if (config.data_dictionary) setDataDictionary(config.data_dictionary);
-                    if (config.prompt_text) setDraftPrompt(config.prompt_text);
-                    if (config.reasoning) {
-                        try {
-                            setReasoning(typeof config.reasoning === 'string' ? JSON.parse(config.reasoning) : config.reasoning);
-                        } catch (e) {
-                            console.error("Failed to parse reasoning", e);
-                        }
-                    }
-                    if (config.data_source_type) setDataSourceType(config.data_source_type as 'database' | 'file');
-
-                    // Reconstruct file upload result for file sources
-                    if (config.data_source_type === 'file' && config.ingestion_file_name) {
-                        const reconstructedFileResult: IngestionResponse = {
-                            status: 'success',
-                            file_name: config.ingestion_file_name,
-                            file_type: config.ingestion_file_type || 'csv',
-                            documents: config.ingestion_documents 
-                                ? (typeof config.ingestion_documents === 'string' 
-                                    ? JSON.parse(config.ingestion_documents) 
-                                    : config.ingestion_documents)
-                                : [],
-                            total_documents: 0,
-                            row_count: config.row_count,
-                            columns: config.schema_selection 
-                                ? (typeof config.schema_selection === 'string'
-                                    ? JSON.parse(config.schema_selection)
-                                    : config.schema_selection)
-                                : undefined
-                        };
-                        reconstructedFileResult.total_documents = reconstructedFileResult.documents?.length || 0;
-                        setFileUploadResult(reconstructedFileResult);
-                    }
-
-                    // Use config's stored Advanced Settings (no need for system defaults)
-                    const parseConf = (c: any) => c ? (typeof c === 'string' ? JSON.parse(c) : c) : null;
-                    const emb = parseConf(config.embedding_config);
-                    const llm = parseConf(config.llm_config);
-                    const chunk = parseConf(config.chunking_config);
-                    const ret = parseConf(config.retriever_config);
-
-                    setAdvancedSettings(prev => {
-                        const next = { ...prev };
-                        if (emb) next.embedding = { ...next.embedding, ...emb };
-                        if (llm) next.llm = { ...next.llm, ...llm };
-                        if (chunk) next.chunking = { ...next.chunking, ...chunk };
-                        if (ret) next.retriever = { ...next.retriever, ...ret };
-                        return next;
-                    });
-                } else {
-                    // NEW config - fetch system defaults for initial values
-                    try {
-                        const [embSettings, ragSettings, llmSettings] = await Promise.all([
-                            getSystemSettings('embedding').catch(() => null),
-                            getSystemSettings('rag').catch(() => null),
-                            getSystemSettings('llm').catch(() => null)
-                        ]);
-
-                        setAdvancedSettings(prev => {
-                            const next = { ...prev };
-                            if (embSettings && embSettings.model_name) next.embedding = { ...next.embedding, model: embSettings.model_name };
-                            if (ragSettings) {
-                                if (ragSettings.chunk_size) next.chunking = { ...next.chunking, parentChunkSize: ragSettings.chunk_size };
-                                if (ragSettings.chunk_overlap) next.chunking = { ...next.chunking, parentChunkOverlap: ragSettings.chunk_overlap };
-                                if (ragSettings.top_k_initial) next.retriever = { ...next.retriever, topKInitial: ragSettings.top_k_initial };
-                                if (ragSettings.top_k_final) next.retriever = { ...next.retriever, topKFinal: ragSettings.top_k_final };
-                                if (ragSettings.hybrid_weights) next.retriever = { ...next.retriever, hybridWeights: ragSettings.hybrid_weights };
-                                if (ragSettings.rerank_enabled !== undefined) next.retriever = { ...next.retriever, rerankEnabled: ragSettings.rerank_enabled };
-                                if (ragSettings.reranker_model) next.retriever = { ...next.retriever, rerankerModel: ragSettings.reranker_model };
-                            }
-                            if (llmSettings) {
-                                if (llmSettings.temperature !== undefined) next.llm = { ...next.llm, temperature: llmSettings.temperature };
-                                if (llmSettings.max_tokens) next.llm = { ...next.llm, maxTokens: llmSettings.max_tokens };
-                            }
-                            return next;
-                        });
-                    } catch (err) {
-                        console.warn("Failed to load backend defaults", err);
-                    }
-                }
-            } catch (e) {
-                console.error("Failed to load existing config", e);
-            }
-
-            // History will be loaded when user navigates to Step 5
-
-            // Done loading config
-            setIsLoadingConfig(false);
-        };
-        loadConfig();
-    }, [agent]);
-
-    // Load history only when entering Review step (Step 5)
-    useEffect(() => {
-        if (currentStep === 5 && agent && history.length === 0) {
-            const loadHistory = async () => {
+        if (selectedDataSource?.id && !fullSchema && dataSourceType === 'database') {
+            const fetchSchema = async () => {
                 try {
-                    const historyData = await getPromptHistory(agent.id);
-                    setHistory(historyData);
+                    const { getDataSourceSchema } = await import('../services/api');
+                    const schema = await getDataSourceSchema(selectedDataSource.id);
+                    setFullSchema(schema);
                 } catch (err) {
-                    console.error("Failed to load history", err);
+                    console.error('Failed to auto-fetch schema:', err);
                 }
             };
-            loadHistory();
+            fetchSchema();
         }
-    }, [currentStep, agent, history.length]);
+    }, [selectedDataSource, fullSchema, dataSourceType]);
 
     // Sync state to window for API use (temporary solution)
     useEffect(() => {
@@ -281,28 +281,104 @@ const AgentConfigPage: React.FC = () => {
         }
     }, [currentStep]);
 
-    // Sync step to URL
+    // Sync step and versionId to URL
     useEffect(() => {
         const currentStepParam = searchParams.get('step');
-        if (currentStep.toString() !== currentStepParam) {
-            setSearchParams({ step: currentStep.toString() }, { replace: true });
-        }
-    }, [currentStep, searchParams, setSearchParams]);
+        const currentVersionParam = searchParams.get('versionId');
+        const newParams: Record<string, string> = { step: currentStep.toString() };
 
-    const handleNext = () => {
-        if (currentStep === 1) {
-            if (dataSourceType === 'database' && !connectionId) {
-                setError("Please select a database connection.");
-                return;
-            }
-            if (dataSourceType === 'file' && !fileUploadResult) {
-                setError("Please upload a file first.");
-                return;
-            }
+        // Add versionId to URL if we have one
+        if (hookVersionId) {
+            newParams.versionId = hookVersionId.toString();
         }
-        if (currentStep === 2 && dataSourceType === 'database' && Object.keys(selectedSchema).length === 0) {
-            setError("Please select at least one table/column.");
-            return;
+
+        // Only update if something changed
+        const stepChanged = currentStep.toString() !== currentStepParam;
+        const versionChanged = hookVersionId?.toString() !== currentVersionParam;
+
+        if (stepChanged || versionChanged) {
+            setSearchParams(newParams, { replace: true });
+        }
+    }, [currentStep, hookVersionId, searchParams, setSearchParams]);
+
+    // Get step data for saving
+    const getStepData = useCallback((step: number): Record<string, any> => {
+        switch (step) {
+            case 1:
+                return selectedDataSource ? { data_source_id: selectedDataSource.id } : {};
+            case 2: {
+                // Use consistent selected_schema format for both file and database
+                // Format: { table_name: string[] }
+                let schemaSelection: Record<string, string[]>;
+                if (dataSourceType === 'file') {
+                    // For files, wrap columns in object with table name
+                    const tableName = fileUploadResult?.table_name || selectedDataSource?.duckdb_table_name || 'data';
+                    schemaSelection = { [tableName]: selectedFileColumns };
+                } else {
+                    schemaSelection = selectedSchema;
+                }
+                return {
+                    selected_columns: schemaSelection,
+                };
+            }
+            case 3:
+                return {
+                    data_dictionary: dataDictionary ? { content: dataDictionary } : { content: '' },
+                };
+            case 4:
+                return {
+                    llm_config: advancedSettings.llm,
+                    embedding_config: advancedSettings.embedding,
+                    chunking_config: advancedSettings.chunking,
+                    rag_config: advancedSettings.retriever,
+                    // Model IDs from AI Registry
+                    embeddingModelId: advancedSettings.embeddingModelId,
+                    llmModelId: advancedSettings.llmModelId,
+                    rerankerModelId: advancedSettings.rerankerModelId,
+                };
+            case 5:
+                return {
+                    system_prompt: draftPrompt,
+                    example_questions: exampleQuestions,
+                };
+            case 6:
+                return {
+                    embedding_path: advancedSettings.embedding?.vectorDbName,
+                };
+            default:
+                return {};
+        }
+    }, [selectedDataSource, dataSourceType, selectedFileColumns, selectedSchema, dataDictionary, advancedSettings, draftPrompt, exampleQuestions, fileUploadResult]);
+
+    const handleNext = async () => {
+        if (currentStep === 1) {
+            if (!selectedDataSource) {
+                setError("Please select a data source.");
+                return;
+            }
+
+            // Create new draft when starting (if no draft was loaded on page init)
+            if (!draft && agent) {
+                const newDraft = await createNewDraft(agent.id, selectedDataSource.id);
+                if (!newDraft) {
+                    setError(draftError || "Failed to create draft config");
+                    return;
+                }
+                setHasDraft(true);
+            } else if (draft) {
+                // Save step 1 data if we have a draft
+                const stepData = getStepData(1);
+                await saveStep(1, stepData);
+            }
+        } else if (draft) {
+            // Save current step data before moving to next
+            const stepData = getStepData(currentStep);
+            await saveStep(currentStep, stepData);
+        }
+
+        if (currentStep === 2 && dataSourceType === 'database') {
+            // For databases, schema selection is temporarily skipped
+            // Just proceed to next step
         }
         if (currentStep === 2 && dataSourceType === 'file' && selectedFileColumns.length === 0) {
             setError("Please select at least one column.");
@@ -317,31 +393,27 @@ const AgentConfigPage: React.FC = () => {
     };
 
     const handleGenerate = async () => {
+        if (!agent || !hookVersionId) {
+            setError('No agent or version ID available. Please complete earlier steps first.');
+            return;
+        }
+
         setGenerating(true);
         setError(null);
         try {
-            let fullContext = dataDictionary;
-
-            if (dataSourceType === 'database') {
-                let schemaContext = "Selected Tables and Columns:\n";
-                Object.entries(selectedSchema).forEach(([table, cols]) => {
-                    schemaContext += `- ${table}: [${cols.join(', ')}]\n`;
-                });
-                schemaContext += "\n";
-                fullContext = schemaContext + dataDictionary;
-            } else if (dataSourceType === 'file' && fileUploadResult) {
-                let documentContext = "Extracted Document Content:\n";
-                documentContext += fileUploadResult.documents.map((doc, i) =>
-                    `--- Document ${i + 1} ---\n${doc.page_content}`
-                ).join('\n\n');
-                fullContext = documentContext + "\n\nUser Notes / Context:\n" + dataDictionary;
+            // Save all relevant steps before generating to ensure DB has latest data
+            // This handles the case where user made changes in previous steps but didn't click "Next"
+            if (draft) {
+                await saveStep(2, getStepData(2)); // Schema selection
+                await saveStep(3, getStepData(3)); // Data dictionary
+                await saveStep(4, getStepData(4)); // Advanced settings
             }
 
-            const result = await generateSystemPrompt(fullContext, dataSourceType);
+            // Generate prompt using endpoint that reads from saved DB data
+            const result = await generatePrompt(agent.id, hookVersionId);
             setDraftPrompt(result.draft_prompt);
             if (result.reasoning) setReasoning(result.reasoning);
             if (result.example_questions) setExampleQuestions(result.example_questions);
-            setCurrentStep(5); // Move to Review & Publish (was incorrectly set to 4)
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -351,98 +423,37 @@ const AgentConfigPage: React.FC = () => {
 
     const handlePublish = async () => {
         if (!draftPrompt.trim() || !agent) return;
-        setPublishing(true);
         setError(null);
 
-        // Derive vector db name if missing - ALWAYS include agent ID for isolation
-        const finalEmbeddingConfig = { ...advancedSettings.embedding } as any;
-        if (!finalEmbeddingConfig.vectorDbName) {
-            let baseName = '';
-            if (dataSourceType === 'database' && connectionName) {
-                baseName = connectionName;
-            } else if (dataSourceType === 'file' && fileUploadResult) {
-                baseName = fileUploadResult.file_name.split('.')[0];
-            }
-
-            if (baseName) {
-                const formatted = baseName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-                // IMPORTANT: Always include agent ID to ensure isolation between agents
-                finalEmbeddingConfig.vectorDbName = `agent_${agent.id}_${formatted}_data`;
-            } else {
-                finalEmbeddingConfig.vectorDbName = `agent_${agent.id}_data`;
-            }
-        }
-
         try {
-            const result = await publishSystemPrompt(
-                draftPrompt,
-                reasoning,
-                exampleQuestions,
-                finalEmbeddingConfig,
-                advancedSettings.retriever,
-                advancedSettings.chunking,
-                advancedSettings.llm,
-                agent.id,
-                dataSourceType,
-                fileUploadResult ? JSON.stringify(fileUploadResult.documents) : undefined,
-                fileUploadResult?.file_name,
-                fileUploadResult?.file_type,
-                selectedFileColumns
-            );
-            setSuccessMessage(`Prompt published successfully! Version: ${result.version}`);
-            // Refresh history
-            const historyData = await getPromptHistory(agent.id);
-            setHistory(historyData);
-            setCurrentStep(6); // Move to Summary
+            // Use the new step-based publish API
+            const published = await publish(draftPrompt, exampleQuestions);
+
+            if (published) {
+                setSuccessMessage(`Configuration published successfully!`);
+                setCurrentStep(6); // Move to Summary
+            } else {
+                setError(draftError || 'Failed to publish configuration');
+            }
         } catch (err) {
             setError(handleApiError(err));
-        } finally {
-            setPublishing(false);
         }
     };
 
-    const handleStartEmbedding = async (incremental: boolean = false, settings?: any) => {
+    const handleStartEmbedding = async (incremental: boolean = false) => {
         if (!agent) return;
         try {
-            // Get config id
-            const config = await getActiveConfigMetadata(agent.id);
-            const configId = config?.id || config?.prompt_id;
+            // Use draft config id directly
+            const configId = draft?.id;
             if (!configId) {
                 showError('Error', 'No configuration found to embed.');
                 return;
             }
 
-            // Use settings from modal if provided, otherwise use defaults
-            let batchSize = settings?.batch_size || 128;
-            let maxConcurrent = settings?.max_concurrent || 5;
-
-            if (!settings) {
-                try {
-                    const systemSettings = await getSystemSettings('embedding');
-                    if (systemSettings?.batch_size) batchSize = systemSettings.batch_size;
-                    if (systemSettings?.max_concurrent) maxConcurrent = systemSettings.max_concurrent;
-                } catch (err) {
-                    console.warn('Failed to fetch embedding settings, using defaults', err);
-                }
-            }
-
+            // Only send config_id and incremental - backend gets all settings from agent_config table
             const result = await startEmbeddingJob({
                 config_id: configId,
-                batch_size: batchSize,
-                max_concurrent: maxConcurrent,
                 incremental: incremental,
-                // Pass chunking from settings or from advancedSettings
-                chunking: settings?.chunking || {
-                    parent_chunk_size: advancedSettings.chunking.parentChunkSize,
-                    parent_chunk_overlap: advancedSettings.chunking.parentChunkOverlap,
-                    child_chunk_size: advancedSettings.chunking.childChunkSize,
-                    child_chunk_overlap: advancedSettings.chunking.childChunkOverlap,
-                },
-                // Pass additional settings from modal
-                parallelization: settings?.parallelization,
-                medical_context_config: settings?.medical_context_config,
-                max_consecutive_failures: settings?.max_consecutive_failures,
-                retry_attempts: settings?.retry_attempts,
             });
             setEmbeddingJobId(result.job_id);
             showSuccess('Embedding Job Started', result.message);
@@ -457,7 +468,7 @@ const AgentConfigPage: React.FC = () => {
         }
     };
 
-    if (isAuthLoading || isLoadingAgent || isLoadingConfig) {
+    if (isAuthLoading || isLoadingAgent || isDraftLoading) {
         return (
             <div className="flex flex-col h-screen bg-gray-50">
                 <ChatHeader title={APP_CONFIG.APP_NAME} />
@@ -498,8 +509,24 @@ const AgentConfigPage: React.FC = () => {
                             <div className="flex-1 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1 min-w-0">
                                 <h1 className="text-lg sm:text-2xl font-bold text-gray-900 truncate">
                                     Configure {agent.name}
+                                    {hasDraft && (
+                                        <span className="ml-2 text-xs font-normal text-blue-600 bg-blue-100 px-2 py-0.5 rounded">
+                                            Draft
+                                        </span>
+                                    )}
                                 </h1>
-                                <span className="text-xs sm:text-sm text-gray-500 flex-shrink-0">Step {currentStep} of 6</span>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                    {isSaving && (
+                                        <span className="text-xs text-gray-500 flex items-center gap-1">
+                                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                            </svg>
+                                            Saving...
+                                        </span>
+                                    )}
+                                    <span className="text-xs sm:text-sm text-gray-500">Step {currentStep} of 6</span>
+                                </div>
                             </div>
                         </div>
 
@@ -524,7 +551,7 @@ const AgentConfigPage: React.FC = () => {
                                         className="flex flex-col items-center z-10"
                                     >
                                         <div className={`w-6 h-6 sm:w-8 sm:h-8 rounded-full flex items-center justify-center text-xs sm:text-sm font-medium transition-colors duration-200 
-                                            ${currentStep >= step.id ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-300 text-gray-400'}`}>
+                                                ${currentStep >= step.id ? 'bg-blue-600 text-white' : 'bg-white border-2 border-gray-300 text-gray-400'}`}>
                                             {step.id}
                                         </div>
                                         <span className={`text-[10px] sm:text-xs mt-1 sm:mt-2 font-medium text-center whitespace-nowrap ${currentStep >= step.id ? 'text-blue-600' : 'text-gray-400'}`}>
@@ -566,9 +593,9 @@ const AgentConfigPage: React.FC = () => {
                                     setConnectionName={setConnectionName}
                                     setFileUploadResult={setFileUploadResult}
                                     onFileColumnsInit={setSelectedFileColumns}
-                                    isEditMode={isEditMode}
-                                    connectionName={connectionName}
-                                    initialFileResult={fileUploadResult}
+                                    selectedDataSource={selectedDataSource}
+                                    setSelectedDataSource={setSelectedDataSource}
+                                    isLocked={isDataSourceLocked}
                                 />
                             )}
 
@@ -577,10 +604,13 @@ const AgentConfigPage: React.FC = () => {
                                     dataSourceType={dataSourceType}
                                     connectionId={connectionId}
                                     setSelectedSchema={setSelectedSchema}
+                                    initialSchema={selectedSchema}
                                     fileUploadResult={fileUploadResult}
                                     reasoning={reasoning}
                                     onFileColumnsChange={setSelectedFileColumns}
                                     selectedFileColumns={selectedFileColumns}
+                                    selectedDataSource={selectedDataSource}
+                                    onSchemaFetch={setFullSchema}
                                 />
                             )}
 
@@ -590,6 +620,8 @@ const AgentConfigPage: React.FC = () => {
                                     dataDictionary={dataDictionary}
                                     setDataDictionary={setDataDictionary}
                                     fileUploadResult={fileUploadResult}
+                                    schema={fullSchema}
+                                    selectedSchema={selectedSchema}
                                 />
                             )}
 
@@ -609,20 +641,20 @@ const AgentConfigPage: React.FC = () => {
                                     draftPrompt={draftPrompt}
                                     setDraftPrompt={setDraftPrompt}
                                     exampleQuestions={exampleQuestions}
-                                    history={history}
+                                    onGeneratePrompt={handleGenerate}
+                                    isGenerating={generating}
+                                    agent={agent}
+                                    dataDictionary={dataDictionary}
+                                    schema={fullSchema}
+                                    selectedSchema={selectedSchema}
+                                    advancedSettings={advancedSettings}
+                                    dataSourceType={dataSourceType}
                                 />
                             )}
 
                             {currentStep === 6 && (
                                 <SummaryStep
-                                    connectionId={connectionId}
-                                    connectionName={connectionName}
-                                    dataSourceType={dataSourceType}
-                                    fileUploadResult={fileUploadResult}
-                                    selectedSchema={selectedSchema}
-                                    dataDictionary={dataDictionary}
-                                    history={history}
-                                    advancedSettings={advancedSettings}
+                                    configId={draft?.id}
                                     embeddingJobId={embeddingJobId}
                                     onStartEmbedding={handleStartEmbedding}
                                     onEmbeddingComplete={() => {
@@ -651,44 +683,41 @@ const AgentConfigPage: React.FC = () => {
                         </button>
 
                         <div className="order-1 sm:order-2">
-                            {currentStep === 4 ? (
-                                <button
-                                    onClick={handleGenerate}
-                                    disabled={generating || !canEdit}
-                                    className={`w-full sm:w-auto px-4 sm:px-6 py-2 rounded-md font-medium text-white text-sm sm:text-base transition-all duration-200 flex items-center justify-center gap-2
-                                        ${generating ? 'bg-gradient-to-r from-blue-500 to-purple-500 animate-pulse' : !canEdit ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
-                                    title={!canEdit ? "Read-only mode" : "Generate Prompt"}
-                                >
-                                    {generating ? (
-                                        <>
-                                            <svg className="animate-spin h-4 w-4 sm:h-5 sm:w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                            </svg>
-                                            <span className="hidden sm:inline">Generating with AI...</span>
-                                            <span className="sm:hidden">Generating...</span>
-                                        </>
+                            {currentStep === 5 ? (
+                                // Step 5: Show Publish button only when prompt exists
+                                draftPrompt ? (
+                                    canPublish ? (
+                                        <button
+                                            onClick={handlePublish}
+                                            disabled={isPublishing}
+                                            className="w-full sm:w-auto px-4 sm:px-6 py-2 bg-green-600 text-white rounded-md font-medium text-sm sm:text-base hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2"
+                                        >
+                                            {isPublishing ? (
+                                                <>
+                                                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                    </svg>
+                                                    Publishing...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                    </svg>
+                                                    Publish
+                                                </>
+                                            )}
+                                        </button>
                                     ) : (
-                                        <>
-                                            <svg className="h-4 w-4 sm:h-5 sm:w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                                            </svg>
-                                            <span>Generate Prompt</span>
-                                        </>
-                                    )}
-                                </button>
-                            ) : currentStep === 5 ? (
-                                canPublish ? (
-                                    <button
-                                        onClick={handlePublish}
-                                        disabled={publishing}
-                                        className="w-full sm:w-auto px-4 sm:px-6 py-2 bg-green-600 text-white rounded-md font-medium text-sm sm:text-base hover:bg-green-700 disabled:opacity-50 flex items-center justify-center"
-                                    >
-                                        {publishing ? 'Publishing...' : 'Publish'}
-                                    </button>
+                                        <div className="text-gray-500 italic text-xs sm:text-sm border border-gray-200 rounded px-3 sm:px-4 py-2 bg-gray-50 text-center">
+                                            Publish restricted
+                                        </div>
+                                    )
                                 ) : (
-                                    <div className="text-gray-500 italic text-xs sm:text-sm border border-gray-200 rounded px-3 sm:px-4 py-2 bg-gray-50 text-center">
-                                        Publish restricted
+                                    // No prompt yet - show disabled placeholder (actual button is in the step component)
+                                    <div className="text-black-400">
+                                        Generate a prompt to continue
                                     </div>
                                 )
                             ) : currentStep === 6 ? (
@@ -701,9 +730,9 @@ const AgentConfigPage: React.FC = () => {
                             ) : (
                                 <button
                                     onClick={handleNext}
-                                    disabled={generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult)}
+                                    disabled={generating || isPublishing || (currentStep === 1 && !selectedDataSource)}
                                     className={`w-full sm:w-auto px-4 sm:px-6 py-2 rounded-md font-medium text-white text-sm sm:text-base transition-colors duration-200 flex items-center justify-center
-                                        ${generating || publishing || (currentStep === 1 && dataSourceType === 'database' && !connectionId) || (currentStep === 1 && dataSourceType === 'file' && !fileUploadResult) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                            ${generating || isPublishing || (currentStep === 1 && !selectedDataSource) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                 >
                                     Next
                                 </button>

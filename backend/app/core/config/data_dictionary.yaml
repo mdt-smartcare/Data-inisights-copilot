@@ -1,0 +1,496 @@
+# =============================================================================
+# Healthcare Data Dictionary - NCD (Non-Communicable Disease) Analytics
+# =============================================================================
+# This data dictionary is specifically designed for healthcare analytics
+# focused on hypertension, diabetes, and cardiovascular disease management.
+#
+# DOMAIN: Healthcare / Public Health / NCD Programs
+# USE CASE: Blood pressure monitoring, CVD risk assessment, patient tracking
+# =============================================================================
+
+business_definitions:
+  # =========================================================================
+  # Blood Pressure Classifications (WHO/ISH Guidelines)
+  # =========================================================================
+  hypertensive patient:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic >= 140 OR avg_diastolic >= 90"
+    description: "Patient with blood pressure readings indicating hypertension (systolic ≥140 or diastolic ≥90 mmHg)"
+
+  controlled hypertension:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic < 140 AND avg_diastolic < 90"
+    description: "Hypertensive patient whose BP is now controlled (systolic <140 AND diastolic <90 mmHg)"
+
+  uncontrolled hypertension:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic >= 140 OR avg_diastolic >= 90"
+    description: "Patient with uncontrolled blood pressure despite treatment"
+
+  stage 1 hypertension:
+    table: wdf_bp_assessment_data
+    condition: "(avg_systolic >= 140 AND avg_systolic < 160) OR (avg_diastolic >= 90 AND avg_diastolic < 100)"
+    description: "Mild hypertension (systolic 140-159 or diastolic 90-99 mmHg)"
+
+  stage 2 hypertension:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic >= 160 OR avg_diastolic >= 100"
+    description: "Moderate to severe hypertension (systolic ≥160 or diastolic ≥100 mmHg)"
+
+  stage 3 hypertension:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic >= 180 OR avg_diastolic >= 110"
+    description: "Severe/crisis hypertension requiring immediate attention (systolic ≥180 or diastolic ≥110 mmHg)"
+
+  normal blood pressure:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic < 120 AND avg_diastolic < 80"
+    description: "Normal blood pressure (systolic <120 AND diastolic <80 mmHg)"
+
+  elevated blood pressure:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic >= 120 AND avg_systolic < 130 AND avg_diastolic < 80"
+    description: "Elevated BP, pre-hypertension stage (systolic 120-129 AND diastolic <80 mmHg)"
+
+  isolated systolic hypertension:
+    table: wdf_bp_assessment_data
+    condition: "avg_systolic >= 140 AND avg_diastolic < 90"
+    description: "High systolic with normal diastolic, common in elderly patients"
+
+  # =========================================================================
+  # CVD Risk Stratification
+  # =========================================================================
+  high cvd risk:
+    table: wdf_bp_assessment_data
+    condition: "cvd_risk_level = 'High risk'"
+    description: "Patient with high cardiovascular disease risk (>20% 10-year risk)"
+
+  moderate cvd risk:
+    table: wdf_bp_assessment_data
+    condition: "cvd_risk_level = 'Medium risk'"
+    description: "Patient with moderate cardiovascular disease risk (10-20% 10-year risk)"
+
+  low cvd risk:
+    table: wdf_bp_assessment_data
+    condition: "cvd_risk_level = 'Low risk'"
+    description: "Patient with low cardiovascular disease risk (<10% 10-year risk)"
+
+  high risk patient:
+    table: wdf_bp_assessment_data
+    condition: "cvd_risk_level = 'High risk' OR cvd_risk_score >= 20"
+    description: "Patient requiring intensive intervention due to high CVD risk"
+
+  # =========================================================================
+  # BMI Classifications (WHO Standards)
+  # =========================================================================
+  obese patient:
+    table: wdf_bp_assessment_data
+    condition: "bmi_category IN ('Obese', 'Extremely Obese') OR bmi >= 30"
+    description: "Patient with BMI ≥30 kg/m² (obese classification)"
+
+  morbidly obese:
+    table: wdf_bp_assessment_data
+    condition: "bmi_category = 'Extremely Obese' OR bmi >= 40"
+    description: "Patient with BMI ≥40 kg/m² (morbidly/extremely obese)"
+
+  overweight patient:
+    table: wdf_bp_assessment_data
+    condition: "bmi_category = 'Overweight' OR (bmi >= 25 AND bmi < 30)"
+    description: "Patient with BMI 25-29.9 kg/m² (overweight)"
+
+  normal weight:
+    table: wdf_bp_assessment_data
+    condition: "bmi_category = 'Normal' OR (bmi >= 18.5 AND bmi < 25)"
+    description: "Patient with healthy BMI 18.5-24.9 kg/m²"
+
+  underweight patient:
+    table: wdf_bp_assessment_data
+    condition: "bmi_category = 'Underweight' OR bmi < 18.5"
+    description: "Patient with BMI <18.5 kg/m² (underweight)"
+
+  # =========================================================================
+  # Patient Tracking & Program Status
+  # =========================================================================
+  active patient:
+    table: patient_tracker
+    condition: "is_active = true AND is_deleted = false"
+    description: "Patient currently enrolled and active in the NCD program"
+
+  enrolled patient:
+    table: patient_tracker
+    condition: "is_enrolled = true AND is_active = true AND is_deleted = false"
+    description: "Patient successfully enrolled in the hypertension management program"
+
+  screened patient:
+    table: patient_tracker
+    condition: "is_screening = true"
+    description: "Patient who has completed initial BP screening"
+
+  diagnosed patient:
+    table: patient_tracker
+    condition: "is_confirmed_diagnosis = true"
+    description: "Patient with confirmed hypertension diagnosis"
+
+  lost to follow up:
+    table: patient_tracker
+    condition: "is_active = false AND is_deleted = false AND last_visit_date < CURRENT_DATE - INTERVAL '90 days'"
+    description: "Patient who hasn't visited in over 90 days"
+
+  new patient:
+    table: patient_tracker
+    condition: "created_at >= CURRENT_DATE - INTERVAL '30 days'"
+    description: "Patient registered in the last 30 days"
+
+  # =========================================================================
+  # Assessment & Visit Types
+  # =========================================================================
+  latest assessment:
+    table: wdf_bp_assessment_data
+    condition: "is_latest = 'true'"
+    description: "Most recent BP assessment for each patient"
+
+  pre-diagnosis reading:
+    table: wdf_bp_assessment_data
+    condition: "is_before_htn_diagnosis = 'true'"
+    description: "BP reading taken before hypertension was officially diagnosed"
+
+  facility visit:
+    table: wdf_bp_assessment_data
+    condition: "encounter_type = 'Facility-based'"
+    description: "Assessment conducted at a health facility/clinic"
+
+  community outreach:
+    table: wdf_bp_assessment_data
+    condition: "encounter_type = 'Community Outreach'"
+    description: "Assessment conducted during community health outreach"
+
+  screening visit:
+    table: wdf_bp_assessment_data
+    condition: "assessment_category = 'Screening'"
+    description: "Initial screening assessment for new patients"
+
+  follow up visit:
+    table: wdf_bp_assessment_data
+    condition: "assessment_category = 'Follow-up'"
+    description: "Follow-up visit for existing patients"
+
+  # =========================================================================
+  # Time-Based Filters
+  # =========================================================================
+  this month:
+    table: wdf_bp_assessment_data
+    condition: "ymd >= DATE_TRUNC('month', CURRENT_DATE)"
+    description: "Assessments from the current calendar month"
+
+  last month:
+    table: wdf_bp_assessment_data
+    condition: "ymd >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND ymd < DATE_TRUNC('month', CURRENT_DATE)"
+    description: "Assessments from the previous calendar month"
+
+  last 30 days:
+    table: wdf_bp_assessment_data
+    condition: "ymd >= CURRENT_DATE - INTERVAL '30 days'"
+    description: "Assessments from the last 30 days"
+
+  last 90 days:
+    table: wdf_bp_assessment_data
+    condition: "ymd >= CURRENT_DATE - INTERVAL '90 days'"
+    description: "Assessments from the last 90 days (quarterly)"
+
+  this year:
+    table: wdf_bp_assessment_data
+    condition: "ymd >= DATE_TRUNC('year', CURRENT_DATE)"
+    description: "Assessments from the current calendar year"
+
+# =============================================================================
+# Healthcare Synonyms - Medical Terminology Mapping
+# =============================================================================
+synonyms:
+  # Table synonyms
+  wdf_bp_assessment_data:
+    - "bp assessments"
+    - "blood pressure data"
+    - "bp readings"
+    - "assessments"
+    - "bp measurements"
+    - "vitals"
+    - "vital signs"
+    - "sheet1"
+
+  patient_tracker:
+    - "patients"
+    - "patient records"
+    - "patient registry"
+    - "enrolled patients"
+
+  # Blood pressure synonyms
+  avg_systolic:
+    - "systolic"
+    - "systolic pressure"
+    - "systolic bp"
+    - "top number"
+    - "systolic reading"
+    - "sbp"
+
+  avg_diastolic:
+    - "diastolic"
+    - "diastolic pressure"
+    - "diastolic bp"
+    - "bottom number"
+    - "diastolic reading"
+    - "dbp"
+
+  avg_pulse:
+    - "pulse"
+    - "heart rate"
+    - "pulse rate"
+    - "hr"
+    - "bpm"
+
+  # CVD Risk synonyms
+  cvd_risk_level:
+    - "cardiovascular risk"
+    - "cvd risk"
+    - "heart risk"
+    - "risk level"
+    - "cardiac risk"
+    - "cv risk"
+
+  cvd_risk_score:
+    - "risk score"
+    - "cvd score"
+    - "framingham score"
+    - "risk percentage"
+
+  # BMI synonyms
+  bmi:
+    - "body mass index"
+    - "bmi value"
+    - "weight index"
+
+  bmi_category:
+    - "bmi classification"
+    - "weight category"
+    - "weight status"
+    - "obesity status"
+
+  # Location synonyms
+  facility_name:
+    - "facility"
+    - "clinic"
+    - "health center"
+    - "hospital"
+    - "health facility"
+
+  county:
+    - "region"
+    - "province"
+    - "state"
+
+  subcounty:
+    - "sub-county"
+    - "district"
+    - "sub-region"
+
+  # Date/Time synonyms
+  ymd:
+    - "date"
+    - "assessment date"
+    - "visit date"
+    - "measurement date"
+    - "reading date"
+
+  # Encounter synonyms
+  encounter_type:
+    - "visit type"
+    - "encounter"
+    - "type of visit"
+    - "service delivery point"
+
+  assessment_category:
+    - "assessment type"
+    - "visit category"
+    - "purpose"
+
+  # Patient identifiers
+  patient_id:
+    - "patient"
+    - "patient identifier"
+    - "patient number"
+
+# =============================================================================
+# Default Filters - Always Applied Unless Explicitly Overridden
+# =============================================================================
+default_filters:
+  patient_tracker:
+    - "is_deleted = false"
+    - "is_active = true"
+
+  wdf_bp_assessment_data:
+    - "is_latest = 'true'"  # Default to latest readings only
+
+# =============================================================================
+# Healthcare Metric Templates
+# =============================================================================
+metric_templates:
+  # Blood Pressure Metrics
+  hypertension_rate:
+    expression: "COUNT(DISTINCT CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
+    description: "Percentage of patients with hypertensive BP readings"
+    tables: ["wdf_bp_assessment_data"]
+
+  bp_control_rate:
+    expression: "COUNT(DISTINCT CASE WHEN avg_systolic < 140 AND avg_diastolic < 90 THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
+    description: "Percentage of patients with controlled blood pressure"
+    tables: ["wdf_bp_assessment_data"]
+
+  stage2_hypertension_rate:
+    expression: "COUNT(DISTINCT CASE WHEN avg_systolic >= 160 OR avg_diastolic >= 100 THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
+    description: "Percentage of patients with Stage 2 or higher hypertension"
+    tables: ["wdf_bp_assessment_data"]
+
+  # CVD Risk Metrics
+  high_risk_rate:
+    expression: "COUNT(DISTINCT CASE WHEN cvd_risk_level = 'High risk' THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
+    description: "Percentage of patients classified as high CVD risk"
+    tables: ["wdf_bp_assessment_data"]
+
+  average_cvd_risk:
+    expression: "AVG(cvd_risk_score)"
+    description: "Average CVD risk score across patients"
+    tables: ["wdf_bp_assessment_data"]
+
+  # BMI/Obesity Metrics
+  obesity_rate:
+    expression: "COUNT(DISTINCT CASE WHEN bmi_category IN ('Obese', 'Extremely Obese') THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
+    description: "Percentage of patients classified as obese"
+    tables: ["wdf_bp_assessment_data"]
+
+  average_bmi:
+    expression: "AVG(bmi)"
+    description: "Average BMI across patients"
+    tables: ["wdf_bp_assessment_data"]
+
+  # Program Metrics
+  screening_rate:
+    expression: "COUNT(DISTINCT CASE WHEN is_screening = true THEN id END) * 100.0 / NULLIF(COUNT(DISTINCT id), 0)"
+    description: "Percentage of patients who completed screening"
+    tables: ["patient_tracker"]
+
+  enrollment_rate:
+    expression: "COUNT(DISTINCT CASE WHEN is_enrolled = true THEN id END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_screening = true THEN id END), 0)"
+    description: "Percentage of screened patients who enrolled"
+    tables: ["patient_tracker"]
+
+  diagnosis_rate:
+    expression: "COUNT(DISTINCT CASE WHEN is_confirmed_diagnosis = true THEN id END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_enrolled = true THEN id END), 0)"
+    description: "Percentage of enrolled patients with confirmed diagnosis"
+    tables: ["patient_tracker"]
+
+# =============================================================================
+# Table Descriptions - Healthcare Context
+# =============================================================================
+table_descriptions:
+  wdf_bp_assessment_data: "Blood pressure assessment records containing patient BP readings (3 measurements averaged), BMI, CVD risk levels, and clinical encounter information. Primary table for hypertension analytics."
+  
+  patient_tracker: "Patient registry tracking enrollment status, screening completion, diagnosis confirmation, and program participation in the NCD/hypertension management program."
+  
+  patient_visit: "Clinical visit records documenting patient encounters at health facilities."
+  
+  patient_diagnosis: "Confirmed medical diagnoses for patients including ICD codes and diagnosis dates."
+  
+  patient_lab_test: "Laboratory test orders and requests for patients."
+  
+  patient_lab_test_result: "Laboratory test results including values and reference ranges."
+  
+  patient_treatment_plan: "Treatment plans and medication regimens assigned to patients."
+  
+  site: "Health facilities and clinics where patient services are delivered."
+  
+  organization: "Healthcare organizations and implementing partners managing facilities."
+
+# =============================================================================
+# Column Semantics - Healthcare Data Dictionary
+# =============================================================================
+column_semantics:
+  wdf_bp_assessment_data:
+    res_id: "Unique identifier for this BP assessment record"
+    encounter_id: "Links to the clinical encounter/visit"
+    ymd: "Date of BP assessment (YYYY-MM-DD)"
+    patient_id: "Unique patient identifier"
+    avg_systolic: "Average of 3 systolic BP readings (mmHg) - key metric for hypertension"
+    avg_diastolic: "Average of 3 diastolic BP readings (mmHg) - key metric for hypertension"
+    avg_pulse: "Average heart rate (beats per minute)"
+    systolic_1: "First systolic reading"
+    systolic_2: "Second systolic reading"
+    systolic_3: "Third systolic reading"
+    diastolic_1: "First diastolic reading"
+    diastolic_2: "Second diastolic reading"
+    diastolic_3: "Third diastolic reading"
+    bmi: "Body Mass Index calculated from height and weight"
+    bmi_category: "WHO BMI classification (Underweight/Normal/Overweight/Obese/Extremely Obese)"
+    cvd_risk_level: "Cardiovascular disease risk category (Low/Medium/High risk)"
+    cvd_risk_score: "Numerical 10-year CVD risk percentage (0-100)"
+    is_latest: "Boolean flag - TRUE means this is the patient's most recent assessment"
+    is_before_htn_diagnosis: "Boolean flag - TRUE means reading was before hypertension diagnosis"
+    encounter_type: "Service delivery point (Facility-based/Community Outreach)"
+    assessment_category: "Purpose of visit (Screening/Follow-up/Referral)"
+    facility_id: "Health facility unique identifier"
+    facility_name: "Name of the health facility"
+    county: "County/province geographic location"
+    subcounty: "Sub-county/district geographic location"
+    program_name: "NCD program name"
+
+  patient_tracker:
+    id: "Unique patient identifier"
+    is_active: "Whether patient is currently active in program"
+    is_deleted: "Soft-delete flag - exclude from queries"
+    is_screening: "Whether patient completed initial screening"
+    is_enrolled: "Whether patient is enrolled in NCD program"
+    is_confirmed_diagnosis: "Whether patient has confirmed hypertension diagnosis"
+    gender: "Patient gender (Male/Female)"
+    age: "Patient age in years"
+    cvd_risk_level: "Most recent CVD risk classification"
+    created_at: "Date patient was registered"
+    last_visit_date: "Date of most recent clinical visit"
+
+# =============================================================================
+# Validation Rules - Healthcare Data Governance
+# =============================================================================
+validation_rules:
+  required_filters:
+    - "Queries on patient_tracker must include is_deleted = false"
+    - "Patient-level queries should filter to is_active = true unless analyzing dropouts"
+    - "Use is_latest = 'true' for current patient status, remove for trend analysis"
+  
+  clinical_thresholds:
+    - "Hypertension: systolic >= 140 OR diastolic >= 90"
+    - "Stage 2 HTN: systolic >= 160 OR diastolic >= 100"
+    - "Controlled BP: systolic < 140 AND diastolic < 90"
+    - "Obesity: BMI >= 30"
+    - "High CVD Risk: cvd_risk_level = 'High risk' OR cvd_risk_score >= 20"
+
+  prohibited_operations:
+    - "No DELETE, UPDATE, INSERT operations - read-only analytics"
+    - "No access to PII beyond patient_id for analytics"
+    - "No TRUNCATE, DROP, ALTER operations"
+
+# =============================================================================
+# Healthcare-Specific Query Patterns
+# =============================================================================
+query_patterns:
+  bp_trend_over_time:
+    description: "Track blood pressure trends over time periods"
+    pattern: "SELECT DATE_TRUNC('month', ymd) as month, AVG(avg_systolic) as avg_systolic, AVG(avg_diastolic) as avg_diastolic FROM wdf_bp_assessment_data GROUP BY 1 ORDER BY 1"
+
+  hypertension_by_facility:
+    description: "Compare hypertension rates across facilities"
+    pattern: "SELECT facility_name, COUNT(DISTINCT CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN patient_id END) * 100.0 / COUNT(DISTINCT patient_id) as htn_rate FROM wdf_bp_assessment_data GROUP BY facility_name"
+
+  patient_risk_distribution:
+    description: "Distribution of patients by CVD risk level"
+    pattern: "SELECT cvd_risk_level, COUNT(DISTINCT patient_id) as patient_count FROM wdf_bp_assessment_data WHERE is_latest = 'true' GROUP BY cvd_risk_level"
+
+  bmi_category_breakdown:
+    description: "Patient distribution by BMI category"
+    pattern: "SELECT bmi_category, COUNT(DISTINCT patient_id) as count FROM wdf_bp_assessment_data WHERE is_latest = 'true' GROUP BY bmi_category"

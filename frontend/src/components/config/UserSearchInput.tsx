@@ -191,7 +191,7 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium"
                     >
                         <span className="w-5 h-5 bg-blue-200 rounded-full flex items-center justify-center text-xs font-semibold">
-                            {(user.full_name || user.username).charAt(0).toUpperCase()}
+                            {(user.full_name || user.username || user.email || 'U').charAt(0).toUpperCase()}
                         </span>
                         <span className="max-w-[150px] truncate">
                             {user.full_name || user.username}
@@ -249,7 +249,7 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
                             `}
                         >
                             <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold text-sm">
-                                {(user.full_name || user.username).charAt(0).toUpperCase()}
+                                {(user.full_name || user.username || user.email || 'U').charAt(0).toUpperCase()}
                             </div>
                             <div className="flex-1 min-w-0">
                                 <div className="text-sm font-medium text-gray-900 truncate">

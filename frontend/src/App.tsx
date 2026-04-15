@@ -12,20 +12,23 @@ import AgentConfigPage from './pages/AgentConfigPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import CallbackPage from './pages/CallbackPage';
-import NotificationsPage from './pages/NotificationsPage';
-import DataManagementPage from './pages/DataManagementPage';
+import DataSourcesPage from './pages/DataSourcesPage';
+import AIRegistryPage from './pages/AIRegistryPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { NotificationsProvider } from './contexts/NotificationsContext';
 import type { UserRole } from './types';
 import { roleAtLeast } from './utils/permissions';
 
-// Create a client
+// Create a client with disabled retries to prevent infinite API loops
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      retry: false,           // Disable retries to prevent infinite loops on 404/500
+      staleTime: 5 * 60 * 1000, // 5 minutes - reduce unnecessary refetches
+    },
+    mutations: {
+      retry: false,
     },
   },
 });
@@ -73,16 +76,11 @@ function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   }
 
   // Check role authorization using hierarchy
-  // If allowedRoles is specified, user must have at least one of the allowed roles
-  // Using roleAtLeast ensures super_admin can access admin routes
   if (allowedRoles && user?.role) {
-    // Find the minimum required role (lowest in hierarchy = most restrictive)
-    // If user's role is at least as privileged as any allowed role, grant access
     const hasAccess = allowedRoles.some(allowedRole =>
       roleAtLeast(user.role, allowedRole)
     );
     if (!hasAccess) {
-      // User is not authorized for this route
       return <Navigate to="/chat" replace />;
     }
   }
@@ -95,91 +93,96 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <SystemSettingsProvider>
-          <NotificationsProvider>
-            <ToastProvider>
-              <BrowserRouter>
-                <Routes>
-                  <Route path="/login" element={<LoginPage />} />
-                  <Route path="/register" element={<RegisterPage />} />
-                  <Route path="/callback" element={<CallbackPage />} />
-                  <Route path="/" element={<DefaultRedirect />} />
-                  <Route
-                    path="/chat"
-                    element={
-                      <ProtectedRoute>
-                        <ChatPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  {/* Agent routes */}
-                  <Route
-                    path="/agents"
-                    element={
-                      <ProtectedRoute allowedRoles={['admin']}>
-                        <AgentsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/agents/:id"
-                    element={
-                      <ProtectedRoute allowedRoles={['admin']}>
-                        <AgentDashboardPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/agents/:id/config"
-                    element={
-                      <ProtectedRoute allowedRoles={['admin']}>
-                        <AgentConfigPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  {/* Backward compatibility redirect */}
-                  <Route
-                    path="/config"
-                    element={<Navigate to="/agents" replace />}
-                  />
-                  <Route path="/about" element={<AboutPage />} />
-                  <Route
-                    path="/users"
-                    element={
-                      <ProtectedRoute allowedRoles={['admin']}>
-                        <UsersPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/audit"
-                    element={
-                      <ProtectedRoute allowedRoles={['admin']}>
-                        <AuditLogsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/notifications"
-                    element={
-                      <ProtectedRoute>
-                        <NotificationsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/data-management"
-                    element={
-                      <ProtectedRoute allowedRoles={['admin']}>
-                        <DataManagementPage />
-                      </ProtectedRoute>
-                    }
-                  />
+          <ToastProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/callback" element={<CallbackPage />} />
+                <Route path="/" element={<DefaultRedirect />} />
+                <Route
+                  path="/chat"
+                  element={
+                    <ProtectedRoute>
+                      <ChatPage />
+                    </ProtectedRoute>
+                  }
+                />
 
-                  <Route path="*" element={<Navigate to="/" replace />} />
-                </Routes>
-              </BrowserRouter>
-            </ToastProvider>
-          </NotificationsProvider>
+                {/* Agent routes */}
+                <Route
+                  path="/agents"
+                  element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <AgentsPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/agents/:id"
+                  element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <AgentDashboardPage />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/agents/:id/config"
+                  element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <AgentConfigPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                {/* Backward compatibility redirect */}
+                <Route
+                  path="/config"
+                  element={<Navigate to="/agents" replace />}
+                />
+
+                <Route path="/about" element={<AboutPage />} />
+
+                <Route
+                  path="/users"
+                  element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <UsersPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/audit"
+                  element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <AuditLogsPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/data-sources"
+                  element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <DataSourcesPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route
+                  path="/ai-registry"
+                  element={
+                    <ProtectedRoute allowedRoles={['admin']}>
+                      <AIRegistryPage />
+                    </ProtectedRoute>
+                  }
+                />
+
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </BrowserRouter>
+          </ToastProvider>
         </SystemSettingsProvider>
       </AuthProvider>
     </QueryClientProvider>

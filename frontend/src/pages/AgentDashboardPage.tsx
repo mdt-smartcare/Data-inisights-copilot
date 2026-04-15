@@ -1,27 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ChatHeader } from '../components/chat';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
-import { ArrowLeftIcon, CommandLineIcon, AdjustmentsVerticalIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { getAgents, startEmbeddingJob, rollbackToVersion, getSystemSettings, handleApiError } from '../services/api';
+import { ArrowLeftIcon, CommandLineIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { getAgent, startEmbeddingJob, handleApiError, getDraftConfig, getVectorDbStatusByConfig } from '../services/api';
 import { canEditPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
-import type { PromptVersion, VectorDbStatus, AdvancedSettings, ActiveConfig } from '../contexts/AgentContext';
+import type { VectorDbStatus, ActiveConfig } from '../contexts/AgentContext';
 
 // Import tab components
-import { OverviewTab, KnowledgeTab, SandboxTab, SettingsTab, UsersTab, MonitoringTab, HistoryTab } from '../components/config/tabs';
+import { OverviewTab, KnowledgeTab, SandboxTab, UsersTab, MonitoringTab, ConfigHistoryTab } from '../components/config/tabs';
+import type { EmbeddingSettings } from '../components/EmbeddingSettingsModal';
 
 // Import hooks for data fetching
-import { getActiveConfigMetadata, getPromptHistory, listEmbeddingJobs, getConnections, getVectorDbStatus } from '../services/api';
+import { getActiveConfigMetadata, listEmbeddingJobs, getConnections } from '../services/api';
 
-const defaultAdvancedSettings: AdvancedSettings = {
-    embedding: { model: 'BAAI/bge-m3' },
-    llm: { temperature: 0.0, maxTokens: 4096 },
-    chunking: { parentChunkSize: 512, parentChunkOverlap: 100, childChunkSize: 128, childChunkOverlap: 25 },
-    retriever: { topKInitial: 50, topKFinal: 10, hybridWeights: [0.75, 0.25], rerankEnabled: true, rerankerModel: 'BAAI/bge-reranker-base' }
-};
 
 const AgentDashboardPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
@@ -36,15 +31,57 @@ const AgentDashboardPage: React.FC = () => {
 
     // Config state
     const [activeConfig, setActiveConfig] = useState<ActiveConfig | null>(null);
-    const [history, setHistory] = useState<PromptVersion[]>([]);
     const [vectorDbStatus, setVectorDbStatus] = useState<VectorDbStatus | null>(null);
     const [connectionName, setConnectionName] = useState('');
-    const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
-    const [isRollingBack, setIsRollingBack] = useState(false);
 
     // Dashboard tab state
     const [dashboardTab, setDashboardTab] = useState('overview');
+
+    // Draft state - track if a draft config exists
+    const [draftConfig, setDraftConfig] = useState<{ id: number } | null>(null);
+    const [isCheckingDraft, setIsCheckingDraft] = useState(true); // Start true to check on load
+
+    /**
+     * Check for existing draft config on agent load.
+     */
+    const checkForDraft = useCallback(async (agentId: string) => {
+        setIsCheckingDraft(true);
+        try {
+            const existingDraft = await getDraftConfig(agentId);
+            setDraftConfig(existingDraft?.id ? { id: existingDraft.id } : null);
+        } catch (err) {
+            console.error('Failed to check for draft:', err);
+            setDraftConfig(null);
+        } finally {
+            setIsCheckingDraft(false);
+        }
+    }, []); // getDraftConfig is an import
+
+    /**
+     * Handle Edit/Create Config button click.
+     * Navigates to config page - with versionId if draft exists.
+     */
+    const handleEditConfig = () => {
+        if (!agent?.id) return;
+
+        if (draftConfig?.id) {
+            // Navigate to edit existing draft
+            navigate(`/agents/${agent.id}/config?versionId=${draftConfig.id}`);
+        } else {
+            // Navigate to create new config
+            navigate(`/agents/${agent.id}/config`);
+        }
+    };
+
+    /**
+     * Get button text based on draft state and user permissions.
+     */
+    const getConfigButtonText = () => {
+        if (isCheckingDraft) return 'Loading...';
+        if (!canEdit) return 'View Configuration';
+        return draftConfig ? 'Edit Draft Config' : 'Create New Config';
+    };
 
     // Load agent
     useEffect(() => {
@@ -54,19 +91,13 @@ const AgentDashboardPage: React.FC = () => {
             if (!id) return;
             setIsLoadingAgent(true);
             try {
-                const agents = await getAgents();
+                const foundAgent = await getAgent(id);
                 if (!isMounted) return;
-                const foundAgent = agents.find((a: Agent) => a.id === id);
-                if (foundAgent) {
-                    setAgent(foundAgent);
-                } else {
-                    showError('Agent Not Found', 'The requested agent could not be found.');
-                    navigate('/agents');
-                }
+                setAgent(foundAgent);
             } catch (err) {
                 if (!isMounted) return;
                 console.error('Failed to load agent', err);
-                showError('Error', 'Failed to load agent.');
+                showError('Agent Not Found', 'The requested agent could not be found.');
                 navigate('/agents');
             } finally {
                 if (isMounted) {
@@ -79,17 +110,14 @@ const AgentDashboardPage: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [id, navigate]);
+    }, [id, navigate, showError]);
 
     // Function to reload agent data (called after update)
     const reloadAgent = async () => {
         if (!id) return;
         try {
-            const agents = await getAgents();
-            const foundAgent = agents.find((a: Agent) => a.id === id);
-            if (foundAgent) {
-                setAgent(foundAgent);
-            }
+            const foundAgent = await getAgent(id);
+            setAgent(foundAgent);
         } catch (err) {
             console.error('Failed to reload agent', err);
         }
@@ -101,83 +129,84 @@ const AgentDashboardPage: React.FC = () => {
 
         const loadConfig = async () => {
             if (!agent) return;
+
+            // Check for existing draft
+            checkForDraft(agent.id);
+
             try {
                 const config = await getActiveConfigMetadata(agent.id);
                 if (!isMounted) return;
 
                 if (config) {
                     setActiveConfig(config);
-
-                    // Parse and set advanced settings from config
                     const parseConf = (c: any) => c ? (typeof c === 'string' ? JSON.parse(c) : c) : null;
-                    const newSettings = { ...defaultAdvancedSettings };
-                    const emb = parseConf(config.embedding_config);
-                    const llm = parseConf(config.llm_config);
-                    const chunk = parseConf(config.chunking_config);
-                    const ret = parseConf(config.retriever_config);
 
-                    if (emb) newSettings.embedding = { ...newSettings.embedding, ...emb };
-                    if (llm) newSettings.llm = { ...newSettings.llm, ...llm };
-                    if (chunk) newSettings.chunking = { ...newSettings.chunking, ...chunk };
-                    if (ret) newSettings.retriever = { ...newSettings.retriever, ...ret };
-                    setAdvancedSettings(newSettings);
-
-                    // Fetch connection name
-                    if (config.connection_id) {
+                    // Set connection name from data_source title (no separate lookup needed)
+                    if (config.data_source?.title) {
+                        setConnectionName(config.data_source.title);
+                    } else if (config.connection_id) {
+                        // Legacy fallback: fetch from connections API
                         try {
                             const conns = await getConnections();
                             if (!isMounted) return;
-                            const c = conns.find((x: any) => x.id === config.connection_id);
+                            const c = conns.find((x: { id: number }) => x.id === config.connection_id);
                             if (c) setConnectionName(c.name);
                         } catch (e) {
                             console.error("Failed to fetch connection name", e);
                         }
                     }
 
-                    // Fetch Vector DB Status
-                    try {
-                        const embConf = config.embedding_config ? JSON.parse(config.embedding_config) : {};
-                        // Use agent-specific vector DB name, not just connection-based
-                        // This prevents different agents using the same connection from sharing vector DBs
-                        const vDbName = embConf.vectorDbName || 
-                            (agent.id ? `agent_${agent.id}_vectors` : 
-                                (config.data_source_type === 'database' && config.connection_id 
-                                    ? `db_connection_${config.connection_id}_data` 
-                                    : 'default_vector_db'));
-                        if (vDbName && embConf.vectorDbName) {
-                            // Only fetch status if a vectorDbName was explicitly set (embedding was run)
-                            const status = await getVectorDbStatus(vDbName);
-                            if (isMounted) setVectorDbStatus(status);
-                        } else {
-                            // No embedding has been run for this agent yet
-                            if (isMounted) setVectorDbStatus(null);
-                        }
-                    } catch (e) {
-                        console.log("Could not load Vector DB status");
-                        if (isMounted) setVectorDbStatus(null);
-                    }
-
-                    // Fetch any active embedding jobs
-                    try {
-                        const jobs = await listEmbeddingJobs({
-                            config_id: config.id || config.prompt_id,
-                            limit: 1
-                        });
-                        if (!isMounted) return;
-                        if (jobs.length > 0) {
-                            const latestJob = jobs[0];
-                            const activeStatuses = ['QUEUED', 'PREPARING', 'EMBEDDING', 'VALIDATING', 'STORING'];
-                            if (activeStatuses.includes(latestJob.status)) {
-                                setEmbeddingJobId(latestJob.job_id);
+                    // Fetch vectorDbStatus from the embedding-jobs API
+                    // This gets actual document/vector counts from completed jobs
+                    const configId = config.id || config.prompt_id;
+                    if (configId) {
+                        try {
+                            const status = await getVectorDbStatusByConfig(configId);
+                            if (isMounted) {
+                                setVectorDbStatus(status);
+                            }
+                        } catch (err) {
+                            console.log('Could not fetch vector DB status:', err);
+                            // Fallback to basic status from config
+                            const embConfig = parseConf(config.embedding_config);
+                            if (isMounted) {
+                                setVectorDbStatus({
+                                    name: config.vector_collection_name || `config_${configId}`,
+                                    exists: config.embedding_status === 'completed',
+                                    total_documents_indexed: 0,
+                                    total_vectors: 0,
+                                    last_updated_at: config.updated_at || null,
+                                    embedding_model: embConfig?.model || null,
+                                    llm: null,
+                                    last_full_run: null,
+                                    last_incremental_run: null,
+                                    version: '1.0.0',
+                                    diagnostics: [],
+                                });
                             }
                         }
-                    } catch (jobErr) {
-                        console.error("Failed to fetch active jobs", jobErr);
+                    }
+
+                    // Only fetch embedding job if status indicates one is running
+                    if (config.embedding_status === 'in_progress') {
+                        try {
+                            const jobs = await listEmbeddingJobs({
+                                config_id: config.id || config.prompt_id,
+                                limit: 1
+                            });
+                            if (!isMounted) return;
+                            if (jobs.length > 0) {
+                                const latestJob = jobs[0];
+                                const activeStatuses = ['QUEUED', 'PREPARING', 'EMBEDDING', 'VALIDATING', 'STORING'];
+                                if (activeStatuses.includes(latestJob.status)) {
+                                    setEmbeddingJobId(latestJob.job_id);
+                                }
+                            }
+                        } catch (jobErr) {
+                            console.error("Failed to fetch active jobs", jobErr);
+                        }
                     }
                 }
-                // Load history
-                const historyData = await getPromptHistory(agent.id);
-                if (isMounted) setHistory(historyData);
             } catch (e) {
                 console.error("Failed to load config", e);
             }
@@ -187,26 +216,17 @@ const AgentDashboardPage: React.FC = () => {
         return () => {
             isMounted = false;
         };
-    }, [agent?.id]);
+    }, [agent?.id, checkForDraft]);
 
-    const handleStartEmbedding = async (incremental: boolean = true, settings?: any) => {
+    const handleStartEmbedding = async (incremental: boolean = true, settings?: EmbeddingSettings) => {
         const configId = activeConfig?.id || activeConfig?.prompt_id;
         if (!configId) return;
 
         try {
-            // Use settings from modal if provided, otherwise fetch defaults
-            let batchSize = settings?.batch_size || 50;
-            let maxConcurrent = settings?.max_concurrent || 5;
-
-            if (!settings) {
-                try {
-                    const systemSettings = await getSystemSettings('embedding');
-                    if (systemSettings?.batch_size) batchSize = systemSettings.batch_size;
-                    if (systemSettings?.max_concurrent) maxConcurrent = systemSettings.max_concurrent;
-                } catch (err) {
-                    console.warn('Failed to fetch embedding settings, using defaults', err);
-                }
-            }
+            // Use settings from modal if provided, otherwise use defaults
+            // Note: Old /api/v1/settings/embedding endpoint no longer exists
+            const batchSize = settings?.batch_size || 50;
+            const maxConcurrent = settings?.max_concurrent || 5;
 
             const result = await startEmbeddingJob({
                 config_id: configId,
@@ -230,47 +250,22 @@ const AgentDashboardPage: React.FC = () => {
     const handleEmbeddingComplete = async () => {
         showSuccess('Embeddings Generated', 'Knowledge base updated successfully');
         setEmbeddingJobId(null);
-        // Refresh vector DB status
-        if (activeConfig) {
+        // Refresh vectorDbStatus from API to get actual counts
+        const configId = activeConfig?.id || activeConfig?.prompt_id;
+        if (configId) {
             try {
-                const embConf = activeConfig.embedding_config
-                    ? (typeof activeConfig.embedding_config === 'string'
-                        ? JSON.parse(activeConfig.embedding_config)
-                        : activeConfig.embedding_config)
-                    : {};
-                const vDbName = embConf.vectorDbName ||
-                    (activeConfig.data_source_type === 'database' && activeConfig.connection_id
-                        ? `db_connection_${activeConfig.connection_id}_data`
-                        : 'default_vector_db');
-                if (vDbName) {
-                    const status = await getVectorDbStatus(vDbName);
-                    setVectorDbStatus(status);
-                }
+                const status = await getVectorDbStatusByConfig(configId);
+                setVectorDbStatus(status);
             } catch (err) {
-                console.log("Failed to refresh vector DB status", err);
+                console.error('Failed to refresh vector DB status:', err);
+                // Fallback: just mark as exists
+                if (vectorDbStatus) {
+                    setVectorDbStatus({
+                        ...vectorDbStatus,
+                        exists: true,
+                    });
+                }
             }
-        }
-    };
-
-    const handleRollback = async (version: PromptVersion) => {
-        if (!agent) return;
-        if (!window.confirm(`Are you sure you want to rollback ${agent.name} to Version ${version.version}? This will make it the active production configuration.`)) {
-            return;
-        }
-
-        setIsRollingBack(true);
-        try {
-            await rollbackToVersion(version.id);
-            showSuccess('Rollback Successful', `Agent ${agent.name} is now running Version ${version.version}`);
-            // Reload config
-            const config = await getActiveConfigMetadata(agent.id);
-            if (config) setActiveConfig(config);
-            const historyData = await getPromptHistory(agent.id);
-            setHistory(historyData);
-        } catch (err) {
-            showError('Rollback Failed', handleApiError(err));
-        } finally {
-            setIsRollingBack(false);
         }
     };
 
@@ -301,10 +296,9 @@ const AgentDashboardPage: React.FC = () => {
         { id: 'overview', name: 'Overview', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg> },
         { id: 'knowledge', name: 'Vector DB', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg> },
         { id: 'sandbox', name: 'Sandbox', icon: (props: any) => <CommandLineIcon {...props} /> },
-        { id: 'specs', name: 'Agent Settings & Specs', icon: (props: any) => <AdjustmentsVerticalIcon {...props} /> },
+        { id: 'config-history', name: 'Config History', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
         { id: 'users', name: 'Users', icon: (props: any) => <UserGroupIcon {...props} /> },
-        { id: 'monitoring', name: 'Monitoring', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> },
-        { id: 'history', name: 'System Prompt History', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> }
+        { id: 'monitoring', name: 'Monitoring', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> }
     ];
 
     return (
@@ -329,10 +323,11 @@ const AgentDashboardPage: React.FC = () => {
                             </div>
                             <div className="flex gap-2 flex-shrink-0">
                                 <button
-                                    onClick={() => navigate(`/agents/${agent.id}/config`)}
-                                    className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200 text-sm sm:text-base whitespace-nowrap"
+                                    onClick={handleEditConfig}
+                                    disabled={isCheckingDraft}
+                                    className="px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-all focus:ring-2 focus:ring-blue-200 text-sm sm:text-base whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    {canEdit ? 'Edit Active Config' : 'View Configuration'}
+                                    {getConfigButtonText()}
                                 </button>
                             </div>
                         </div>
@@ -366,9 +361,9 @@ const AgentDashboardPage: React.FC = () => {
                                     <OverviewTab
                                         activeConfig={activeConfig}
                                         connectionName={connectionName}
-                                        advancedSettings={advancedSettings}
-                                        history={history}
-                                        vectorDbStatus={vectorDbStatus}
+                                        agent={agent || undefined}
+                                        canEdit={canEdit}
+                                        onAgentUpdate={reloadAgent}
                                     />
                                 )}
 
@@ -391,15 +386,6 @@ const AgentDashboardPage: React.FC = () => {
                                     <SandboxTab agent={agent} activeConfig={activeConfig} />
                                 )}
 
-                                {dashboardTab === 'specs' && (
-                                    <SettingsTab
-                                        activeConfig={activeConfig}
-                                        agent={agent}
-                                        canEdit={canEdit}
-                                        onAgentUpdate={reloadAgent}
-                                    />
-                                )}
-
                                 {dashboardTab === 'users' && (
                                     <UsersTab agentId={agent.id} agentName={agent.name} />
                                 )}
@@ -408,23 +394,15 @@ const AgentDashboardPage: React.FC = () => {
                                     <MonitoringTab />
                                 )}
 
-                                {dashboardTab === 'history' && (
-                                    <HistoryTab
-                                        history={history}
-                                        onRollback={handleRollback}
-                                        isRollingBack={isRollingBack}
+                                {dashboardTab === 'config-history' && (
+                                    <ConfigHistoryTab
+                                        agentId={agent.id}
+                                        onRollback={reloadAgent}
                                     />
                                 )}
                             </div>
                         ) : dashboardTab === 'users' ? (
                             <UsersTab agentId={agent.id} agentName={agent.name} />
-                        ) : dashboardTab === 'specs' ? (
-                            <SettingsTab
-                                activeConfig={null}
-                                agent={agent}
-                                canEdit={canEdit}
-                                onAgentUpdate={reloadAgent}
-                            />
                         ) : (
                             <div className="min-h-[400px] flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border-2 border-dashed border-gray-200 shadow-sm">
                                 <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
