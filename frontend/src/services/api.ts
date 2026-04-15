@@ -852,14 +852,6 @@ export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ statu
 };
 
 // ============================================================================
-// SYSTEM SETTINGS API - DEPRECATED
-// The /api/v1/settings/* endpoints no longer exist.
-// Settings now come from:
-// - AI Models defaults: getAIModelDefaults()
-// - Agent configs: getAgent(), getDraftConfig()
-// ============================================================================
-
-// ============================================================================
 // FILE SQL API - DuckDB-based SQL queries on uploaded files
 // ============================================================================
 

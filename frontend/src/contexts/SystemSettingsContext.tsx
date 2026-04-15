@@ -1,7 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
 import { useAuth } from './AuthContext';
-// Note: Old getSystemSettings API removed - backend endpoints no longer exist
 
 /**
  * Advanced settings structure that matches the backend system settings.
