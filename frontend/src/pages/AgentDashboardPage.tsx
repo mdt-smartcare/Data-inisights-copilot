@@ -5,17 +5,17 @@ import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { ArrowLeftIcon, CommandLineIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { getAgent, startEmbeddingJob, rollbackToVersion, handleApiError, getDraftConfig, getVectorDbStatusByConfig } from '../services/api';
+import { getAgent, startEmbeddingJob, handleApiError, getDraftConfig, getVectorDbStatusByConfig } from '../services/api';
 import { canEditPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
-import type { PromptVersion, VectorDbStatus, ActiveConfig } from '../contexts/AgentContext';
+import type { VectorDbStatus, ActiveConfig } from '../contexts/AgentContext';
 
 // Import tab components
-import { OverviewTab, KnowledgeTab, SandboxTab, UsersTab, MonitoringTab, HistoryTab, ConfigHistoryTab } from '../components/config/tabs';
+import { OverviewTab, KnowledgeTab, SandboxTab, UsersTab, MonitoringTab, ConfigHistoryTab } from '../components/config/tabs';
 import type { EmbeddingSettings } from '../components/EmbeddingSettingsModal';
 
 // Import hooks for data fetching
-import { getActiveConfigMetadata, getPromptHistory, listEmbeddingJobs, getConnections } from '../services/api';
+import { getActiveConfigMetadata, listEmbeddingJobs, getConnections } from '../services/api';
 
 
 const AgentDashboardPage: React.FC = () => {
@@ -31,11 +31,9 @@ const AgentDashboardPage: React.FC = () => {
 
     // Config state
     const [activeConfig, setActiveConfig] = useState<ActiveConfig | null>(null);
-    const [history, setHistory] = useState<PromptVersion[]>([]);
     const [vectorDbStatus, setVectorDbStatus] = useState<VectorDbStatus | null>(null);
     const [connectionName, setConnectionName] = useState('');
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
-    const [isRollingBack, setIsRollingBack] = useState(false);
 
     // Dashboard tab state
     const [dashboardTab, setDashboardTab] = useState('overview');
@@ -209,9 +207,6 @@ const AgentDashboardPage: React.FC = () => {
                         }
                     }
                 }
-                // Load history
-                const historyData = await getPromptHistory(agent.id);
-                if (isMounted) setHistory(historyData);
             } catch (e) {
                 console.error("Failed to load config", e);
             }
@@ -274,28 +269,6 @@ const AgentDashboardPage: React.FC = () => {
         }
     };
 
-    const handleRollback = async (version: PromptVersion) => {
-        if (!agent) return;
-        if (!window.confirm(`Are you sure you want to rollback ${agent.name} to Version ${version.version}? This will make it the active production configuration.`)) {
-            return;
-        }
-
-        setIsRollingBack(true);
-        try {
-            await rollbackToVersion(version.id);
-            showSuccess('Rollback Successful', `Agent ${agent.name} is now running Version ${version.version}`);
-            // Reload config
-            const config = await getActiveConfigMetadata(agent.id);
-            if (config) setActiveConfig(config);
-            const historyData = await getPromptHistory(agent.id);
-            setHistory(historyData);
-        } catch (err) {
-            showError('Rollback Failed', handleApiError(err));
-        } finally {
-            setIsRollingBack(false);
-        }
-    };
-
     if (isAuthLoading || isLoadingAgent) {
         return (
             <div className="flex flex-col h-screen bg-gray-50">
@@ -325,8 +298,7 @@ const AgentDashboardPage: React.FC = () => {
         { id: 'sandbox', name: 'Sandbox', icon: (props: any) => <CommandLineIcon {...props} /> },
         { id: 'config-history', name: 'Config History', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
         { id: 'users', name: 'Users', icon: (props: any) => <UserGroupIcon {...props} /> },
-        { id: 'monitoring', name: 'Monitoring', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> },
-        { id: 'history', name: 'System Prompt History', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> }
+        { id: 'monitoring', name: 'Monitoring', icon: (props: any) => <svg {...props} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg> }
     ];
 
     return (
@@ -426,14 +398,6 @@ const AgentDashboardPage: React.FC = () => {
                                     <ConfigHistoryTab
                                         agentId={agent.id}
                                         onRollback={reloadAgent}
-                                    />
-                                )}
-
-                                {dashboardTab === 'history' && (
-                                    <HistoryTab
-                                        history={history}
-                                        onRollback={handleRollback}
-                                        isRollingBack={isRollingBack}
                                     />
                                 )}
                             </div>
