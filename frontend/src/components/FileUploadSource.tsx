@@ -13,6 +13,8 @@ interface FileUploadSourceProps {
     onExtractionComplete: (result: IngestionResponse) => void;
     /** If true, prevent interaction */
     disabled?: boolean;
+    /** Pre-populate with an existing result (for edit mode) */
+    initialResult?: IngestionResponse | null;
 }
 
 /**
@@ -26,15 +28,23 @@ interface FileUploadSourceProps {
 const FileUploadSource: React.FC<FileUploadSourceProps> = ({
     onExtractionComplete,
     disabled = false,
+    initialResult = null,
 }) => {
     const [isDragging, setIsDragging] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [isPolling, setIsPolling] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [result, setResult] = useState<IngestionResponse | null>(null);
+    const [result, setResult] = useState<IngestionResponse | null>(initialResult);
     const [pollingMessage, setPollingMessage] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+    // Update result if initialResult changes (e.g., when loading existing config)
+    useEffect(() => {
+        if (initialResult) {
+            setResult(initialResult);
+        }
+    }, [initialResult]);
 
     // Cleanup polling on unmount
     useEffect(() => {
