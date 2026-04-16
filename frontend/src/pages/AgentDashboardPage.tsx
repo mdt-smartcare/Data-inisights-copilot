@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChatHeader } from '../components/chat';
 import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
@@ -21,6 +21,7 @@ import { getActiveConfigMetadata, listEmbeddingJobs, getConnections } from '../s
 const AgentDashboardPage: React.FC = () => {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
     const { user, isLoading: isAuthLoading } = useAuth();
     const { success: showSuccess, error: showError } = useToast();
     const canEdit = canEditPrompt(user);
@@ -35,8 +36,23 @@ const AgentDashboardPage: React.FC = () => {
     const [connectionName, setConnectionName] = useState('');
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
 
-    // Dashboard tab state
-    const [dashboardTab, setDashboardTab] = useState('overview');
+    // Dashboard tab state - persist in URL query string
+    const validTabs = ['overview', 'knowledge', 'sandbox', 'config-history', 'users', 'monitoring'];
+    const tabFromUrl = searchParams.get('tab');
+    const initialTab = tabFromUrl && validTabs.includes(tabFromUrl) ? tabFromUrl : 'overview';
+    const [dashboardTab, setDashboardTabState] = useState(initialTab);
+
+    // Update URL when tab changes
+    const setDashboardTab = (tab: string) => {
+        setDashboardTabState(tab);
+        const newParams = new URLSearchParams(searchParams);
+        if (tab === 'overview') {
+            newParams.delete('tab'); // Don't clutter URL for default tab
+        } else {
+            newParams.set('tab', tab);
+        }
+        setSearchParams(newParams, { replace: true });
+    };
 
     // Draft state - track if a draft config exists
     const [draftConfig, setDraftConfig] = useState<{ id: number } | null>(null);
