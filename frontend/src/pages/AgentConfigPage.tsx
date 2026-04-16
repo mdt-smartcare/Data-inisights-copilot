@@ -344,9 +344,8 @@ const AgentConfigPage: React.FC = () => {
                     example_questions: exampleQuestions,
                 };
             case 6:
-                return {
-                    embedding_path: advancedSettings.embedding?.vectorDbName,
-                };
+                // embedding_path and vector_collection_name are set by the embedding job
+                return {};
             default:
                 return {};
         }
@@ -476,7 +475,7 @@ const AgentConfigPage: React.FC = () => {
                 <ChatHeader title={APP_CONFIG.APP_NAME} />
                 <div className="flex-1 flex items-center justify-center">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    <span className="ml-3 text-gray-500">{isLoadingConfig ? 'Loading configuration...' : 'Loading...'}</span>
+                    <span className="ml-3 text-gray-500">{isDraftLoading ? 'Loading configuration...' : 'Loading...'}</span>
                 </div>
             </div>
         );

@@ -73,10 +73,6 @@ export const AdvancedSettingsStep: React.FC<AdvancedSettingsStepProps> = ({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isLoaded]); // Only run when settings are loaded
 
-    const dataSourceName = dataSourceType === 'file' && fileName
-        ? fileName.split('.')[0]
-        : (connectionName || `db_connection_${connectionId || 'default'}`);
-
     // Show loading only during active fetch, not initially
     if (isLoadingDefaults && !isLoaded) {
         return (
@@ -93,7 +89,6 @@ export const AdvancedSettingsStep: React.FC<AdvancedSettingsStepProps> = ({
                 settings={advancedSettings}
                 onChange={setAdvancedSettings}
                 readOnly={!canEdit}
-                dataSourceName={dataSourceName}
             />
         </div>
     );

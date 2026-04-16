@@ -141,11 +141,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
 
     // Update local settings when system settings change (e.g., after initial load)
     useEffect(() => {
-        setAdvancedSettings(prev => ({
-            ...systemSettings,
-            // Preserve any agent-specific overrides like vectorDbName
-            embedding: { ...systemSettings.embedding, vectorDbName: prev.embedding.vectorDbName }
-        }));
+        setAdvancedSettings(systemSettings);
     }, [systemSettings]);
 
     const refreshHistory = useCallback(async () => {

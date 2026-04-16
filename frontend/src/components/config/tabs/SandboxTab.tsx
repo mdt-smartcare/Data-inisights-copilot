@@ -102,6 +102,7 @@ export const SandboxTab: React.FC<SandboxTabProps> = ({
                     messages={messages}
                     isLoading={isTyping}
                     username={user?.username}
+                    onSuggestedQuestionClick={handleSend}
                     emptyStateProps={{
                         title: `Testing ${agent.name}`,
                         subtitle: 'Type a message to see how the agent responds with its current settings.',

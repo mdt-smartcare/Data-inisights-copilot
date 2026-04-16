@@ -1499,7 +1499,6 @@ export interface LLMSettingsConfig {
 
 export interface EmbeddingSettingsConfig {
   model?: string;  // AI Registry model_id
-  vectorDbName?: string;
   dimensions?: number;
   batchSize?: number;
 }
@@ -1886,6 +1885,7 @@ export interface AIModelCreate {
 }
 
 export interface AIModelUpdate {
+  model_id?: string;
   display_name?: string;
   api_base_url?: string;
   api_key?: string;

@@ -52,6 +52,7 @@ describe('EmbeddingProgress', () => {
         elapsed_seconds: 60,
         errors_count: 2,
         recent_errors: ['Error processing doc-1', 'Error processing doc-2'],
+        error_message: null,
         started_at: '2024-01-15T10:00:00Z',
         completed_at: null,
     };
@@ -345,7 +346,7 @@ describe('EmbeddingProgress', () => {
         });
 
         await waitFor(() => {
-            expect(screen.getByText('Embedding generation failed. Check the errors above.')).toBeInTheDocument();
+            expect(screen.getByText('Embedding generation failed.')).toBeInTheDocument();
         });
     });
 
@@ -737,6 +738,7 @@ describe('EmbeddingProgress - WebSocket', () => {
             elapsed_seconds: 30,
             errors_count: 0,
             recent_errors: [],
+            error_message: null,
             started_at: null,
             completed_at: null,
         });

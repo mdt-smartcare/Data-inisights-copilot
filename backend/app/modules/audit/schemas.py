@@ -83,6 +83,12 @@ class AuditLogResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class AuditLogListResponse(BaseModel):
+    """Schema for paginated audit logs response."""
+    logs: List[AuditLogResponse]
+    total: int
+
+
 class AuditLogCountResponse(BaseModel):
     """Schema for audit log count response."""
     count: int

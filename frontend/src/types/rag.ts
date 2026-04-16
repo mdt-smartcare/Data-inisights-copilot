@@ -31,6 +31,7 @@ export interface EmbeddingJobProgress {
     elapsed_seconds: number | null;
     errors_count: number;
     recent_errors: string[];
+    error_message: string | null;
     started_at: string | null;
     completed_at: string | null;
 }
@@ -128,6 +129,7 @@ export interface WebSocketProgressMessage {
     errors: {
         count: number;
         recent: string[];
+        message: string | null;
     };
     timestamp: string;
 }

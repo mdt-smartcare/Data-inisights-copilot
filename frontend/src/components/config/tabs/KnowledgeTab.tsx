@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import EmbeddingProgress from '../../EmbeddingProgress';
 import EmbeddingSettingsModal from '../../EmbeddingSettingsModal';
-import ScheduleSelector from '../../ScheduleSelector';
 import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { ActiveConfig, VectorDbStatus } from '../../../contexts/AgentContext';
 import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
@@ -30,23 +29,6 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
 
     // Get system settings from context (loaded from backend Settings page)
     const { getEmbeddingModalDefaults } = useSystemSettings();
-
-    // Get vector DB name from config
-    const getVectorDbName = () => {
-        try {
-            const embConf = activeConfig.embedding_config
-                ? (typeof activeConfig.embedding_config === 'string'
-                    ? JSON.parse(activeConfig.embedding_config)
-                    : activeConfig.embedding_config)
-                : {};
-            return embConf.vectorDbName ||
-                (activeConfig.data_source_type === 'database' && activeConfig.connection_id
-                    ? `db_connection_${activeConfig.connection_id}_data`
-                    : 'default_vector_db');
-        } catch {
-            return 'default_vector_db';
-        }
-    };
 
     // Get chunking config from activeConfig, falling back to system settings
     const getChunkingConfig = () => {
@@ -251,10 +233,12 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                     </div>
                                 )}
 
-                                {/* Schedule Selector */}
-                                <div className="col-span-1 md:col-span-3 mt-4 pt-6 border-t border-gray-100">
+                                {/* Schedule Selector - Disabled until backend API is implemented
+                                   Backend routes for /api/v1/vector-db/schedule/* are not yet available.
+                                   See: migrations/001_initial_schema.sql for vector_db_schedules table schema */}
+                                {/* <div className="col-span-1 md:col-span-3 mt-4 pt-6 border-t border-gray-100">
                                     <ScheduleSelector vectorDbName={getVectorDbName()} />
-                                </div>
+                                </div> */}
                             </div>
                         ) : (
                             <div className="pt-6 sm:pt-8 border-t border-gray-100">

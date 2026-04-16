@@ -142,6 +142,7 @@ class EmbeddingJobProgress(BaseModel):
     # Errors
     errors_count: int = Field(default=0, description="Number of errors encountered")
     recent_errors: List[str] = Field(default_factory=list, description="Recent error messages")
+    error_message: Optional[str] = Field(None, description="Error message if job failed")
     
     # Timestamps
     started_at: Optional[datetime] = None

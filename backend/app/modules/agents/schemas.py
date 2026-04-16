@@ -33,7 +33,6 @@ class LLMConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     """Embedding model configuration."""
     model: Optional[str] = Field(None, description="AI Registry model_id - optional when embeddingModelId is provided")
-    vector_db_name: Optional[str] = Field(None, alias="vectorDbName", description="Vector DB collection name")
     dimensions: int = Field(default=1536, ge=1)
     batch_size: int = Field(default=100, ge=1, alias="batchSize")
     

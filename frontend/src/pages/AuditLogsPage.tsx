@@ -41,12 +41,10 @@ const AuditLogsPage: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [filters, setFilters] = useState({
         actor: '',
-        action: '',
         resource_type: '',
         start_date: '',
         end_date: ''
     });
-    const [actionTypes, setActionTypes] = useState<string[]>([]);
     const [totalCount, setTotalCount] = useState(0);
     const [currentPage, setCurrentPage] = useState(1);
 
@@ -56,7 +54,6 @@ const AuditLogsPage: React.FC = () => {
     useEffect(() => {
         if (hasAccess) {
             loadLogs();
-            loadActionTypes();
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [currentPage]); // Reload when page changes
@@ -68,34 +65,32 @@ const AuditLogsPage: React.FC = () => {
             const offset = (currentPage - 1) * PAGE_SIZE;
             const params = new URLSearchParams();
             if (filters.actor) params.set('actor', filters.actor);
-            if (filters.action) params.set('action', filters.action);
             if (filters.resource_type) params.set('resource_type', filters.resource_type);
-            if (filters.start_date) params.set('start_date', filters.start_date);
-            if (filters.end_date) params.set('end_date', filters.end_date);
+            
+            // Convert local dates to UTC ISO strings for proper timezone handling
+            if (filters.start_date) {
+                // Start of the selected day in local timezone, converted to UTC
+                const startLocal = new Date(filters.start_date + 'T00:00:00');
+                params.set('start_date', startLocal.toISOString());
+            }
+            if (filters.end_date) {
+                // End of the selected day in local timezone (23:59:59.999), converted to UTC
+                const endLocal = new Date(filters.end_date + 'T23:59:59.999');
+                params.set('end_date', endLocal.toISOString());
+            }
+            
             params.set('limit', String(PAGE_SIZE));
             params.set('offset', String(offset));
 
             const res = await apiClient.get(`/api/v1/audit/logs?${params.toString()}`);
-            setLogs(res.data || []);
-            
-            // Get total count
-            const countRes = await apiClient.get(`/api/v1/audit/logs/count?${params.toString()}`);
-            setTotalCount(countRes.data?.count || 0);
+            setLogs(res.data?.logs || []);
+            setTotalCount(res.data?.total || 0);
         } catch {
             // Silently fail - audit logs are non-critical
             setLogs([]);
+            setTotalCount(0);
         } finally {
             setLoading(false);
-        }
-    };
-
-    const loadActionTypes = async () => {
-        try {
-            const res = await apiClient.get('/api/v1/audit/actions');
-            setActionTypes(res.data || []);
-        } catch {
-            // Silently fail
-            setActionTypes([]);
         }
     };
 
@@ -189,7 +184,7 @@ const AuditLogsPage: React.FC = () => {
 
                     {/* Filters */}
                     <form onSubmit={handleSearch} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
-                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Actor</label>
                                 <input
@@ -199,22 +194,6 @@ const AuditLogsPage: React.FC = () => {
                                     placeholder="Username"
                                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                                 />
-                            </div>
-                            <div>
-                                <label htmlFor="action-filter-select" className="block text-sm font-medium text-gray-700 mb-1">Action Type</label>
-                                <select
-                                    id="action-filter-select"
-                                    value={filters.action}
-                                    onChange={(e) => setFilters(f => ({ ...f, action: e.target.value }))}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
-                                >
-                                    <option value="">All Actions</option>
-                                    {Array.from(new Set(actionTypes.map(a => a.split('.')[0]))).filter(Boolean).map(cat => (
-                                        <option key={cat} value={cat}>
-                                            {cat.charAt(0).toUpperCase() + cat.slice(1).replace(/_/g, ' ')}
-                                        </option>
-                                    ))}
-                                </select>
                             </div>
                             <div>
                                 <label htmlFor="resource-type-select" className="block text-sm font-medium text-gray-700 mb-1">Resource Type</label>
@@ -247,19 +226,13 @@ const AuditLogsPage: React.FC = () => {
                                     className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
                                 />
                             </div>
-                            <div className="flex items-end gap-2">
+                            <div className="flex items-end">
                                 <button
                                     type="submit"
-                                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+                                    className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium shadow-sm hover:shadow-md transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
                                 >
                                     Search
                                 </button>
-                                <RefreshButton
-                                    onClick={() => loadLogs()}
-                                    isLoading={loading}
-                                    size="md"
-                                    className="!px-4"
-                                />
                             </div>
                         </div>
                         {totalCount > 0 && (

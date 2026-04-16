@@ -181,6 +181,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                             elapsed_seconds: data.performance.elapsed_seconds,
                             errors_count: data.errors.count,
                             recent_errors: data.errors.recent,
+                            error_message: data.errors.message,
                             started_at: null,
                             completed_at: null,
                         };
@@ -434,14 +435,23 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             </div>
 
             {/* Error messages */}
-            {progress.recent_errors && progress.recent_errors.length > 0 && (
+            {(progress.error_message || (progress.recent_errors && progress.recent_errors.length > 0)) && (
                 <div className="embedding-progress__errors">
-                    <div className="embedding-progress__errors-title">Recent Errors:</div>
-                    <ul className="embedding-progress__errors-list">
-                        {progress.recent_errors.slice(0, 3).map((err, i) => (
-                            <li key={i}>{err}</li>
-                        ))}
-                    </ul>
+                    <div className="embedding-progress__errors-title">
+                        {isFailed ? 'Error Details:' : 'Recent Errors:'}
+                    </div>
+                    {progress.error_message && (
+                        <div className="embedding-progress__error-message mb-2 text-red-600 dark:text-red-400 font-medium">
+                            {progress.error_message}
+                        </div>
+                    )}
+                    {progress.recent_errors && progress.recent_errors.length > 0 && (
+                        <ul className="embedding-progress__errors-list">
+                            {progress.recent_errors.slice(0, 3).map((err, i) => (
+                                <li key={i}>{err}</li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
             )}
 
@@ -460,7 +470,11 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
             {isFailed && (
                 <div className="embedding-progress__failed mt-4 pb-2">
-                    <div className="mb-4">Embedding generation failed. Check the errors above.</div>
+                    <div className="mb-4">
+                        {progress.error_message 
+                            ? 'Embedding generation failed. See error details above.'
+                            : 'Embedding generation failed.'}
+                    </div>
                     <button
                         onClick={() => onCancelRef.current?.()}
                         className="px-6 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm w-full md:w-auto"

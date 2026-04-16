@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any, Union
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.audit.repository import AuditLogRepository
-from app.modules.audit.schemas import AuditLogResponse, AuditLogCreate, AuditAction
+from app.modules.audit.schemas import AuditLogResponse, AuditLogCreate, AuditAction, AuditLogListResponse
 from app.core.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -77,7 +77,7 @@ class AuditService:
         end_date: Optional[str] = None,
         limit: int = 100,
         offset: int = 0
-    ) -> List[AuditLogResponse]:
+    ) -> AuditLogListResponse:
         """
         Query audit logs with optional filters.
         
@@ -91,9 +91,9 @@ class AuditService:
             offset: Pagination offset
             
         Returns:
-            List of audit log entries
+            AuditLogListResponse with logs and total count
         """
-        return await self.repository.get_logs(
+        logs = await self.repository.get_logs(
             actor_username=actor_username,
             action=action,
             resource_type=resource_type,
@@ -102,12 +102,24 @@ class AuditService:
             limit=limit,
             offset=offset
         )
+        
+        total = await self.repository.get_log_count(
+            actor_username=actor_username,
+            action=action,
+            resource_type=resource_type,
+            start_date=start_date,
+            end_date=end_date
+        )
+        
+        return AuditLogListResponse(logs=logs, total=total)
     
     async def get_log_count(
         self,
         actor_username: Optional[str] = None,
         action: Optional[str] = None,
-        resource_type: Optional[str] = None
+        resource_type: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> int:
         """
         Get total count of logs matching filters.
@@ -116,6 +128,8 @@ class AuditService:
             actor_username: Filter by username
             action: Filter by action type (prefix match)
             resource_type: Filter by resource type
+            start_date: Filter logs after this date (ISO format)
+            end_date: Filter logs before this date (ISO format)
             
         Returns:
             Count of matching logs
@@ -123,5 +137,7 @@ class AuditService:
         return await self.repository.get_log_count(
             actor_username=actor_username,
             action=action,
-            resource_type=resource_type
+            resource_type=resource_type,
+            start_date=start_date,
+            end_date=end_date
         )

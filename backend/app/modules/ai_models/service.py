@@ -113,6 +113,12 @@ class AIModelService:
         # Update fields
         update_data = data.model_dump(exclude_unset=True)
         
+        # Check model_id uniqueness if being changed
+        if 'model_id' in update_data and update_data['model_id'] != model.model_id:
+            existing = await self.repo.get_by_model_id(update_data['model_id'])
+            if existing:
+                raise ValueError(f"Model with ID '{update_data['model_id']}' already exists")
+        
         # Handle API key separately
         if 'api_key' in update_data:
             api_key = update_data.pop('api_key')

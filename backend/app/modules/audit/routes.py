@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database.session import get_db_session
 from app.core.auth.permissions import require_admin
 from app.modules.audit.service import AuditService
-from app.modules.audit.schemas import AuditLogResponse, AuditLogCountResponse, AuditAction
+from app.modules.audit.schemas import AuditLogListResponse, AuditAction
 from app.modules.users.schemas import User
 from app.core.utils.logging import get_logger
 
@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/audit", tags=["Audit Logs"])
 
 
-@router.get("/logs", response_model=List[AuditLogResponse])
+@router.get("/logs", response_model=AuditLogListResponse)
 async def get_audit_logs(
     actor: Optional[str] = Query(None, description="Filter by actor username"),
     action: Optional[str] = Query(None, description="Filter by action prefix (e.g., 'prompt')"),
@@ -35,11 +35,7 @@ async def get_audit_logs(
     
     **Requires Admin role.**
     
-    Returns paginated list of audit log entries with details about:
-    - Who performed the action
-    - What action was taken
-    - Which resource was affected
-    - When it happened
+    Returns paginated list of audit log entries with total count.
     """
     service = AuditService(session)
     return await service.get_logs(
@@ -51,28 +47,6 @@ async def get_audit_logs(
         limit=limit,
         offset=offset
     )
-
-
-@router.get("/logs/count", response_model=AuditLogCountResponse)
-async def get_audit_log_count(
-    actor: Optional[str] = Query(None, description="Filter by actor username"),
-    action: Optional[str] = Query(None, description="Filter by action prefix"),
-    resource_type: Optional[str] = Query(None, description="Filter by resource type"),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_admin)
-):
-    """
-    Get total count of audit logs matching filters.
-    
-    **Requires Admin role.**
-    """
-    service = AuditService(session)
-    count = await service.get_log_count(
-        actor_username=actor,
-        action=action,
-        resource_type=resource_type
-    )
-    return AuditLogCountResponse(count=count)
 
 
 @router.get("/actions", response_model=List[str])

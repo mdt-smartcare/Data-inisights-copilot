@@ -12,7 +12,6 @@ import { useAuth } from './AuthContext';
 export interface AdvancedSettings {
     embedding: {
         model: string;  // model_id string like "huggingface/BAAI/bge-m3"
-        vectorDbName?: string;
     };
     llm: {
         temperature: number;

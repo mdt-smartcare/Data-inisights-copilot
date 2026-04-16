@@ -908,15 +908,6 @@ class ChatService:
             config_id = agent_config.get("config_id")
             if agent_id and config_id:
                 return f"agent_{agent_id}_config_{config_id}"
-            
-            # Legacy fallback: check embedding_config
-            embedding_config = agent_config.get("embedding_config", {})
-            if isinstance(embedding_config, str):
-                embedding_config = json.loads(embedding_config)
-            legacy_name = embedding_config.get("vector_db_name")
-            # Ignore malformed names that look like file paths
-            if legacy_name and not legacy_name.startswith("var_") and "/" not in legacy_name:
-                return legacy_name
         
         return "default_collection"
     

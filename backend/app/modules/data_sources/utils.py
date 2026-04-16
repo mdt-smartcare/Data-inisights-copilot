@@ -138,6 +138,62 @@ def get_user_csv_path(user_id: str, table_name: str) -> Path:
 
 
 # ==========================================
+# Relative Path Helpers (for portable storage)
+# ==========================================
+
+def get_relative_duckdb_path(user_id: str) -> str:
+    """
+    Get RELATIVE path for storing in database.
+    
+    Returns path relative to settings.duckdb_path, e.g.:
+    'user_bd042320-7412-4a18-8395-e808fc24a18a/database.duckdb'
+    
+    This makes the path portable across different environments.
+    """
+    return f"user_{user_id}/database.duckdb"
+
+
+def resolve_duckdb_path(relative_or_absolute_path: str) -> Path:
+    """
+    Resolve a duckdb_file_path to its full absolute path.
+    
+    Handles both:
+    - Relative paths (new format): 'user_xxx/database.duckdb'
+    - Absolute paths (legacy): 'D:\\fhir_rag\\backend\\data\\duckdb_files\\user_xxx\\database.duckdb'
+    
+    Returns the resolved absolute Path.
+    """
+    from pathlib import Path
+    
+    path = Path(relative_or_absolute_path)
+    
+    # If it's already absolute and exists, use it directly
+    if path.is_absolute():
+        if path.exists():
+            return path
+        # Absolute path doesn't exist - try to extract relative portion and resolve
+        # Look for 'user_' or 'agent_' pattern in the path
+        path_str = str(path)
+        for marker in ['user_', 'agent_']:
+            if marker in path_str:
+                # Extract from the marker onwards
+                idx = path_str.find(marker)
+                relative = path_str[idx:]
+                # Normalize path separators
+                relative = relative.replace('\\', '/')
+                settings = get_settings()
+                resolved = settings.duckdb_path / relative
+                if resolved.exists():
+                    return resolved
+        # Fallback: return the original path (will fail with file not found downstream)
+        return path
+    
+    # Relative path - resolve from settings.duckdb_path
+    settings = get_settings()
+    return settings.duckdb_path / relative_or_absolute_path
+
+
+# ==========================================
 # Excel to CSV Streaming
 # ==========================================
 
@@ -310,7 +366,7 @@ def process_file_for_duckdb(
         "columns": columns,
         "row_count": row_count,
         "csv_path": str(csv_path),
-        "duckdb_path": str(get_user_duckdb_path(user_id)),
+        "duckdb_path": get_relative_duckdb_path(user_id),  # Store relative path for portability
     }
 
 

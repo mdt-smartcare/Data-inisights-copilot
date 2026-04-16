@@ -1219,8 +1219,11 @@ class SQLServiceFactory:
                 # Use DuckDB for file-based data sources
                 duckdb_path = data_source.duckdb_file_path
                 if duckdb_path:
+                    # Resolve relative path to absolute path
+                    from app.modules.data_sources.utils import resolve_duckdb_path
+                    resolved_path = resolve_duckdb_path(duckdb_path)
                     return SQLService(
-                        db_url=f"duckdb://{duckdb_path}",
+                        db_url=f"duckdb://{resolved_path}",
                         enable_few_shot=enable_few_shot,
                         config_id=config_id,
                         agent_id=agent_id,
