@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from './components/Toast';
 import { SystemSettingsProvider } from './contexts/SystemSettingsContext';
+import { AgentProvider } from './contexts/AgentContext';
 import ChatPage from './pages/ChatPage';
 import AboutPage from './pages/AboutPage';
 import LoginPage from './pages/LoginPage';
@@ -12,20 +13,23 @@ import AgentConfigPage from './pages/AgentConfigPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
 import CallbackPage from './pages/CallbackPage';
-import NotificationsPage from './pages/NotificationsPage';
-import DataManagementPage from './pages/DataManagementPage';
+import DataSourcesPage from './pages/DataSourcesPage';
+import AIRegistryPage from './pages/AIRegistryPage';
 
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { NotificationsProvider } from './contexts/NotificationsContext';
 import type { UserRole } from './types';
 import { roleAtLeast } from './utils/permissions';
 
-// Create a client
+// Create a client with disabled retries to prevent infinite API loops
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      retry: 1,
+      retry: false,           // Disable retries to prevent infinite loops on 404/500
+      staleTime: 5 * 60 * 1000, // 5 minutes - reduce unnecessary refetches
+    },
+    mutations: {
+      retry: false,
     },
   },
 });
@@ -73,16 +77,11 @@ function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   }
 
   // Check role authorization using hierarchy
-  // If allowedRoles is specified, user must have at least one of the allowed roles
-  // Using roleAtLeast ensures super_admin can access admin routes
   if (allowedRoles && user?.role) {
-    // Find the minimum required role (lowest in hierarchy = most restrictive)
-    // If user's role is at least as privileged as any allowed role, grant access
     const hasAccess = allowedRoles.some(allowedRole =>
       roleAtLeast(user.role, allowedRole)
     );
     if (!hasAccess) {
-      // User is not authorized for this route
       return <Navigate to="/chat" replace />;
     }
   }
@@ -95,7 +94,7 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <SystemSettingsProvider>
-          <NotificationsProvider>
+          <AgentProvider>
             <ToastProvider>
               <BrowserRouter>
                 <Routes>
@@ -111,6 +110,7 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+
                   {/* Agent routes */}
                   <Route
                     path="/agents"
@@ -136,12 +136,15 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+
                   {/* Backward compatibility redirect */}
                   <Route
                     path="/config"
                     element={<Navigate to="/agents" replace />}
                   />
+
                   <Route path="/about" element={<AboutPage />} />
+
                   <Route
                     path="/users"
                     element={
@@ -150,6 +153,7 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+
                   <Route
                     path="/audit"
                     element={
@@ -158,19 +162,21 @@ function App() {
                       </ProtectedRoute>
                     }
                   />
+
                   <Route
-                    path="/notifications"
+                    path="/data-sources"
                     element={
-                      <ProtectedRoute>
-                        <NotificationsPage />
+                      <ProtectedRoute allowedRoles={['admin']}>
+                        <DataSourcesPage />
                       </ProtectedRoute>
                     }
                   />
+
                   <Route
-                    path="/data-management"
+                    path="/ai-registry"
                     element={
                       <ProtectedRoute allowedRoles={['admin']}>
-                        <DataManagementPage />
+                        <AIRegistryPage />
                       </ProtectedRoute>
                     }
                   />
@@ -179,7 +185,7 @@ function App() {
                 </Routes>
               </BrowserRouter>
             </ToastProvider>
-          </NotificationsProvider>
+          </AgentProvider>
         </SystemSettingsProvider>
       </AuthProvider>
     </QueryClientProvider>

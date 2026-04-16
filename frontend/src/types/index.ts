@@ -21,8 +21,8 @@ export * from './auth';
 export type UserRole = 'super_admin' | 'admin' | 'user';
 
 export interface User {
-    id?: number;
-    username: string;
+    id?: string;
+    username?: string;
     email?: string;
     full_name?: string;
     role?: UserRole;

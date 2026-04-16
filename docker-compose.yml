@@ -1,15 +1,45 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database (for internal app config, users, settings)
+  postgres:
+    image: postgres:16-alpine
+    container_name: data_insights_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-copilot}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_copilot_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-admin} -d ${POSTGRES_DB:-copilot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - copilot_network
+    restart: unless-stopped
+
   # Backend Service
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
+    image: data_insights_backend:latest
     container_name: data_insights_backend
+    env_file:
+      - .env
     environment:
-      # Internal SQLite database path (for app config, users, settings)
-      SQLITE_DB_PATH: ./sqliteDb/copilot.db
+      # PostgreSQL Database (for app config, users, settings)
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-copilot}
+      POSTGRES_USER: ${POSTGRES_USER:-admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-admin}
       
       # Server Configuration
       HOST: 0.0.0.0
@@ -20,35 +50,23 @@ services:
       # CORS
       CORS_ORIGINS: http://localhost:3000,http://localhost:5173,http://localhost
       
-      # Security (CHANGE THESE IN PRODUCTION!)
-      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-this-in-production-min-32-chars}
+      # Langfuse - use Docker network hostname
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_BASEURL: http://langfuse-web:3000
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
       
-      # OpenAI API Key (required)
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      
-      # File paths
-      LOG_FILE: ./logs/backend.log
-      MODELS_PATH: ./models
-      DATA_PATH: ./data
-      
-      # Optional: OIDC/Keycloak (leave empty to use local auth)
-      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-data-insights-copilot}
-      
-      # Optional: Langfuse tracing
-      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-      ENABLE_LANGFUSE: ${ENABLE_LANGFUSE:-false}
-      
-      # Celery Configuration
-      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+      # Celery Configuration (use Docker service names)
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672//
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      
+      # Qdrant - use Docker service name
+      QDRANT_HOST: qdrant
+      QDRANT_URL: http://qdrant:6333
     volumes:
       - ./backend:/app/backend
-      - ./backend/models:/app/backend/models
       - ./backend/data:/app/backend/data
       - ./backend/logs:/app/backend/logs
-      - ./backend/sqliteDb:/app/backend/sqliteDb
+      - ./migrations:/app/migrations
     ports:
       - "8000:8000"
     healthcheck:
@@ -58,9 +76,13 @@ services:
       retries: 3
       start_period: 40s
     depends_on:
+      postgres:
+        condition: service_healthy
       rabbitmq:
         condition: service_healthy
       redis:
+        condition: service_started
+      langfuse-web:
         condition: service_started
     networks:
       - copilot_network
@@ -73,7 +95,7 @@ services:
       dockerfile: Dockerfile.frontend
     container_name: data_insights_frontend
     ports:
-      - "3000:80"
+      - "5173:80"
     depends_on:
       - backend
     networks:
@@ -135,81 +157,205 @@ services:
       - copilot_network
     restart: unless-stopped
 
-  # Celery Worker for Embedding
-  embedding_worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    container_name: data_insights_embedding_worker
-    command: celery -A backend.pipeline.workers.embedding_worker.celery_app worker --loglevel=info --concurrency=2
-    environment:
-      # Use the same env vars as backend
-      SQLITE_DB_PATH: ./sqliteDb/copilot.db
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
-      QDRANT_URL: http://qdrant:6333
-      MODELS_PATH: ./models
-    volumes:
-      - ./backend:/app/backend
-      - ./backend/models:/app/backend/models
-      - ./backend/data:/app/backend/data
-      - ./backend/logs:/app/backend/logs
-      - ./backend/sqliteDb:/app/backend/sqliteDb
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_started
-      qdrant:
-        condition: service_started
-    networks:
-      - copilot_network
-    restart: unless-stopped
+  # NOTE: Celery Worker and Flower removed - new backend uses in-process async embedding
+  # Re-add if Celery task queue is needed in the future
 
-  # Flower - Celery Monitoring UI
-  flower:
-    image: mher/flower:2.0
-    container_name: data_insights_flower
-    command: celery --broker=amqp://guest:guest@rabbitmq:5672// flower --port=5555 --broker_api=http://guest:guest@rabbitmq:15672/api/
-    ports:
-      - "5555:5555"
-    environment:
-      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - FLOWER_UNAUTHENTICATED_API=true
+  # ===========================================
+  # Langfuse Observability Stack
+  # ===========================================
+  
+  # Langfuse Web (Main UI & API)
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: langfuse
+    restart: always
     depends_on:
-      rabbitmq:
+      langfuse-db:
         condition: service_healthy
-      redis:
-        condition: service_started
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    ports:
+      - "${LANGFUSE_PORT:-3001}:3000"
+    environment: &langfuse-worker-env
+      # Database
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      # ClickHouse
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      # Redis
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      REDIS_AUTH: langfuseredis
+      # MinIO (S3-compatible storage)
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: auto
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: http://langfuse-minio:9000
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      # Auth - All from environment variables
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3001}
+      SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      # Features
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      # Auto-create initial user and project - from environment variables
+      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-data-insights}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Data Insights}
+      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-copilot}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-AI Copilot}
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@example.com}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Admin}
+      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-admin123}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/public/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     networks:
       - copilot_network
-    restart: unless-stopped
+
+  # Langfuse Worker (Background processing)
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: langfuse-worker
+    restart: always
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+      langfuse-clickhouse:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+      langfuse-minio:
+        condition: service_healthy
+    environment:
+      <<: *langfuse-worker-env
+    networks:
+      - copilot_network
+
+  # Langfuse PostgreSQL Database
+  langfuse-db:
+    image: postgres:15-alpine
+    container_name: langfuse-db
+    restart: always
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - copilot_network
+
+  # Langfuse ClickHouse (Analytics Database)
+  langfuse-clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: langfuse-clickhouse
+    restart: always
+    user: "101:101"
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - copilot_network
+
+  # Langfuse Redis (Queue & Cache)
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: langfuse-redis
+    restart: always
+    command: >
+      --requirepass langfuseredis
+      --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "langfuseredis", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    networks:
+      - copilot_network
+
+  # Langfuse MinIO (S3-compatible Object Storage)
+  langfuse-minio:
+    image: minio/minio:latest
+    container_name: langfuse-minio
+    restart: always
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    volumes:
+      - langfuse_minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - copilot_network
 
 volumes:
+  postgres_copilot_data:
   rabbitmq_data:
   redis_data:
   qdrant_data:
+  langfuse_postgres_data:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio_data:
 
 networks:
   copilot_network:
     driver: bridge
 
 # =============================================================================
-# ARCHITECTURE:
-#   Celery + RabbitMQ (message broker) + Redis (results backend)
-#
 # SERVICES & PORTS:
 #   - Backend API:      http://localhost:8000
 #   - Frontend:         http://localhost:3000
-#   - RabbitMQ AMQP:    localhost:5672
-#   - RabbitMQ UI:      http://localhost:15672 (guest/guest)
+#   - RabbitMQ UI:      http://localhost:15672
 #   - Redis:            localhost:6379
 #   - Qdrant:           http://localhost:6333
 #   - Flower (Celery):  http://localhost:5555
+#   - Langfuse UI:      http://localhost:3001
 #
-# NOTE: Clinical database connections are NOT configured here.
-# They are managed via the frontend Settings > Database Connections page
-# and stored in the `db_connections` table.
+# SETUP:
+#   1. Copy .env.example to .env
+#   2. Fill in your API keys and secrets
+#   3. Run: docker compose up -d
 # =============================================================================

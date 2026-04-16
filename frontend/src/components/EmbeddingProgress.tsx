@@ -7,6 +7,7 @@ import type { EmbeddingJobProgress, EmbeddingJobStatus, WebSocketProgressMessage
 import { getEmbeddingProgress, cancelEmbeddingJob } from '../services/api';
 import { oidcService } from '../services/oidcService';
 import { API_BASE_URL } from '../config';
+import { formatTimeRemaining, formatElapsedTime } from '../utils/datetime';
 import './EmbeddingProgress.css';
 
 interface EmbeddingProgressProps {
@@ -60,6 +61,12 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     const pollingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const completedRef = useRef(false); // Guard against multiple onComplete calls
 
+    // Client-side timer state for real-time ETA/elapsed updates
+    const [clientElapsedSeconds, setClientElapsedSeconds] = useState<number | null>(null);
+    const [clientEtaSeconds, setClientEtaSeconds] = useState<number | null>(null);
+    const clientTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const lastBackendUpdateRef = useRef<number>(Date.now());
+
     // Memoize the handlers to prevent dependency churn
     const onCompleteRef = useRef(onComplete);
     const onErrorRef = useRef(onError);
@@ -81,21 +88,47 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     const isFinalState = (status: EmbeddingJobStatus) =>
         ['COMPLETED', 'FAILED', 'CANCELLED'].includes(status);
 
-    // Format time remaining
-    const formatTimeRemaining = (seconds: number | null): string => {
-        if (seconds === null || seconds < 0) return '--:--';
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
+    // Update client-side timers when backend data arrives
+    const syncWithBackendData = useCallback((data: EmbeddingJobProgress) => {
+        lastBackendUpdateRef.current = Date.now();
+        setClientElapsedSeconds(data.elapsed_seconds);
+        setClientEtaSeconds(data.estimated_time_remaining_seconds);
+    }, []);
 
-    // Format elapsed time
-    const formatElapsed = (seconds: number | null): string => {
-        if (seconds === null) return '0:00';
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
+    // Start client-side timer for real-time updates
+    useEffect(() => {
+        // Only run timer when job is active
+        const isActive = progress && ['QUEUED', 'PREPARING', 'EMBEDDING', 'VALIDATING', 'STORING'].includes(progress.status);
+        
+        if (isActive) {
+            // Clear any existing timer
+            if (clientTimerRef.current) {
+                clearInterval(clientTimerRef.current);
+            }
+
+            // Start new timer that updates every second
+            clientTimerRef.current = setInterval(() => {
+                setClientElapsedSeconds(prev => prev !== null ? prev + 1 : null);
+                setClientEtaSeconds(prev => {
+                    if (prev === null || prev <= 0) return prev;
+                    return Math.max(0, prev - 1);
+                });
+            }, 1000);
+
+            return () => {
+                if (clientTimerRef.current) {
+                    clearInterval(clientTimerRef.current);
+                    clientTimerRef.current = null;
+                }
+            };
+        } else {
+            // Job not active, stop timer
+            if (clientTimerRef.current) {
+                clearInterval(clientTimerRef.current);
+                clientTimerRef.current = null;
+            }
+        }
+    }, [progress?.status]);
 
     const stopPolling = useCallback(() => {
         if (pollingRef.current) {
@@ -133,7 +166,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                     const data = JSON.parse(event.data) as WebSocketProgressMessage;
 
                     if (data.event === 'embedding_progress') {
-                        setProgress({
+                        const progressData: EmbeddingJobProgress = {
                             job_id: data.job_id,
                             status: data.status,
                             phase: data.phase,
@@ -148,9 +181,13 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                             elapsed_seconds: data.performance.elapsed_seconds,
                             errors_count: data.errors.count,
                             recent_errors: data.errors.recent,
+                            error_message: data.errors.message,
                             started_at: null,
                             completed_at: null,
-                        });
+                        };
+                        setProgress(progressData);
+                        // Sync client-side timers with backend data
+                        syncWithBackendData(progressData);
                     } else if (data.event === 'job_finished') {
                         const finished = data as any;
                         if (finished.status === 'COMPLETED') {
@@ -194,6 +231,8 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             try {
                 const data = await getEmbeddingProgress(jobId);
                 setProgress(data);
+                // Sync client-side timers with backend data
+                syncWithBackendData(data);
 
                 if (data.status === 'COMPLETED') {
                     stopPolling();
@@ -218,7 +257,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
         poll(); // Initial fetch
         pollingRef.current = setInterval(poll, 2000);
-    }, [jobId, progress?.status, stopPolling, triggerComplete]);
+    }, [jobId, progress?.status, stopPolling, triggerComplete, syncWithBackendData]);
 
     // Handle cancel
     const handleCancel = async () => {
@@ -296,7 +335,7 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
     const displayBatch = isComplete ? progress.total_batches : progress.current_batch;
 
     return (
-        <div className={`embedding-progress embedding-progress--${progress.status.toLowerCase()}`}>
+        <div className={`embedding-progress embedding-progress--${(progress.status || 'unknown').toLowerCase()}`}>
             {/* Header */}
             <div className="embedding-progress__header">
                 <div className="embedding-progress__title">
@@ -356,13 +395,13 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
                 <div className="embedding-progress__stat">
                     <div className="embedding-progress__stat-label">ETA</div>
                     <div className="embedding-progress__stat-value">
-                        {formatTimeRemaining(progress.estimated_time_remaining_seconds)}
+                        {formatTimeRemaining(clientEtaSeconds)}
                     </div>
                 </div>
                 <div className="embedding-progress__stat">
                     <div className="embedding-progress__stat-label">Elapsed</div>
                     <div className="embedding-progress__stat-value">
-                        {formatElapsed(progress.elapsed_seconds)}
+                        {formatElapsedTime(clientElapsedSeconds)}
                     </div>
                 </div>
                 {progress.failed_documents > 0 && (
@@ -396,14 +435,23 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
             </div>
 
             {/* Error messages */}
-            {progress.recent_errors && progress.recent_errors.length > 0 && (
+            {(progress.error_message || (progress.recent_errors && progress.recent_errors.length > 0)) && (
                 <div className="embedding-progress__errors">
-                    <div className="embedding-progress__errors-title">Recent Errors:</div>
-                    <ul className="embedding-progress__errors-list">
-                        {progress.recent_errors.slice(0, 3).map((err, i) => (
-                            <li key={i}>{err}</li>
-                        ))}
-                    </ul>
+                    <div className="embedding-progress__errors-title">
+                        {isFailed ? 'Error Details:' : 'Recent Errors:'}
+                    </div>
+                    {progress.error_message && (
+                        <div className="embedding-progress__error-message mb-2 text-red-600 dark:text-red-400 font-medium">
+                            {progress.error_message}
+                        </div>
+                    )}
+                    {progress.recent_errors && progress.recent_errors.length > 0 && (
+                        <ul className="embedding-progress__errors-list">
+                            {progress.recent_errors.slice(0, 3).map((err, i) => (
+                                <li key={i}>{err}</li>
+                            ))}
+                        </ul>
+                    )}
                 </div>
             )}
 
@@ -422,7 +470,11 @@ export const EmbeddingProgress: React.FC<EmbeddingProgressProps> = ({
 
             {isFailed && (
                 <div className="embedding-progress__failed mt-4 pb-2">
-                    <div className="mb-4">Embedding generation failed. Check the errors above.</div>
+                    <div className="mb-4">
+                        {progress.error_message 
+                            ? 'Embedding generation failed. See error details above.'
+                            : 'Embedding generation failed.'}
+                    </div>
                     <button
                         onClick={() => onCancelRef.current?.()}
                         className="px-6 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition-colors shadow-sm w-full md:w-auto"

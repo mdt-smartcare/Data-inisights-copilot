@@ -1,6 +1,7 @@
 import { apiClient } from './api';
 import { API_ENDPOINTS } from '../config';
 import type { ChatRequest, ChatResponse } from '../types';
+import type { FeedbackRequest, FeedbackResponse } from '../types/feedback';
 
 // Mock mode flag - set to false when backend is ready
 const USE_MOCK_DATA = false;
@@ -147,12 +148,13 @@ export const chatService = {
     const { signal, ...requestData } = request;
 
     // Pass everything except signal, including agent_id
-    const response = await apiClient.post<ChatResponse>(
+    const response = await apiClient.post<{ success: boolean; data: ChatResponse; message: string }>(
       API_ENDPOINTS.CHAT,
       requestData,
       { signal }  // Pass signal to axios config
     );
-    return response.data;
+    // Backend wraps response in { success, data, message } - extract inner data
+    return response.data.data;
   },
 
   getConversationHistory: async (conversationId: string) => {
@@ -163,6 +165,28 @@ export const chatService = {
 
     const response = await apiClient.get(
       `${API_ENDPOINTS.CHAT}/${conversationId}`
+    );
+    return response.data;
+  },
+
+  /**
+   * Submit user feedback for a chat response
+   * @param feedback - Feedback request with trace_id, rating, etc.
+   * @returns Feedback submission response
+   */
+  submitFeedback: async (feedback: FeedbackRequest): Promise<FeedbackResponse> => {
+    if (USE_MOCK_DATA) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      return {
+        status: "success",
+        message: `Feedback recorded with rating: ${feedback.rating}`,
+        feedback_id: "mock-feedback-" + Math.random().toString(36).substring(7)
+      };
+    }
+
+    const response = await apiClient.post<FeedbackResponse>(
+      API_ENDPOINTS.FEEDBACK,
+      feedback
     );
     return response.data;
   },

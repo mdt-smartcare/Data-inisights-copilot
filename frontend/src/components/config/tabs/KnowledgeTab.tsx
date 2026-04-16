@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import EmbeddingProgress from '../../EmbeddingProgress';
 import EmbeddingSettingsModal from '../../EmbeddingSettingsModal';
-import ScheduleSelector from '../../ScheduleSelector';
 import { CheckCircleIcon, ExclamationTriangleIcon, Cog6ToothIcon, ArrowPathIcon } from '@heroicons/react/24/outline';
 import type { ActiveConfig, VectorDbStatus } from '../../../contexts/AgentContext';
 import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
+import { formatDateTime } from '../../../utils/datetime';
 
 interface KnowledgeTabProps {
     activeConfig: ActiveConfig;
@@ -26,26 +26,9 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
     onEmbeddingCancel
 }) => {
     const [showSettingsModal, setShowSettingsModal] = useState(false);
-    
+
     // Get system settings from context (loaded from backend Settings page)
     const { getEmbeddingModalDefaults } = useSystemSettings();
-
-    // Get vector DB name from config
-    const getVectorDbName = () => {
-        try {
-            const embConf = activeConfig.embedding_config
-                ? (typeof activeConfig.embedding_config === 'string'
-                    ? JSON.parse(activeConfig.embedding_config)
-                    : activeConfig.embedding_config)
-                : {};
-            return embConf.vectorDbName ||
-                (activeConfig.data_source_type === 'database' && activeConfig.connection_id
-                    ? `db_connection_${activeConfig.connection_id}_data`
-                    : 'default_vector_db');
-        } catch {
-            return 'default_vector_db';
-        }
-    };
 
     // Get chunking config from activeConfig, falling back to system settings
     const getChunkingConfig = () => {
@@ -99,6 +82,7 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
         <div className="space-y-8">
             {/* Embedding Settings Modal */}
             <EmbeddingSettingsModal
+                key={showSettingsModal ? 'open' : 'closed'}
                 isOpen={showSettingsModal}
                 onClose={() => setShowSettingsModal(false)}
                 onConfirm={handleEmbeddingConfirm}
@@ -183,14 +167,26 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                         <CheckCircleIcon className="w-5 h-5 sm:w-6 sm:h-6 text-green-600" />
                                         <p className="text-sm sm:text-base font-semibold text-gray-900">
                                             {vectorDbStatus.last_updated_at
-                                                ? new Date(vectorDbStatus.last_updated_at + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+                                                ? formatDateTime(vectorDbStatus.last_updated_at)
                                                 : 'Never run'}
                                         </p>
                                     </div>
                                 </div>
 
                                 {/* Enhanced Metadata Fields */}
-                                <div className="col-span-1 sm:col-span-2 md:col-span-3 grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-2">
+                                <div className="col-span-1 sm:col-span-2 md:col-span-3 grid grid-cols-2 lg:grid-cols-5 gap-3 sm:gap-4 mt-2">
+                                    <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
+                                        <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Vector Database</p>
+                                        <p className="text-xs sm:text-sm font-medium text-gray-800 capitalize flex items-center gap-1.5">
+                                            {vectorDbStatus.vector_db_type === 'qdrant' && (
+                                                <span className="w-2 h-2 rounded-full bg-purple-500"></span>
+                                            )}
+                                            {vectorDbStatus.vector_db_type === 'chroma' && (
+                                                <span className="w-2 h-2 rounded-full bg-orange-500"></span>
+                                            )}
+                                            {vectorDbStatus.vector_db_type || 'N/A'}
+                                        </p>
+                                    </div>
                                     <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Embedding Model</p>
                                         <p className="text-xs sm:text-sm font-medium text-gray-800 truncate" title={vectorDbStatus.embedding_model || 'N/A'}>
@@ -206,7 +202,7 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                     <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
                                         <p className="text-[10px] text-gray-500 font-bold uppercase mb-1">Last Full Sync</p>
                                         <p className="text-xs sm:text-sm font-medium text-gray-800">
-                                            {vectorDbStatus.last_full_run ? new Date(vectorDbStatus.last_full_run + 'Z').toLocaleDateString() : 'N/A'}
+                                            {vectorDbStatus.last_full_run ? formatDateTime(vectorDbStatus.last_full_run) : 'N/A'}
                                         </p>
                                     </div>
                                     <div className="p-2 sm:p-3 bg-gray-50 rounded-lg border border-gray-100">
@@ -237,10 +233,12 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
                                     </div>
                                 )}
 
-                                {/* Schedule Selector */}
-                                <div className="col-span-1 md:col-span-3 mt-4 pt-6 border-t border-gray-100">
+                                {/* Schedule Selector - Disabled until backend API is implemented
+                                   Backend routes for /api/v1/vector-db/schedule/* are not yet available.
+                                   See: migrations/001_initial_schema.sql for vector_db_schedules table schema */}
+                                {/* <div className="col-span-1 md:col-span-3 mt-4 pt-6 border-t border-gray-100">
                                     <ScheduleSelector vectorDbName={getVectorDbName()} />
-                                </div>
+                                </div> */}
                             </div>
                         ) : (
                             <div className="pt-6 sm:pt-8 border-t border-gray-100">

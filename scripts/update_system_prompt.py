@@ -7,7 +7,7 @@ import logging
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from backend.services.config_service import get_config_service
-from backend.sqliteDb.db import get_db_service
+from backend.database.db import get_db_service
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

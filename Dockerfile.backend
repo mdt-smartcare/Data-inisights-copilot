@@ -3,9 +3,10 @@ FROM python:3.10.19-slim AS builder
 
 WORKDIR /app
 
-# System libs needed to compile native wheels
+# System libs needed to compile native wheels (including MySQL client)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ git curl libpq-dev build-essential \
+    default-libmysqlclient-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
@@ -17,9 +18,9 @@ FROM python:3.10.19-slim
 
 WORKDIR /app
 
-# Runtime-only system deps
+# Runtime-only system deps (including MySQL client library)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl libpq5 \
+    curl libpq5 default-mysql-client libmariadb3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
@@ -28,6 +29,12 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy backend source
 COPY backend/ ./backend/
+
+# Copy shared constants
+COPY shared/ ./shared/
+
+# Copy database migrations
+COPY migrations/ ./migrations/
 
 # Create runtime directories
 RUN mkdir -p /app/backend/logs \
@@ -51,7 +58,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Production: Gunicorn with Uvicorn workers (4 workers, scalable)
-CMD ["gunicorn", "backend.app:app", \
+CMD ["gunicorn", "backend.app.app:app", \
     "--worker-class", "uvicorn.workers.UvicornWorker", \
     "--workers", "4", \
     "--bind", "0.0.0.0:8000", \

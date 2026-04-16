@@ -1,0 +1,1 @@
+{"patients": ["id", "mrn", "first_name", "last_name", "date_of_birth", "gender"], "vital_signs": ["id", "patient_id", "heart_rate", "blood_pressure_systolic"]}

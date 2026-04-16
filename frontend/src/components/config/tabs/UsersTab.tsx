@@ -3,7 +3,7 @@ import AgentUsersTab from '../AgentUsersTab';
 import { UserGroupIcon } from '@heroicons/react/24/outline';
 
 interface UsersTabProps {
-    agentId: number;
+    agentId: string;
     agentName: string;
 }
 

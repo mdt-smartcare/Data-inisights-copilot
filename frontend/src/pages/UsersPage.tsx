@@ -7,10 +7,11 @@ import Alert from '../components/Alert';
 import ConfirmationModal from '../components/ConfirmationModal';
 import { APP_CONFIG, CONFIRMATION_MESSAGES } from '../config';
 import { apiClient, getAgents, getAllAgents, getUserAgents, bulkAssignAgents, revokeUserAccess, handleApiError } from '../services/api';
-import type { Agent } from '../types';
+import type { Agent, UserAgentAssignment } from '../types';
+import { formatDateTime } from '../utils/datetime';
 
 interface UserData {
-    id: number;
+    id: string;
     username: string;
     email?: string;
     full_name?: string;
@@ -38,13 +39,13 @@ const UsersPage: React.FC = () => {
     // Agent Assignment State
     const [agentModalUser, setAgentModalUser] = useState<UserData | null>(null);
     const [allAgents, setAllAgents] = useState<Agent[]>([]);
-    const [userAgents, setUserAgents] = useState<Agent[]>([]);
+    const [userAgents, setUserAgents] = useState<UserAgentAssignment[]>([]);
     const [loadingAgents, setLoadingAgents] = useState(false);
-    const [selectedAgentRoles, setSelectedAgentRoles] = useState<Record<number, 'admin' | 'user'>>({}); // Per-agent role map
+    const [selectedAgentRoles, setSelectedAgentRoles] = useState<Record<string, 'admin' | 'user'>>({}); // Per-agent role map (agent IDs are UUIDs)
     const [assigning, setAssigning] = useState(false);
 
     // Helper to get selected agent IDs
-    const selectedAgentIds = Object.keys(selectedAgentRoles).map(Number);
+    const selectedAgentIds = Object.keys(selectedAgentRoles); // Already strings (agent IDs are UUIDs)
 
     const hasAccess = canManageUsers(user);
     const currentUserIsSuperAdmin = isSuperAdmin(user);
@@ -60,8 +61,9 @@ const UsersPage: React.FC = () => {
         setError(null);
         try {
             const res = await apiClient.get('/api/v1/users');
-
-            setUsers(res.data || []);
+            // Handle wrapped response: { success, data: { items } }
+            const users = res.data?.data?.items || res.data?.items || (Array.isArray(res.data) ? res.data : []);
+            setUsers(users);
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to load users');
         } finally {
@@ -180,7 +182,7 @@ const UsersPage: React.FC = () => {
         }
     };
 
-    const toggleAgentSelection = (agentId: number) => {
+    const toggleAgentSelection = (agentId: string) => {
         setSelectedAgentRoles(prev => {
             if (prev[agentId] !== undefined) {
                 // Remove from selection
@@ -193,14 +195,14 @@ const UsersPage: React.FC = () => {
         });
     };
 
-    const setAgentRole = (agentId: number, role: 'admin' | 'user') => {
+    const setAgentRole = (agentId: string, role: 'admin' | 'user') => {
         setSelectedAgentRoles(prev => ({
             ...prev,
             [agentId]: role
         }));
     };
 
-    const handleRevokeAgent = async (agentId: number) => {
+    const handleRevokeAgent = async (agentId: string) => {
         if (!agentModalUser) return;
         try {
             await revokeUserAccess(agentId, agentModalUser.id);
@@ -303,7 +305,7 @@ const UsersPage: React.FC = () => {
                             <span className="mt-1 text-sm text-gray-400">Please wait</span>
                         </div>
                     ) : (
-                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead className="bg-gray-50">
                                     <tr>
@@ -320,7 +322,7 @@ const UsersPage: React.FC = () => {
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 <div className="flex items-center">
                                                     <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold">
-                                                        {(u.full_name || u.username).charAt(0).toUpperCase()}
+                                                        {(u.full_name || u.username || u.email || 'U').charAt(0).toUpperCase()}
                                                     </div>
                                                     <div className="ml-4">
                                                         <div className="text-sm font-medium text-gray-900">{u.full_name || u.username}</div>
@@ -344,7 +346,7 @@ const UsersPage: React.FC = () => {
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}
+                                                {formatDateTime(u.created_at)}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                                 <div className="flex items-center justify-end gap-2">
@@ -544,16 +546,13 @@ const UsersPage: React.FC = () => {
                                                                         <div className="flex items-center gap-2">
                                                                             <span className="font-medium text-gray-900 truncate">{agent.name}</span>
                                                                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                                                                                agent.user_role === 'admin' 
+                                                                                agent.role === 'admin' 
                                                                                     ? 'bg-purple-100 text-purple-700 ring-1 ring-purple-200' 
                                                                                     : 'bg-amber-100 text-amber-700 ring-1 ring-amber-200'
                                                                             }`}>
-                                                                                {agent.user_role === 'admin' ? '⚙️ Configure' : '💬 Chat'}
+                                                                                {agent.role === 'admin' ? '⚙️ Configure' : '💬 Chat'}
                                                                             </span>
                                                                         </div>
-                                                                        {agent.description && (
-                                                                            <p className="text-xs text-gray-500 truncate mt-0.5">{agent.description}</p>
-                                                                        )}
                                                                     </div>
                                                                 </div>
                                                                 <button
@@ -635,11 +634,6 @@ const UsersPage: React.FC = () => {
                                                                                 <span className={`block text-sm font-medium truncate ${isSelected ? 'text-indigo-900' : 'text-gray-900'}`}>
                                                                                     {agent.name}
                                                                                 </span>
-                                                                                {agent.description && (
-                                                                                    <span className={`block text-xs truncate mt-0.5 ${isSelected ? 'text-indigo-600' : 'text-gray-500'}`}>
-                                                                                        {agent.description}
-                                                                                    </span>
-                                                                                )}
                                                                             </div>
                                                                         </label>
 

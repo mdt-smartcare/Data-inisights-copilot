@@ -1,6 +1,6 @@
 /**
  * Standardized error codes for API responses.
- * Single source of truth: shared/constants.json
+ * Auto-generated from shared/constants.json - DO NOT EDIT MANUALLY
  */
 import constants from '../../../shared/constants.json';
 

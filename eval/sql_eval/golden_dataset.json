@@ -1,0 +1,508 @@
+{
+    "version": "2.0",
+    "description": "SQL-specific golden dataset for schema-aware pipeline evaluation. Each entry has a natural language question, expected SQL pattern components, and ground truth SQL for deterministic comparison.",
+    "created": "2026-03-31",
+    "schema_context": "Clinical NCD database with patient_tracker, patient_visit, patient_diagnosis, bp_log, glucose_log, screening_log, site, organization, region, district",
+    "entries": [
+        {
+            "id": "sql_eval_001",
+            "category": "simple_count",
+            "difficulty": "easy",
+            "query": "How many active patients are registered?",
+            "ground_truth_sql": "SELECT COUNT(*) AS patient_count FROM patient_tracker WHERE is_active = true AND is_deleted = false;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "count",
+                "demographics",
+                "default_filters"
+            ]
+        },
+        {
+            "id": "sql_eval_002",
+            "category": "group_by",
+            "difficulty": "easy",
+            "query": "What is the distribution of patients by gender?",
+            "ground_truth_sql": "SELECT gender, COUNT(*) AS patient_count FROM patient_tracker WHERE is_active = true AND is_deleted = false GROUP BY gender ORDER BY patient_count DESC;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "distribution",
+                "gender",
+                "group_by"
+            ]
+        },
+        {
+            "id": "sql_eval_003",
+            "category": "date_filter",
+            "difficulty": "medium",
+            "query": "How many patients were screened for hypertension last month?",
+            "ground_truth_sql": "SELECT COUNT(DISTINCT patient_tracker_id) AS screened_count FROM screening_log WHERE is_active = true AND is_deleted = false AND created_at >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month') AND created_at < date_trunc('month', CURRENT_DATE);",
+            "expected_tables": [
+                "screening_log"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted",
+                "created_at"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "count",
+                "screening",
+                "date_filter"
+            ]
+        },
+        {
+            "id": "sql_eval_004",
+            "category": "percentage",
+            "difficulty": "hard",
+            "query": "What percentage of diagnosed hypertension patients are on treatment?",
+            "ground_truth_sql": "SELECT ROUND(100.0 * COUNT(CASE WHEN is_on_treatment = true THEN 1 END) / NULLIF(COUNT(*), 0), 2) AS treatment_rate FROM patient_tracker WHERE is_active = true AND is_deleted = false AND is_hypertension_diagnosed = true;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted",
+                "is_hypertension_diagnosed"
+            ],
+            "expected_aggregations": [
+                "COUNT",
+                "CASE"
+            ],
+            "tags": [
+                "rate",
+                "treatment",
+                "care_cascade"
+            ]
+        },
+        {
+            "id": "sql_eval_005",
+            "category": "care_cascade",
+            "difficulty": "hard",
+            "query": "Show the NCD care cascade for diabetes",
+            "ground_truth_sql": "SELECT 'Screened' AS stage, COUNT(*) AS patient_count FROM patient_tracker WHERE is_active = true AND is_deleted = false AND is_screened = true UNION ALL SELECT 'Diagnosed', COUNT(*) FROM patient_tracker WHERE is_active = true AND is_deleted = false AND is_diabetes_diagnosed = true UNION ALL SELECT 'On Treatment', COUNT(*) FROM patient_tracker WHERE is_active = true AND is_deleted = false AND is_diabetes_diagnosed = true AND is_on_treatment = true UNION ALL SELECT 'Controlled', COUNT(*) FROM patient_tracker WHERE is_active = true AND is_deleted = false AND is_diabetes_diagnosed = true AND is_on_treatment = true AND glucose_value IS NOT NULL AND glucose_value < 126;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT",
+                "UNION"
+            ],
+            "tags": [
+                "cascade",
+                "diabetes",
+                "funnel"
+            ]
+        },
+        {
+            "id": "sql_eval_006",
+            "category": "join_simple",
+            "difficulty": "medium",
+            "query": "How many patients are there per site?",
+            "ground_truth_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY s.name ORDER BY patient_count DESC;",
+            "expected_tables": [
+                "patient_tracker",
+                "site"
+            ],
+            "expected_joins": [
+                "patient_tracker.site_id = site.id"
+            ],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "join",
+                "site",
+                "group_by"
+            ]
+        },
+        {
+            "id": "sql_eval_007",
+            "category": "ranking",
+            "difficulty": "medium",
+            "query": "What are the top 5 sites by patient count?",
+            "ground_truth_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY s.name ORDER BY patient_count DESC LIMIT 5;",
+            "expected_tables": [
+                "patient_tracker",
+                "site"
+            ],
+            "expected_joins": [
+                "patient_tracker.site_id = site.id"
+            ],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "ranking",
+                "top_n",
+                "site"
+            ]
+        },
+        {
+            "id": "sql_eval_008",
+            "category": "trend",
+            "difficulty": "medium",
+            "query": "What is the monthly trend of new patient registrations this year?",
+            "ground_truth_sql": "SELECT date_trunc('month', created_at)::date AS month, COUNT(*) AS new_registrations FROM patient_tracker WHERE is_active = true AND is_deleted = false AND EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM CURRENT_DATE) GROUP BY date_trunc('month', created_at) ORDER BY month;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted",
+                "created_at"
+            ],
+            "expected_aggregations": [
+                "COUNT",
+                "date_trunc"
+            ],
+            "tags": [
+                "trend",
+                "monthly",
+                "registration"
+            ]
+        },
+        {
+            "id": "sql_eval_009",
+            "category": "comparison",
+            "difficulty": "hard",
+            "query": "Compare male vs female hypertension control rates",
+            "ground_truth_sql": "SELECT gender, COUNT(*) AS total_patients, COUNT(CASE WHEN is_bp_controlled = true THEN 1 END) AS controlled, ROUND(100.0 * COUNT(CASE WHEN is_bp_controlled = true THEN 1 END) / NULLIF(COUNT(*), 0), 2) AS control_rate FROM patient_tracker WHERE is_active = true AND is_deleted = false AND is_hypertension_diagnosed = true GROUP BY gender ORDER BY gender;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted",
+                "is_hypertension_diagnosed"
+            ],
+            "expected_aggregations": [
+                "COUNT",
+                "CASE"
+            ],
+            "tags": [
+                "comparison",
+                "gender",
+                "hypertension",
+                "control_rate"
+            ]
+        },
+        {
+            "id": "sql_eval_010",
+            "category": "multi_join",
+            "difficulty": "hard",
+            "query": "Show patient count by organization and site",
+            "ground_truth_sql": "SELECT o.name AS organization_name, s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id JOIN organization o ON s.organization_id = o.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY o.name, s.name ORDER BY organization_name, patient_count DESC;",
+            "expected_tables": [
+                "patient_tracker",
+                "site",
+                "organization"
+            ],
+            "expected_joins": [
+                "patient_tracker.site_id = site.id",
+                "site.organization_id = organization.id"
+            ],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "multi_join",
+                "organization",
+                "site",
+                "hierarchy"
+            ]
+        },
+        {
+            "id": "sql_eval_011",
+            "category": "average",
+            "difficulty": "easy",
+            "query": "What is the average age of patients?",
+            "ground_truth_sql": "SELECT ROUND(AVG(age), 1) AS average_age FROM patient_tracker WHERE is_active = true AND is_deleted = false;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "AVG"
+            ],
+            "tags": [
+                "average",
+                "age",
+                "demographics"
+            ]
+        },
+        {
+            "id": "sql_eval_012",
+            "category": "lookup",
+            "difficulty": "easy",
+            "query": "Show me details for patient with ID 12345",
+            "ground_truth_sql": "SELECT * FROM patient_tracker WHERE id = 12345;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [],
+            "expected_aggregations": [],
+            "tags": [
+                "lookup",
+                "patient_specific"
+            ]
+        },
+        {
+            "id": "sql_eval_013",
+            "category": "bp_analysis",
+            "difficulty": "medium",
+            "query": "How many patients have controlled blood pressure?",
+            "ground_truth_sql": "SELECT COUNT(*) AS controlled_bp_count FROM patient_tracker WHERE is_active = true AND is_deleted = false AND is_hypertension_diagnosed = true AND is_bp_controlled = true;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted",
+                "is_hypertension_diagnosed",
+                "is_bp_controlled"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "count",
+                "hypertension",
+                "control"
+            ]
+        },
+        {
+            "id": "sql_eval_014",
+            "category": "join_with_filter",
+            "difficulty": "hard",
+            "query": "Show the screening coverage rate by site",
+            "ground_truth_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS total_patients, COUNT(CASE WHEN pt.is_screened = true THEN 1 END) AS screened, ROUND(100.0 * COUNT(CASE WHEN pt.is_screened = true THEN 1 END) / NULLIF(COUNT(pt.id), 0), 2) AS coverage_rate FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY s.name ORDER BY coverage_rate DESC;",
+            "expected_tables": [
+                "patient_tracker",
+                "site"
+            ],
+            "expected_joins": [
+                "patient_tracker.site_id = site.id"
+            ],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT",
+                "CASE",
+                "ROUND"
+            ],
+            "tags": [
+                "coverage",
+                "rate",
+                "site",
+                "screening"
+            ]
+        },
+        {
+            "id": "sql_eval_015",
+            "category": "subquery",
+            "difficulty": "hard",
+            "query": "Which sites have more than 1000 active patients?",
+            "ground_truth_sql": "SELECT s.name AS site_name, COUNT(pt.id) AS patient_count FROM patient_tracker pt JOIN site s ON pt.site_id = s.id WHERE pt.is_active = true AND pt.is_deleted = false GROUP BY s.name HAVING COUNT(pt.id) > 1000 ORDER BY patient_count DESC;",
+            "expected_tables": [
+                "patient_tracker",
+                "site"
+            ],
+            "expected_joins": [
+                "patient_tracker.site_id = site.id"
+            ],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT",
+                "HAVING"
+            ],
+            "tags": [
+                "having",
+                "threshold",
+                "site"
+            ]
+        },
+        {
+            "id": "sql_eval_016",
+            "category": "visit_analysis",
+            "difficulty": "medium",
+            "query": "How many patient visits happened this month?",
+            "ground_truth_sql": "SELECT COUNT(*) AS visit_count FROM patient_visit WHERE is_active = true AND is_deleted = false AND visit_date >= date_trunc('month', CURRENT_DATE) AND visit_date < date_trunc('month', CURRENT_DATE) + INTERVAL '1 month';",
+            "expected_tables": [
+                "patient_visit"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted",
+                "visit_date"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "count",
+                "visit",
+                "date_filter"
+            ]
+        },
+        {
+            "id": "sql_eval_017",
+            "category": "diagnosis_analysis",
+            "difficulty": "medium",
+            "query": "What is the distribution of diagnoses across patients?",
+            "ground_truth_sql": "SELECT diagnosis_type, COUNT(DISTINCT patient_tracker_id) AS patient_count FROM patient_diagnosis WHERE is_active = true AND is_deleted = false GROUP BY diagnosis_type ORDER BY patient_count DESC;",
+            "expected_tables": [
+                "patient_diagnosis"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "distribution",
+                "diagnosis",
+                "group_by"
+            ]
+        },
+        {
+            "id": "sql_eval_018",
+            "category": "bp_trend",
+            "difficulty": "hard",
+            "query": "Show average systolic BP by month over the last 6 months",
+            "ground_truth_sql": "SELECT date_trunc('month', bp_taken_at)::date AS month, ROUND(AVG(systolic), 1) AS avg_systolic FROM bp_log WHERE is_active = true AND is_deleted = false AND bp_taken_at >= CURRENT_DATE - INTERVAL '6 months' GROUP BY date_trunc('month', bp_taken_at) ORDER BY month;",
+            "expected_tables": [
+                "bp_log"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "is_active",
+                "is_deleted",
+                "bp_taken_at"
+            ],
+            "expected_aggregations": [
+                "AVG",
+                "date_trunc"
+            ],
+            "tags": [
+                "trend",
+                "bp",
+                "monthly",
+                "average"
+            ]
+        },
+        {
+            "id": "sql_eval_019",
+            "category": "multi_table_analysis",
+            "difficulty": "hard",
+            "query": "Show average glucose values by organization",
+            "ground_truth_sql": "SELECT o.name AS organization_name, ROUND(AVG(gl.glucose_value), 1) AS avg_glucose FROM glucose_log gl JOIN patient_tracker pt ON gl.patient_tracker_id = pt.id JOIN site s ON pt.site_id = s.id JOIN organization o ON s.organization_id = o.id WHERE gl.is_active = true AND gl.is_deleted = false GROUP BY o.name ORDER BY avg_glucose DESC;",
+            "expected_tables": [
+                "glucose_log",
+                "patient_tracker",
+                "site",
+                "organization"
+            ],
+            "expected_joins": [
+                "glucose_log.patient_tracker_id = patient_tracker.id",
+                "patient_tracker.site_id = site.id",
+                "site.organization_id = organization.id"
+            ],
+            "expected_filters": [
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "AVG"
+            ],
+            "tags": [
+                "multi_join",
+                "glucose",
+                "organization",
+                "average"
+            ]
+        },
+        {
+            "id": "sql_eval_020",
+            "category": "existence_check",
+            "difficulty": "easy",
+            "query": "Are there any patients in site 5?",
+            "ground_truth_sql": "SELECT COUNT(*) AS patient_count FROM patient_tracker WHERE site_id = 5 AND is_active = true AND is_deleted = false;",
+            "expected_tables": [
+                "patient_tracker"
+            ],
+            "expected_joins": [],
+            "expected_filters": [
+                "site_id",
+                "is_active",
+                "is_deleted"
+            ],
+            "expected_aggregations": [
+                "COUNT"
+            ],
+            "tags": [
+                "existence",
+                "count",
+                "site_filter"
+            ]
+        }
+    ]
+}

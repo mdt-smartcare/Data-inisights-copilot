@@ -10,6 +10,7 @@ import {
   ChatInput
 } from '../components/chat';
 import AgenticHybridResultsDisplay from '../components/AgenticHybridResultsDisplay';
+import ConfirmationModal from '../components/ConfirmationModal';
 import { useAuth } from '../contexts/AuthContext';
 import { canExecuteQuery } from '../utils/permissions';
 import { APP_CONFIG } from '../config';
@@ -27,7 +28,7 @@ export default function ChatPage() {
   // AbortController for canceling in-flight requests
   const abortControllerRef = useRef<AbortController | null>(null);
   // Track which agent we sent the request to
-  const requestAgentIdRef = useRef<number | undefined>(undefined);
+  const requestAgentIdRef = useRef<string | undefined>(undefined);
 
   // Default suggestions shown when no agent is selected
   const DEFAULT_SUGGESTIONS = [
@@ -38,9 +39,13 @@ export default function ChatPage() {
 
   // Agent selection state
   const [agents, setAgents] = useState<any[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<number | undefined>(undefined);
+  const [selectedAgentId, setSelectedAgentId] = useState<string | undefined>(undefined);
   const [isLoadingAgents, setIsLoadingAgents] = useState(false);
-  
+
+  // Agent switch confirmation modal state
+  const [showSwitchConfirmation, setShowSwitchConfirmation] = useState(false);
+  const [pendingAgentId, setPendingAgentId] = useState<string | undefined>(undefined);
+
   // RAG availability state
   const [ragAvailable, setRagAvailable] = useState(false);
   const [agenticHybridAvailable, setAgenticHybridAvailable] = useState(false);
@@ -59,14 +64,14 @@ export default function ChatPage() {
         // Check for agent ID in URL query param
         const agentIdParam = searchParams.get('agent');
         if (agentIdParam) {
-          const agentId = parseInt(agentIdParam, 10);
+          // agentId is now a UUID string
           // Verify agent exists in the list (user has access)
-          if (agentList.some((a: any) => a.id === agentId)) {
-            setSelectedAgentId(agentId);
+          if (agentList.some((a: any) => a.id === agentIdParam)) {
+            setSelectedAgentId(agentIdParam);
             return;
           }
         }
-        
+
         // Auto-select ONLY if there is exactly 1 agent
         if (agentList.length === 1) {
           setSelectedAgentId(agentList[0].id);
@@ -101,13 +106,13 @@ export default function ChatPage() {
       try {
         // Fetch agent-specific config including example questions
         const config = await getActiveConfigMetadata(selectedAgentId);
-        
+
         if (config && config.example_questions) {
           try {
-            const parsed = typeof config.example_questions === 'string' 
-              ? JSON.parse(config.example_questions) 
+            const parsed = typeof config.example_questions === 'string'
+              ? JSON.parse(config.example_questions)
               : config.example_questions;
-            
+
             if (Array.isArray(parsed) && parsed.length > 0) {
               setSuggestions(parsed);
               console.log(`Loaded ${parsed.length} example questions for agent ${selectedAgentId}`);
@@ -117,7 +122,7 @@ export default function ChatPage() {
             console.warn("Failed to parse example questions", e);
           }
         }
-        
+
         // Fallback to defaults if no agent-specific questions
         setSuggestions(DEFAULT_SUGGESTIONS);
       } catch (err) {
@@ -125,7 +130,7 @@ export default function ChatPage() {
         setSuggestions(DEFAULT_SUGGESTIONS);
       }
     };
-    
+
     loadAgentSuggestions();
   }, [selectedAgentId]);
 
@@ -133,18 +138,18 @@ export default function ChatPage() {
   useEffect(() => {
     if (selectedAgentId !== undefined) {
       // Agent selected or changed
-      
+
       // 1. Abort any in-flight request from previous agent (Approach 3)
       if (abortControllerRef.current) {
         console.log('Aborting previous request due to agent switch');
         abortControllerRef.current.abort();
         abortControllerRef.current = null;
       }
-      
+
       // 2. Reset session ID for new agent (Approach 1)
       console.log(`Agent ${selectedAgentId} selected - creating new session`);
       setSessionId(crypto.randomUUID());
-      
+
       // 3. Optional: Clear messages for clean slate
       // Uncomment if you want messages to clear on agent switch
       // setMessages([]);
@@ -174,7 +179,7 @@ export default function ChatPage() {
         console.error('Failed to check RAG availability', err);
       }
     };
-    
+
     checkRagAvailability();
   }, [selectedAgentId, agents]);
 
@@ -182,9 +187,9 @@ export default function ChatPage() {
     mutationFn: (data: { query: string; session_id: string; query_mode?: QueryMode; signal: AbortSignal }) => {
       // Store which agent this request is for
       requestAgentIdRef.current = selectedAgentId;
-      
-      return chatService.sendMessage({ 
-        ...data, 
+
+      return chatService.sendMessage({
+        ...data,
         agent_id: selectedAgentId,
         signal: data.signal
       });
@@ -215,13 +220,15 @@ export default function ChatPage() {
         sqlQuery: data.sql_query,
         suggestedQuestions: data.suggested_questions,
         chartData: data.chart_data,
+        dashboards: data.dashboards,
         traceId: data.trace_id,
         processingTime: data.processing_time,
         queryMode: data.query_mode as QueryMode,
         agenticHybridResult: data.agentic_hybrid_result as AgenticHybridResult,
+        comparisonInsights: data.comparison_insights,
       };
       setMessages((prev) => [...prev, assistantMessage]);
-      
+
       // Clear abort controller after successful response
       abortControllerRef.current = null;
     },
@@ -231,7 +238,7 @@ export default function ChatPage() {
         console.log('Request cancelled - no error shown');
         return;
       }
-      
+
       console.error('Chat error:', error);
       const errorMessage: Message = {
         id: Date.now().toString(),
@@ -240,7 +247,7 @@ export default function ChatPage() {
         timestamp: new Date(),
       };
       setMessages((prev) => [...prev, errorMessage]);
-      
+
       // Clear abort controller on error
       abortControllerRef.current = null;
     },
@@ -274,7 +281,7 @@ export default function ChatPage() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
-    
+
     setMessages([]);
     setSessionId(crypto.randomUUID()); // Generate new session for fresh start
   };
@@ -291,6 +298,46 @@ export default function ChatPage() {
     console.log('Feedback:', { messageId, rating });
     // TODO: Send feedback to backend API
     // feedbackService.submitFeedback({ message_id: messageId, rating });
+  };
+
+  // Handler for agent selection with confirmation if messages exist
+  const handleAgentSelection = (agentId: string) => {
+    // If there are existing messages and we're switching to a different agent, show confirmation
+    if (messages.length > 0 && agentId !== selectedAgentId) {
+      setPendingAgentId(agentId);
+      setShowSwitchConfirmation(true);
+    } else {
+      // No messages or same agent, switch directly
+      setSelectedAgentId(agentId);
+      if (agentId === undefined) {
+        // Going back to agent selection, clear messages
+        setMessages([]);
+      }
+    }
+  };
+
+  // Confirm agent switch - clear history and switch
+  const confirmAgentSwitch = () => {
+    // Abort any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+
+    // Clear messages and switch agent
+    setMessages([]);
+    setSelectedAgentId(pendingAgentId);
+    setSessionId(crypto.randomUUID());
+
+    // Close modal and reset
+    setShowSwitchConfirmation(false);
+    setPendingAgentId(undefined);
+  };
+
+  // Cancel agent switch
+  const cancelAgentSwitch = () => {
+    setShowSwitchConfirmation(false);
+    setPendingAgentId(undefined);
   };
 
   return (
@@ -319,7 +366,7 @@ export default function ChatPage() {
                 {agents.map(agent => (
                   <button
                     key={agent.id}
-                    onClick={() => setSelectedAgentId(agent.id)}
+                    onClick={() => handleAgentSelection(agent.id)}
                     className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-300 hover:ring-1 hover:ring-indigo-300 transition-all text-left group"
                   >
                     <div className="flex items-start gap-4">
@@ -375,18 +422,7 @@ export default function ChatPage() {
 
             {agents.length > 1 && (
               <button
-                onClick={() => {
-                  setSelectedAgentId(undefined);
-                  setMessages([]); // Optional: clear messages when switching? Or keep them? User didn't specify, but switching context usually implies fresh start or at least leaving the view.
-                  // Keeping messages might be confusing if they belong to another agent.
-                  // For now, let's NOT clear messages automatically unless user explicitly clears, but navigating back usually implies "I'm done with this agent".
-                  // Actually, if I go back and select the SAME agent, I might expect history.
-                  // Does `selectedAgentId(undefined)` clear history? No, `messages` state is in ChatPage.
-                  // If I switch agents, the `chatMutation` payload changes `agent_id`.
-                  // It is safer to clear messages on switch to avoid sending previous context to new agent?
-                  // The prompt says "go back and select a new agent".
-                  // Let's just go back for now.
-                }}
+                onClick={() => handleAgentSelection("")}
                 className="text-sm text-gray-600 hover:text-indigo-600 font-medium px-3 py-1.5 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
               >
                 Change Assistant
@@ -457,6 +493,18 @@ export default function ChatPage() {
           />
         </>
       )}
+
+      {/* Agent Switch Confirmation Modal */}
+      <ConfirmationModal
+        show={showSwitchConfirmation}
+        title="Switch Agent?"
+        message={`Switching agents will clear your current chat history and context. Are you sure you want to switch to a different agent?`}
+        onConfirm={confirmAgentSwitch}
+        onCancel={cancelAgentSwitch}
+        confirmText="Switch Agent"
+        cancelText="Stay Here"
+        type="warning"
+      />
     </div>
   );
 }

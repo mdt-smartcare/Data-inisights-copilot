@@ -352,7 +352,7 @@ const ScheduleSelector: React.FC<ScheduleSelectorProps> = ({
                                             : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
                                             }`}
                                     >
-                                        {type === 'hourly' ? 'At Minute' : type.charAt(0).toUpperCase() + type.slice(1)}
+                                        {type === 'hourly' ? 'At Minute' : (type || '').charAt(0).toUpperCase() + (type || '').slice(1)}
                                     </button>
                                 ))}
                             </div>

@@ -11,8 +11,8 @@ import { useNavigate } from 'react-router-dom';
 
 interface AgentSelectorProps {
     agents: Agent[];
-    selectedAgentId: number | undefined;
-    onSelect: (agentId: number) => void;
+    selectedAgentId: string | undefined;
+    onSelect: (agentId: string) => void;
     isLoading: boolean;
 }
 
@@ -43,7 +43,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
     }, []);
 
     const getAgentIcon = (type: string) => {
-        switch (type.toLowerCase()) {
+        switch ((type || 'default').toLowerCase()) {
             case 'sql':
                 return <CircleStackIcon className="w-5 h-5" />;
             default:
@@ -51,7 +51,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({
         }
     };
 
-    const handleSelect = (agentId: number) => {
+    const handleSelect = (agentId: string) => {
         onSelect(agentId);
         setIsOpen(false);
     };

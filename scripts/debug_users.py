@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from backend.sqliteDb.db import get_db_service
+from backend.database.db import get_db_service
 
 def dump_users():
     db = get_db_service()

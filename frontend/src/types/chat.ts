@@ -18,7 +18,7 @@ export type QueryMode = 'auto' | 'sql' | 'rag' | 'hybrid' | 'agentic_hybrid';
 export interface AgenticHybridResult {
   status: string;
   question: string;
-  
+
   // Workflow stages
   stage_1_rag: {
     query: string;
@@ -36,16 +36,16 @@ export interface AgenticHybridResult {
     prompt_context: string;
     model_used: string;
   };
-  
+
   // Final answer
   final_answer: string;
-  
+
   // Performance metrics
   total_time_ms: number;
   rag_time_ms: number;
   sql_time_ms: number;
   synthesis_time_ms: number;
-  
+
   error?: string;
 }
 
@@ -62,10 +62,12 @@ export interface Message {
   sqlQuery?: string;                   // Optional SQL query executed for response
   suggestedQuestions?: string[];       // Optional follow-up questions
   chartData?: ChartData;               // Optional visualization data
+  dashboards?: ChartData[];            // Optional multiple charts for dashboard
   traceId?: string;                    // Optional trace ID for debugging
   processingTime?: number;             // Optional response generation time in ms
   queryMode?: QueryMode;               // Query mode used for this message
   agenticHybridResult?: AgenticHybridResult; // Optional agentic hybrid workflow result
+  comparisonInsights?: string;         // Optional comparison insights for cross-validation
 }
 
 /**
@@ -99,7 +101,7 @@ export interface Source {
 export interface ChatRequest {
   query: string;              // User's question or prompt
   session_id?: string;        // Optional session ID for conversation tracking
-  agent_id?: number;          // Optional target agent ID
+  agent_id?: string;          // Optional target agent ID (UUID)
   signal?: AbortSignal;       // Optional signal for request cancellation
 }
 
@@ -113,12 +115,14 @@ export interface ChatResponse {
   sql_query?: string;                  // Optional executed SQL query
   suggested_questions?: string[];      // Optional follow-up questions
   chart_data?: ChartData;              // Optional chart visualization
+  dashboards?: ChartData[];            // Optional multiple charts for dashboard
   conversation_id: string;             // Conversation thread ID
   session_id?: string;                 // Session ID for conversation tracking
-  agent_id?: number;                   // Agent ID that generated this response
+  agent_id?: string;                   // Agent ID that generated this response (UUID)
   timestamp: string;                   // Response generation timestamp
   trace_id?: string;                   // Optional trace ID for debugging
   processing_time?: number;            // Optional processing time in ms
   query_mode?: QueryMode;              // Query mode used for processing
   agentic_hybrid_result?: AgenticHybridResult; // Optional agentic hybrid workflow result
+  comparison_insights?: string;        // Optional cross-validation comparison insights
 }

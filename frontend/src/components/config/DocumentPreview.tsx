@@ -9,12 +9,17 @@ interface DocumentPreviewProps {
 }
 
 export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
-    documents,
+    documents = [],
     fileName,
     fileType,
     totalDocuments
 }) => {
     const [expandedDoc, setExpandedDoc] = useState<number | null>(null);
+
+    // Guard against undefined/empty documents
+    if (!documents || documents.length === 0) {
+        return null;
+    }
 
     return (
         <div className="max-w-4xl mx-auto">
@@ -30,7 +35,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                     </svg>
                     <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-green-100 text-green-700">
-                        {fileType.toUpperCase()}
+                        {(fileType || 'FILE').toUpperCase()}
                     </span>
                     <span className="text-sm font-medium text-gray-900">{fileName}</span>
                 </div>
@@ -53,7 +58,7 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                                     {idx + 1}
                                 </span>
                                 <span className="text-sm text-gray-700 truncate">
-                                    {doc.page_content.slice(0, 120)}{doc.page_content.length > 120 ? '…' : ''}
+                                    {(doc.page_content || '').slice(0, 120)}{(doc.page_content || '').length > 120 ? '…' : ''}
                                 </span>
                             </div>
                             <svg
@@ -67,10 +72,10 @@ export const DocumentPreview: React.FC<DocumentPreviewProps> = ({
                         {expandedDoc === idx && (
                             <div className="px-4 pb-4 border-t border-gray-100">
                                 <pre className="mt-3 text-sm text-gray-800 whitespace-pre-wrap bg-gray-50 rounded-md p-3 max-h-48 overflow-y-auto font-mono leading-relaxed">
-                                    {doc.page_content}
+                                    {doc.page_content || ''}
                                 </pre>
                                 <div className="mt-2 flex flex-wrap gap-1.5">
-                                    {Object.entries(doc.metadata).map(([key, value]) => (
+                                    {Object.entries(doc.metadata || {}).map(([key, value]) => (
                                         <span key={key} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-100 text-xs text-gray-600">
                                             <span className="font-medium text-gray-800">{key}:</span>
                                             {typeof value === 'object' ? JSON.stringify(value) : String(value)}

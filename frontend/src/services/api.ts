@@ -146,6 +146,18 @@ export const handleApiError = (error: unknown): string => {
   return 'An unexpected error occurred';
 };
 
+/**
+ * Extract data from wrapped API response.
+ * All API responses are now wrapped in: { success: boolean, message: string, data: T }
+ * This helper extracts the inner data field.
+ * 
+ * @param response - Axios response with wrapped data
+ * @returns The inner data payload
+ */
+export const unwrapResponse = <T>(response: { data: { success: boolean; message: string; data: T } }): T => {
+  return response.data?.data;
+};
+
 // ============================================================================
 // SYSTEM PROMPT CONFIGURATION API
 // ============================================================================
@@ -166,7 +178,7 @@ export const publishSystemPrompt = async (
   retrieverConfig?: any,
   chunkingConfig?: any,
   llmConfig?: any,
-  agentId?: number,
+  agentId?: string,
   dataSourceType: string = 'database',
   ingestionDocuments?: string,
   ingestionFileName?: string,
@@ -215,39 +227,116 @@ export const publishSystemPrompt = async (
   return response.data;
 };
 
-export const getPromptHistory = async (agentId?: number): Promise<any> => {
-  const response = await apiClient.get('/api/v1/config/history', { params: { agent_id: agentId } });
-  return response.data;
+export const getPromptHistory = async (agentId?: string): Promise<any> => {
+  if (!agentId) {
+    console.warn('getPromptHistory called without agentId');
+    return [];
+  }
+  const response = await apiClient.get(`/api/v1/config/${agentId}/history`);
+  // Response: { success, message, data: { configs: [], total } }
+  const configs = response.data?.data?.configs || response.data?.configs || [];
+
+  // Transform backend configs to frontend PromptVersion format
+  return configs.map((config: any) => ({
+    id: config.id,
+    version: config.version,
+    prompt_text: config.system_prompt || '',
+    created_at: config.created_at,
+    created_by_username: config.created_by_username,
+    is_active: config.is_active ? 1 : 0,
+  }));
 };
 
-export const rollbackToVersion = async (versionId: number): Promise<{ status: string; message: string; version: number }> => {
-  const response = await apiClient.post(`/api/v1/config/rollback/${versionId}`);
-  return response.data;
+export const rollbackToVersion = async (configId: number): Promise<{ status: string; message: string; version: number }> => {
+  // Activate a specific config version (this deactivates others)
+  const response = await apiClient.post(`/api/v1/config/${configId}/activate`);
+  return { status: 'success', message: response.data?.message || 'Configuration activated', version: configId };
 };
 
-export const getActiveConfigMetadata = async (agentId?: number): Promise<any> => {
-  const response = await apiClient.get('/api/v1/config/active-metadata', { params: { agent_id: agentId } });
-  return response.data;
+export const getActiveConfigMetadata = async (agentId?: string): Promise<any> => {
+  if (!agentId) {
+    console.warn('getActiveConfigMetadata called without agentId');
+    return null;
+  }
+  const response = await apiClient.get(`/api/v1/config/${agentId}/active`);
+  // Response: { success, message, data: { ...config } }
+  const config = response.data?.data || response.data;
+  if (!config) return null;
+
+  // Transform backend field names to frontend expectations
+  return {
+    ...config,
+    // Map system_prompt to prompt_text for compatibility
+    prompt_text: config.system_prompt || config.prompt_text || '',
+    // Map selected_columns to schema_selection
+    schema_selection: config.selected_columns
+      ? (typeof config.selected_columns === 'string' ? config.selected_columns : JSON.stringify(config.selected_columns))
+      : config.schema_selection,
+    // Map rag_config to retriever_config
+    retriever_config: config.rag_config || config.retriever_config,
+    // Ensure embedding_config is stringified if it's an object
+    embedding_config: config.embedding_config
+      ? (typeof config.embedding_config === 'string' ? config.embedding_config : JSON.stringify(config.embedding_config))
+      : null,
+    // Ensure llm_config is stringified if it's an object
+    llm_config: config.llm_config
+      ? (typeof config.llm_config === 'string' ? config.llm_config : JSON.stringify(config.llm_config))
+      : null,
+    // Ensure chunking_config is stringified if it's an object
+    chunking_config: config.chunking_config
+      ? (typeof config.chunking_config === 'string' ? config.chunking_config : JSON.stringify(config.chunking_config))
+      : null,
+    // Map data_source info
+    data_source_type: config.data_source?.source_type || config.data_source_type,
+    connection_id: config.data_source?.connection_id || config.connection_id,
+    ingestion_file_name: config.data_source?.title || config.data_source?.original_filename || config.ingestion_file_name,
+    ingestion_file_type: config.data_source?.file_type || config.ingestion_file_type,
+    db_url: config.data_source?.db_url,
+    db_engine_type: config.data_source?.db_engine_type,
+  };
 };
 
 // ============================================================================
 // AGENT API
 // ============================================================================
 
-import type { Agent } from '../types';
+import type { Agent, GetUserAgentsResponse } from '../types';
+
+// Transform backend agent (title) to frontend agent (name)
+const transformAgent = (agent: any): Agent => ({
+  ...agent,
+  name: agent.title || agent.name,
+});
 
 export const getAgents = async (): Promise<Agent[]> => {
   const response = await apiClient.get('/api/v1/agents');
-  return response.data;
+  // Response wrapped: { success, message, data: { agents: [...], total, skip, limit } }
+  const wrapped = response.data?.data || response.data;
+  const agents = wrapped.agents || wrapped;
+  return agents.map(transformAgent);
+};
+
+export const getAgent = async (agentId: string): Promise<Agent> => {
+  const response = await apiClient.get(`/api/v1/agents/${agentId}`);
+  // Response wrapped: { success, message, data: AgentResponse }
+  return transformAgent(response.data?.data || response.data);
+};
+
+export const getAgentDetail = async (agentId: string): Promise<Agent & { active_config?: any }> => {
+  const response = await apiClient.get(`/api/v1/agents/${agentId}/detail`);
+  // Response wrapped: { success, message, data: AgentDetailResponse }
+  return transformAgent(response.data?.data || response.data);
 };
 
 export const getUsers = async (): Promise<User[]> => {
   const response = await apiClient.get('/api/v1/users');
-  return response.data;
+  // Response wrapped: { success, message, data: { items: [...], total, page, size, pages } }
+  const wrapped = response.data?.data || response.data;
+  return wrapped.items || wrapped;
 };
 
 export interface SearchUser {
-  id: number;
+  id: string;
   username: string;
   email?: string;
   full_name?: string;
@@ -257,7 +346,9 @@ export interface SearchUser {
 
 export const searchUsers = async (query: string, limit: number = 20): Promise<SearchUser[]> => {
   const response = await apiClient.get('/api/v1/users/search', { params: { q: query, limit } });
-  return response.data;
+  // Response wrapped: { success, message, data: { items: [...], total, page, size, pages } }
+  const wrapped = response.data?.data || response.data;
+  return wrapped.items || wrapped;
 };
 
 export const lookupUsersByEmails = async (emails: string[]): Promise<SearchUser[]> => {
@@ -265,65 +356,81 @@ export const lookupUsersByEmails = async (emails: string[]): Promise<SearchUser[
   return response.data;
 };
 
-export const getActivePrompt = async (agentId?: number): Promise<{ prompt_text: string }> => {
+export const getActivePrompt = async (agentId?: string): Promise<{ prompt_text: string }> => {
   const response = await apiClient.get('/api/v1/config/active', { params: { agent_id: agentId } });
   return response.data;
 };
 
 export const createAgent = async (data: { name: string; description?: string; type?: string; system_prompt?: string }): Promise<Agent> => {
-  const response = await apiClient.post('/api/v1/agents', data);
-  return response.data;
+  // Backend expects 'title' instead of 'name'
+  const payload = { title: data.name, description: data.description };
+  const response = await apiClient.post('/api/v1/agents', payload);
+  // Response wrapped: { success, message, data: AgentResponse }
+  return transformAgent(response.data?.data || response.data);
 };
 
-export const updateAgent = async (agentId: number, data: { name?: string; description?: string }): Promise<Agent> => {
-  const response = await apiClient.patch(`/api/v1/agents/${agentId}`, data);
-  return response.data;
+export const updateAgent = async (agentId: string, data: { name?: string; description?: string }): Promise<Agent> => {
+  // Backend expects 'title' instead of 'name', and uses PUT
+  const payload: { title?: string; description?: string } = { description: data.description };
+  if (data.name) payload.title = data.name;
+  const response = await apiClient.put(`/api/v1/agents/${agentId}`, payload);
+  // Response wrapped: { success, message, data: AgentResponse }
+  return transformAgent(response.data?.data || response.data);
 };
 
-export const deleteAgent = async (agentId: number): Promise<void> => {
+export const deleteAgent = async (agentId: string): Promise<void> => {
   await apiClient.delete(`/api/v1/agents/${agentId}`);
 };
 
-export const assignUserToAgent = async (agentId: number, userId: number, role: string): Promise<{ status: string }> => {
+export const assignUserToAgent = async (agentId: string, userId: string, role: string): Promise<{ status: string }> => {
   const response = await apiClient.post(`/api/v1/agents/${agentId}/users`, { user_id: userId, role });
-  return response.data;
+  // Response wrapped: { success, message, data }
+  return response.data?.data || response.data;
 };
 
-export const bulkAssignAgents = async (userId: number, agentIds: number[], role: string = 'user'): Promise<{ status: string; assigned: number[]; failed: number[]; message: string }> => {
+export const bulkAssignAgents = async (userId: string, agentIds: string[], role: string = 'user'): Promise<{ status: string; assigned: string[]; failed: string[]; message: string }> => {
   const response = await apiClient.post('/api/v1/agents/bulk-assign', { user_id: userId, agent_ids: agentIds, role });
-  return response.data;
+  return response.data?.data || response.data;
 };
 
-export const revokeUserAccess = async (agentId: number, userId: number): Promise<{ status: string }> => {
-  const response = await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
-  return response.data;
+export const revokeUserAccess = async (agentId: string, userId: string): Promise<void> => {
+  await apiClient.delete(`/api/v1/agents/${agentId}/users/${userId}`);
 };
 
 export interface AgentUser {
-  id: number;
+  id: string;
   username: string;
   email?: string;
   full_name?: string;
-  user_role: string;
+  role: string;
   is_active: boolean;
-  created_at?: string;
-  agent_role: string;
-  granted_by?: number;
+  granted_at?: string;
+  granted_by?: string;
 }
 
-export const getAgentUsers = async (agentId: number): Promise<{ users: AgentUser[]; agent_id: number }> => {
+export const getAgentUsers = async (agentId: string): Promise<{ users: AgentUser[]; agent_id: string }> => {
   const response = await apiClient.get(`/api/v1/agents/${agentId}/users`);
-  return response.data;
+  return response.data?.data;
 };
 
-export const getUserAgents = async (userId: number): Promise<{ agents: Agent[]; is_admin: boolean; message?: string }> => {
+export const getUserAgents = async (userId: string): Promise<GetUserAgentsResponse> => {
   const response = await apiClient.get(`/api/v1/users/${userId}/agents`);
-  return response.data;
+  const data = response.data?.data || response.data;
+  return {
+    agents: (data.agents || []).map((agent: any) => ({
+      ...agent,
+      name: agent.title || agent.name,
+    })),
+    total: data.total || 0,
+    user_id: data.user_id || userId,
+  };
 };
 
 export const getAllAgents = async (): Promise<Agent[]> => {
-  const response = await apiClient.get('/api/v1/agents/all');
-  return response.data;
+  const response = await apiClient.get('/api/v1/agents/search');
+  const data = response.data?.data || response.data;
+  const agents = data.agents || data;
+  return Array.isArray(agents) ? agents.map(transformAgent) : [];
 };
 
 
@@ -332,10 +439,10 @@ export const getAllAgents = async (): Promise<Agent[]> => {
 // ============================================================================
 
 // Cache for in-flight status requests to deduplicate concurrent calls
-const vectorDbStatusCache: Map<string, { promise: Promise<any>; timestamp: number }> = new Map();
+const vectorDbStatusCache: Map<string, { promise: Promise<VectorDbStatusResult>; timestamp: number }> = new Map();
 const CACHE_TTL_MS = 1000; // 1 second deduplication window
 
-export const getVectorDbStatus = async (vectorDbName: string): Promise<{
+interface VectorDbStatusResult {
   name: string;
   exists: boolean;
   total_documents_indexed: number;
@@ -347,8 +454,46 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
   last_incremental_run: string | null;
   version: string;
   diagnostics: Array<{ level: string; message: string }>;
-  schedule: any;
-}> => {
+  schedule?: Record<string, unknown> | null;
+  embedding_status?: string | null;
+  last_job_id?: string | null;
+  last_job_status?: string | null;
+  vector_db_type?: 'qdrant' | 'chroma' | string;
+}
+
+/**
+ * Get vector database status by config ID.
+ * Uses the embedding-jobs module endpoint.
+ */
+export const getVectorDbStatusByConfig = async (configId: number): Promise<VectorDbStatusResult> => {
+  const cacheKey = `config_${configId}`;
+  const now = Date.now();
+  const cached = vectorDbStatusCache.get(cacheKey);
+
+  if (cached && (now - cached.timestamp) < CACHE_TTL_MS) {
+    return cached.promise;
+  }
+
+  const promise = apiClient.get(`/api/v1/embedding-jobs/status/config/${configId}`)
+    .then(response => response.data)
+    .finally(() => {
+      setTimeout(() => {
+        const entry = vectorDbStatusCache.get(cacheKey);
+        if (entry && entry.promise === promise) {
+          vectorDbStatusCache.delete(cacheKey);
+        }
+      }, 100);
+    });
+
+  vectorDbStatusCache.set(cacheKey, { promise, timestamp: now });
+  return promise;
+};
+
+/**
+ * @deprecated Use getVectorDbStatusByConfig instead
+ * Legacy function that fetches by vector db name - now proxies to config-based endpoint
+ */
+export const getVectorDbStatus = async (vectorDbName: string): Promise<VectorDbStatusResult> => {
   const now = Date.now();
   const cached = vectorDbStatusCache.get(vectorDbName);
 
@@ -357,11 +502,10 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
     return cached.promise;
   }
 
-  // Create new request and cache it
+  // Try the old endpoint for backwards compatibility (will fail if not available)
   const promise = apiClient.get(`/api/v1/vector-db/status/${vectorDbName}`)
     .then(response => response.data)
     .finally(() => {
-      // Clean up cache entry after request completes + small buffer
       setTimeout(() => {
         const entry = vectorDbStatusCache.get(vectorDbName);
         if (entry && entry.promise === promise) {
@@ -376,7 +520,8 @@ export const getVectorDbStatus = async (vectorDbName: string): Promise<{
 
 export const getUserProfile = async (): Promise<User> => {
   const response = await apiClient.get('/api/v1/auth/me');
-  return response.data;
+  // Response wrapped: { success, message, data: User }
+  return response.data?.data || response.data;
 };
 
 export interface DbConnection {
@@ -433,10 +578,7 @@ export const getConnectionSchema = async (id: number): Promise<{ status: string;
 import type {
   EmbeddingJobProgress,
   EmbeddingJobSummary,
-  EmbeddingJobCreate,
-  Notification,
-  NotificationPreferences,
-  NotificationPreferencesUpdate
+  EmbeddingJobCreate
 } from '../types/rag';
 
 /**
@@ -485,87 +627,6 @@ export const listEmbeddingJobs = async (params?: {
   return response.data;
 };
 
-// ============================================================================
-// NOTIFICATIONS API
-// ============================================================================
-
-/**
- * Get notifications for the current user.
- */
-export const getNotifications = async (params?: {
-  status_filter?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<Notification[]> => {
-  const response = await apiClient.get('/api/v1/notifications', { params });
-  return response.data;
-};
-
-/**
- * Get count of unread notifications.
- */
-export const getUnreadNotificationCount = async (): Promise<{ count: number }> => {
-  const response = await apiClient.get('/api/v1/notifications/unread-count');
-  return response.data;
-};
-
-/**
- * Get total count of notifications (for pagination).
- */
-export const getNotificationCount = async (params?: {
-  status_filter?: string;
-}): Promise<{ count: number }> => {
-  const response = await apiClient.get('/api/v1/notifications/count', { params });
-  return response.data;
-};
-
-/**
- * Get a specific notification.
- */
-export const getNotification = async (notificationId: number): Promise<Notification> => {
-  const response = await apiClient.get(`/api/v1/notifications/${notificationId}`);
-  return response.data;
-};
-
-/**
- * Mark a notification as read.
- */
-export const markNotificationAsRead = async (notificationId: number): Promise<{ success: boolean }> => {
-  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/read`);
-  return response.data;
-};
-
-/**
- * Mark all notifications as read.
- */
-export const markAllNotificationsAsRead = async (): Promise<{ success: boolean; marked_count: number }> => {
-  const response = await apiClient.post('/api/v1/notifications/read-all');
-  return response.data;
-};
-
-/**
- * Dismiss a notification.
- */
-export const dismissNotification = async (notificationId: number): Promise<{ success: boolean }> => {
-  const response = await apiClient.post(`/api/v1/notifications/${notificationId}/dismiss`);
-  return response.data;
-};
-
-/**
- * Get notification preferences for the current user.
- */
-export const getNotificationPreferences = async (): Promise<NotificationPreferences> => {
-  const response = await apiClient.get('/api/v1/notifications/preferences');
-  return response.data;
-};
-
-/**
- * Update notification preferences.
- */
-export const updateNotificationPreferences = async (preferences: NotificationPreferencesUpdate): Promise<{ success: boolean }> => {
-  const response = await apiClient.put('/api/v1/notifications/preferences', preferences);
-  return response.data;
-};
 
 // ============================================================================
 // OBSERVABILITY API
@@ -583,6 +644,11 @@ export const updateObservabilityConfig = async (config: any) => {
 
 export const getUsageStats = async (period: string = '24h') => {
   const response = await apiClient.get(`/api/v1/observability/usage?period=${period}`);
+  return response.data;
+};
+
+export const getRecentTraces = async (limit: number = 10) => {
+  const response = await apiClient.get(`/api/v1/observability/traces?limit=${limit}`);
   return response.data;
 };
 
@@ -682,103 +748,13 @@ export interface ModelActivationResponse {
   system_settings_updated: boolean;
 }
 
-/** List all registered embedding models from the DB */
-export const getEmbeddingModels = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/embedding/models');
-  return response.data;
-};
-
-/** List all registered LLM models from the DB */
-export const getLLMModels = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/llm/models');
-  return response.data;
-};
-
-/** Get LLM models compatible with the active embedding model */
-export const getCompatibleLLMs = async (): Promise<ModelInfo[]> => {
-  const response = await apiClient.get('/api/v1/settings/llm/models/compatible');
-  return response.data;
-};
-
-/** 
- * Activate an embedding model by ID 
- * Returns detailed info including rebuild warnings if dimensions change
- */
-export const activateEmbeddingModel = async (modelId: number): Promise<ModelActivationResponse> => {
-  const response = await apiClient.put(`/api/v1/settings/embedding/models/${modelId}/activate`);
-  return response.data;
-};
-
-/** Activate an LLM model by ID */
-export const activateLLMModel = async (modelId: number): Promise<ModelInfo> => {
-  const response = await apiClient.put(`/api/v1/settings/llm/models/${modelId}/activate`);
-  return response.data;
-};
-
-/** Register a new custom embedding model */
-export const registerEmbeddingModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/embedding/models', data);
-  return response.data;
-};
-
-/** Register a new custom LLM model */
-export const registerLLMModel = async (data: Partial<ModelInfo>): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/llm/models', data);
-  return response.data;
-};
-
 // ============================================================================
-// MODEL CATALOG API (NEW)
+// OLD EMBEDDING/LLM MODEL APIs - DEPRECATED
+// These APIs (/api/v1/settings/embedding/*, /api/v1/settings/llm/*) no longer exist.
+// Use the new AI Models API (/api/v1/ai-models/*) instead.
+// See: getAIModels, createAIModel, updateAIModel, deleteAIModel,
+//      getAIModelDefaults, setAIModelDefault, getAvailableModelsForAgentConfig
 // ============================================================================
-
-/**
- * Get the curated model catalog with pre-validated embedding models.
- * Each model includes dimensions, quality/speed ratings, and recommendations.
- */
-export const getModelCatalog = async (options?: {
-  category?: 'general' | 'multilingual' | 'fast' | 'medical';
-  localOnly?: boolean;
-}): Promise<CatalogModelInfo[]> => {
-  const params: Record<string, any> = {};
-  if (options?.category) params.category = options.category;
-  if (options?.localOnly) params.local_only = options.localOnly;
-
-  const response = await apiClient.get('/api/v1/settings/embedding/catalog', { params });
-  return response.data;
-};
-
-/**
- * Add a model from the curated catalog to the registry.
- * Ensures correct dimensions and settings are used automatically.
- */
-export const addModelFromCatalog = async (modelName: string): Promise<ModelInfo> => {
-  const response = await apiClient.post('/api/v1/settings/embedding/catalog/add', {
-    model_name: modelName,
-  });
-  return response.data;
-};
-
-/**
- * Validate that a model can be used.
- * For local models: checks if model can be downloaded
- * For API models: checks if API key is configured
- */
-export const validateModelAvailability = async (modelName: string): Promise<{
-  model_name: string;
-  available: boolean;
-  message: string;
-}> => {
-  const response = await apiClient.get(`/api/v1/settings/embedding/catalog/${encodeURIComponent(modelName)}/validate`);
-  return response.data;
-};
-
-/**
- * Get the currently active embedding model with full details.
- */
-export const getActiveEmbeddingModel = async (): Promise<ModelInfo> => {
-  const response = await apiClient.get('/api/v1/settings/embedding/models/active');
-  return response.data;
-};
 
 // ============================================================================
 // VECTOR DB SCHEDULE API
@@ -796,7 +772,6 @@ export interface VectorDbSchedule {
   countdown_seconds?: number;
   last_run_at?: string;
   last_run_status?: 'success' | 'failed' | 'running';
-  last_run_job_id?: string;
   exists?: boolean; // false when no schedule is configured
   schedule?: any;   // null when no schedule is configured
 }
@@ -877,15 +852,6 @@ export const triggerVectorDbSync = async (vectorDbName: string): Promise<{ statu
 };
 
 // ============================================================================
-// SYSTEM SETTINGS API
-// ============================================================================
-
-export const getSystemSettings = async (category: string): Promise<Record<string, any>> => {
-  const response = await apiClient.get(`/api/v1/settings/${category}`);
-  return response.data;
-};
-
-// ============================================================================
 // FILE SQL API - DuckDB-based SQL queries on uploaded files
 // ============================================================================
 
@@ -923,39 +889,6 @@ export interface NaturalLanguageQueryResult {
   execution_time_ms?: number;
   error?: string;
 }
-
-/**
- * List all uploaded file tables available for SQL querying.
- */
-export const getFileSqlTables = async (): Promise<{ tables: FileTable[] }> => {
-  const response = await apiClient.get('/api/v1/ingestion/sql/tables');
-  return response.data;
-};
-
-/**
- * Execute a raw SQL query against uploaded file data using DuckDB.
- * Only SELECT queries are allowed for security.
- */
-export const executeFileSqlQuery = async (query: string): Promise<SQLQueryResult> => {
-  const response = await apiClient.post('/api/v1/ingestion/sql/query', { query });
-  return response.data;
-};
-
-/**
- * Delete a specific uploaded file table and its data.
- */
-export const deleteFileSqlTable = async (tableName: string): Promise<{ status: string; message: string }> => {
-  const response = await apiClient.delete(`/api/v1/ingestion/sql/tables/${tableName}`);
-  return response.data;
-};
-
-/**
- * Delete all uploaded file tables for the current user.
- */
-export const deleteAllFileSqlTables = async (): Promise<{ status: string; message: string }> => {
-  const response = await apiClient.delete('/api/v1/ingestion/sql/tables');
-  return response.data;
-};
 
 /**
  * Get the schema (columns and types) of a specific table.
@@ -1226,29 +1159,6 @@ export interface AgenticHybridResult {
   error?: string;
 }
 
-export interface WorkflowCapabilities {
-  status: string;
-  workflows: {
-    sql: {
-      available: boolean;
-      tables: string[];
-      description: string;
-    };
-    rag: {
-      available: boolean;
-      tables: string[];
-      description: string;
-    };
-    agentic_hybrid: {
-      available: boolean;
-      description: string;
-      example_queries: string[];
-    };
-  };
-  recommended_endpoint: string;
-  message?: string;
-}
-
 /**
  * Unified query endpoint with automatic intent routing.
  * Automatically determines optimal retrieval strategy (SQL, RAG, or Hybrid).
@@ -1298,226 +1208,848 @@ export const agenticHybridQuery = async (
   return response.data;
 };
 
-/**
- * Check which query workflows are available for the current user.
- * Returns status of SQL, RAG, and Agentic Hybrid capabilities.
- */
-export const getWorkflowCapabilities = async (): Promise<WorkflowCapabilities> => {
-  const response = await apiClient.get('/api/v1/ingestion/query/workflow-status');
-  return response.data;
-};
-
 // ============================================================================
-// VECTOR DB REGISTRY API - Central management of all vector databases
+// DATA SOURCES API - Unified database & file source management
 // ============================================================================
 
-export interface VectorDbRegistryItem {
-  id: number;
-  name: string;
-  data_source_id: string | null;
-  created_at: string | null;
-  created_by: string | null;
-  embedding_model: string | null;
-  llm: string | null;
-  version: string;
-  last_full_run: string | null;
-  last_incremental_run: string | null;
-  disk_size_bytes: number;
-  disk_size_formatted: string;
-  document_count: number;
-  vector_count: number;
-  last_updated: string | null;
-  chroma_exists: boolean;
-  schedule: {
-    enabled: boolean;
-    schedule_type: string;
-    next_run_at: string | null;
-    last_run_at: string | null;
-    last_run_status: string | null;
-  } | null;
-  health_status: 'healthy' | 'warning' | 'error' | 'missing' | 'orphaned';
+export interface DataSource {
+  id: string;
+  title: string;
+  description?: string;
+  source_type: 'database' | 'file';
+  // Database fields
+  db_url?: string;
+  db_engine_type?: string;
+  // File fields
+  original_file_path?: string;
+  file_type?: string;
+  duckdb_file_path?: string;
+  duckdb_table_name?: string;
+  columns_json?: string;
+  row_count?: number;
+  // Metadata
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  // Dependency info
+  dependent_agents?: string[];
+  dependent_config_count?: number;
 }
 
-export interface OrphanedVectorDb {
-  name: string;
-  path: string;
-  disk_size_bytes: number;
-  disk_size_formatted: string;
-  vector_count: number;
-  health_status: 'orphaned';
+export interface DataSourceListResponse {
+  data_sources: DataSource[];
+  total: number;
+  skip: number;
+  limit: number;
 }
 
-export interface VectorDbRegistryResponse {
+export interface DatabaseSourceCreate {
+  title: string;
+  description?: string;
+  source_type: 'database';
+  db_url: string;
+  db_engine_type: string;
+}
+
+export interface FileSourceCreate {
+  title: string;
+  description?: string;
+  source_type: 'file';
+  original_file_path: string;
+  file_type: string;
+}
+
+export interface DataSourceUpdate {
+  title?: string;
+  description?: string;
+  db_url?: string;
+  db_engine_type?: string;
+}
+
+export interface TestConnectionResult {
+  success: boolean;
+  message: string;
+  tables?: string[];
+  error?: string;
+}
+
+export interface DataSourceUploadResponse {
   status: string;
-  total_vector_dbs: number;
-  total_disk_size_bytes: number;
-  total_disk_size_formatted: string;
-  vector_dbs: VectorDbRegistryItem[];
-  orphaned_dbs: OrphanedVectorDb[];
-}
-
-/**
- * Get all vector databases with their disk sizes, document counts, and sync status.
- * Provides a centralized registry view for IT admins.
- */
-export const getVectorDbRegistry = async (): Promise<VectorDbRegistryResponse> => {
-  const response = await apiClient.get('/api/v1/vector-db/registry');
-  return response.data;
-};
-
-/**
- * Delete a vector database from the registry and optionally remove its files.
- */
-export const deleteVectorDb = async (
-  vectorDbName: string,
-  deleteFiles: boolean = true
-): Promise<{ status: string; message: string; files_deleted: boolean }> => {
-  const response = await apiClient.delete(`/api/v1/vector-db/registry/${vectorDbName}`, {
-    params: { delete_files: deleteFiles }
-  });
-  return response.data;
-};
-
-// ============================================================================
-// SCHEMA DRIFT DETECTION API
-// ============================================================================
-
-export interface SchemaDrift {
-  drift_type: 'table_removed' | 'table_added' | 'column_removed' | 'column_added' | 'column_type_changed';
-  severity: 'critical' | 'warning' | 'info';
-  entity_name: string;
+  file_name: string;
+  file_type: string;
+  total_documents: number;
   table_name?: string;
-  column_name?: string;
-  old_value?: string;
-  new_value?: string;
-  message: string;
+  columns?: string[];
+  column_details?: Array<{ name: string; type: string }>;
+  row_count?: number;
+  processing_mode?: string;
+  message?: string;
+  data_source_id?: string;
 }
 
-export interface DriftReport {
-  vector_db_name: string;
-  has_critical_drift: boolean;
-  has_warnings: boolean;
-  total_drifts: number;
-  critical_count: number;
-  warning_count: number;
-  info_count: number;
-  drifts: SchemaDrift[];
-  checked_at: string;
-  can_run_embedding: boolean;
-  summary: string;
-}
+/**
+ * List all data sources with optional filters.
+ */
+export const getDataSources = async (params?: {
+  query?: string;
+  source_type?: 'database' | 'file';
+  skip?: number;
+  limit?: number;
+}): Promise<DataSourceListResponse> => {
+  const response = await apiClient.get('/api/v1/data-sources', { params });
+  // Response wrapped: { success, message, data: DataSourceListResponse }
+  return response.data?.data || response.data;
+};
 
-export interface DriftStatus {
-  vector_db_name: string;
-  has_snapshot: boolean;
-  snapshot_at: string | null;
-  connection_id: string | null;
-  unresolved_count: number;
-  critical_count: number;
-  warning_count: number;
-  unresolved_drifts: Array<{
-    id: number;
-    drift_type: string;
-    severity: string;
-    entity_name: string;
-    details: string;
-    detected_at: string;
-    acknowledged_at: string | null;
-    acknowledged_by: string | null;
-  }>;
-  can_run_embedding: boolean;
-}
+/**
+ * Get a data source by ID.
+ */
+export const getDataSource = async (id: string): Promise<DataSource> => {
+  const response = await apiClient.get(`/api/v1/data-sources/${id}`);
+  // Response wrapped: { success, message, data: DataSource }
+  return response.data?.data || response.data;
+};
 
-export interface DriftHistoryItem {
+/**
+ * Create a database connection data source.
+ */
+export const createDatabaseSource = async (data: DatabaseSourceCreate): Promise<DataSource> => {
+  const response = await apiClient.post('/api/v1/data-sources/database', data);
+  // Response wrapped: { success, message, data: DataSource }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Create a file-based data source (manual entry - use uploadDataSourceFile for file upload).
+ */
+export const createFileSource = async (data: FileSourceCreate): Promise<DataSource> => {
+  const response = await apiClient.post('/api/v1/data-sources/file', data);
+  // Response wrapped: { success, message, data: DataSource }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Update a data source.
+ */
+export const updateDataSource = async (id: string, data: DataSourceUpdate): Promise<DataSource> => {
+  const response = await apiClient.put(`/api/v1/data-sources/${id}`, data);
+  // Response wrapped: { success, message, data: DataSource }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Delete a data source.
+ */
+export const deleteDataSource = async (id: string): Promise<void> => {
+  await apiClient.delete(`/api/v1/data-sources/${id}`);
+};
+
+/**
+ * Test a database connection before saving.
+ */
+export const testDataSourceConnection = async (
+  db_url: string,
+  db_engine_type: string
+): Promise<TestConnectionResult> => {
+  const response = await apiClient.post('/api/v1/data-sources/test-connection', {
+    db_url,
+    db_engine_type,
+  });
+  // Response wrapped: { success, message, data: TestConnectionResult }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Upload a file and create a data source.
+ * Processes CSV/Excel files into DuckDB for SQL queries.
+ */
+export const uploadDataSourceFile = async (
+  file: File,
+  title?: string,
+  description?: string
+): Promise<DataSourceUploadResponse> => {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const params = new URLSearchParams();
+  if (title) params.append('title', title);
+  if (description) params.append('description', description);
+
+  const url = params.toString()
+    ? `/api/v1/data-sources/upload?${params.toString()}`
+    : '/api/v1/data-sources/upload';
+
+  const response = await apiClient.post(url, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120 * 1000, // 2 min for large files
+  });
+  // Response wrapped: { success, message, data: IngestionResponse }
+  return response.data?.data || response.data;
+};
+
+/**
+ * List SQL tables for file data sources.
+ */
+export const getDataSourceSqlTables = async (): Promise<{ tables: FileTable[] }> => {
+  const response = await apiClient.get('/api/v1/data-sources/sql/tables');
+  // Response wrapped: { success, message, data: { tables: [] } }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Execute SQL query on file data sources.
+ */
+export const executeDataSourceSqlQuery = async (query: string): Promise<SQLQueryResult> => {
+  const response = await apiClient.post('/api/v1/data-sources/sql/query', { query });
+  // Response wrapped: { success, message, data: SQLQueryResult }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Get table schema for a file data source.
+ */
+export const getDataSourceTableSchema = async (tableName: string): Promise<TableSchema> => {
+  const response = await apiClient.get(`/api/v1/data-sources/sql/schema/${tableName}`);
+  // Response wrapped: { success, message, data: TableSchema }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Delete a SQL table from file data sources.
+ */
+export const deleteDataSourceSqlTable = async (tableName: string): Promise<{ status: string; message: string }> => {
+  const response = await apiClient.delete(`/api/v1/data-sources/sql/tables/${tableName}`);
+  // Response wrapped: { success, message, data }
+  return response.data?.data || response.data;
+};
+
+// ============================================================================
+// AGENT CONFIG DRAFT API - Versioned configuration with draft support
+// ============================================================================
+
+export interface AgentConfig {
   id: number;
-  vector_db_name: string;
-  drift_type: string;
-  severity: string;
-  entity_name: string;
-  details: string;
-  detected_at: string;
-  resolved_at: string | null;
-  resolved_by: string | null;
-  acknowledged_at: string | null;
-  acknowledged_by: string | null;
+  agent_id: string;
+  data_source_id: string;
+  // For files: string[] | For databases: Record<table, columns[]>
+  selected_columns?: string[] | Record<string, string[]>;
+  data_dictionary?: Record<string, unknown>;
+  llm_config?: Record<string, unknown>;
+  embedding_config?: Record<string, unknown>;
+  chunking_config?: Record<string, unknown>;
+  rag_config?: Record<string, unknown>;
+  // AI Registry model IDs (foreign keys to ai_models.id)
+  llm_model_id?: number;
+  embedding_model_id?: number;
+  reranker_model_id?: number;
+  system_prompt?: string;
+  example_questions?: string[];
+  embedding_path?: string;
+  vector_collection_name?: string;
+  embedding_status: string;
+  version: number;
+  is_active: boolean;
+  status: 'draft' | 'published';
+  completed_step: number;
+  created_at: string;
+  updated_at: string;
+  data_source?: DataSource;
 }
 
 /**
- * Check for schema drift between stored snapshot and current database.
- * Should be called before starting embedding jobs to prevent failures.
+ * Get draft configuration for an agent if exists.
  */
-export const checkSchemaDrift = async (
-  vectorDbName: string,
-  connectionId: number
-): Promise<DriftReport> => {
-  const response = await apiClient.post('/api/v1/schema-drift/check', {
-    vector_db_name: vectorDbName,
-    connection_id: connectionId,
+export const getDraftConfig = async (agentId: string): Promise<AgentConfig | null> => {
+  const response = await apiClient.get(`/api/v1/config/${agentId}/draft`);
+  // Response is wrapped: { success, message, data }
+  return response.data?.data ?? null;
+};
+
+/**
+ * Delete/discard draft configuration for an agent.
+ */
+export const deleteDraftConfig = async (agentId: string): Promise<void> => {
+  await apiClient.delete(`/api/v1/config/${agentId}/draft`);
+};
+
+// ==========================================
+// Per-Step APIs (named steps with version_id)
+// ==========================================
+
+export interface DataSourceStepRequest {
+  data_source_id: string;
+  version_id?: number;  // Optional: if provided, updates existing version; otherwise creates new
+}
+
+export interface SchemaSelectionStepRequest {
+  // Unified format for both file and database: table -> columns mapping
+  selected_schema: Record<string, string[]>;
+}
+
+export interface DataDictionaryStepRequest {
+  data_dictionary: Record<string, unknown>;
+}
+
+// Config types matching backend schemas
+export interface LLMSettingsConfig {
+  model?: string;  // AI Registry model_id format: "provider/model"
+  temperature?: number;
+  maxTokens?: number;
+}
+
+export interface EmbeddingSettingsConfig {
+  model?: string;  // AI Registry model_id
+  dimensions?: number;
+  batchSize?: number;
+}
+
+export interface ChunkingSettingsConfig {
+  parentChunkSize?: number;
+  parentChunkOverlap?: number;
+  childChunkSize?: number;
+  childChunkOverlap?: number;
+}
+
+export interface RetrieverSettingsConfig {
+  topKInitial?: number;
+  topKFinal?: number;
+  hybridWeights?: number[];
+  rerankEnabled?: boolean;
+  rerankerModel?: string;  // AI Registry model_id
+  similarityThreshold?: number;
+}
+
+export interface SettingsStepRequest {
+  embeddingConfig?: EmbeddingSettingsConfig;
+  chunkingConfig?: ChunkingSettingsConfig;
+  ragConfig?: RetrieverSettingsConfig;
+  llmConfig?: LLMSettingsConfig;
+  // AI Registry model IDs (foreign keys to ai_models.id)
+  llmModelId?: number;
+  embeddingModelId?: number;
+  rerankerModelId?: number;
+}
+
+export interface PromptStepRequest {
+  system_prompt: string;
+  example_questions?: string[];
+}
+
+/**
+ * Step: data-source.
+ * If version_id provided in body, updates that version.
+ * If not provided, creates a new draft version.
+ */
+export const saveDataSourceStep = async (agentId: string, data: DataSourceStepRequest): Promise<AgentConfig> => {
+  const response = await apiClient.put(`/api/v1/config/${agentId}/step/data-source`, data);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Step: schema-selection.
+ * Requires version_id in path.
+ */
+export const saveSchemaSelectionStep = async (agentId: string, versionId: number, data: SchemaSelectionStepRequest): Promise<AgentConfig> => {
+  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/schema-selection`, data);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Step: data-dictionary.
+ * Requires version_id in path.
+ */
+export const saveDataDictionaryStep = async (agentId: string, versionId: number, data: DataDictionaryStepRequest): Promise<AgentConfig> => {
+  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/data-dictionary`, data);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Step: settings.
+ * Requires version_id in path.
+ */
+export const saveSettingsStep = async (agentId: string, versionId: number, data: SettingsStepRequest): Promise<AgentConfig> => {
+  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/settings`, data);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Step: prompt.
+ * Requires version_id in path.
+ */
+export const savePromptStep = async (agentId: string, versionId: number, data: PromptStepRequest): Promise<AgentConfig> => {
+  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/prompt`, data);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Response from generate-prompt endpoint.
+ */
+export interface GeneratePromptResponse {
+  draft_prompt: string;
+  reasoning: Record<string, string>;
+  example_questions: string[];
+}
+
+/**
+ * Step: generate-prompt.
+ * Generates a system prompt based on saved config data (data dictionary, settings).
+ * This reads from the database and uses LLM to generate a production-ready prompt.
+ */
+export const generatePrompt = async (agentId: string, versionId: number): Promise<GeneratePromptResponse> => {
+  const response = await apiClient.post(`/api/v1/config/${agentId}/version/${versionId}/step/generate-prompt`);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Publish a version (saves system prompt and makes it active).
+ */
+export interface PublishVersionRequest {
+  systemPrompt: string;
+  exampleQuestions?: string[];
+}
+
+export const publishVersion = async (
+  agentId: string,
+  versionId: number,
+  data: PublishVersionRequest
+): Promise<AgentConfig> => {
+  const response = await apiClient.put(
+    `/api/v1/config/${agentId}/version/${versionId}/step/publish`,
+    {
+      system_prompt: data.systemPrompt,
+      example_questions: data.exampleQuestions || [],
+    }
+  );
+  return response.data?.data || response.data;
+};
+
+/**
+ * Delete/discard a specific version.
+ */
+export const deleteVersion = async (agentId: string, versionId: number): Promise<void> => {
+  await apiClient.delete(`/api/v1/config/${agentId}/version/${versionId}`);
+};
+
+/**
+ * Get a specific version.
+ */
+export const getVersion = async (agentId: string, versionId: number): Promise<AgentConfig> => {
+  const response = await apiClient.get(`/api/v1/config/${agentId}/version/${versionId}`);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Foreign key reference info.
+ */
+export interface ForeignKeyInfo {
+  referenced_table: string;
+  referenced_column?: string;
+}
+
+/**
+ * Column info for schema selection.
+ */
+export interface ColumnInfo {
+  column_name: string;
+  data_type: string;
+  is_nullable: boolean;
+  is_primary_key?: boolean;
+  foreign_key?: ForeignKeyInfo;
+}
+
+/**
+ * Table info with columns.
+ */
+export interface TableInfoResponse {
+  table_name: string;
+  columns: ColumnInfo[];
+  primary_key_columns?: string[];
+}
+
+/**
+ * Foreign key relationship between tables.
+ */
+export interface TableRelationship {
+  from_table: string;
+  from_columns: string[];
+  to_table: string;
+  to_columns: string[];
+}
+
+/**
+ * Schema response for data source.
+ */
+export interface DataSourceSchemaResponse {
+  source_type: 'database' | 'file';
+  tables: TableInfoResponse[];
+  relationships?: TableRelationship[];
+  file_name?: string;
+  row_count?: number;
+}
+
+/**
+ * Get schema (tables and columns) for a data source.
+ * Used in Step 2 to display available tables/columns for selection.
+ */
+export const getDataSourceSchema = async (dataSourceId: string): Promise<DataSourceSchemaResponse> => {
+  const response = await apiClient.get(`/api/v1/data-sources/${dataSourceId}/schema`);
+  return response.data?.data || response.data;
+};
+
+/**
+ * Preview response with sample data.
+ */
+export interface DataSourcePreviewResponse {
+  source_type: 'database' | 'file';
+  file_name?: string;
+  table_name?: string;
+  columns: string[];
+  column_details?: { name: string; type: string }[];
+  row_count?: number;
+  documents: { page_content: string; metadata: Record<string, string> }[];
+  total_documents: number;
+}
+
+/**
+ * Get sample data preview for a data source.
+ * Used in Step 2 to display document previews for file sources.
+ */
+export const getDataSourcePreview = async (dataSourceId: string, limit: number = 10): Promise<DataSourcePreviewResponse> => {
+  const response = await apiClient.get(`/api/v1/data-sources/${dataSourceId}/preview`, {
+    params: { limit }
   });
-  return response.data;
+  return response.data?.data || response.data;
 };
 
 /**
- * Get current drift status for a vector DB including unresolved issues.
+ * Create a draft by cloning an existing configuration.
+ * Used for "Edit Config" functionality.
  */
-export const getSchemaDriftStatus = async (vectorDbName: string): Promise<DriftStatus> => {
-  const response = await apiClient.get(`/api/v1/schema-drift/status/${vectorDbName}`);
-  return response.data;
+export const cloneConfigAsDraft = async (configId: number): Promise<AgentConfig> => {
+  const response = await apiClient.post(`/api/v1/config/${configId}/clone`);
+  // Response wrapped: { success, message, data: AgentConfig }
+  return response.data?.data || response.data;
 };
 
 /**
- * Acknowledge a drift alert (mark as seen but not resolved).
+ * Get configuration history for an agent (all versions).
  */
-export const acknowledgeSchemaDrift = async (driftId: number): Promise<{ status: string; message: string }> => {
-  const response = await apiClient.post('/api/v1/schema-drift/acknowledge', { drift_id: driftId });
-  return response.data;
+export const getConfigHistory = async (agentId: string): Promise<{ configs: AgentConfig[]; total: number }> => {
+  const response = await apiClient.get(`/api/v1/config/${agentId}/history`);
+  // Response wrapped: { success, message, data: { configs: [], total: number } }
+  return response.data?.data || response.data;
 };
 
 /**
- * Mark a drift as resolved.
+ * Config summary for table view (limited fields).
  */
-export const resolveSchemaDrift = async (driftId: number): Promise<{ status: string; message: string }> => {
-  const response = await apiClient.post(`/api/v1/schema-drift/resolve/${driftId}`);
-  return response.data;
-};
-
-/**
- * Update schema snapshot for a vector DB (re-baseline after schema changes).
- */
-export const updateSchemaSnapshot = async (
-  vectorDbName: string,
-  connectionId: number,
-  resolveExisting: boolean = true
-): Promise<{
+export interface ConfigSummary {
+  id: number;
+  agent_id: string;
+  version: number;
+  is_active: boolean;
   status: string;
-  message: string;
-  snapshot_info: { tables: number; columns: number; captured_at: string };
-  resolved_drifts: number;
-}> => {
-  const response = await apiClient.post('/api/v1/schema-drift/snapshot/update', {
-    vector_db_name: vectorDbName,
-    connection_id: connectionId,
-    resolve_existing: resolveExisting,
+  embedding_status: string;
+  data_source_name: string | null;
+  llm_model_name: string | null;
+  embedding_model_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Paginated config history response.
+ */
+export interface ConfigHistoryResponse {
+  configs: ConfigSummary[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
+/**
+ * Get paginated configuration history with summary fields for table view.
+ */
+export const getConfigHistoryPaginated = async (
+  agentId: string,
+  page: number = 1,
+  pageSize: number = 10
+): Promise<ConfigHistoryResponse> => {
+  const response = await apiClient.get(`/api/v1/config/${agentId}/history/paginated`, {
+    params: { page, page_size: pageSize }
   });
-  return response.data;
+  // Response wrapped: { success, message, data: ConfigHistoryResponse }
+  return response.data?.data || response.data;
 };
 
 /**
- * Get drift detection history for a vector DB.
+ * Get specific configuration by ID.
  */
-export const getSchemaDriftHistory = async (
-  vectorDbName: string,
-  includeResolved: boolean = false,
-  limit: number = 50
-): Promise<{
-  vector_db_name: string;
-  total_records: number;
-  include_resolved: boolean;
-  history: DriftHistoryItem[];
-}> => {
-  const response = await apiClient.get(`/api/v1/schema-drift/history/${vectorDbName}`, {
-    params: { include_resolved: includeResolved, limit },
-  });
-  return response.data;
+export const getConfigById = async (configId: number): Promise<AgentConfig> => {
+  const response = await apiClient.get(`/api/v1/config/detail/${configId}`);
+  // Response wrapped: { success, message, data: AgentConfig }
+  return response.data?.data || response.data;
 };
 
+/**
+ * Activate a specific configuration version (rollback).
+ */
+export const activateConfig = async (configId: number): Promise<{ message: string }> => {
+  const response = await apiClient.post(`/api/v1/config/${configId}/activate`);
+  // Response wrapped: { success, message, data }
+  return response.data?.data || { message: response.data?.message || 'Activated' };
+};
+
+
+// ============================================
+// AI Models - Simplified Single-Table Design
+// ============================================
+
+export type ModelType = 'llm' | 'embedding' | 'reranker';
+export type DeploymentType = 'cloud' | 'local';
+export type DownloadStatus = 'not_downloaded' | 'pending' | 'downloading' | 'ready' | 'error';
+
+// ----- Model Types -----
+
+export interface AIModel {
+  id: number;
+  model_id: string;  // "provider/model-name"
+  display_name: string;
+  model_type: ModelType;
+  provider_name: string;
+  deployment_type: DeploymentType;
+
+  // Cloud config
+  api_base_url?: string;
+  has_api_key: boolean;
+  api_key_env_var?: string;
+
+  // Local config
+  local_path?: string;
+  download_status: DownloadStatus;
+  download_progress: number;
+  download_error?: string;
+  download_queue_position?: number;
+  hf_model_id?: string;
+  hf_revision?: string;
+
+  // Model specs
+  context_length?: number;
+  max_input_tokens?: number;
+  dimensions?: number;
+
+  // RAG hints
+  recommended_chunk_size?: number;
+  compatibility_notes?: string;
+
+  // Status
+  is_active: boolean;
+  is_default: boolean;
+  is_ready: boolean;
+
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  created_by?: string;
+}
+
+export interface AIModelCreate {
+  model_id: string;  // "provider/model-name"
+  display_name: string;
+  model_type: ModelType;
+  provider_name: string;
+  deployment_type: DeploymentType;
+
+  // Cloud config
+  api_base_url?: string;
+  api_key?: string;
+  api_key_env_var?: string;
+
+  // Local config
+  local_path?: string;
+  hf_model_id?: string;
+  hf_revision?: string;
+
+  // Model specs
+  context_length?: number;
+  max_input_tokens?: number;
+  dimensions?: number;
+
+  // RAG hints
+  recommended_chunk_size?: number;
+  compatibility_notes?: string;
+
+  description?: string;
+  is_default?: boolean;
+}
+
+export interface AIModelUpdate {
+  model_id?: string;
+  display_name?: string;
+  api_base_url?: string;
+  api_key?: string;
+  api_key_env_var?: string;
+  local_path?: string;
+  context_length?: number;
+  max_input_tokens?: number;
+  dimensions?: number;
+  recommended_chunk_size?: number;
+  compatibility_notes?: string;
+  description?: string;
+  is_active?: boolean;
+  is_default?: boolean;
+}
+
+// ----- HuggingFace Types -----
+
+export interface HFSearchRequest {
+  query: string;
+  model_type?: ModelType;
+  limit?: number;
+}
+
+export interface HFModelInfo {
+  model_id: string;
+  author: string;
+  model_name: string;
+  pipeline_tag?: string;
+  downloads: number;
+  likes: number;
+  last_modified?: string;
+  description?: string;
+  suggested_type?: ModelType;
+  is_registered: boolean;
+}
+
+export interface HFSearchResponse {
+  models: HFModelInfo[];
+  total: number;
+}
+
+export interface HFQuickAddRequest {
+  hf_model_id: string;
+  model_type: ModelType;
+  display_name?: string;
+  auto_download?: boolean;
+}
+
+// ----- Download Types -----
+
+export interface DownloadProgress {
+  model_id: number;
+  status: DownloadStatus;
+  progress: number;
+  error?: string;
+  queue_position?: number;  // Position in download queue (1-based) if pending
+}
+
+// ----- Default Types -----
+
+export interface DefaultsResponse {
+  llm?: AIModel;
+  embedding?: AIModel;
+  reranker?: AIModel;
+}
+
+// ----- Available Models Types -----
+
+export interface AvailableModel {
+  id: number;
+  model_id: string;
+  display_name: string;
+  model_type: ModelType;
+  provider_name: string;
+  deployment_type: DeploymentType;
+  is_ready: boolean;
+  is_default: boolean;
+  context_length?: number;
+  dimensions?: number;
+}
+
+export interface AvailableModelsResponse {
+  llm: AvailableModel[];
+  embedding: AvailableModel[];
+  reranker: AvailableModel[];
+}
+
+// ----- API Functions -----
+
+export const listAIModels = async (params?: {
+  model_type?: ModelType;
+  provider_name?: string;
+  deployment_type?: DeploymentType;
+  is_active?: boolean;
+  skip?: number;
+  limit?: number;
+}): Promise<{ models: AIModel[]; total: number }> => {
+  const response = await apiClient.get('/api/v1/ai-models', { params });
+  return response.data?.data || response.data;
+};
+
+export const getAIModel = async (modelId: number): Promise<AIModel> => {
+  const response = await apiClient.get(`/api/v1/ai-models/${modelId}`);
+  return response.data?.data || response.data;
+};
+
+export const createAIModel = async (data: AIModelCreate): Promise<AIModel> => {
+  const response = await apiClient.post('/api/v1/ai-models', data);
+  return response.data?.data || response.data;
+};
+
+export const updateAIModel = async (modelId: number, data: AIModelUpdate): Promise<AIModel> => {
+  const response = await apiClient.patch(`/api/v1/ai-models/${modelId}`, data);
+  return response.data?.data || response.data;
+};
+
+export const deleteAIModel = async (modelId: number): Promise<void> => {
+  await apiClient.delete(`/api/v1/ai-models/${modelId}`);
+};
+
+export const getAIModelDefaults = async (): Promise<DefaultsResponse> => {
+  const response = await apiClient.get('/api/v1/ai-models/defaults');
+  return response.data?.data || response.data;
+};
+
+export const setAIModelDefault = async (modelType: ModelType, modelId: number): Promise<DefaultsResponse> => {
+  const response = await apiClient.put(`/api/v1/ai-models/defaults/${modelType}`, { model_id: modelId });
+  return response.data?.data || response.data;
+};
+
+export const clearAIModelDefault = async (modelType: ModelType): Promise<DefaultsResponse> => {
+  const response = await apiClient.delete(`/api/v1/ai-models/defaults/${modelType}`);
+  return response.data?.data || response.data;
+};
+
+export const getAvailableModelsForAgentConfig = async (modelType?: ModelType): Promise<AvailableModelsResponse> => {
+  const response = await apiClient.get('/api/v1/ai-models/available', { params: { model_type: modelType } });
+  return response.data?.data || response.data;
+};
+
+// ----- HuggingFace Functions -----
+
+export const searchHuggingFace = async (request: HFSearchRequest): Promise<HFSearchResponse> => {
+  const response = await apiClient.post('/api/v1/ai-models/huggingface/search', request);
+  return response.data?.data || response.data;
+};
+
+export const quickAddFromHuggingFace = async (request: HFQuickAddRequest): Promise<AIModel> => {
+  const response = await apiClient.post('/api/v1/ai-models/huggingface/quick-add', request);
+  return response.data?.data || response.data;
+};
+
+// ----- Download Functions -----
+
+export const startModelDownload = async (modelId: number): Promise<DownloadProgress> => {
+  const response = await apiClient.post(`/api/v1/ai-models/${modelId}/download`);
+  return response.data?.data || response.data;
+};
+
+export const getDownloadProgress = async (modelId: number): Promise<DownloadProgress> => {
+  const response = await apiClient.get(`/api/v1/ai-models/${modelId}/download`);
+  return response.data?.data || response.data;
+};
+
+export const cancelDownload = async (modelId: number): Promise<void> => {
+  await apiClient.delete(`/api/v1/ai-models/${modelId}/download`);
+};

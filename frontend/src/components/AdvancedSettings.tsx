@@ -1,11 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-    getEmbeddingModels, getLLMModels, getCompatibleLLMs,
-    activateEmbeddingModel, activateLLMModel, handleApiError,
-    registerEmbeddingModel, registerLLMModel
+    listAIModels, setAIModelDefault, handleApiError
 } from '../services/api';
-import type { ModelInfo } from '../services/api';
-import ModelCatalog from './ModelCatalog';
+import type { AIModel, ModelType } from '../services/api';
+import AIModelSelector from './AIModelSelector';
+import { useAIRegistryModels } from '../hooks/useAIRegistryModels';
 
 export type AccordionSection = 'embedding' | 'llm' | 'chunking' | 'retrieval';
 
@@ -13,9 +12,9 @@ interface AdvancedSettingsProps {
     settings: {
         embedding: {
             model: string;
-            vectorDbName?: string;
         };
         llm: {
+            model?: string;
             temperature: number;
             maxTokens: number;
         };
@@ -32,21 +31,23 @@ interface AdvancedSettingsProps {
             rerankEnabled: boolean;
             rerankerModel: string;
         };
+        // AI Registry model IDs at top level
+        embeddingModelId?: number;
+        llmModelId?: number;
+        rerankerModelId?: number;
     };
-    onChange: (settings: any) => void;
+    onChange: (settings: AdvancedSettingsProps['settings']) => void;
     readOnly?: boolean;
-    dataSourceName?: string;
     /** If true, only one accordion section can be open at a time. Default: false (multiple can be open) */
     singleAccordionMode?: boolean;
     /** Sections to open by default. Default: ['embedding'] */
     defaultOpenSections?: AccordionSection[];
 }
 
-const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({ 
-    settings, 
-    onChange, 
-    readOnly = false, 
-    dataSourceName = '',
+const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
+    settings,
+    onChange,
+    readOnly = false,
     singleAccordionMode = true,
     defaultOpenSections = []
 }) => {
@@ -61,7 +62,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
     const toggleSection = useCallback((section: AccordionSection) => {
         setOpenSections(prev => {
             const isCurrentlyOpen = prev.has(section);
-            
+
             if (singleAccordionMode) {
                 // In single mode: if clicking the open section, close it; otherwise open clicked and close others
                 if (isCurrentlyOpen) {
@@ -83,145 +84,190 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
 
     const isSectionOpen = (section: AccordionSection) => openSections.has(section);
 
-    // Vector DB Name Validation State
-    const [vectorDbValidation, setVectorDbValidation] = useState<{ valid: boolean; message: string; checking: boolean }>({
-        valid: true,
-        message: '',
-        checking: false
-    });
-
-    // Model registry state
-    const [embeddingModels, setEmbeddingModels] = useState<ModelInfo[]>([]);
-    const [llmModels, setLLMModels] = useState<ModelInfo[]>([]);
-    const [compatibleLLMs, setCompatibleLLMs] = useState<ModelInfo[]>([]);
+    // Model registry state (from AI Registry)
+    const [embeddingModels, setEmbeddingModels] = useState<AIModel[]>([]);
+    const [llmModels, setLLMModels] = useState<AIModel[]>([]);
+    const [compatibleLLMs, setCompatibleLLMs] = useState<AIModel[]>([]);
     const [loadingModels, setLoadingModels] = useState(true);
     const [modelError, setModelError] = useState<string | null>(null);
+
+    // AI Registry models (new system)
+    const aiRegistry = useAIRegistryModels();
 
     // Activation state
     const [activatingId, setActivatingId] = useState<number | null>(null);
     const [activationMsg, setActivationMsg] = useState<string | null>(null);
 
     // Active selections
-    const [activeEmbedding, setActiveEmbedding] = useState<ModelInfo | null>(null);
-    const [activeLLM, setActiveLLM] = useState<ModelInfo | null>(null);
+    const [activeEmbedding, setActiveEmbedding] = useState<AIModel | null>(null);
+    const [activeLLM, setActiveLLM] = useState<AIModel | null>(null);
 
-    // Registration UI state
-    const [showRegisterEmbedding, setShowRegisterEmbedding] = useState(false);
-    const [showRegisterLLM, setShowRegisterLLM] = useState(false);
-    
-    // Model Catalog toggle
-    const [showModelCatalog, setShowModelCatalog] = useState(false);
-
-    const [newModelForm, setNewModelForm] = useState({
-        provider: 'huggingface',
-        model_name: '',
-        display_name: '',
-        dimensions: 768,
-        max_tokens: 512,
-        context_length: 4096,
-        max_output_tokens: 1024
-    });
+    // Track if we've already set the default reranker
+    const hasSetDefaultReranker = React.useRef(false);
+    // Track if we've synced embedding/LLM defaults
+    const hasSetDefaultEmbedding = React.useRef(false);
+    const hasSetDefaultLLM = React.useRef(false);
 
     useEffect(() => {
         setLocalSettings(settings);
     }, [settings]);
 
-    // Handle Vector DB Default formatting
+    // Pre-select default reranker model from AI Registry
+    // Only if the current value doesn't match any available model
     useEffect(() => {
-        if (!localSettings.embedding.vectorDbName && dataSourceName) {
-            // format: alphanumeric + underscores, no spaces, strip extras
-            const formatted = dataSourceName.replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase().replace(/_+/g, '_').replace(/^_+|_+$/g, '');
-            const defaultName = formatted ? `${formatted}_data` : 'default_vector_db';
-            handleChange('embedding', 'vectorDbName', defaultName);
+        if (readOnly) return;
+        if (hasSetDefaultReranker.current) return;
+        if (aiRegistry.isLoading || aiRegistry.rerankerModels.length === 0) return;
+        if (!aiRegistry.defaults?.reranker) return;
+
+        const currentRerankerModelId = localSettings.rerankerModelId;
+        const isValidSelection = currentRerankerModelId && aiRegistry.rerankerModels.some(m => m.id === currentRerankerModelId);
+
+        // If current selection is not valid, use the default
+        if (!isValidSelection) {
+            hasSetDefaultReranker.current = true;
+            const defaultReranker = aiRegistry.defaults.reranker;
+            const newSettings = {
+                ...localSettings,
+                retriever: {
+                    ...localSettings.retriever,
+                    rerankerModel: defaultReranker.model_id,
+                },
+                rerankerModelId: defaultReranker.id,  // Store at top level
+            };
+            setLocalSettings(newSettings);
+            onChange(newSettings);
         }
-    }, [dataSourceName, localSettings.embedding.vectorDbName]);
+    }, [aiRegistry.isLoading, aiRegistry.rerankerModels, aiRegistry.defaults?.reranker, readOnly, localSettings, onChange]);
 
-    // Validate Vector DB Name
-    useEffect(() => {
-        const checkName = async () => {
-            const name = localSettings.embedding.vectorDbName;
-            if (!name) {
-                setVectorDbValidation({ valid: false, message: 'Vector DB name is required', checking: false });
-                return;
-            }
-            if (!/^[a-zA-Z0-9_]+$/.test(name)) {
-                setVectorDbValidation({ valid: false, message: 'Only alphanumeric characters and underscores allowed', checking: false });
-                return;
-            }
-
-            setVectorDbValidation(prev => ({ ...prev, checking: true }));
-            try {
-                // We assume there's an api client configured for this
-                const { apiClient } = await import('../services/api');
-                const response = await apiClient.get(`/api/v1/vector-db/check-name?name=${encodeURIComponent(name)}`);
-                setVectorDbValidation({ valid: response.data.valid, message: response.data.message, checking: false });
-            } catch (err) {
-                setVectorDbValidation({ valid: true, message: 'Could not validate with server (assuming valid)', checking: false });
-            }
-        };
-
-        const timer = setTimeout(checkName, 500);
-        return () => clearTimeout(timer);
-    }, [localSettings.embedding.vectorDbName]);
-
-    // Load models from backend
+    // Load models from AI Registry
     const loadModels = useCallback(async () => {
         setLoadingModels(true);
         setModelError(null);
         try {
-            const [embModels, llModels, compat] = await Promise.all([
-                getEmbeddingModels(),
-                getLLMModels(),
-                getCompatibleLLMs()
+            const [embResult, llmResult] = await Promise.all([
+                listAIModels({ model_type: 'embedding' as ModelType }),
+                listAIModels({ model_type: 'llm' as ModelType })
             ]);
+
+            // Filter to only ready models
+            const embModels = (embResult.models || []).filter(m => m.is_ready);
+            const llModels = (llmResult.models || []).filter(m => m.is_ready);
+
             setEmbeddingModels(embModels);
             setLLMModels(llModels);
-            setCompatibleLLMs(compat);
+            // For compatibility, set all LLMs as compatible for now
+            setCompatibleLLMs(llModels);
 
-            const activeEmb = embModels.find(m => m.is_active === 1) || null;
-            const activeLl = llModels.find(m => m.is_active === 1) || null;
+            const activeEmb = embModels.find(m => m.is_default) || null;
+            const activeLl = llModels.find(m => m.is_default) || null;
             setActiveEmbedding(activeEmb);
             setActiveLLM(activeLl);
-
-            // Sync with parent settings if out of bounds
-            if (activeEmb && activeEmb.model_name !== localSettings.embedding.model) {
-                handleChange('embedding', 'model', activeEmb.model_name);
-            }
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error('Failed to load models:', err);
-            setModelError('Could not load model registry. Using manual input.');
+            setModelError('Could not load AI Registry. Using manual input.');
         } finally {
             setLoadingModels(false);
         }
-    }, [localSettings.embedding.model]);
+    }, []);
 
     useEffect(() => {
         loadModels();
     }, [loadModels]);
 
-    const handleChange = (section: keyof AdvancedSettingsProps['settings'], field: string, value: any) => {
-        if (readOnly) return;
-        const newSettings = {
-            ...localSettings,
-            [section]: {
-                ...localSettings[section],
-                [field]: value
+    // Sync default models to local settings on initial load (only if not already set)
+    useEffect(() => {
+        if (readOnly || loadingModels) return;
+
+        // Use functional update to access current state and avoid stale closures
+        setLocalSettings(currentSettings => {
+            let needsUpdate = false;
+            const newSettings = { ...currentSettings };
+
+            // Sync embedding model (model string + top-level embeddingModelId)
+            if (activeEmbedding && !hasSetDefaultEmbedding.current && !currentSettings.embeddingModelId) {
+                newSettings.embedding = {
+                    ...currentSettings.embedding,
+                    model: activeEmbedding.model_id,
+                };
+                newSettings.embeddingModelId = activeEmbedding.id;
+                hasSetDefaultEmbedding.current = true;
+                needsUpdate = true;
             }
-        };
-        setLocalSettings(newSettings);
-        onChange(newSettings);
+
+            // Sync LLM model (model string + top-level llmModelId)
+            if (activeLLM && !hasSetDefaultLLM.current && !currentSettings.llmModelId) {
+                newSettings.llm = {
+                    ...currentSettings.llm,
+                    model: activeLLM.model_id,
+                };
+                newSettings.llmModelId = activeLLM.id;
+                hasSetDefaultLLM.current = true;
+                needsUpdate = true;
+            }
+
+            if (needsUpdate) {
+                // Use setTimeout to call onChange after state update to avoid batching issues
+                setTimeout(() => onChange(newSettings), 0);
+                return newSettings;
+            }
+            return currentSettings;
+        });
+    }, [activeEmbedding, activeLLM, loadingModels, readOnly, onChange]);
+
+    const handleChange = (section: keyof AdvancedSettingsProps['settings'], field: string, value: unknown) => {
+        if (readOnly) return;
+
+        setLocalSettings(prev => {
+            const sectionData = prev[section];
+
+            // If it's an object-style section (embedding, llm, chunking, retriever)
+            if (sectionData && typeof sectionData === 'object' && !Array.isArray(sectionData)) {
+                const newSettings = {
+                    ...prev,
+                    [section]: {
+                        ...sectionData as any,
+                        [field]: value
+                    }
+                };
+                // Call onChange outside if possible or use useEffect to sync
+                return newSettings;
+            }
+
+            // Fallback for top-level primitives if any (though currently they aren't handled via this generic handleChange)
+            return {
+                ...prev,
+                [field]: value
+            } as any;
+        });
     };
+
+    // Use effect to call onChange when localSettings changes to avoid stale closures in handleChange
+    useEffect(() => {
+        onChange(localSettings);
+    }, [localSettings, onChange]);
 
     // Handle embedding model activation via API
     const handleEmbeddingSelect = async (modelId: number) => {
         if (readOnly || activatingId) return;
         const model = embeddingModels.find(m => m.id === modelId);
-        if (!model || model.is_active === 1) return;
+        if (!model || model.is_default) return;
 
         setActivatingId(modelId);
         setActivationMsg(null);
         try {
-            await activateEmbeddingModel(modelId);
+            await setAIModelDefault('embedding', modelId);
+            // Update local settings with model_id string and top-level embeddingModelId
+            const newSettings = {
+                ...localSettings,
+                embedding: {
+                    ...localSettings.embedding,
+                    model: model.model_id,
+                },
+                embeddingModelId: model.id,  // Store at top level
+            };
+            setLocalSettings(newSettings);
+            onChange(newSettings);
             setActivationMsg(`✓ Switched to ${model.display_name}`);
             await loadModels();
         } catch (err) {
@@ -236,12 +282,23 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
     const handleLLMSelect = async (modelId: number) => {
         if (readOnly || activatingId) return;
         const model = llmModels.find(m => m.id === modelId);
-        if (!model || model.is_active === 1) return;
+        if (!model || model.is_default) return;
 
         setActivatingId(modelId);
         setActivationMsg(null);
         try {
-            await activateLLMModel(modelId);
+            await setAIModelDefault('llm', modelId);
+            // Update local settings with model_id string and top-level llmModelId
+            const newSettings = {
+                ...localSettings,
+                llm: {
+                    ...localSettings.llm,
+                    model: model.model_id,
+                },
+                llmModelId: model.id,  // Store at top level
+            };
+            setLocalSettings(newSettings);
+            onChange(newSettings);
             setActivationMsg(`✓ Switched to ${model.display_name}`);
             await loadModels();
         } catch (err) {
@@ -249,47 +306,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
         } finally {
             setActivatingId(null);
             setTimeout(() => setActivationMsg(null), 4000);
-        }
-    };
-
-    // Handle Custom Model Registration
-    const handleRegisterModel = async (type: 'embedding' | 'llm') => {
-        setActivationMsg(null);
-        try {
-            if (type === 'embedding') {
-                await registerEmbeddingModel({
-                    provider: newModelForm.provider,
-                    model_name: newModelForm.model_name,
-                    display_name: newModelForm.display_name,
-                    dimensions: newModelForm.dimensions,
-                    max_tokens: newModelForm.max_tokens
-                });
-                setShowRegisterEmbedding(false);
-            } else {
-                await registerLLMModel({
-                    provider: newModelForm.provider,
-                    model_name: newModelForm.model_name,
-                    display_name: newModelForm.display_name,
-                    context_length: newModelForm.context_length,
-                    max_output_tokens: newModelForm.max_output_tokens,
-                    parameters: { temperature: 0.0 }
-                });
-                setShowRegisterLLM(false);
-            }
-            setActivationMsg(`✓ Successfully registered model ${newModelForm.display_name}`);
-            // Reset form
-            setNewModelForm({
-                provider: 'huggingface',
-                model_name: '',
-                display_name: '',
-                dimensions: 768,
-                max_tokens: 512,
-                context_length: 4096,
-                max_output_tokens: 1024
-            });
-            await loadModels();
-        } catch (err) {
-            setActivationMsg(`✗ Registration failed: ${handleApiError(err)}`);
         }
     };
 
@@ -311,67 +327,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
             )}
 
             <div className="space-y-4 sm:space-y-6">
-                {/* Model Catalog Modal */}
-                {showModelCatalog && (
-                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                        <div className="bg-white rounded-xl shadow-2xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-                            <div className="flex items-center justify-between p-4 border-b border-gray-200">
-                                <h2 className="text-lg font-semibold text-gray-900">Model Catalog</h2>
-                                <button
-                                    onClick={() => setShowModelCatalog(false)}
-                                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                                >
-                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
-                                </button>
-                            </div>
-                            <div className="flex-1 overflow-y-auto p-4">
-                                <ModelCatalog 
-                                    readOnly={readOnly} 
-                                    onModelActivated={() => {
-                                        loadModels();
-                                        setActivationMsg('✓ Model activated from catalog');
-                                        setTimeout(() => setActivationMsg(null), 4000);
-                                    }} 
-                                />
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Vector DB Naming Section - Outside accordion */}
-                <div className="p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-1">
-                        Vector Database Namespace
-                    </label>
-                    <p className="text-[10px] sm:text-xs text-gray-500 mb-2 sm:mb-3">
-                        A unique identifier for where your embeddings will be stored.
-                    </p>
-                    <div className="relative">
-                        <input
-                            type="text"
-                            value={localSettings.embedding.vectorDbName || ''}
-                            onChange={(e) => handleChange('embedding', 'vectorDbName', e.target.value)}
-                            disabled={readOnly}
-                            placeholder="e.g. my_dataset_data"
-                            className={`w-full rounded-md shadow-sm text-xs sm:text-sm p-2 border focus:ring-1 
-                                ${vectorDbValidation.checking ? 'border-gray-300' :
-                                    vectorDbValidation.valid ? 'border-green-300 focus:border-green-500 focus:ring-green-500' :
-                                        'border-red-300 focus:border-red-500 focus:ring-red-500'}`}
-                        />
-                        {vectorDbValidation.checking && (
-                            <div className="absolute right-3 top-2">
-                                <svg className="animate-spin h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                            </div>
-                        )}
-                    </div>
-                    {!vectorDbValidation.checking && vectorDbValidation.message && (
-                        <p className={`mt-1 text-[10px] sm:text-xs ${vectorDbValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
-                            {vectorDbValidation.valid ? '✓ ' : '✗ '}{vectorDbValidation.message}
-                        </p>
-                    )}
-                </div>
 
                 {/* ============================================================ */}
                 {/* 1. Embedding Configuration                             */}
@@ -397,128 +352,82 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                     </span>
                                 )}
                             </div>
-                            <svg 
-                                className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('embedding') ? 'rotate-180' : ''}`} 
-                                fill="none" 
-                                stroke="currentColor" 
+                            <svg
+                                className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('embedding') ? 'rotate-180' : ''}`}
+                                fill="none"
+                                stroke="currentColor"
                                 viewBox="0 0 24 24"
                             >
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                             </svg>
                         </button>
-                        {/* Browse Catalog Button - beside header */}
-                        {!readOnly && (
-                            <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); setShowModelCatalog(true); }}
-                                className="ml-3 px-3 py-1.5 text-xs sm:text-sm font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors flex items-center gap-1.5"
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-                                </svg>
-                                <span className="hidden sm:inline">Browse Catalog</span>
-                                <span className="sm:hidden">Catalog</span>
-                            </button>
-                        )}
                     </div>
 
                     {/* Accordion Content */}
                     {isSectionOpen('embedding') && (
                         <div className="p-3 sm:p-6 border-t border-gray-100">
 
-                    {loadingModels ? (
-                        <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-400 p-3">
-                            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                            Loading models...
-                        </div>
-                    ) : modelError || embeddingModels.length === 0 ? (
-                        <div className="mb-4">
-                            <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Model Name</label>
-                            <input type="text" value={localSettings.embedding.model} onChange={(e) => handleChange('embedding', 'model', e.target.value)} disabled={readOnly} className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs sm:text-sm p-2 border" />
-                            {modelError && <p className="mt-1 text-[10px] sm:text-xs text-amber-600">{modelError}</p>}
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 gap-2 sm:gap-3 mb-4">
-                            {embeddingModels.map(m => {
-                                const isActive = m.is_active === 1;
-                                const isLoading = activatingId === m.id;
-                                return (
-                                    <button
-                                        key={m.id}
-                                        type="button"
-                                        onClick={() => handleEmbeddingSelect(m.id)}
-                                        disabled={readOnly || isActive || !!activatingId}
-                                        className={`text-left p-3 sm:p-4 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
-                                            : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
-                                                : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50 cursor-pointer hover:shadow-sm'
-                                            }`}
-                                    >
-                                        <div className="flex items-start justify-between gap-2">
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex flex-wrap items-center gap-1 sm:gap-2 mb-1">
-                                                    <span className={`text-xs sm:text-sm font-semibold ${isActive ? 'text-indigo-900' : 'text-gray-800'}`}>{m.display_name}</span>
-                                                    {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Active</span>}
-                                                    {m.is_custom === 1 && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-700">Custom</span>}
+                            {loadingModels ? (
+                                <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-400 p-3">
+                                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    Loading models...
+                                </div>
+                            ) : modelError || embeddingModels.length === 0 ? (
+                                <div className="mb-4">
+                                    <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-1">Model Name</label>
+                                    <input type="text" value={localSettings.embedding.model} onChange={(e) => handleChange('embedding', 'model', e.target.value)} disabled={readOnly} className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-xs sm:text-sm p-2 border" />
+                                    {modelError && <p className="mt-1 text-[10px] sm:text-xs text-amber-600">{modelError}</p>}
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 gap-2 sm:gap-3 mb-4">
+                                    {embeddingModels.map(m => {
+                                        const isActive = m.is_default;
+                                        const isLoading = activatingId === m.id;
+                                        const isLocal = m.deployment_type === 'local';
+                                        return (
+                                            <button
+                                                key={m.id}
+                                                type="button"
+                                                onClick={() => handleEmbeddingSelect(m.id)}
+                                                disabled={readOnly || isActive || !!activatingId}
+                                                className={`text-left p-3 sm:p-4 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
+                                                    : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                        : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50 cursor-pointer hover:shadow-sm'
+                                                    }`}
+                                            >
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex flex-wrap items-center gap-1 sm:gap-2 mb-1">
+                                                            <span className={`text-xs sm:text-sm font-semibold ${isActive ? 'text-indigo-900' : 'text-gray-800'}`}>{m.display_name}</span>
+                                                            {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Default</span>}
+                                                            {/* Deployment Type Badge */}
+                                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${isLocal ? 'bg-orange-100 text-orange-700' : 'bg-sky-100 text-sky-700'}`}>
+                                                                {isLocal ? 'Local' : 'Cloud'}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-[10px] sm:text-xs text-gray-500 truncate">{m.provider_name} • {m.model_id}</p>
+                                                        <p className="text-[10px] text-gray-400 mt-1">{m.dimensions}d{m.max_input_tokens ? ` • Max ${m.max_input_tokens}` : ''}</p>
+                                                    </div>
+                                                    {!isLoading && !isActive && !readOnly && <span className="text-[10px] sm:text-xs text-indigo-500 font-medium flex-shrink-0">Select →</span>}
                                                 </div>
-                                                <p className="text-[10px] sm:text-xs text-gray-500 truncate">{m.provider} • {m.model_name}</p>
-                                                <p className="text-[10px] text-gray-400 mt-1">{m.dimensions}d • Max {m.max_tokens}</p>
-                                            </div>
-                                            {!isLoading && !isActive && !readOnly && <span className="text-[10px] sm:text-xs text-indigo-500 font-medium flex-shrink-0">Select →</span>}
-                                        </div>
-                                    </button>
-                                );
-                            })}
+                                            </button>
+                                        );
+                                    })}
 
-                            {/* Add Custom Embedded Model Button */}
-                            {!readOnly && (
-                                <button
-                                    type="button"
-                                    onClick={() => setShowRegisterEmbedding(!showRegisterEmbedding)}
-                                    className="border-2 border-dashed border-gray-300 rounded-lg p-3 sm:p-4 flex flex-col items-center justify-center text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-colors"
-                                >
-                                    <svg className="w-5 h-5 sm:w-6 sm:h-6 mb-1 sm:mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                                    <span className="text-xs sm:text-sm font-medium">Register Custom Model</span>
-                                </button>
+                                    {/* Link to AI Registry */}
+                                    {!readOnly && (
+                                        <button
+                                            type="button"
+                                            onClick={() => window.open('/ai-registry', '_blank')}
+                                            className="mt-2 inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-800 font-medium"
+                                        >
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                                            Add new model in AI Registry
+                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                        </button>
+                                    )}
+                                </div>
                             )}
-                        </div>
-                    )}
-
-                    {/* Registration Form */}
-                    {showRegisterEmbedding && !readOnly && (
-                        <div className="mt-4 p-3 sm:p-4 bg-gray-50 rounded-lg border border-gray-200">
-                            <h4 className="text-xs sm:text-sm font-medium text-gray-900 mb-3">Register New Embedding Model</h4>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4">
-                                <div>
-                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Provider</label>
-                                    <select value={newModelForm.provider} onChange={e => setNewModelForm({ ...newModelForm, provider: e.target.value })} className="w-full text-xs sm:text-sm border-gray-300 rounded-md p-1.5 border">
-                                        <option value="huggingface">HuggingFace</option>
-                                        <option value="openai">OpenAI</option>
-                                        <option value="sentence-transformers">Sentence Transformers</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Display Name</label>
-                                    <input type="text" placeholder="e.g. My Custom BGE" value={newModelForm.display_name} onChange={e => setNewModelForm({ ...newModelForm, display_name: e.target.value })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
-                                </div>
-                                <div className="sm:col-span-2">
-                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Model ID / Name</label>
-                                    <input type="text" placeholder="e.g. BAAI/bge-large-en-v1.5" value={newModelForm.model_name} onChange={e => setNewModelForm({ ...newModelForm, model_name: e.target.value })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Dimensions</label>
-                                    <input type="number" value={newModelForm.dimensions} onChange={e => setNewModelForm({ ...newModelForm, dimensions: parseInt(e.target.value) })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] sm:text-xs font-medium text-gray-700 mb-1">Max Tokens</label>
-                                    <input type="number" value={newModelForm.max_tokens} onChange={e => setNewModelForm({ ...newModelForm, max_tokens: parseInt(e.target.value) })} className="w-full text-xs sm:text-sm rounded-md p-1.5 border border-gray-300" />
-                                </div>
-                            </div>
-                            <div className="flex justify-end gap-2">
-                                <button type="button" onClick={() => setShowRegisterEmbedding(false)} className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 font-medium">Cancel</button>
-                                <button type="button" onClick={() => handleRegisterModel('embedding')} disabled={!newModelForm.model_name || !newModelForm.display_name} className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded hover:bg-indigo-700 font-medium disabled:opacity-50">Register</button>
-                            </div>
-                        </div>
-                    )}
                         </div>
                     )}
                 </div>
@@ -546,10 +455,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                 </span>
                             )}
                         </div>
-                        <svg 
-                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('llm') ? 'rotate-180' : ''}`} 
-                            fill="none" 
-                            stroke="currentColor" 
+                        <svg
+                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('llm') ? 'rotate-180' : ''}`}
+                            fill="none"
+                            stroke="currentColor"
                             viewBox="0 0 24 24"
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -559,149 +468,127 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                     {/* Accordion Content */}
                     {isSectionOpen('llm') && (
                         <div className="p-6 border-t border-gray-100">
-                    {loadingModels ? (
-                        <div className="text-sm text-gray-400 flex items-center gap-2 p-3">
-                            <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                            Loading LLM models...
-                        </div>
-                    ) : modelError || llmModels.length === 0 ? (
-                        <p className="text-sm text-gray-500">LLM model registry unavailable. Configure via backend settings.</p>
-                    ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {/* Block 1: Model Selection & Registration */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Select LLM Model</label>
-                                <div className="space-y-2 mb-4">
-                                    {llmModels.map(m => {
-                                        const isActive = m.is_active === 1;
-                                        const isCompatible = compatibleLLMs.some(c => c.id === m.id);
-                                        const isLoading = activatingId === m.id;
-                                        return (
-                                            <button
-                                                key={m.id}
-                                                type="button"
-                                                onClick={() => handleLLMSelect(m.id)}
-                                                disabled={readOnly || isActive || !!activatingId}
-                                                className={`w-full text-left p-3 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-200 shadow-sm'
-                                                    : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
-                                                        : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/50 cursor-pointer hover:shadow-sm'
-                                                    }`}
-                                            >
-                                                <div className="flex items-center justify-between">
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex items-center gap-2">
-                                                            <span className={`text-sm font-semibold ${isActive ? 'text-purple-900' : 'text-gray-800'}`}>{m.display_name}</span>
-                                                            {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Active</span>}
-                                                            {isCompatible && !isActive && <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                                                            {!isCompatible && !isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-red-50 text-red-600">Incompatible</span>}
+                            {loadingModels ? (
+                                <div className="text-sm text-gray-400 flex items-center gap-2 p-3">
+                                    <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                    Loading LLM models...
+                                </div>
+                            ) : modelError || llmModels.length === 0 ? (
+                                <p className="text-sm text-gray-500">LLM model registry unavailable. Configure via backend settings.</p>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    {/* Block 1: Model Selection & Registration */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Select LLM Model</label>
+                                        <div className="space-y-2 mb-4">
+                                            {llmModels.map(m => {
+                                                const isActive = m.is_default;
+                                                const isCompatible = compatibleLLMs.some(c => c.id === m.id);
+                                                const isLoading = activatingId === m.id;
+                                                const isLocal = m.deployment_type === 'local';
+                                                return (
+                                                    <button
+                                                        key={m.id}
+                                                        type="button"
+                                                        onClick={() => handleLLMSelect(m.id)}
+                                                        disabled={readOnly || isActive || !!activatingId}
+                                                        className={`w-full text-left p-3 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-200 shadow-sm'
+                                                            : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                                : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/50 cursor-pointer hover:shadow-sm'
+                                                            }`}
+                                                    >
+                                                        <div className="flex items-center justify-between">
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                                                                    <span className={`text-sm font-semibold ${isActive ? 'text-purple-900' : 'text-gray-800'}`}>{m.display_name}</span>
+                                                                    {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Default</span>}
+                                                                    {isCompatible && !isActive && <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                                                                    {!isCompatible && !isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-600">Incompatible</span>}
+                                                                    {/* Deployment Type Badge */}
+                                                                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${isLocal ? 'bg-orange-100 text-orange-700' : 'bg-sky-100 text-sky-700'}`}>
+                                                                        {isLocal ? 'Local' : 'Cloud'}
+                                                                    </span>
+                                                                </div>
+                                                                <p className="text-xs text-gray-500 mt-0.5">{m.provider_name} • {m.model_id}</p>
+                                                            </div>
+                                                            {!isLoading && !isActive && !readOnly && <span className="text-xs text-purple-500 font-medium ml-2 flex-shrink-0">Select →</span>}
                                                         </div>
-                                                        <p className="text-xs text-gray-500 mt-0.5">{m.provider} • {m.model_name}</p>
-                                                    </div>
-                                                    {!isLoading && !isActive && !readOnly && <span className="text-xs text-purple-500 font-medium ml-2 flex-shrink-0">Select →</span>}
+                                                    </button>
+                                                );
+                                            })}
+
+                                            {/* Link to AI Registry */}
+                                            {!readOnly && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => window.open('/ai-registry', '_blank')}
+                                                    className="mt-2 w-full inline-flex items-center justify-center gap-1 text-xs text-purple-600 hover:text-purple-800 font-medium py-2"
+                                                >
+                                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                                                    Add new model in AI Registry
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Block 2: Hyperparameters & Compatibility */}
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">Hyperparameters (Active LLM)</label>
+                                        <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 space-y-4 mb-6">
+                                            <div>
+                                                <div className="flex justify-between items-center mb-1">
+                                                    <label className="block text-xs font-medium text-gray-700">Temperature</label>
+                                                    <span className="text-xs text-gray-500 font-mono">{localSettings.llm.temperature.toFixed(1)}</span>
                                                 </div>
-                                            </button>
-                                        );
-                                    })}
-
-                                    {!readOnly && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowRegisterLLM(!showRegisterLLM)}
-                                            className="w-full border-2 border-dashed border-gray-300 rounded-lg p-3 flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:border-gray-400 hover:text-gray-700 transition-colors"
-                                        >
-                                            <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                                            <span className="text-sm font-medium">Register Custom LLM</span>
-                                        </button>
-                                    )}
-                                </div>
-
-                                {/* Registration Form */}
-                                {showRegisterLLM && !readOnly && (
-                                    <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                                        <h4 className="text-sm font-medium text-gray-900 mb-3">Register Custom LLM Model</h4>
-                                        <div className="grid grid-cols-2 gap-4 mb-4">
-                                            <div>
-                                                <label className="block text-xs font-medium text-gray-700 mb-1">Provider</label>
-                                                <select value={newModelForm.provider} onChange={e => setNewModelForm({ ...newModelForm, provider: e.target.value })} className="w-full text-sm border-gray-300 rounded-md p-1.5 border">
-                                                    <option value="openai">OpenAI</option>
-                                                    <option value="anthropic">Anthropic</option>
-                                                    <option value="ollama">Ollama</option>
-                                                </select>
+                                                <input
+                                                    type="range"
+                                                    min="0"
+                                                    max="2"
+                                                    step="0.1"
+                                                    value={localSettings.llm.temperature}
+                                                    onChange={(e) => handleChange('llm', 'temperature', parseFloat(e.target.value))}
+                                                    disabled={readOnly}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
+                                                />
+                                                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                                                    <span>Precise</span>
+                                                    <span>Creative</span>
+                                                </div>
                                             </div>
                                             <div>
-                                                <label className="block text-xs font-medium text-gray-700 mb-1">Display Name</label>
-                                                <input type="text" placeholder="e.g. My Llama 3" value={newModelForm.display_name} onChange={e => setNewModelForm({ ...newModelForm, display_name: e.target.value })} className="w-full text-sm rounded-md p-1.5 border border-gray-300" />
-                                            </div>
-                                            <div className="col-span-2">
-                                                <label className="block text-xs font-medium text-gray-700 mb-1">Model Name</label>
-                                                <input type="text" placeholder="e.g. llama3.1:latest" value={newModelForm.model_name} onChange={e => setNewModelForm({ ...newModelForm, model_name: e.target.value })} className="w-full text-sm rounded-md p-1.5 border border-gray-300" />
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">Max Output Tokens</label>
+                                                <input
+                                                    type="number"
+                                                    min="1"
+                                                    value={localSettings.llm.maxTokens}
+                                                    onChange={(e) => handleChange('llm', 'maxTokens', parseInt(e.target.value))}
+                                                    disabled={readOnly}
+                                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-xs p-1.5 border"
+                                                />
                                             </div>
                                         </div>
-                                        <div className="flex justify-end gap-2">
-                                            <button type="button" onClick={() => setShowRegisterLLM(false)} className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-900 font-medium">Cancel</button>
-                                            <button type="button" onClick={() => handleRegisterModel('llm')} disabled={!newModelForm.model_name || !newModelForm.display_name} className="px-3 py-1.5 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 font-medium disabled:opacity-50">Register Model</button>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
 
-                            {/* Block 2: Hyperparameters & Compatibility */}
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Hyperparameters (Active LLM)</label>
-                                <div className="bg-gray-50 p-4 rounded-lg border border-gray-200 space-y-4 mb-6">
-                                    <div>
-                                        <div className="flex justify-between items-center mb-1">
-                                            <label className="block text-xs font-medium text-gray-700">Temperature</label>
-                                            <span className="text-xs text-gray-500 font-mono">{localSettings.llm.temperature.toFixed(1)}</span>
-                                        </div>
-                                        <input
-                                            type="range"
-                                            min="0"
-                                            max="2"
-                                            step="0.1"
-                                            value={localSettings.llm.temperature}
-                                            onChange={(e) => handleChange('llm', 'temperature', parseFloat(e.target.value))}
-                                            disabled={readOnly}
-                                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-purple-600"
-                                        />
-                                        <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-                                            <span>Precise</span>
-                                            <span>Creative</span>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-medium text-gray-700 mb-1">Max Output Tokens</label>
-                                        <input
-                                            type="number"
-                                            min="1"
-                                            value={localSettings.llm.maxTokens}
-                                            onChange={(e) => handleChange('llm', 'maxTokens', parseInt(e.target.value))}
-                                            disabled={readOnly}
-                                            className="w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-xs p-1.5 border"
-                                        />
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Compatible with {activeEmbedding?.display_name || 'Active Embedding'}
+                                        </label>
+                                        {compatibleLLMs.length === 0 ? (
+                                            <div className="p-3 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg text-center">
+                                                No compatibility data available
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-1">
+                                                {compatibleLLMs.map(m => (
+                                                    <div key={m.id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-50 border border-emerald-200">
+                                                        <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                                        <span className="text-sm text-emerald-800 font-medium">{m.display_name}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-
-                                <label className="block text-sm font-medium text-gray-700 mb-2">
-                                    Compatible with {activeEmbedding?.display_name || 'Active Embedding'}
-                                </label>
-                                {compatibleLLMs.length === 0 ? (
-                                    <div className="p-3 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg text-center">
-                                        No compatibility data available
-                                    </div>
-                                ) : (
-                                    <div className="space-y-1">
-                                        {compatibleLLMs.map(m => (
-                                            <div key={m.id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-50 border border-emerald-200">
-                                                <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                                <span className="text-sm text-emerald-800 font-medium">{m.display_name}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
+                            )}
                         </div>
                     )}
                 </div>
@@ -722,15 +609,15 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                                 </svg>
                             </div>
-                            <h3 className="text-lg font-medium text-gray-900">Chunking Strategy</h3>
+                            <h3 className="text-lg font-medium text-gray-900">Indexing Strategy</h3>
                             <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-blue-100 text-blue-800">
-                                Parent: {localSettings.chunking.parentChunkSize} / Child: {localSettings.chunking.childChunkSize}
+                                Schema-Aware (DDL per table)
                             </span>
                         </div>
-                        <svg 
-                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('chunking') ? 'rotate-180' : ''}`} 
-                            fill="none" 
-                            stroke="currentColor" 
+                        <svg
+                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('chunking') ? 'rotate-180' : ''}`}
+                            fill="none"
+                            stroke="currentColor"
                             viewBox="0 0 24 24"
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -740,83 +627,83 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                     {/* Accordion Content */}
                     {isSectionOpen('chunking') && (
                         <div className="p-6 border-t border-gray-100">
-                    <p className="text-xs text-gray-500 mb-5 leading-relaxed">
-                        Data is split using a small-to-big retrieval strategy. Large <b>Parent Chunks</b> are returned to the LLM for full context, while small <b>Child Chunks</b> are used for precise semantic vector search.
-                    </p>
+                            <p className="text-xs text-gray-500 mb-5 leading-relaxed">
+                                Data is split using a small-to-big retrieval strategy. Large <b>Parent Chunks</b> are returned to the LLM for full context, while small <b>Child Chunks</b> are used for precise semantic vector search.
+                            </p>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Parent Splitter */}
-                        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                            <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
-                                Parent Document Splitter
-                                <span className="ml-2 text-[10px] font-normal px-2 py-0.5 bg-gray-200 text-gray-600 rounded-full">Sent to LLM</span>
-                            </h4>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Chunk Size</label>
-                                    <input
-                                        type="number"
-                                        value={localSettings.chunking.parentChunkSize}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-                                            if (!isNaN(val)) handleChange('chunking', 'parentChunkSize', val);
-                                        }}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                                    />
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Parent Splitter */}
+                                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                    <h4 className="text-sm font-semibold text-gray-800 mb-3 flex items-center">
+                                        Parent Document Splitter
+                                        <span className="ml-2 text-[10px] font-normal px-2 py-0.5 bg-gray-200 text-gray-600 rounded-full">Sent to LLM</span>
+                                    </h4>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-700 mb-1">Chunk Size</label>
+                                            <input
+                                                type="number"
+                                                value={localSettings.chunking.parentChunkSize}
+                                                onChange={(e) => {
+                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    if (!isNaN(val)) handleChange('chunking', 'parentChunkSize', val);
+                                                }}
+                                                disabled={readOnly}
+                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-700 mb-1">Overlap</label>
+                                            <input
+                                                type="number"
+                                                value={localSettings.chunking.parentChunkOverlap}
+                                                onChange={(e) => {
+                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    if (!isNaN(val)) handleChange('chunking', 'parentChunkOverlap', val);
+                                                }}
+                                                disabled={readOnly}
+                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Overlap</label>
-                                    <input
-                                        type="number"
-                                        value={localSettings.chunking.parentChunkOverlap}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-                                            if (!isNaN(val)) handleChange('chunking', 'parentChunkOverlap', val);
-                                        }}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
-                                    />
+
+                                {/* Child Splitter */}
+                                <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                    <h4 className="text-sm font-semibold text-blue-900 mb-3 flex items-center">
+                                        Child Chunk Splitter
+                                        <span className="ml-2 text-[10px] font-normal px-2 py-0.5 bg-blue-200 text-blue-800 rounded-full">Embedded</span>
+                                    </h4>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-700 mb-1">Chunk Size</label>
+                                            <input
+                                                type="number"
+                                                value={localSettings.chunking.childChunkSize}
+                                                onChange={(e) => {
+                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    if (!isNaN(val)) handleChange('chunking', 'childChunkSize', val);
+                                                }}
+                                                disabled={readOnly}
+                                                className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border bg-white"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-gray-700 mb-1">Overlap</label>
+                                            <input
+                                                type="number"
+                                                value={localSettings.chunking.childChunkOverlap}
+                                                onChange={(e) => {
+                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    if (!isNaN(val)) handleChange('chunking', 'childChunkOverlap', val);
+                                                }}
+                                                disabled={readOnly}
+                                                className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border bg-white"
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Child Splitter */}
-                        <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-                            <h4 className="text-sm font-semibold text-blue-900 mb-3 flex items-center">
-                                Child Chunk Splitter
-                                <span className="ml-2 text-[10px] font-normal px-2 py-0.5 bg-blue-200 text-blue-800 rounded-full">Embedded</span>
-                            </h4>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Chunk Size</label>
-                                    <input
-                                        type="number"
-                                        value={localSettings.chunking.childChunkSize}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-                                            if (!isNaN(val)) handleChange('chunking', 'childChunkSize', val);
-                                        }}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border bg-white"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Overlap</label>
-                                    <input
-                                        type="number"
-                                        value={localSettings.chunking.childChunkOverlap}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
-                                            if (!isNaN(val)) handleChange('chunking', 'childChunkOverlap', val);
-                                        }}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border bg-white"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                         </div>
                     )}
                 </div>
@@ -847,10 +734,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                 </span>
                             )}
                         </div>
-                        <svg 
-                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('retrieval') ? 'rotate-180' : ''}`} 
-                            fill="none" 
-                            stroke="currentColor" 
+                        <svg
+                            className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('retrieval') ? 'rotate-180' : ''}`}
+                            fill="none"
+                            stroke="currentColor"
                             viewBox="0 0 24 24"
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -860,91 +747,133 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                     {/* Accordion Content */}
                     {isSectionOpen('retrieval') && (
                         <div className="p-6 border-t border-gray-100">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                        {/* Block 1: Multi-stage retrieval stats */}
-                        <div className="space-y-6">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Top K (Initial)</label>
-                                    <input
-                                        type="number"
-                                        value={localSettings.retriever.topKInitial}
-                                        onChange={(e) => handleChange('retriever', 'topKInitial', parseInt(e.target.value))}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
-                                    />
-                                    <p className="mt-1 text-xs text-gray-500 leading-tight">Candidates fetched from vector base before reranking</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                {/* Block 1: Multi-stage retrieval stats */}
+                                <div className="space-y-6">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Top K (Initial)</label>
+                                            <input
+                                                type="number"
+                                                value={localSettings.retriever.topKInitial}
+                                                onChange={(e) => handleChange('retriever', 'topKInitial', parseInt(e.target.value))}
+                                                disabled={readOnly}
+                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
+                                            />
+                                            <p className="mt-1 text-xs text-gray-500 leading-tight">Candidates fetched from vector base before reranking</p>
+                                        </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Top K (Final)</label>
+                                            <input
+                                                type="number"
+                                                value={localSettings.retriever.topKFinal}
+                                                onChange={(e) => handleChange('retriever', 'topKFinal', parseInt(e.target.value))}
+                                                disabled={readOnly}
+                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
+                                            />
+                                            <p className="mt-1 text-xs text-gray-500 leading-tight">Final results sent to LLM context window</p>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-3">Hybrid Search Weights</label>
+                                        <div className="flex items-center gap-4 px-2">
+                                            <input
+                                                type="range"
+                                                min="0"
+                                                max="1"
+                                                step="0.05"
+                                                value={localSettings.retriever.hybridWeights[0]}
+                                                onChange={(e) => {
+                                                    const val = parseFloat(e.target.value);
+                                                    handleChange('retriever', 'hybridWeights', [val, parseFloat((1 - val).toFixed(2))]);
+                                                }}
+                                                disabled={readOnly}
+                                                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+                                            />
+                                        </div>
+                                        <div className="flex justify-between text-xs text-gray-600 mt-2 px-2 font-medium">
+                                            <span>Dense (Vector): {Math.round(localSettings.retriever.hybridWeights[0] * 100)}%</span>
+                                            <span>Sparse (BM25): {Math.round(localSettings.retriever.hybridWeights[1] * 100)}%</span>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">Top K (Final)</label>
-                                    <input
-                                        type="number"
-                                        value={localSettings.retriever.topKFinal}
-                                        onChange={(e) => handleChange('retriever', 'topKFinal', parseInt(e.target.value))}
-                                        disabled={readOnly}
-                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
-                                    />
-                                    <p className="mt-1 text-xs text-gray-500 leading-tight">Final results sent to LLM context window</p>
+
+                                {/* Block 2: Cross-Encoder Reranker */}
+                                <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                    <div className="flex items-center justify-between mb-4">
+                                        <h4 className="text-sm font-semibold text-gray-800">Cross-Encoder Reranking</h4>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                className="sr-only peer"
+                                                checked={localSettings.retriever.rerankEnabled}
+                                                onChange={(e) => handleChange('retriever', 'rerankEnabled', e.target.checked)}
+                                                disabled={readOnly}
+                                            />
+                                            <div className="w-9 h-5 bg-gray-300 hover:bg-gray-400 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                                        </label>
+                                    </div>
+
+                                    <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+                                        Reranking dramatically improves accuracy by using a lightweight cross-encoder to re-score the initial retrieval candidates before passing them to the generative LLM.
+                                    </p>
+
+                                    <div className={`transition-opacity duration-200 ${localSettings.retriever.rerankEnabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                                        {/* AI Registry Reranker Selector */}
+                                        {aiRegistry.rerankerModels.length > 0 ? (
+                                            <AIModelSelector
+                                                modelType="reranker"
+                                                models={aiRegistry.rerankerModels}
+                                                selectedModelId={localSettings.retriever.rerankerModel || null}
+                                                onSelect={(modelId) => {
+                                                    // Look up the model to get the database ID
+                                                    const model = aiRegistry.rerankerModels.find(m => m.model_id === modelId);
+                                                    const newSettings = {
+                                                        ...localSettings,
+                                                        retriever: {
+                                                            ...localSettings.retriever,
+                                                            rerankerModel: modelId,
+                                                        },
+                                                        rerankerModelId: model?.id,  // Store at top level
+                                                    };
+                                                    setLocalSettings(newSettings);
+                                                    onChange(newSettings);
+                                                }}
+                                                disabled={readOnly || !localSettings.retriever.rerankEnabled}
+                                                isLoading={aiRegistry.isLoading}
+                                                label="Reranker Model"
+                                                compact={true}
+                                            />
+                                        ) : (
+                                            <>
+                                                <label className="block text-xs font-medium text-gray-700 mb-1">Reranker Model</label>
+                                                <input
+                                                    type="text"
+                                                    value={localSettings.retriever.rerankerModel}
+                                                    onChange={(e) => handleChange('retriever', 'rerankerModel', e.target.value)}
+                                                    disabled={readOnly || !localSettings.retriever.rerankEnabled}
+                                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
+                                                />
+                                                <p className="mt-1 text-[10px] text-gray-400">HuggingFace Model ID (e.g. BAAI/bge-reranker-base)</p>
+                                            </>
+                                        )}
+
+                                        {/* Link to AI Registry */}
+                                        {!readOnly && (
+                                            <button
+                                                type="button"
+                                                onClick={() => window.open('/ai-registry', '_blank')}
+                                                className="mt-3 inline-flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+                                            >
+                                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                                                Add new model in AI Registry
+                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-3">Hybrid Search Weights</label>
-                                <div className="flex items-center gap-4 px-2">
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={localSettings.retriever.hybridWeights[0]}
-                                        onChange={(e) => {
-                                            const val = parseFloat(e.target.value);
-                                            handleChange('retriever', 'hybridWeights', [val, parseFloat((1 - val).toFixed(2))]);
-                                        }}
-                                        disabled={readOnly}
-                                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
-                                    />
-                                </div>
-                                <div className="flex justify-between text-xs text-gray-600 mt-2 px-2 font-medium">
-                                    <span>Dense (Vector): {Math.round(localSettings.retriever.hybridWeights[0] * 100)}%</span>
-                                    <span>Sparse (BM25): {Math.round(localSettings.retriever.hybridWeights[1] * 100)}%</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Block 2: Cross-Encoder Reranker */}
-                        <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                            <div className="flex items-center justify-between mb-4">
-                                <h4 className="text-sm font-semibold text-gray-800">Cross-Encoder Reranking</h4>
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                    <input
-                                        type="checkbox"
-                                        className="sr-only peer"
-                                        checked={localSettings.retriever.rerankEnabled}
-                                        onChange={(e) => handleChange('retriever', 'rerankEnabled', e.target.checked)}
-                                        disabled={readOnly}
-                                    />
-                                    <div className="w-9 h-5 bg-gray-300 hover:bg-gray-400 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
-                                </label>
-                            </div>
-
-                            <p className="text-xs text-gray-500 mb-4 leading-relaxed">
-                                Reranking dramatically improves accuracy by using a lightweight cross-encoder to re-score the initial retrieval candidates before passing them to the generative LLM.
-                            </p>
-
-                            <div className={`transition-opacity duration-200 ${localSettings.retriever.rerankEnabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                                <label className="block text-xs font-medium text-gray-700 mb-1">Reranker Model</label>
-                                <input
-                                    type="text"
-                                    value={localSettings.retriever.rerankerModel}
-                                    onChange={(e) => handleChange('retriever', 'rerankerModel', e.target.value)}
-                                    disabled={readOnly || !localSettings.retriever.rerankEnabled}
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
-                                />
-                                <p className="mt-1 text-[10px] text-gray-400">HuggingFace Model ID (e.g. BAAI/bge-reranker-base)</p>
-                            </div>
-                        </div>
-                    </div>
                         </div>
                     )}
                 </div>

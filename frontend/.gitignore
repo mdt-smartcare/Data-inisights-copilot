@@ -33,3 +33,7 @@ coverage/
 
 # Vite cache
 .vite/
+
+# Lock files
+package-lock.json
+yarn.lock

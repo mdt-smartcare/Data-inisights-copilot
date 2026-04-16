@@ -1,6 +1,6 @@
-# FHIR RAG Frontend
+# Data Insights Copilot Frontend
 
-A modern React + TypeScript frontend for the FHIR RAG (Retrieval-Augmented Generation) application.
+A modern React + TypeScript frontend for the Data Insights Copilot application.
 
 ## 🚀 Tech Stack
 

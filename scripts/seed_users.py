@@ -13,7 +13,7 @@ import warnings
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from backend.sqliteDb.db import get_db_service
+from backend.database.db import get_db_service
 
 def seed_users():
     warnings.warn(

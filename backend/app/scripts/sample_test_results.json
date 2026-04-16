@@ -1,0 +1,124 @@
+{
+  "timestamp": "2026-04-09T10:00:00",
+  "total_tests": 12,
+  "passed": 5,
+  "failed": 4,
+  "errors": 3,
+  "skipped": 0,
+  "pass_rate": 41.7,
+  "results": [
+    {
+      "test_id": "test_001",
+      "question": "Show first record per patient",
+      "status": "error",
+      "generated_sql": "SELECT * FROM patients WHERE ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY created_at) = 1",
+      "sql_executed": false,
+      "sql_error": "window functions are not allowed in WHERE clause",
+      "tags": ["window", "basic"]
+    },
+    {
+      "test_id": "test_002",
+      "question": "Find patients with above average visits",
+      "status": "error",
+      "generated_sql": "SELECT * FROM patients WHERE COUNT(*) > (SELECT AVG(cnt) FROM visits)",
+      "sql_executed": false,
+      "sql_error": "aggregate functions are not allowed in WHERE clause",
+      "tags": ["aggregate", "subquery"]
+    },
+    {
+      "test_id": "test_003",
+      "question": "Calculate days between dates",
+      "status": "error",
+      "generated_sql": "SELECT DATEDIFF(admission_date, discharge_date) FROM admissions",
+      "sql_executed": false,
+      "sql_error": "DATEDIFF expected 3 arguments but got 2",
+      "tags": ["date", "duckdb"]
+    },
+    {
+      "test_id": "test_004",
+      "question": "Find records from last 90 days",
+      "status": "failed",
+      "generated_sql": "SELECT * FROM records WHERE created_at > DATE_SUB(CURRENT_DATE, 90)",
+      "sql_executed": false,
+      "sql_error": "function date_sub does not exist",
+      "tags": ["date", "temporal"]
+    },
+    {
+      "test_id": "test_005",
+      "question": "Get latest record per patient",
+      "status": "error",
+      "generated_sql": "SELECT * FROM records WHERE RANK() OVER (PARTITION BY patient_id ORDER BY date DESC) = 1",
+      "sql_executed": false,
+      "sql_error": "window function in WHERE clause cannot be used",
+      "tags": ["window", "ranking"]
+    },
+    {
+      "test_id": "test_006",
+      "question": "Count by month",
+      "status": "failed",
+      "generated_sql": "SELECT MONTH(created_at), COUNT(*) FROM records GROUP BY 1",
+      "sql_executed": false,
+      "sql_error": "function month does not exist",
+      "tags": ["date", "aggregation"]
+    },
+    {
+      "test_id": "test_007",
+      "question": "Find consecutive days with readings",
+      "status": "failed",
+      "generated_sql": "SELECT * FROM readings WHERE date = LAG(date) + 1",
+      "sql_executed": false,
+      "sql_error": "window functions are not allowed in WHERE clause for consecutive detection",
+      "tags": ["streak", "window"]
+    },
+    {
+      "test_id": "test_008",
+      "question": "Show total count",
+      "status": "passed",
+      "generated_sql": "SELECT COUNT(*) FROM records",
+      "sql_executed": true,
+      "result_match": true,
+      "row_count": 1,
+      "tags": ["basic", "count"]
+    },
+    {
+      "test_id": "test_009",
+      "question": "List all patients",
+      "status": "passed",
+      "generated_sql": "SELECT * FROM patients LIMIT 100",
+      "sql_executed": true,
+      "result_match": true,
+      "row_count": 50,
+      "tags": ["basic", "select"]
+    },
+    {
+      "test_id": "test_010",
+      "question": "Average age by category",
+      "status": "passed",
+      "generated_sql": "SELECT category, AVG(age) FROM patients GROUP BY category",
+      "sql_executed": true,
+      "result_match": true,
+      "row_count": 5,
+      "tags": ["aggregation", "groupby"]
+    },
+    {
+      "test_id": "test_011",
+      "question": "Join patients with visits",
+      "status": "passed",
+      "generated_sql": "SELECT p.name, v.visit_date FROM patients p JOIN visits v ON p.id = v.patient_id",
+      "sql_executed": true,
+      "result_match": true,
+      "row_count": 100,
+      "tags": ["join", "basic"]
+    },
+    {
+      "test_id": "test_012",
+      "question": "Filter active records",
+      "status": "passed",
+      "generated_sql": "SELECT * FROM records WHERE is_active = TRUE",
+      "sql_executed": true,
+      "result_match": true,
+      "row_count": 75,
+      "tags": ["filter", "boolean"]
+    }
+  ]
+}

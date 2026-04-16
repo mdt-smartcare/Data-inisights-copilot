@@ -9,7 +9,8 @@ logs/backend.log
 __pycache__/
 /backend/models/sentence-transformers
 /models/bge-m3
-/backend/models
+/backend/models/bge-*
+/backend/models/sentence-transformers
 *.db
 /data/indexes
 /frontend/dev-dist
@@ -17,3 +18,10 @@ __pycache__/
 /data/chroma_db
 backend/embedding_test_output.txt
 /models
+/backend/venv
+copilot_env
+
+# Local output and settings
+.vscode/
+eval/reports/
+/Data Literacy 2.0

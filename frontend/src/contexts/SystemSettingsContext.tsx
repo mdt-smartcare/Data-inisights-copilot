@@ -1,21 +1,22 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
-import { getSystemSettings } from '../services/api';
 import { useAuth } from './AuthContext';
 
 /**
  * Advanced settings structure that matches the backend system settings.
  * All values come from the Settings page - nothing is hardcoded.
+ * 
+ * Note: Model IDs (embeddingModelId, llmModelId, rerankerModelId) are sent
+ * at the top level of the API request, not inside these config objects.
  */
 export interface AdvancedSettings {
     embedding: {
-        model: string;
-        vectorDbName?: string;
+        model: string;  // model_id string like "huggingface/BAAI/bge-m3"
     };
     llm: {
         temperature: number;
         maxTokens: number;
-        model?: string;
+        model?: string;  // model_id string like "openai/gpt-4o"
     };
     chunking: {
         parentChunkSize: number;
@@ -28,8 +29,12 @@ export interface AdvancedSettings {
         topKFinal: number;
         hybridWeights: [number, number];
         rerankEnabled: boolean;
-        rerankerModel: string;
+        rerankerModel: string;  // model_id string like "huggingface/BAAI/bge-reranker-v2-m3"
     };
+    // AI Registry model IDs (foreign keys to ai_models.id) - sent at request top level
+    embeddingModelId?: number;
+    llmModelId?: number;
+    rerankerModelId?: number;
 }
 
 /**
@@ -54,6 +59,7 @@ interface SystemSettingsContextType {
     
     // Actions
     refreshSettings: () => Promise<void>;
+    ensureLoaded: () => Promise<void>;
     
     // Helper to get settings for embedding modal
     getEmbeddingModalDefaults: () => {
@@ -108,92 +114,21 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     const { isAuthenticated, isLoading: authLoading } = useAuth();
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(FALLBACK_SETTINGS);
     const [embeddingJobSettings, setEmbeddingJobSettings] = useState<EmbeddingJobSettings>(FALLBACK_EMBEDDING_JOB_SETTINGS);
-    const [isLoading, setIsLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState(false);  // Start as false, set true when loading
     const [isLoaded, setIsLoaded] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
+    // Note: Old /api/v1/settings/* endpoints no longer exist in backend
+    // Settings now use fallback defaults. In the future, these could come from
+    // the AI Models API (/api/v1/ai-models/defaults) or agent configs.
     const refreshSettings = useCallback(async () => {
         setIsLoading(true);
         setError(null);
         
         try {
-            // Fetch all settings categories in parallel
-            const [embSettings, ragSettings, llmSettings, chunkingSettings] = await Promise.all([
-                getSystemSettings('embedding').catch(() => null),
-                getSystemSettings('rag').catch(() => null),
-                getSystemSettings('llm').catch(() => null),
-                getSystemSettings('chunking').catch(() => null)  // Separate chunking category
-            ]);
-
-            setAdvancedSettings(prev => {
-                const next = { ...prev };
-                
-                // Embedding settings
-                if (embSettings) {
-                    if (embSettings.model_name) {
-                        next.embedding = { ...next.embedding, model: embSettings.model_name };
-                    }
-                    // Embedding job settings
-                    if (embSettings.batch_size) {
-                        setEmbeddingJobSettings(ejs => ({ ...ejs, batchSize: embSettings.batch_size }));
-                    }
-                    if (embSettings.max_concurrent) {
-                        setEmbeddingJobSettings(ejs => ({ ...ejs, maxConcurrent: embSettings.max_concurrent }));
-                    }
-                }
-                
-                // Chunking settings (from dedicated chunking category)
-                if (chunkingSettings) {
-                    if (chunkingSettings.parent_chunk_size !== undefined) {
-                        next.chunking = { ...next.chunking, parentChunkSize: chunkingSettings.parent_chunk_size };
-                    }
-                    if (chunkingSettings.parent_chunk_overlap !== undefined) {
-                        next.chunking = { ...next.chunking, parentChunkOverlap: chunkingSettings.parent_chunk_overlap };
-                    }
-                    if (chunkingSettings.child_chunk_size !== undefined) {
-                        next.chunking = { ...next.chunking, childChunkSize: chunkingSettings.child_chunk_size };
-                    }
-                    if (chunkingSettings.child_chunk_overlap !== undefined) {
-                        next.chunking = { ...next.chunking, childChunkOverlap: chunkingSettings.child_chunk_overlap };
-                    }
-                }
-                
-                // RAG settings (retriever only - chunking moved to separate category)
-                if (ragSettings) {
-                    // Retriever
-                    if (ragSettings.top_k_initial !== undefined) {
-                        next.retriever = { ...next.retriever, topKInitial: ragSettings.top_k_initial };
-                    }
-                    if (ragSettings.top_k_final !== undefined) {
-                        next.retriever = { ...next.retriever, topKFinal: ragSettings.top_k_final };
-                    }
-                    if (ragSettings.hybrid_weights) {
-                        next.retriever = { ...next.retriever, hybridWeights: ragSettings.hybrid_weights };
-                    }
-                    if (ragSettings.rerank_enabled !== undefined) {
-                        next.retriever = { ...next.retriever, rerankEnabled: ragSettings.rerank_enabled };
-                    }
-                    if (ragSettings.reranker_model) {
-                        next.retriever = { ...next.retriever, rerankerModel: ragSettings.reranker_model };
-                    }
-                }
-                
-                // LLM settings
-                if (llmSettings) {
-                    if (llmSettings.temperature !== undefined) {
-                        next.llm = { ...next.llm, temperature: llmSettings.temperature };
-                    }
-                    if (llmSettings.max_tokens !== undefined) {
-                        next.llm = { ...next.llm, maxTokens: llmSettings.max_tokens };
-                    }
-                    if (llmSettings.model_name) {
-                        next.llm = { ...next.llm, model: llmSettings.model_name };
-                    }
-                }
-                
-                return next;
-            });
-            
+            // Use fallback settings - old backend endpoints removed
+            setAdvancedSettings(FALLBACK_SETTINGS);
+            setEmbeddingJobSettings(FALLBACK_EMBEDDING_JOB_SETTINGS);
             setIsLoaded(true);
         } catch (err) {
             console.error('Failed to load system settings:', err);
@@ -203,15 +138,21 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         }
     }, []);
 
-    // Load settings only when authenticated
+    // Lazy loading - don't auto-load on auth
+    // Settings are loaded on-demand when ensureLoaded() is called
     useEffect(() => {
-        if (!authLoading && isAuthenticated) {
-            refreshSettings();
-        } else if (!authLoading && !isAuthenticated) {
+        if (!authLoading && !isAuthenticated) {
             // Not authenticated - use fallback settings, stop loading
             setIsLoading(false);
         }
-    }, [refreshSettings, isAuthenticated, authLoading]);
+    }, [authLoading, isAuthenticated]);
+
+    // Ensure settings are loaded (call this before accessing settings)
+    const ensureLoaded = useCallback(async () => {
+        if (!isLoaded && !isLoading && isAuthenticated) {
+            await refreshSettings();
+        }
+    }, [isLoaded, isLoading, isAuthenticated, refreshSettings]);
 
     // Helper to get embedding modal defaults in the expected format
     const getEmbeddingModalDefaults = useCallback(() => {
@@ -241,6 +182,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         isLoaded,
         error,
         refreshSettings,
+        ensureLoaded,
         getEmbeddingModalDefaults,
     };
 

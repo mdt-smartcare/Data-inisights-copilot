@@ -59,6 +59,11 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
         }
     };
 
+    const handleCloseModal = () => {
+        setShowCreateModal(false);
+        setNewAgentData({ name: '', description: '' });
+    };
+
     return (
         <div className="flex flex-col h-full bg-gray-50">
             {/* Header */}
@@ -209,7 +214,7 @@ const AgentsTab: React.FC<AgentsTabProps> = ({ onSelectAgent }) => {
                             <div className="mt-6 flex justify-end gap-3">
                                 <button
                                     type="button"
-                                    onClick={() => setShowCreateModal(false)}
+                                    onClick={handleCloseModal}
                                     className="px-4 py-2 text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
                                 >
                                     Cancel

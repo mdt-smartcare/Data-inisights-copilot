@@ -4,19 +4,47 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import ChartRenderer from './ChartRenderer';
 import { useState } from 'react';
+import { chatService } from '../../services/chatService';
 
 interface AssistantMessageProps {
   message: Message;
   onSuggestedQuestionClick?: (question: string) => void;
   onFeedback?: (messageId: string, rating: 'positive' | 'negative') => void;
+  /** The original user query that prompted this response */
+  userQuery?: string;
 }
 
-export default function AssistantMessage({ message, onSuggestedQuestionClick, onFeedback }: AssistantMessageProps) {
+export default function AssistantMessage({ message, onSuggestedQuestionClick, onFeedback, userQuery }: AssistantMessageProps) {
   const [feedback, setFeedback] = useState<'positive' | 'negative' | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleFeedback = (rating: 'positive' | 'negative') => {
+  const handleFeedback = async (rating: 'positive' | 'negative') => {
+    if (isSubmitting || feedback !== null) return;
+
+    setIsSubmitting(true);
     setFeedback(rating);
+
+    // Call parent callback
     onFeedback?.(message.id, rating);
+
+    // Send feedback to Langfuse via backend API
+    if (message.traceId) {
+      try {
+        await chatService.submitFeedback({
+          trace_id: message.traceId,
+          query: userQuery || message.content,
+          rating: rating === 'positive' ? 1 : -1,
+        });
+        console.log(`Feedback submitted to Langfuse: trace_id=${message.traceId}, rating=${rating}`);
+      } catch (error) {
+        console.error('Failed to submit feedback to Langfuse:', error);
+        // Don't revert UI state - feedback is still shown locally
+      }
+    } else {
+      console.warn('No trace_id available for feedback submission');
+    }
+
+    setIsSubmitting(false);
   };
 
   return (
@@ -92,6 +120,17 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
           {/* Render chart if present */}
           {message.chartData && <ChartRenderer chartData={message.chartData} />}
 
+          {/* Render dashboard grid if present */}
+          {message.dashboards && message.dashboards.length > 0 && (
+            <div className="my-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {message.dashboards.map((chart, idx) => (
+                <div key={idx} className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                  <ChartRenderer chartData={chart} />
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Render SQL query if present */}
           {message.sqlQuery && (
             <div className="my-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
@@ -109,6 +148,38 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
 
           {/* Render sources */}
           {message.sources && <SourceList sources={message.sources} />}
+
+          {/* Render comparison insights */}
+          {message.comparisonInsights && (
+            <div className="my-3 p-3 bg-indigo-50/50 rounded-lg border border-indigo-100">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-semibold text-indigo-900">Cross-Validation Insights</span>
+              </div>
+              <div className="prose prose-sm max-w-none text-gray-800 text-xs">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h1: ({ node, ...props }) => <h1 className="text-sm font-bold mt-2 mb-1" {...props} />,
+                    h2: ({ node, ...props }) => <h2 className="text-xs font-bold mt-2 mb-1" {...props} />,
+                    h3: ({ node, ...props }) => <h3 className="text-xs font-semibold mt-1 mb-1" {...props} />,
+                    p: ({ node, ...props }) => <p className="my-1 leading-relaxed" {...props} />,
+                    ul: ({ node, ...props }) => <ul className="list-disc pl-4 my-1 space-y-0.5" {...props} />,
+                    ol: ({ node, ...props }) => <ol className="list-decimal pl-4 my-1 space-y-0.5" {...props} />,
+                    strong: ({ node, ...props }) => <strong className="font-bold text-gray-900" {...props} />,
+                    table: ({ node, ...props }) => (
+                      <div className="overflow-x-auto my-1">
+                        <table className="min-w-full divide-y divide-gray-200" {...props} />
+                      </div>
+                    ),
+                    th: ({ node, ...props }) => <th className="px-2 py-1 bg-indigo-100/50 font-semibold text-left" {...props} />,
+                    td: ({ node, ...props }) => <td className="px-2 py-1 border-t border-indigo-100/50" {...props} />,
+                  }}
+                >
+                  {message.comparisonInsights}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
 
           {/* Render suggested questions */}
           {message.suggestedQuestions && message.suggestedQuestions.length > 0 && (
@@ -146,7 +217,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => handleFeedback('positive')}
-                disabled={feedback !== null}
+                disabled={feedback !== null || isSubmitting}
                 className={`p-1.5 rounded transition-all ${feedback === 'positive'
                   ? 'bg-green-100 text-green-600'
                   : 'hover:bg-gray-100 text-gray-400 hover:text-green-600'
@@ -159,7 +230,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               </button>
               <button
                 onClick={() => handleFeedback('negative')}
-                disabled={feedback !== null}
+                disabled={feedback !== null || isSubmitting}
                 className={`p-1.5 rounded transition-all ${feedback === 'negative'
                   ? 'bg-red-100 text-red-600'
                   : 'hover:bg-gray-100 text-gray-400 hover:text-red-600'
@@ -172,7 +243,9 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               </button>
             </div>
             {feedback && (
-              <span className="text-[10px] text-gray-500 italic">Thank you for your feedback!</span>
+              <span className="text-[10px] text-gray-500 italic">
+                {isSubmitting ? 'Submitting...' : 'Thank you for your feedback!'}
+              </span>
             )}
           </div>
         </div>

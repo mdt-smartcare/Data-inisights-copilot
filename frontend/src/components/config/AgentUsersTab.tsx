@@ -7,9 +7,10 @@ import { getAgentUsers, assignUserToAgent, revokeUserAccess, handleApiError } fr
 import type { AgentUser, SearchUser } from '../../services/api';
 import { getRoleDisplayName } from '../../utils/permissions';
 import UserSearchInput from './UserSearchInput';
+import { formatDateTime } from '../../utils/datetime';
 
 interface AgentUsersTabProps {
-    agentId: number;
+    agentId: string;
     agentName: string;
 }
 
@@ -35,7 +36,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
         setError(null);
         try {
             const response = await getAgentUsers(agentId);
-            setAgentUsers(response.users);
+            setAgentUsers(response.users || []);
         } catch (err) {
             setError(handleApiError(err));
         } finally {
@@ -106,7 +107,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
     };
 
     // Get IDs of users already assigned to exclude from search
-    const excludeUserIds = agentUsers.map(u => u.id);
+    const excludeUserIds: string[] = agentUsers.map(u => u.id);
 
     return (
         <div className="space-y-6">
@@ -133,7 +134,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
             </div>
 
             {/* Users Table */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
                 <div className="px-6 py-4 border-b border-gray-200">
                     <h3 className="text-lg font-semibold text-gray-900">Assigned Users</h3>
                     <p className="text-sm text-gray-500 mt-1">
@@ -181,7 +182,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="flex items-center">
                                             <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold">
-                                                {(agentUser.full_name || agentUser.username).charAt(0).toUpperCase()}
+                                                {(agentUser.full_name || agentUser.username || agentUser.email || 'U').charAt(0).toUpperCase()}
                                             </div>
                                             <div className="ml-4">
                                                 <div className="text-sm font-medium text-gray-900">{agentUser.full_name || agentUser.username}</div>
@@ -191,10 +192,10 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
-                                            ${agentUser.user_role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
-                                            ${agentUser.user_role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
+                                            ${agentUser.role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
+                                            ${agentUser.role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
                                         `}>
-                                            {getRoleDisplayName(agentUser.user_role)}
+                                            {getRoleDisplayName(agentUser.role)}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
@@ -203,7 +204,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {agentUser.created_at ? new Date(agentUser.created_at).toLocaleDateString() : '-'}
+                                        {agentUser.granted_at ? formatDateTime(agentUser.granted_at) : '-' }
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         {agentUser.username !== user?.username && (

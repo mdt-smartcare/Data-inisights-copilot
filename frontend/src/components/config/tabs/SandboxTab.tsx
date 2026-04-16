@@ -35,7 +35,7 @@ export const SandboxTab: React.FC<SandboxTabProps> = ({
             const response = await chatService.sendMessage({
                 query: content,
                 agent_id: agent.id,
-                session_id: 'sandbox-' + agent.id
+                session_id: 'sandbox-' + String(agent.id)
             });
 
             const aiMsg: Message = {
@@ -46,6 +46,7 @@ export const SandboxTab: React.FC<SandboxTabProps> = ({
                 sources: response.sources,
                 sqlQuery: response.sql_query,
                 chartData: response.chart_data,
+                dashboards: response.dashboards,
                 traceId: response.trace_id,
                 processingTime: response.processing_time
             };
@@ -101,6 +102,7 @@ export const SandboxTab: React.FC<SandboxTabProps> = ({
                     messages={messages}
                     isLoading={isTyping}
                     username={user?.username}
+                    onSuggestedQuestionClick={handleSend}
                     emptyStateProps={{
                         title: `Testing ${agent.name}`,
                         subtitle: 'Type a message to see how the agent responds with its current settings.',
