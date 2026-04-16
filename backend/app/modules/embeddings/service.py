@@ -1549,7 +1549,10 @@ async def _run_embedding_job(job_config: Dict[str, Any]):
                 
                 if data_source:
                     source_type = data_source.source_type
-                    duckdb_path = data_source.duckdb_file_path
+                    # Resolve relative path to absolute path
+                    if data_source.duckdb_file_path:
+                        from app.modules.data_sources.utils import resolve_duckdb_path
+                        duckdb_path = str(resolve_duckdb_path(data_source.duckdb_file_path))
                     duckdb_table_name = data_source.duckdb_table_name
                     db_url = data_source.db_url
         

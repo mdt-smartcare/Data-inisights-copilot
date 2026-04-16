@@ -291,7 +291,9 @@ class DataSourceService:
                 # Try to get schema from DuckDB
                 try:
                     import duckdb
-                    conn = duckdb.connect(source.duckdb_file_path, read_only=True)
+                    from app.modules.data_sources.utils import resolve_duckdb_path
+                    resolved_path = resolve_duckdb_path(source.duckdb_file_path)
+                    conn = duckdb.connect(str(resolved_path), read_only=True)
                     result = conn.execute(f"DESCRIBE {table_name}").fetchall()
                     for row in result:
                         columns.append({
@@ -626,7 +628,9 @@ class DataSourceService:
         if source.duckdb_file_path:
             try:
                 import duckdb
-                conn = duckdb.connect(source.duckdb_file_path, read_only=True)
+                from app.modules.data_sources.utils import resolve_duckdb_path
+                resolved_path = resolve_duckdb_path(source.duckdb_file_path)
+                conn = duckdb.connect(str(resolved_path), read_only=True)
                 
                 # Get columns if not already loaded
                 if not columns:

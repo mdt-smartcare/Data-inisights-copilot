@@ -242,9 +242,12 @@ async def check_context_window(
                 embedding_model=embedding_model,
             )
         else:
+            # Resolve relative duckdb path to absolute
+            from app.modules.data_sources.utils import resolve_duckdb_path
+            resolved_duckdb_path = str(resolve_duckdb_path(data_source.duckdb_file_path)) if data_source.duckdb_file_path else None
             migrator = SchemaMigrator(
                 config_id=config_id,
-                duckdb_path=data_source.duckdb_file_path,
+                duckdb_path=resolved_duckdb_path,
                 duckdb_table_name=data_source.duckdb_table_name,
                 embedding_model=embedding_model,
             )
@@ -400,9 +403,12 @@ async def search_schema(
                 api_key=api_key,
             )
         else:
+            # Resolve relative duckdb path to absolute
+            from app.modules.data_sources.utils import resolve_duckdb_path
+            resolved_duckdb_path = str(resolve_duckdb_path(data_source.duckdb_file_path)) if data_source.duckdb_file_path else None
             vectorizer = SchemaVectorizer(
                 config_id=request.config_id,
-                duckdb_path=data_source.duckdb_file_path,
+                duckdb_path=resolved_duckdb_path,
                 duckdb_table_name=data_source.duckdb_table_name,
                 embedding_model=embedding_model,
                 api_key=api_key,

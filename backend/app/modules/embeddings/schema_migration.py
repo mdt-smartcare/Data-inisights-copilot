@@ -705,9 +705,12 @@ async def migrate_schema_from_agent_config(
             api_base_url=api_base_url,
         )
     elif data_source.source_type == "file":
+        # Resolve relative duckdb path to absolute
+        from app.modules.data_sources.utils import resolve_duckdb_path
+        resolved_duckdb_path = str(resolve_duckdb_path(data_source.duckdb_file_path)) if data_source.duckdb_file_path else None
         migrator = SchemaMigrator(
             config_id=config_id,
-            duckdb_path=data_source.duckdb_file_path,
+            duckdb_path=resolved_duckdb_path,
             duckdb_table_name=data_source.duckdb_table_name,
             data_dictionary=data_dictionary,
             embedding_model=embedding_model,
