@@ -206,6 +206,7 @@ def serialize_progress(progress) -> dict:
         "errors": {
             "count": progress.errors_count or 0,
             "recent": progress.recent_errors or [],
+            "message": progress.error_message,
         }
     }
 
