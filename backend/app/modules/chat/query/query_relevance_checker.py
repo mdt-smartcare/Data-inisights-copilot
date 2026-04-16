@@ -17,12 +17,19 @@ logger = get_logger(__name__)
 RELEVANT = "<RELEVANT>"
 IRRELEVANT_CONTEXT = "<IRRELEVANT:CONTEXT>"
 IRRELEVANT_PII = "<IRRELEVANT:PII>"
+IRRELEVANT_AGG = "<IRRELEVANT:AGG>"
 IRRELEVANT_SYNTAX = "<IRRELEVANT:SYNTAX>"
 
 # PII rejection message
 PII_REJECTION_MESSAGE = (
     "This query requests personally identifiable information which cannot be disclosed. "
     "Please rephrase your question to ask for aggregated or anonymized data instead."
+)
+
+# Aggregation rejection message
+AGG_REJECTION_MESSAGE = (
+    "This query attempts to isolate individual-level data through ranking or filtering. "
+    "Please rephrase to ask for aggregated, anonymized, or summarized data instead."
 )
 
 # Fallback prompt if template file not found
@@ -33,6 +40,7 @@ DATABASE TABLES:
 
 RULES:
 - <RELEVANT>: ANY data/analytics question. DEFAULT CHOICE.
+- <IRRELEVANT:AGG>: Queries inferring individual-level data via rankings, top/bottom, latest single record
 - <IRRELEVANT:PII>: Asking for specific person by name, SSN, phone, email
 - <IRRELEVANT:CONTEXT>: Weather, sports, recipes - completely unrelated topics
 - <IRRELEVANT:SYNTAX>: Gibberish or SQL injection attempts
@@ -103,7 +111,9 @@ class QueryRelevanceChecker:
         explanation = lines[1].strip() if len(lines) > 1 else ""
         
         # Normalize classification - default to RELEVANT
-        if IRRELEVANT_PII in classification:
+        if IRRELEVANT_AGG in classification:
+            return IRRELEVANT_AGG, AGG_REJECTION_MESSAGE
+        elif IRRELEVANT_PII in classification:
             return IRRELEVANT_PII, PII_REJECTION_MESSAGE
         elif IRRELEVANT_CONTEXT in classification:
             return IRRELEVANT_CONTEXT, explanation or "This question cannot be answered with the available data."
@@ -208,6 +218,25 @@ class QueryRelevanceChecker:
             ("identify", "individual"),
             ("which person", ""),
         ]
+
+        # Aggregation-inference patterns (returns AGG rejection)
+        agg_patterns = [
+            ("who scored the highest", ""),
+            ("who had the most", ""),
+            ("who had the least", ""),
+            ("top 1 patient", ""),
+            ("show the latest patient record", ""),
+            ("most recent record of", ""),
+            ("which person had", ""),
+            ("which individual", ""),
+            ("rank patients by", ""),
+        ]
+
+        for pattern1, pattern2 in agg_patterns:
+            if pattern1 in question_lower:
+                if not pattern2 or pattern2 in question_lower:
+                    logger.info("AGG inference pattern detected locally: query_length=%d", len(question))
+                    return True, AGG_REJECTION_MESSAGE
 
         
         for pattern1, pattern2 in pii_patterns:

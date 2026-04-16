@@ -40,6 +40,8 @@ SQL_GENERATOR_SYSTEM_PROMPT = """You are an expert SQL developer. Your task is t
 
 {dialect_rules}
 
+{business_context}
+
 ## DATABASE SCHEMA
 The following CREATE TABLE statements define the ONLY tables and columns you may use:
 
@@ -166,6 +168,7 @@ def build_sql_generation_prompt(
     dialect: str = "postgresql",
     few_shot_examples: Optional[List[Dict[str, Any]]] = None,
     additional_rules: Optional[str] = None,
+    business_context: Optional[str] = None,
 ) -> str:
     """
     Build the complete SQL generation system prompt.
@@ -178,6 +181,7 @@ def build_sql_generation_prompt(
         dialect: Target SQL dialect
         few_shot_examples: Optional list of similar examples
         additional_rules: Optional additional SQL rules
+        business_context: Optional business glossary/definitions context
     
     Returns:
         Complete system prompt string
@@ -196,11 +200,17 @@ def build_sql_generation_prompt(
     if few_shot_examples:
         formatted_examples = format_few_shot_examples(few_shot_examples)
     
-    # Build final prompt with dynamic {retrieved_ddls} injection
+    # Format business context
+    formatted_business = ""
+    if business_context:
+        formatted_business = f"## BUSINESS CONTEXT\n{business_context}"
+    
+    # Build final prompt with dynamic injection
     prompt = SQL_GENERATOR_SYSTEM_PROMPT.format(
         dialect_rules=dialect_rules,
         retrieved_ddls=formatted_ddls,
         few_shot_examples=formatted_examples,
+        business_context=formatted_business,
     )
     
     return prompt.strip()

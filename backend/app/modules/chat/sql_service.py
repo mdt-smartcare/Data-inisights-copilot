@@ -195,6 +195,16 @@ class SQLService:
         except Exception as e:
             logger.warning(f"Failed to initialize data dictionary: {e}")
             self._data_dictionary = None
+        
+        # Initialize reflection service for SQL validation
+        self._reflection_service = None
+        try:
+            from app.modules.chat.query.reflection_service import ReflectionService
+            self._reflection_service = ReflectionService()
+            logger.info("ReflectionService initialized for SQL validation")
+        except Exception as e:
+            logger.warning(f"Failed to initialize ReflectionService: {e}")
+            self._reflection_service = None
     
     def _classify_query_type(self, question: str) -> str:
         """
@@ -301,16 +311,48 @@ class SQLService:
         if not self._data_dictionary:
             return ""
         
-        try:
-            tables = self._discover_tables()
-            context = self._data_dictionary.to_prompt_context(tables)
-            if context:
-                logger.debug(f"Added data dictionary context for {len(tables)} tables")
-            return context
-        except Exception as e:
-            logger.warning(f"Failed to get data dictionary context: {e}")
-            return ""
+        tables = self._discover_tables()
+        return self._data_dictionary.to_prompt_context(tables)
     
+    def _get_table_descriptions(self) -> dict:
+        """
+        Get table descriptions for the relevance checker.
+        
+        Priority:
+        1. DataDictionary (user-curated descriptions)
+        2. Auto-generated from schema columns (lightweight summaries)
+        
+        Returns:
+            Dict of {table_name: description}
+        """
+        tables = self._discover_tables()
+        descriptions = {}
+        
+        # Try DataDictionary first (user-curated descriptions)
+        if self._data_dictionary:
+            for table in tables:
+                desc = self._data_dictionary.get_table_description(table)
+                if desc:
+                    descriptions[table] = desc
+        
+        # Auto-generate for any tables missing descriptions
+        if len(descriptions) < len(tables):
+            schema = self.get_schema_context()
+            for table in tables:
+                if table not in descriptions:
+                    # Extract column info from cached schema
+                    for line in schema.split("\n"):
+                        if line.strip().startswith(f"- {table}:"):
+                            col_info = line.strip()[len(f"- {table}: "):]
+                            # Take first 5 column names to form a description
+                            cols = [c.split("(")[0].strip() for c in col_info.split(",")[:5]]
+                            descriptions[table] = f"Data table with columns: {', '.join(cols)}, and more"
+                            break
+                    if table not in descriptions:
+                        descriptions[table] = "General data table"
+        
+        return descriptions
+
     def _format_few_shot_examples(self, examples: List[Dict[str, Any]]) -> str:
         """
         Format few-shot examples as a string for prompt injection.
@@ -685,9 +727,11 @@ class SQLService:
         # Check query relevance first (if enabled)
         if self._enable_relevance_check and self._relevance_checker:
             table_names = self._discover_tables()
+            table_descriptions = self._get_table_descriptions()
             is_relevant, classification = self._relevance_checker.check(
                 question=natural_language_query,
-                table_names=table_names
+                table_names=table_names,
+                table_descriptions=table_descriptions
             )
             
             # Update statistics (without logging query content for privacy)
@@ -836,6 +880,38 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 last_sql = sql
                 
                 logger.info("LLM generated SQL", attempt=attempt + 1, generated_sql=sql, question=natural_language_query[:100])
+                
+                # =========================================================
+                # REFLECTION GATE: Validate SQL before execution
+                # =========================================================
+                if self._reflection_service:
+                    try:
+                        critique = self._reflection_service.critique(
+                            question=natural_language_query,
+                            sql_query=sql,
+                            schema_context=schema,
+                        )
+                        if not critique.is_valid:
+                            logger.warning(
+                                f"Reflection rejected SQL (attempt {attempt + 1}): {critique.issues}"
+                            )
+                            # If the critique provides a corrected SQL, use it directly
+                            if critique.corrected_sql:
+                                logger.info("Using corrected SQL from reflection service")
+                                sql = critique.corrected_sql
+                                last_sql = sql
+                            else:
+                                # Feed issues into the retry loop
+                                previous_error = (
+                                    f"SQL VALIDATION FAILED: {'; '.join(critique.issues)}. "
+                                    f"Reasoning: {critique.reasoning}"
+                                )
+                                last_sql = sql
+                                continue  # Skip execution, go to next retry
+                        else:
+                            logger.info(f"Reflection validated SQL (attempt {attempt + 1})")
+                    except Exception as e:
+                        logger.warning(f"Reflection service error, proceeding without validation: {e}")
                 
                 # Execute the generated SQL using read-only session
                 results, count = self.execute_query(sql)
