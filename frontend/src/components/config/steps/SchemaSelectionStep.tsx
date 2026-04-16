@@ -174,6 +174,14 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                 setSelected(initialSelection);
                 // Only emit when creating new selection (not restoring saved)
                 emitSelection(initialSelection);
+
+                // For file sources, also initialize file columns if not already set
+                if (result.source_type === 'file' && onFileColumnsChange) {
+                    const allColumns = result.tables[0]?.columns?.map(c => c.column_name) || [];
+                    if (allColumns.length > 0 && (!selectedFileColumns || selectedFileColumns.length === 0)) {
+                        onFileColumnsChange(allColumns);
+                    }
+                }
             }
         } catch (err) {
             console.error('Failed to fetch schema:', err);
