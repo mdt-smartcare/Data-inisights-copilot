@@ -596,6 +596,16 @@ class ChatService:
         # Append chart generation rules to the system prompt
         system_prompt = base_prompt + get_chart_generator_prompt()
         
+        # Hard short-circuit: If the SQL execution pipeline failed all its retries, 
+        # do NOT send the error trace to the LLM. The LLM ignores negative constraints
+        # and starts writing SQL patches in the chat UI.
+        if "Failed to execute query after" in sql_result:
+            return (
+                "I apologize, but I couldn't execute the database query to retrieve this data. "
+                "The system ran into a technical limitation with the available fields. "
+                "Please try asking the question in a different way or check if the target data exists."
+            )
+        
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
         try:
@@ -632,6 +642,16 @@ class ChatService:
         
         if agent_config and agent_config.get("system_prompt"):
             system_prompt = agent_config["system_prompt"]
+        
+        # Hard short-circuit: If the SQL execution pipeline failed all its retries, 
+        # do NOT send the error trace to the LLM. The LLM ignores negative constraints
+        # and starts writing SQL patches in the chat UI.
+        if "Failed to execute query after" in sql_result:
+            return (
+                "I apologize, but I couldn't execute the database query to retrieve this data. "
+                "The system ran into a technical limitation with the available fields. "
+                "Please try asking the question in a different way or check if the target data exists."
+            )
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
