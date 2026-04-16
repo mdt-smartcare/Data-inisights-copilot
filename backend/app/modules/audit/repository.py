@@ -21,6 +21,26 @@ class AuditLogRepository:
     def __init__(self, session: AsyncSession):
         self.session = session
     
+    def _parse_date(self, date_str: str) -> Optional[datetime]:
+        """
+        Parse ISO date string (UTC) to naive datetime for database comparison.
+        
+        Frontend sends UTC ISO format: 2026-04-14T18:30:00.000Z
+        Database stores naive UTC timestamps.
+        """
+        if not date_str:
+            return None
+        try:
+            # Handle Z suffix (UTC indicator)
+            if date_str.endswith('Z'):
+                date_str = date_str.replace('Z', '+00:00')
+            dt = datetime.fromisoformat(date_str)
+            # Strip timezone to get naive datetime (DB stores naive UTC)
+            return dt.replace(tzinfo=None)
+        except ValueError:
+            logger.warning(f"Could not parse date: {date_str}")
+            return None
+    
     async def create(self, data: AuditLogCreate) -> int:
         """
         Create a new audit log entry.
@@ -97,10 +117,14 @@ class AuditLogRepository:
                 filters.append(AuditLogModel.resource_type == resource_type)
             
             if start_date:
-                filters.append(AuditLogModel.timestamp >= start_date)
+                start_dt = self._parse_date(start_date)
+                if start_dt:
+                    filters.append(AuditLogModel.timestamp >= start_dt)
             
             if end_date:
-                filters.append(AuditLogModel.timestamp <= end_date)
+                end_dt = self._parse_date(end_date)
+                if end_dt:
+                    filters.append(AuditLogModel.timestamp <= end_dt)
             
             if filters:
                 stmt = stmt.where(and_(*filters))
@@ -138,7 +162,9 @@ class AuditLogRepository:
         self,
         actor_username: Optional[str] = None,
         action: Optional[str] = None,
-        resource_type: Optional[str] = None
+        resource_type: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None
     ) -> int:
         """
         Get total count of logs matching filters.
@@ -147,6 +173,8 @@ class AuditLogRepository:
             actor_username: Filter by username
             action: Filter by action type (prefix match)
             resource_type: Filter by resource type
+            start_date: Filter logs after this date (ISO format)
+            end_date: Filter logs before this date (ISO format)
             
         Returns:
             Count of matching logs
@@ -163,6 +191,16 @@ class AuditLogRepository:
             
             if resource_type:
                 filters.append(AuditLogModel.resource_type == resource_type)
+            
+            if start_date:
+                start_dt = self._parse_date(start_date)
+                if start_dt:
+                    filters.append(AuditLogModel.timestamp >= start_dt)
+            
+            if end_date:
+                end_dt = self._parse_date(end_date)
+                if end_dt:
+                    filters.append(AuditLogModel.timestamp <= end_dt)
             
             if filters:
                 stmt = stmt.where(and_(*filters))
