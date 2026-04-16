@@ -76,6 +76,7 @@ class DataDictionary:
         self._default_filters: Dict[str, List[str]] = {}  # table → [filter_conditions]
         self._column_semantics: Dict[str, Dict[str, str]] = {}  # table → {column → description}
         self._table_descriptions: Dict[str, str] = {}  # table → description
+        self._business_glossary: List[str] = []  # free-form domain jargon/terms
         
         if config_dict:
             self._load_from_dict(config_dict)
@@ -124,6 +125,7 @@ class DataDictionary:
         self._default_filters = config.get("default_filters", {})
         self._column_semantics = config.get("column_semantics", {})
         self._table_descriptions = config.get("table_descriptions", {})
+        self._business_glossary = config.get("business_glossary", [])
         
         # Build synonym index (lowercase for case-insensitive matching)
         raw_synonyms = config.get("synonyms", {})
@@ -140,7 +142,8 @@ class DataDictionary:
             f"DataDictionary loaded from dict: {len(self._business_definitions)} definitions, "
             f"{len(self._metric_templates)} metric templates, "
             f"{len(self._synonyms)} synonyms, "
-            f"{sum(len(v) for v in self._default_filters.values())} default filters",
+            f"{sum(len(v) for v in self._default_filters.values())} default filters, "
+            f"{len(self._business_glossary)} glossary terms",
             agent_id=self._agent_id
         )
     
@@ -306,6 +309,12 @@ class DataDictionary:
                     if desc:
                         parts.append(f"    ({desc})")
         
+        # Business glossary (free-form domain jargon)
+        if self._business_glossary:
+            parts.append("\nBUSINESS GLOSSARY (domain-specific terminology):")
+            for term in self._business_glossary:
+                parts.append(f"  - {term}")
+        
         return "\n".join(parts) if parts else ""
     
     def to_dict(self) -> Dict[str, Any]:
@@ -328,7 +337,8 @@ class DataDictionary:
             "synonyms": reverse_synonyms,
             "default_filters": self._default_filters,
             "column_semantics": self._column_semantics,
-            "table_descriptions": self._table_descriptions
+            "table_descriptions": self._table_descriptions,
+            "business_glossary": self._business_glossary
         }
     
     def to_json(self) -> str:
@@ -353,7 +363,7 @@ class DataDictionary:
         
         # Deep merge each section
         for key in ["business_definitions", "metric_templates", "default_filters", 
-                    "column_semantics", "table_descriptions"]:
+                    "column_semantics", "table_descriptions", "business_glossary"]:
             if key in other_config:
                 if key not in merged_config:
                     merged_config[key] = {}
@@ -379,6 +389,7 @@ class DataDictionary:
         self._default_filters.clear()
         self._column_semantics.clear()
         self._table_descriptions.clear()
+        self._business_glossary.clear()
         self._load_from_file()
         logger.info("DataDictionary reloaded", agent_id=self._agent_id)
     

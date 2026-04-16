@@ -103,6 +103,7 @@ class ChatResponse(BaseModel):
     reasoning_steps: List[ReasoningStep] = Field(default_factory=list, description="Agent reasoning process")
     sources: List[SourceChunk] = Field(default_factory=list, description="Retrieved source chunks")
     embedding_info: Optional[EmbeddingInfo] = Field(default=None, description="Embedding analysis")
+    comparison_insights: Optional[str] = Field(default=None, description="Auto-generated comparison analysis for cross-validation")
     trace_id: str = Field(..., description="Trace ID for debugging")
     session_id: Optional[str] = Field(default=None, description="Session ID for conversation tracking")
     agent_id: Optional[str] = Field(default=None, description="Agent ID that generated this response")

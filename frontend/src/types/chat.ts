@@ -18,7 +18,7 @@ export type QueryMode = 'auto' | 'sql' | 'rag' | 'hybrid' | 'agentic_hybrid';
 export interface AgenticHybridResult {
   status: string;
   question: string;
-  
+
   // Workflow stages
   stage_1_rag: {
     query: string;
@@ -36,16 +36,16 @@ export interface AgenticHybridResult {
     prompt_context: string;
     model_used: string;
   };
-  
+
   // Final answer
   final_answer: string;
-  
+
   // Performance metrics
   total_time_ms: number;
   rag_time_ms: number;
   sql_time_ms: number;
   synthesis_time_ms: number;
-  
+
   error?: string;
 }
 
@@ -66,6 +66,7 @@ export interface Message {
   processingTime?: number;             // Optional response generation time in ms
   queryMode?: QueryMode;               // Query mode used for this message
   agenticHybridResult?: AgenticHybridResult; // Optional agentic hybrid workflow result
+  comparisonInsights?: string;         // Optional comparison insights for cross-validation
 }
 
 /**
@@ -121,4 +122,5 @@ export interface ChatResponse {
   processing_time?: number;            // Optional processing time in ms
   query_mode?: QueryMode;              // Query mode used for processing
   agentic_hybrid_result?: AgenticHybridResult; // Optional agentic hybrid workflow result
+  comparison_insights?: string;        // Optional cross-validation comparison insights
 }

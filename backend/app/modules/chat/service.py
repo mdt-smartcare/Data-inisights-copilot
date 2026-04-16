@@ -172,6 +172,7 @@ class ChatService:
                 sources: List[SourceChunk] = []
                 reasoning_steps: List[ReasoningStep] = []
                 embedding_info = None
+                comparison_insights = None
                 
                 # Override to fallback if confidence is too low
                 final_intent = classification.intent
@@ -188,6 +189,31 @@ class ChatService:
                     answer, reasoning_steps, chart_data = await self._handle_sql_intent(
                         rewritten_query, sql_service, agent_config, tracing_ctx
                     )
+                    
+                    # Generate comparison insights (optional, non-blocking)
+                    if sql_service and answer and not answer.startswith("No database"):
+                        try:
+                            from app.modules.chat.comparison_engine import generate_comparison_insights
+                            from app.core.llm import create_llm_provider
+                            
+                            comp_provider = create_llm_provider("openai", {
+                                "model": "gpt-4o-mini",
+                                "temperature": 0.3,
+                            })
+                            comp_llm = comp_provider.get_langchain_llm()
+                            schema_ctx = sql_service.cached_schema if sql_service else ""
+                            
+                            comparison_insights = await generate_comparison_insights(
+                                original_question=rewritten_query,
+                                original_sql=reasoning_steps[0].input if reasoning_steps else rewritten_query,
+                                original_results=answer[:2000],
+                                schema_context=schema_ctx,
+                                sql_service=sql_service,
+                                llm=comp_llm,
+                                dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                            )
+                        except Exception as e:
+                            logger.debug(f"Comparison insights generation failed: {e}")
                     
                 elif final_intent == QueryIntent.VECTOR_ONLY.value:
                     # Intent B: Vector only
@@ -263,6 +289,7 @@ class ChatService:
                     reasoning_steps=reasoning_steps,
                     sources=sources,
                     embedding_info=embedding_info,
+                    comparison_insights=comparison_insights,
                     trace_id=trace_id,
                     session_id=session_id,
                     agent_id=str(request.agent_id) if request.agent_id else None,
@@ -320,8 +347,11 @@ class ChatService:
             
             tracing_ctx.update_span("sql_query", output=result[:500])
             
+            # Get schema context for domain-aware analysis
+            schema_context = sql_service.cached_schema if sql_service else ""
+            
             # Synthesize response with LLM (includes chart generation instructions)
-            raw_answer = await self._synthesize_sql_response_with_chart(query, result, agent_config)
+            raw_answer = await self._synthesize_sql_response_with_chart(query, result, agent_config, schema_context)
             
             # Parse chart data from LLM response
             chart_data, answer = parse_chart_data(raw_answer)
@@ -548,11 +578,18 @@ class ChatService:
         query: str,
         sql_result: str,
         agent_config: Optional[Dict[str, Any]],
+        schema_context: str = "",
     ) -> str:
         """Synthesize a natural language response from SQL results with chart generation."""
         from openai import AsyncOpenAI
         
         base_prompt = get_data_analyst_prompt()
+        # Inject schema context for domain-aware analysis
+        if schema_context:
+            base_prompt = base_prompt.replace("{schema_context}", schema_context)
+        else:
+            base_prompt = base_prompt.replace("{schema_context}", "No schema context available.")
+        
         if agent_config and agent_config.get("system_prompt"):
             base_prompt = agent_config["system_prompt"]
         
@@ -581,11 +618,18 @@ class ChatService:
         query: str,
         sql_result: str,
         agent_config: Optional[Dict[str, Any]],
+        schema_context: str = "",
     ) -> str:
         """Synthesize a natural language response from SQL results (without chart)."""
         from openai import AsyncOpenAI
         
         system_prompt = get_data_analyst_prompt()
+        # Inject schema context for domain-aware analysis
+        if schema_context:
+            system_prompt = system_prompt.replace("{schema_context}", schema_context)
+        else:
+            system_prompt = system_prompt.replace("{schema_context}", "No schema context available.")
+        
         if agent_config and agent_config.get("system_prompt"):
             system_prompt = agent_config["system_prompt"]
         

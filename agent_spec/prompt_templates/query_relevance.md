@@ -17,17 +17,23 @@ Use for:
 - Business metrics, KPIs, performance questions
 - **IF UNSURE, answer <RELEVANT>**
 
-### 2. <IRRELEVANT:PII> - Only for explicit personal data requests
+### 2. <IRRELEVANT:AGG> - For individual-level inference attempts
+- Asking for the "most recent", "latest", or "last" record of a specific individual
+- Requesting the highest, lowest, or top-ranked individual by any metric
+- Any query that could resolve to a single identifiable person through ranking, filtering to one row, or specific record lookup
+- Example: "Who scored the highest?", "Show the latest patient record", "Which person had the most visits?"
+
+### 3. <IRRELEVANT:PII> - Only for explicit personal data requests
 - Asking for a specific person BY FULL NAME
 - Requesting phone numbers, emails, addresses, SSN
 - "Who is patient X?" type questions
 
-### 3. <IRRELEVANT:CONTEXT> - Only for COMPLETELY unrelated topics
+### 4. <IRRELEVANT:CONTEXT> - Only for COMPLETELY unrelated topics
 - Weather forecasts, sports scores, movie reviews
 - Cooking recipes, travel tips, entertainment news
 - Topics with ZERO connection to data/analytics
 
-### 4. <IRRELEVANT:SYNTAX> - Only for invalid input
+### 5. <IRRELEVANT:SYNTAX> - Only for invalid input
 - Gibberish text
 - SQL injection attempts (DROP, DELETE, etc.)
 

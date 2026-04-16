@@ -20,13 +20,13 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
 
   const handleFeedback = async (rating: 'positive' | 'negative') => {
     if (isSubmitting || feedback !== null) return;
-    
+
     setIsSubmitting(true);
     setFeedback(rating);
-    
+
     // Call parent callback
     onFeedback?.(message.id, rating);
-    
+
     // Send feedback to Langfuse via backend API
     if (message.traceId) {
       try {
@@ -43,7 +43,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
     } else {
       console.warn('No trace_id available for feedback submission');
     }
-    
+
     setIsSubmitting(false);
   };
 
@@ -137,6 +137,38 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
 
           {/* Render sources */}
           {message.sources && <SourceList sources={message.sources} />}
+
+          {/* Render comparison insights */}
+          {message.comparisonInsights && (
+            <div className="my-3 p-3 bg-indigo-50/50 rounded-lg border border-indigo-100">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-xs font-semibold text-indigo-900">Cross-Validation Insights</span>
+              </div>
+              <div className="prose prose-sm max-w-none text-gray-800 text-xs">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    h1: ({ node, ...props }) => <h1 className="text-sm font-bold mt-2 mb-1" {...props} />,
+                    h2: ({ node, ...props }) => <h2 className="text-xs font-bold mt-2 mb-1" {...props} />,
+                    h3: ({ node, ...props }) => <h3 className="text-xs font-semibold mt-1 mb-1" {...props} />,
+                    p: ({ node, ...props }) => <p className="my-1 leading-relaxed" {...props} />,
+                    ul: ({ node, ...props }) => <ul className="list-disc pl-4 my-1 space-y-0.5" {...props} />,
+                    ol: ({ node, ...props }) => <ol className="list-decimal pl-4 my-1 space-y-0.5" {...props} />,
+                    strong: ({ node, ...props }) => <strong className="font-bold text-gray-900" {...props} />,
+                    table: ({ node, ...props }) => (
+                      <div className="overflow-x-auto my-1">
+                        <table className="min-w-full divide-y divide-gray-200" {...props} />
+                      </div>
+                    ),
+                    th: ({ node, ...props }) => <th className="px-2 py-1 bg-indigo-100/50 font-semibold text-left" {...props} />,
+                    td: ({ node, ...props }) => <td className="px-2 py-1 border-t border-indigo-100/50" {...props} />,
+                  }}
+                >
+                  {message.comparisonInsights}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
 
           {/* Render suggested questions */}
           {message.suggestedQuestions && message.suggestedQuestions.length > 0 && (

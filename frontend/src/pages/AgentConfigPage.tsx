@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { useConfigDraft } from '../hooks';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
+import { useAgent } from '../contexts/AgentContext';
 import {
     getAgent,
     generatePrompt,
@@ -67,6 +68,7 @@ const AgentConfigPage: React.FC = () => {
     const { user, isLoading: isAuthLoading } = useAuth();
     const { success: showSuccess, error: showError } = useToast();
     const canPublish = canPublishPrompt(user);
+    const { isLoadingConfig } = useAgent();
 
     // Draft config hook
     const {
