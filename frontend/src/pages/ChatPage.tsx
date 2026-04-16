@@ -224,6 +224,7 @@ export default function ChatPage() {
         processingTime: data.processing_time,
         queryMode: data.query_mode as QueryMode,
         agenticHybridResult: data.agentic_hybrid_result as AgenticHybridResult,
+        comparisonInsights: data.comparison_insights,
       };
       setMessages((prev) => [...prev, assistantMessage]);
 
