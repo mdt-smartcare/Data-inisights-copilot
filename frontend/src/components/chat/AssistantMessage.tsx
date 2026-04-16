@@ -120,6 +120,17 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
           {/* Render chart if present */}
           {message.chartData && <ChartRenderer chartData={message.chartData} />}
 
+          {/* Render dashboard grid if present */}
+          {message.dashboards && message.dashboards.length > 0 && (
+            <div className="my-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+              {message.dashboards.map((chart, idx) => (
+                <div key={idx} className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+                  <ChartRenderer chartData={chart} />
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* Render SQL query if present */}
           {message.sqlQuery && (
             <div className="my-3 p-3 bg-gray-50 rounded-lg border border-gray-200">

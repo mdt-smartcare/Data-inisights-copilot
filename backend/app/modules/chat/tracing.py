@@ -105,14 +105,19 @@ class TracingContext:
         """Start the trace."""
         if self._langfuse:
             try:
-                self._trace = self._langfuse.trace(
-                    id=self.trace_id,
-                    name=self.name,
-                    user_id=self.user_id,
-                    session_id=self.session_id,
-                    metadata=self.metadata,
-                )
-                logger.debug(f"Started trace: {self.trace_id}")
+                # Handle SDK version differences (v2 uses .trace(), v3+ uses different patterns)
+                trace_fn = getattr(self._langfuse, 'trace', None)
+                if trace_fn:
+                    self._trace = trace_fn(
+                        id=self.trace_id,
+                        name=self.name,
+                        user_id=self.user_id,
+                        session_id=self.session_id,
+                        metadata=self.metadata,
+                    )
+                    logger.debug(f"Started trace: {self.trace_id}")
+                else:
+                    logger.debug("Langfuse.trace method not found (possibly SDK v3+)")
             except Exception as e:
                 logger.warning(f"Failed to start trace: {e}")
         

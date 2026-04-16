@@ -271,16 +271,22 @@ class ReflectionService:
             )
     
     def _extract_tables_from_sql(self, sql_query: str) -> List[str]:
-        """Extract all table names from SQL query."""
+        """Extract all table names from SQL query, excluding CTE aliases."""
         sql_lower = sql_query.lower()
-        tables = []
         
-        # Match FROM and JOIN clauses
+        # 1. Identify CTE names (aliases defined in WITH clause)
+        # Pattern: WITH cte_name AS (
+        cte_pattern = r'with\s+([a-z_][a-z0-9_]*)'
+        ctes = set(re.findall(cte_pattern, sql_lower))
+        
+        # 2. Extract all tables from FROM and JOIN
         from_pattern = r'(?:from|join)\s+([a-z_][a-z0-9_]*)'
-        matches = re.findall(from_pattern, sql_lower)
-        tables.extend(matches)
+        all_tables = re.findall(from_pattern, sql_lower)
         
-        return list(set(tables))
+        # 3. Filter out CTE aliases
+        real_tables = [t for t in all_tables if t not in ctes]
+        
+        return list(set(real_tables))
     
     def _is_safe_select_query(self, sql_query: str) -> bool:
         """Check if query is a safe SELECT statement."""
@@ -290,7 +296,7 @@ class ReflectionService:
             'truncate', 'create', 'grant', 'revoke', 'exec'
         ]
         
-        if not sql_lower.startswith('select'):
+        if not sql_lower.startswith('select') and not sql_lower.startswith('with'):
             return False
         
         for keyword in dangerous_keywords:

@@ -40,18 +40,48 @@ class QdrantStore(BaseVectorStore):
     ):
         from qdrant_client import AsyncQdrantClient
         
+        import asyncio
+        
         self.collection_name = collection_name
         self.url = url or os.getenv("QDRANT_URL", "http://localhost:6333")
         self.auto_recreate_on_dimension_mismatch = auto_recreate_on_dimension_mismatch
         
-        # Initialize async client
-        self.client = AsyncQdrantClient(url=self.url)
+        # Initialize client lazily to ensure it's bound to the correct loop
+        self._client = None
+        self._loop = None
+        self._lock = asyncio.Lock()
         
         # Track whether collection has been validated
         self._collection_checked = False
         self._validated_dimension: Optional[int] = None
         
         logger.info(f"QdrantStore initialized for collection '{collection_name}' at {self.url}")
+
+    @property
+    def client(self):
+        """Get or create the AsyncQdrantClient for the current event loop."""
+        from qdrant_client import AsyncQdrantClient
+        import asyncio
+        
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+            
+        if self._client is None or self._loop != current_loop:
+            if self._client is not None:
+                # Close old client if loop changed (unlikely but possible in some setups)
+                try:
+                    # AsyncQdrantClient close is actually sync in some versions, but let's be safe
+                    pass 
+                except Exception:
+                    pass
+            
+            self._client = AsyncQdrantClient(url=self.url)
+            self._loop = current_loop
+            logger.debug(f"Initialized new Qdrant client for loop {id(current_loop)}")
+            
+        return self._client
     
     async def _get_collection_dimension(self) -> Optional[int]:
         """Get the vector dimension of an existing collection."""
@@ -208,13 +238,14 @@ class QdrantStore(BaseVectorStore):
             ]
             qdrant_filter = models.Filter(must=must_conditions)
         
-        results_obj = await self.client.query_points(
-            collection_name=self.collection_name,
-            query=query_embedding,
-            query_filter=qdrant_filter,
-            limit=top_k,
-            with_payload=True
-        )
+        async with self._lock:
+            results_obj = await self.client.query_points(
+                collection_name=self.collection_name,
+                query=query_embedding,
+                query_filter=qdrant_filter,
+                limit=top_k,
+                with_payload=True
+            )
         results = results_obj.points
         
         normalized_results = []

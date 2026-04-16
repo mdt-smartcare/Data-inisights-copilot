@@ -11,10 +11,12 @@ Handles:
 - Tracing & observability
 - Chart generation
 """
+
 import uuid
 import time
 import asyncio
 import json
+import re
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime, timezone
 
@@ -169,6 +171,7 @@ class ChatService:
                 # Step 4: Route based on intent
                 answer = ""
                 chart_data: Optional[ChartData] = None
+                dashboards: Optional[List[ChartData]] = None
                 sources: List[SourceChunk] = []
                 reasoning_steps: List[ReasoningStep] = []
                 embedding_info = None
@@ -230,6 +233,13 @@ class ChatService:
                         tracing_ctx, fastapi_request
                     )
                     
+                elif final_intent == QueryIntent.DASHBOARD_GENERATOR.value:
+                    # Dashboard: Generate multiple charts
+                    await check_cancelled(fastapi_request)
+                    answer, reasoning_steps, dashboards = await self._handle_dashboard_intent(
+                        rewritten_query, sql_service, agent_config, tracing_ctx
+                    )
+                    
                 else:
                     # Fallback: Use full vector search (safest default)
                     await check_cancelled(fastapi_request)
@@ -285,6 +295,7 @@ class ChatService:
                 return ChatResponse(
                     answer=answer,
                     chart_data=chart_data,
+                    dashboards=dashboards,
                     suggested_questions=suggested_questions,
                     reasoning_steps=reasoning_steps,
                     sources=sources,
@@ -337,7 +348,7 @@ class ChatService:
         
         try:
             # Execute natural language SQL query
-            result = sql_service.query(query)
+            result = await sql_service.query_async(query)
             
             reasoning_steps.append(ReasoningStep(
                 tool="sql_query",
@@ -366,6 +377,120 @@ class ChatService:
         except Exception as e:
             logger.error(f"SQL query failed: {e}")
             return f"Failed to execute database query: {str(e)}", reasoning_steps, None
+            
+    async def _handle_dashboard_intent(
+        self,
+        query: str,
+        sql_service: Optional[SQLService],
+        agent_config: Optional[Dict[str, Any]],
+        tracing_ctx: TracingContext,
+    ) -> Tuple[str, List[ReasoningStep], Optional[List[ChartData]]]:
+        """Handle Dashboard Intent: Generates multiple queries in parallel for a dashboard view."""
+        reasoning_steps = []
+        if not sql_service:
+            return "No database connection configured for this agent.", reasoning_steps, None
+            
+        tracing_ctx.add_span("dashboard_generation", input=query)
+        
+        from app.core.llm import create_llm_provider
+        provider = create_llm_provider("openai", {
+            "model": "gpt-4o-mini",
+            "temperature": 0.2,
+        })
+        llm = provider.get_langchain_llm()
+        
+        schema_context = sql_service.cached_schema if sql_service else ""
+        prompt = f"""
+        The user wants a high-level overview or dashboard for the following request: "{query}"
+        
+        DATABASE SCHEMA:
+        {schema_context}
+        
+        INSTRUCTIONS:
+        1. Generate exactly 4 distinct natural language questions that can be answered by the database. 
+        2. Use ONLY column names and table names present in the schema above. Do NOT invent columns like "patient_status" if they are not in the schema.
+        3. If there are no clear metrics, focus on row counts, category distributions, or trend over time using provided date columns.
+        4. Each question should be independent and designed for a specific chart type:
+           - 1 Pie Chart (categorical distribution)
+           - 1 Bar or Line Chart (trends or comparisons)
+           - 1 Scorecard (single key metric like average or total)
+           - 1 Detail or Trend Chart (time-series)
+        
+        Output ONLY the 4 questions, one per line. No numbering, no extra text.
+        """
+        
+        try:
+            response = await llm.ainvoke(prompt)
+            # Split by lines and remove leading numbering (e.g., "1. ")
+            questions = [re.sub(r'^\d+[\.\)]\s*', '', q.strip()) for q in response.content.splitlines() if q.strip()]
+
+            if not questions:
+                return "Failed to generate dashboard queries.", reasoning_steps, None
+                
+            reasoning_steps.append(ReasoningStep(
+                tool="dashboard_planner",
+                input=query,
+                output="Generated dashboard queries:\n" + "\n".join(questions),
+            ))
+            
+            # Helper for parallel sub-query processing (SQL + Synthesis)
+            async def process_subquery(idx, sub_q):
+                try:
+                    # 1. Execute SQL directly asynchronously (avoids event loop mismatch)
+                    sql_result = await sql_service.query_async(sub_q)
+                    
+                    # 2. Skip synthesis if query failed or returned no data
+                    if not sql_result or sql_result.startswith("Failed") or "No results found" in sql_result:
+                        return idx, None, sql_result
+                        
+                    # 3. Synthesize results with chart generation
+                    raw_answer = await self._synthesize_sql_response_with_chart(
+                        sub_q, sql_result, agent_config, schema_context
+                    )
+                    
+                    # 4. Parse chart data
+                    chart, _ = parse_chart_data(raw_answer)
+                    return idx, chart, sql_result
+                except Exception as e:
+                    logger.error(f"Dashboard sub-query {idx} processing failed: {e}")
+                    return idx, None, f"Error: {str(e)}"
+
+            # Execute all sub-queries and synthesis in parallel with a semaphore to prevent resource exhaustion
+            semaphore = asyncio.Semaphore(2)  # Limit to 2 concurrent sub-queries
+            
+            async def sem_process_subquery(idx, sub_q):
+                async with semaphore:
+                    return await process_subquery(idx, sub_q)
+
+            tasks = [sem_process_subquery(i, q) for i, q in enumerate(questions)]
+            results = await asyncio.gather(*tasks)
+            
+            dashboards = []
+            # Sort results by index to maintain order
+            sorted_results = sorted(results, key=lambda x: x[0])
+            
+            for idx, chart, sql_result in sorted_results:
+                sub_query = questions[idx]
+                
+                reasoning_steps.append(ReasoningStep(
+                    tool=f"sql_query_{idx}",
+                    input=sub_query,
+                    output=(sql_result[:500] if sql_result else "No result")
+                ))
+                
+                if chart:
+                    dashboards.append(chart)
+            
+            if not dashboards:
+                main_answer = "I've analyzed your request for an overview, but I couldn't find enough specific data to generate visual charts. You can see the details of what I attempted in the reasoning steps."
+            else:
+                main_answer = f"Here is an overview for '{query}'. I've synthesized the available data into {len(dashboards)} charts."
+                
+            return main_answer, reasoning_steps, dashboards
+            
+        except Exception as e:
+            logger.error(f"Dashboard generation failed: {e}")
+            return f"Failed to generate dashboard: {str(e)}", reasoning_steps, None
     
     async def _handle_vector_intent(
         self,
@@ -596,6 +721,16 @@ class ChatService:
         # Append chart generation rules to the system prompt
         system_prompt = base_prompt + get_chart_generator_prompt()
         
+        # Hard short-circuit: If the SQL execution pipeline failed all its retries, 
+        # do NOT send the error trace to the LLM. The LLM ignores negative constraints
+        # and starts writing SQL patches in the chat UI.
+        if "Failed to execute query after" in sql_result:
+            return (
+                "I apologize, but I couldn't execute the database query to retrieve this data. "
+                "The system ran into a technical limitation with the available fields. "
+                "Please try asking the question in a different way or check if the target data exists."
+            )
+        
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
         try:
@@ -632,6 +767,16 @@ class ChatService:
         
         if agent_config and agent_config.get("system_prompt"):
             system_prompt = agent_config["system_prompt"]
+        
+        # Hard short-circuit: If the SQL execution pipeline failed all its retries, 
+        # do NOT send the error trace to the LLM. The LLM ignores negative constraints
+        # and starts writing SQL patches in the chat UI.
+        if "Failed to execute query after" in sql_result:
+            return (
+                "I apologize, but I couldn't execute the database query to retrieve this data. "
+                "The system ran into a technical limitation with the available fields. "
+                "Please try asking the question in a different way or check if the target data exists."
+            )
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         

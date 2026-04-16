@@ -46,6 +46,7 @@ export const SandboxTab: React.FC<SandboxTabProps> = ({
                 sources: response.sources,
                 sqlQuery: response.sql_query,
                 chartData: response.chart_data,
+                dashboards: response.dashboards,
                 traceId: response.trace_id,
                 processingTime: response.processing_time
             };

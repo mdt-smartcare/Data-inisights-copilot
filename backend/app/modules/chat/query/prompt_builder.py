@@ -224,6 +224,12 @@ class PromptBuilder:
                 "",
                 "17. Use ILIKE for case-insensitive string comparisons",
                 "18. Boolean columns may be stored as strings: use = 'true' or = 'false'",
+                "19. TIMESTAMPS WITH OFFSETS (e.g., '+0000', '+0300'):",
+                "    DuckDB handles standard ISO strings but fails on explicit offsets without the ICU extension.",
+                "    If a timestamp string has an offset, strip it before casting:",
+                "    WRONG: CAST(created_at AS TIMESTAMP) -- fails if created_at has '+0300'",
+                "    CORRECT: TRY_CAST(SUBSTRING(CAST(created_at AS VARCHAR), 1, 19) AS TIMESTAMP)",
+                "    ALWAYS use this pattern for assessment_data.created_at or bp_taken_on columns.",
             ])
         elif dialect == "postgresql":
             constraints.extend([

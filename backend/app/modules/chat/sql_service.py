@@ -75,12 +75,14 @@ DUCKDB_SQL_RULES = """CRITICAL DUCKDB SQL RULES:
 15. **AGGREGATE vs ROW-WISE FUNCTIONS**: 
     - max()/min() are AGGREGATE functions - they work ACROSS ROWS (vertical)
     - GREATEST()/LEAST() are SCALAR functions - they work ACROSS COLUMNS in a single row (horizontal)
-16. **TIMEZONE-AWARE TIMESTAMPS**: If a timestamp column contains timezone info (e.g., "+0300", "UTC", "Z"), you MUST use TIMESTAMPTZ, not TIMESTAMP:
-    - WRONG: CAST(created_at AS TIMESTAMP) - fails with "timestamp that is not UTC" error
+16. **TIMEZONE-AWARE TIMESTAMPS & DIRTY STRINGS**: If a timestamp column contains timezone info (e.g., "+0300", "UTC", "Z") or if a VARCHAR needs conversion, ALWAYS use TIMESTAMPTZ:
+    - WRONG: CAST(created_at AS TIMESTAMP) - fails if string has timezone or is already a DATE.
     - CORRECT: CAST(created_at AS TIMESTAMPTZ) or created_at::TIMESTAMPTZ
     - Example: DATE_TRUNC('month', CAST(created_at AS TIMESTAMPTZ))
-    - For columns like 'created_at', 'updated_at', always prefer TIMESTAMPTZ to be safe
-17. **PREFER DEDICATED DATE COLUMNS**: If a table has both a date column (like 'ymd', 'date', 'assessment_date') AND a timestamp column (like 'created_at'), prefer the dedicated date column for date-based queries as it avoids timezone issues."""
+    - For any string-to-date conversion where formatting is complex, prefer TIMESTAMPTZ.
+17. **PREFER DEDICATED DATE COLUMNS**: If a table has both a date column (like 'ymd', 'date') and a timestamp, prefer the dedicated date column to avoid timezone issues.
+18. **NO SUBSTRING FOR DATES**: Never use SUBSTRING() on a DATE or TIMESTAMP column. Only use it on VARCHAR if absolutely necessary. DuckDB's CAST is usually smart enough without it.
+"""
 
 # Query type classification keywords
 QUERY_TYPE_KEYWORDS = {
@@ -412,6 +414,15 @@ class SQLService:
                     f"duckdb:///{file_path}",
                     connect_args={"read_only": True},
                 )
+                
+                # Load ICU extension for DuckDB to handle non-UTC timestamps
+                try:
+                    with self._engine.connect() as conn:
+                        conn.execute(text("INSTALL icu; LOAD icu;"))
+                        conn.commit()
+                    logger.info("Loaded ICU extension for DuckDB")
+                except Exception as e:
+                    logger.warning(f"Failed to load DuckDB ICU extension: {e}")
             else:
                 # PostgreSQL, MySQL, etc.
                 self._engine = create_engine(
@@ -632,16 +643,9 @@ class SQLService:
             Tuple of (results as list of dicts, total row count)
         """
         
-        # Apply DuckDB-specific syntax corrections
-        if self._is_duckdb():
-            import re
-            sql = re.sub(
-                r'CAST\s*\(\s*([a-zA-Z0-9_]+)\s+AS\s+TIMESTAMP(?:TZ)?\s*\)', 
-                r'CAST(SUBSTRING(\1, 1, 19) AS TIMESTAMP)', 
-                sql, 
-                flags=re.IGNORECASE
-            )
-            
+        # DuckDB handles standard ISO strings correctly in CAST(col AS TIMESTAMP)
+        # No automatic SUBSTRING injection needed - it breaks DATE columns.
+        
         engine = self._get_engine()
         
         # Do NOT add automatic LIMIT - data analysts need full results
@@ -956,29 +960,49 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
         """
         Execute a natural language query using LLM to generate SQL.
         
-        This is the synchronous version that wraps the async implementation.
-        For new code, prefer using query_async() directly.
-        
-        Args:
-            natural_language_query: User's question in natural language
-            
-        Returns:
-            Formatted response string with query results
+        This is a synchronous wrapper around query_async.
+        Warning: For new code, prefer using query_async() directly.
         """
-        # Try to use existing event loop, or create a new one
+        import asyncio
+        import concurrent.futures
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're already in an async context, create new loop in thread
-                import concurrent.futures
+            # Check if we are already in an event loop
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+                
+            if loop and loop.is_running():
+                # In an async context, we must run the coroutine in the current thread's loop properly.
+                # Using asyncio.run in a thread pool is dangerous as it creates a NEW loop, 
+                # breaking shared async resources (like httpx/qdrant clients).
+                # Instead, we'll run it in the background thread but bridge back to the current loop
+                # or use a safer approach for NL2SQL which is primarily IO bound.
+                
+                # Since query_async is already async, if we are in a running loop, 
+                # it's better to just warn and use query_async directly if possible.
+                # But for a sync wrapper, we use nested_asyncio if available or a separate thread with a clean loop.
+                
+                logger.warning("Sync SQLService.query called from async context. Prefer query_async.")
+                
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, self.query_async(natural_language_query))
-                    return future.result(timeout=60)
+                    # Create a clean loop in the thread and run it
+                    def run_with_new_loop(coro):
+                        new_loop = asyncio.new_event_loop()
+                        try:
+                            asyncio.set_event_loop(new_loop)
+                            return new_loop.run_until_complete(coro)
+                        finally:
+                            new_loop.close()
+                            
+                    future = executor.submit(run_with_new_loop, self.query_async(natural_language_query))
+                    return future.result(timeout=120)
             else:
-                return loop.run_until_complete(self.query_async(natural_language_query))
-        except RuntimeError:
-            # No event loop, create a new one
-            return asyncio.run(self.query_async(natural_language_query))
+                # Not in an async context, safe to use asyncio.run
+                return asyncio.run(self.query_async(natural_language_query))
+        except Exception as e:
+            logger.error(f"SQL execution failed in sync wrapper: {e}")
+            return f"Error: {str(e)}"
     
     def run(self, sql: str) -> str:
         """

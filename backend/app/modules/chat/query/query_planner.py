@@ -22,6 +22,7 @@ from .models import (
     JoinSpec, SchemaLinkResult
 )
 from .schema_graph import SchemaGraph
+from .fuzzy_matcher import FuzzyMatcher
 
 logger = get_logger(__name__)
 
@@ -115,6 +116,17 @@ class QueryPlanner:
             if self.schema_graph and len(plan.entities) > 1:
                 plan = self._enrich_join_strategy(plan)
             
+            # Entity Resolution: Fuzzy match categorical filters
+            cat_map = self._parse_categorical_values(schema_context)
+            if cat_map:
+                matcher = FuzzyMatcher(threshold=0.6)
+                for f in plan.filters:
+                    if f.column in cat_map and isinstance(f.value, str):
+                        matched = matcher.match_categorical_value(f.value, cat_map[f.column])
+                        if matched and matched != f.value:
+                            logger.info(f"Fuzzy matched filter '{f.value}' -> '{matched}' for column '{f.column}'")
+                            f.value = matched
+            
             # Inject default filters from schema link result
             if schema_link_result and schema_link_result.default_filters:
                 plan = self._inject_default_filters(plan, schema_link_result)
@@ -133,6 +145,22 @@ class QueryPlanner:
             logger.warning(f"Query planning failed: {e}. Generating minimal plan.")
             return self._fallback_plan(question, schema_link_result)
     
+    def _parse_categorical_values(self, schema_context: str) -> dict:
+        """Parse the schema context to extract valid categorical values for columns."""
+        import re
+        cat_map = {}
+        for line in schema_context.split('\n'):
+            line = line.strip()
+            if line.startswith('- ') and ':' in line:
+                parts = line[2:].split(':', 1)
+                if len(parts) == 2:
+                    col_name = parts[0].strip()
+                    vals_part = parts[1].strip()
+                    vals = re.findall(r"'([^']*)'", vals_part)
+                    if vals:
+                        cat_map[col_name] = vals
+        return cat_map
+
     def _enrich_join_strategy(self, plan: QueryPlan) -> QueryPlan:
         """
         Populate join_strategy based on SchemaGraph FK relationships.

@@ -1080,18 +1080,33 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
         
         def _load_model():
             from sentence_transformers import SentenceTransformer
-            if local_path:
-                m = SentenceTransformer(local_path, device=device)
-                logger.info(f"Loaded embedding model from local path: {local_path} on {device}")
-            else:
-                logger.info(f"Model not found locally, downloading from HuggingFace: {actual_model}")
-                m = SentenceTransformer(actual_model, device=device)
-                logger.info(f"Loaded embedding model from HuggingFace: {actual_model} on {device}")
+            try:
+                if local_path:
+                    m = SentenceTransformer(local_path, device=device)
+                    logger.info(f"Loaded embedding model from local path: {local_path} on {device}")
+                else:
+                    logger.info(f"Model not found locally, downloading from HuggingFace: {actual_model}")
+                    m = SentenceTransformer(actual_model, device=device)
+                    logger.info(f"Loaded embedding model from HuggingFace: {actual_model} on {device}")
+            except Exception as e:
+                # Fallback for MPS "meta tensor" error or other device issues
+                if device == "mps":
+                    logger.warning(f"Failed to load model on MPS: {e}. Falling back to CPU.")
+                    if local_path:
+                        m = SentenceTransformer(local_path, device="cpu")
+                    else:
+                        m = SentenceTransformer(actual_model, device="cpu")
+                    logger.info(f"Loaded embedding model on CPU after MPS failure")
+                else:
+                    raise e
             
             # Pre-warm the model with a test embedding
-            logger.info("Pre-warming embedding model...")
-            _ = m.encode(["test"], convert_to_numpy=True)
-            logger.info("Embedding model ready!")
+            logger.info("Pre-warm the model...")
+            try:
+                _ = m.encode(["test"], convert_to_numpy=True)
+                logger.info("Embedding model ready!")
+            except Exception as e:
+                logger.warning(f"Pre-warming failed: {e}")
             return m
         
         # Load model in executor - get loop fresh to avoid stale reference issues

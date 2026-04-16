@@ -87,14 +87,9 @@ async def generate_comparison_insights(
             if not sql:
                 continue
                 
-            # Quick syntax auto-correction for DuckDB timezone limitations
-            if dialect == "duckdb":
-                sql = re.sub(
-                    r'CAST\s*\(\s*([a-zA-Z0-9_]+)\s+AS\s+TIMESTAMP(?:TZ)?\s*\)', 
-                    r'CAST(SUBSTRING(\1, 1, 19) AS TIMESTAMP)', 
-                    sql, 
-                    flags=re.IGNORECASE
-                )
+            # DuckDB handles standard ISO strings correctly in CAST(col AS TIMESTAMP)
+            # No automatic SUBSTRING injection needed - it breaks DATE columns.
+            pass
             
             try:
                 results, count = sql_service.execute_query(sql, timeout_seconds=15)

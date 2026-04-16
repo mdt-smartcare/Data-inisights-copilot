@@ -1,8 +1,8 @@
 import { useRef, useState, useEffect } from 'react';
-import { 
-  LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area, 
-  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, 
-  Treemap, XAxis, YAxis, CartesianGrid, Tooltip, Legend, 
+import {
+  LineChart, Line, BarChart, Bar, PieChart, Pie, AreaChart, Area,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  Treemap, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, Cell, LabelList, FunnelChart, Funnel
 } from 'recharts';
 import { domToPng } from 'modern-screenshot';
@@ -37,7 +37,7 @@ const COLORS = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'
 // Healthcare-specific color schemes
 const GAUGE_COLORS = {
   danger: '#ef4444',
-  warning: '#f59e0b', 
+  warning: '#f59e0b',
   success: '#10b981',
   neutral: '#6b7280'
 };
@@ -58,17 +58,17 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
     const handleResize = () => {
       setContainerWidth(window.innerWidth);
     };
-    
+
     // Set initial width
     handleResize();
-    
+
     // Add debounced resize listener
     let timeoutId: NodeJS.Timeout;
     const debouncedResize = () => {
       clearTimeout(timeoutId);
       timeoutId = setTimeout(handleResize, 150);
     };
-    
+
     window.addEventListener('resize', debouncedResize);
     return () => {
       window.removeEventListener('resize', debouncedResize);
@@ -81,14 +81,14 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
   // ============================================
   const handleDownload = async () => {
     if (!chartRef.current || isExporting) return;
-    
+
     setIsExporting(true);
     try {
       const dataUrl = await domToPng(chartRef.current, {
         scale: 2, // 2x resolution for crisp PPT images
         backgroundColor: '#ffffff',
       });
-      
+
       // Download the PNG
       const link = document.createElement('a');
       link.download = `${(title || 'chart').replace(/[^a-zA-Z0-9]/g, '-')}-${new Date().toISOString().slice(0, 10)}.png`;
@@ -131,7 +131,7 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
   if (type === 'gauge') {
     const { value = 0, min = 0, max = 100, target, thresholds } = chartData;
     const percentage = ((value - min) / (max - min)) * 100;
-    
+
     // Determine color based on thresholds or default logic
     let gaugeColor = GAUGE_COLORS.neutral;
     if (thresholds && thresholds.length > 0) {
@@ -187,10 +187,10 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
               )}
               {/* Value text */}
               <text x="100" y="85" textAnchor="middle" className="text-2xl font-bold" fill={gaugeColor}>
-                {typeof value === 'number' ? value.toLocaleString() : value}
+                {typeof value === 'number' ? value.toLocaleString() : (typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value))}
               </text>
               <text x="100" y="105" textAnchor="middle" className="text-xs" fill="#6b7280">
-                {target ? `Target: ${target}` : `${min} - ${max}`}
+                {target ? `Target: ${String(target)}` : `${String(min)} - ${String(max)}`}
               </text>
             </svg>
             {/* Legend for thresholds */}
@@ -283,10 +283,10 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
     const dataTarget = (rawData as any)?.target;
     const defaultTarget = chartData.target ?? dataTarget ?? 0.8;
     const ranges = chartData.ranges ?? [30, 70, 100];
-    
+
     // Transform data to bullet format
     let bulletData: { name: string; actual: number; target: number }[] = [];
-    
+
     if (Array.isArray(rawData)) {
       // Array format: [{name: 'X', actual: 50, target: 80}, ...]
       bulletData = rawData.map(item => ({
@@ -298,37 +298,37 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
       // Labels/values format from backend
       // Get target from data object if available
       const targetFromData = (rawData as any)?.target ?? defaultTarget;
-      
+
       bulletData = rawData.labels.map((label: string, index: number) => {
         const value = rawData.values![index];
-        
+
         // Skip if value is undefined (handles mismatched array lengths)
         if (value === undefined) return null;
-        
+
         // Handle case where value is an object {actual, target}
         if (value && typeof value === 'object' && 'actual' in value) {
           let actualVal = typeof value.actual === 'number' ? value.actual : parseFloat(value.actual) || 0;
           let targetVal = typeof value.target === 'number' ? value.target : targetFromData;
-          
+
           // If values are decimals (0-1), convert to percentage
           if (actualVal <= 1) actualVal = actualVal * 100;
           if (targetVal <= 1) targetVal = targetVal * 100;
-          
+
           return {
             name: label,
             actual: actualVal,
             target: targetVal
           };
         }
-        
+
         // Handle simple numeric value
         let numericValue = typeof value === 'number' ? value : parseFloat(value) || 0;
         let targetVal = typeof targetFromData === 'number' ? targetFromData : 0.8;
-        
+
         // If values are decimals (0-1), convert to percentage
         if (numericValue <= 1) numericValue = numericValue * 100;
         if (targetVal <= 1) targetVal = targetVal * 100;
-        
+
         return {
           name: label,
           actual: numericValue,
@@ -339,10 +339,10 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
       // Single bullet from chartData props
       let targetVal = defaultTarget;
       if (targetVal <= 1) targetVal = targetVal * 100;
-      
-      bulletData = [{ 
-        name: title || 'Progress', 
-        actual: chartData.actual, 
+
+      bulletData = [{
+        name: title || 'Progress',
+        actual: chartData.actual,
         target: targetVal
       }];
     }
@@ -366,7 +366,7 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
               const scaledRanges = ranges.map(r => (r / maxValue) * 100);
               const scaledActual = (item.actual / maxValue) * 100;
               const scaledTarget = (item.target / maxValue) * 100;
-              
+
               return (
                 <div key={index} className="relative">
                   <div className="flex items-center mb-1">
@@ -487,19 +487,36 @@ export default function ChartRenderer({ chartData }: ChartRendererProps) {
           {title && <h4 className="text-sm font-bold mb-4 text-gray-800 border-b pb-2">{title}</h4>}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             {displayMetrics && displayMetrics.length > 0 ? (
-              displayMetrics.map((metric: any, idx: number) => (
-                <div key={idx} className="p-3 bg-gray-50 rounded-md border border-gray-100 flex flex-col items-center text-center">
-                  <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">{metric.label || metric.name || 'Metric'}</span>
-                  <span className="text-xl font-bold text-gray-900 my-1">{metric.value}</span>
-                  {metric.change && (
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${metric.status === 'up' ? 'bg-green-100 text-green-700' :
-                      metric.status === 'down' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
-                      } `}>
-                      {metric.change}
-                    </span>
-                  )}
-                </div>
-              ))
+              displayMetrics.map((metric: any, idx: number) => {
+                const isObjectValue = typeof metric.value === 'object' && metric.value !== null;
+
+                return (
+                  <div key={idx} className="p-3 bg-gray-50 rounded-md border border-gray-100 flex flex-col items-center text-center">
+                    <span className="text-xs text-gray-500 font-medium uppercase tracking-wide">{String(metric.label || metric.name || 'Metric')}</span>
+
+                    {isObjectValue ? (
+                      <div className="flex flex-wrap justify-center gap-2 mt-1">
+                        {Object.entries(metric.value).map(([key, val]: [string, any]) => (
+                          <div key={key} className="flex flex-col">
+                            <span className="text-[10px] text-gray-400 leading-none">{key.replace(/_/g, ' ')}</span>
+                            <span className="text-sm font-bold text-gray-800">{String(val)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xl font-bold text-gray-900 my-1">{metric.value}</span>
+                    )}
+
+                    {metric.change && (
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full mt-1 ${metric.status === 'up' ? 'bg-green-100 text-green-700' :
+                        metric.status === 'down' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600'
+                        } `}>
+                        {metric.change}
+                      </span>
+                    )}
+                  </div>
+                );
+              })
             ) : (
               <div className="text-sm text-gray-500 italic col-span-3">No metrics data available</div>
             )}

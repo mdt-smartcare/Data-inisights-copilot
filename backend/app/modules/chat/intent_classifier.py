@@ -29,6 +29,7 @@ class QueryIntent(str, Enum):
     SQL_ONLY = "A"      # Pure SQL for structured data
     VECTOR_ONLY = "B"   # Pure vector search for documents
     HYBRID = "C"        # SQL filter + vector search
+    DASHBOARD_GENERATOR = "Dashboard" # Dashboard generation (multiple charts)
     FALLBACK = "Fallback"  # Use agent with tools
 
 
@@ -95,6 +96,12 @@ class IntentClassifier:
         'recent patients', 'patients diagnosed',
     ]
     
+    # Keywords indicating Dashboard Generation queries
+    DASHBOARD_KEYWORDS = [
+        'overview', 'dashboard', 'summary of', 'metrics for', 
+        'give me a dashboard', 'show me an overview', 'executive summary'
+    ]
+    
     def __init__(self, llm=None):
         """
         Initialize the intent classifier.
@@ -131,7 +138,16 @@ class IntentClassifier:
         """
         query_lower = query.lower()
         
-        # Check for hybrid patterns first (most specific)
+        # Check for dashboard patterns first
+        dashboard_score = sum(1 for kw in self.DASHBOARD_KEYWORDS if kw in query_lower)
+        if dashboard_score > 0:
+            return IntentClassification(
+                intent=QueryIntent.DASHBOARD_GENERATOR.value,
+                confidence_score=0.9,
+                reason=f"Dashboard keywords detected (score: {dashboard_score})"
+            )
+            
+        # Check for hybrid patterns next (most specific)
         hybrid_score = sum(1 for kw in self.HYBRID_KEYWORDS if kw in query_lower)
         if hybrid_score > 0:
             return IntentClassification(

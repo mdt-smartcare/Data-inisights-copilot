@@ -62,6 +62,7 @@ export interface Message {
   sqlQuery?: string;                   // Optional SQL query executed for response
   suggestedQuestions?: string[];       // Optional follow-up questions
   chartData?: ChartData;               // Optional visualization data
+  dashboards?: ChartData[];            // Optional multiple charts for dashboard
   traceId?: string;                    // Optional trace ID for debugging
   processingTime?: number;             // Optional response generation time in ms
   queryMode?: QueryMode;               // Query mode used for this message
@@ -114,6 +115,7 @@ export interface ChatResponse {
   sql_query?: string;                  // Optional executed SQL query
   suggested_questions?: string[];      // Optional follow-up questions
   chart_data?: ChartData;              // Optional chart visualization
+  dashboards?: ChartData[];            // Optional multiple charts for dashboard
   conversation_id: string;             // Conversation thread ID
   session_id?: string;                 // Session ID for conversation tracking
   agent_id?: string;                   // Agent ID that generated this response (UUID)
