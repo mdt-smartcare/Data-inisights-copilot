@@ -166,7 +166,7 @@ npm run dev
 
 ## Project Documentation
 
-For detailed technical guides and system documentation, refer to the [docs/](docs/) directory:
+For detailed technical guides and system documentation, please refer to our **[GitHub Wiki](https://github.com/Medtronic-LABS/data-insights-copilot/wiki)** or the local [docs/](docs/) directory:
 
 | Guide | Description |
 |-------|-------------|
