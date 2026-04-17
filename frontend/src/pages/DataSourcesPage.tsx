@@ -207,7 +207,9 @@ export default function DataSourcesPage() {
     setFormState({
       title: source.title,
       description: source.description || '',
-      db_url: source.db_url || '',
+      // Don't pre-fill db_url - it's no longer returned for security
+      // User must re-enter if they want to change it
+      db_url: '',
       db_engine_type: source.db_engine_type || 'postgresql',
     });
     setFormError(null);
@@ -236,7 +238,8 @@ export default function DataSourcesPage() {
         updateData.description = formState.description || undefined;
       }
       if (editingSource.source_type === 'database') {
-        if (formState.db_url !== editingSource.db_url) {
+        // Only update db_url if user provided a new one
+        if (formState.db_url.trim()) {
           updateData.db_url = formState.db_url;
         }
         if (formState.db_engine_type !== editingSource.db_engine_type) {
@@ -474,7 +477,7 @@ export default function DataSourcesPage() {
                       <td className="px-6 py-4">
                         {source.source_type === 'database' ? (
                           <span className="text-sm text-gray-500 font-mono truncate max-w-xs block">
-                            {source.db_url?.replace(/:[^:@]+@/, ':***@') || '-'}
+                            {source.db_url || '-'}
                           </span>
                         ) : (
                           <div className="text-sm text-gray-500">

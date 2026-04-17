@@ -42,7 +42,7 @@ export interface ActiveConfig {
     is_active?: boolean;
     status?: string;
     completed_step?: number;
-    db_url?: string;
+    db_url?: string;  // Returned with credentials masked
     db_engine_type?: string;
 
     // Embedding status
@@ -65,7 +65,7 @@ export interface ActiveConfig {
         id: string;
         title: string;
         source_type: string;
-        db_url?: string;
+        db_url?: string;  // Returned with credentials masked
         original_filename?: string;
         file_type?: string;
         row_count?: number;

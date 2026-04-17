@@ -29,8 +29,9 @@ class DataSourceBase(BaseModel):
 class DatabaseSourceCreate(DataSourceBase):
     """Create a database connection data source."""
     source_type: Literal["database"] = "database"
-    db_url: str = Field(..., description="Database connection URL")
+    db_url: str = Field(..., description="Database connection URL (can be base64 encoded)")
     db_engine_type: str = Field(..., description="Database engine: postgresql, mysql, sqlite")
+    is_encoded: bool = Field(default=False, description="Whether db_url is base64 encoded")
     
     @field_validator("db_engine_type")
     @classmethod
@@ -87,8 +88,8 @@ class DataSourceUpdate(BaseModel):
 class DataSourceResponse(DataSourceBase):
     """Data source response schema."""
     id: UUID
-    # Database fields
-    db_url: Optional[str] = None
+    # Database fields - credentials are masked in db_url
+    db_url: Optional[str] = None  # Returned with credentials masked
     db_engine_type: Optional[str] = None
     # File fields
     original_file_path: Optional[str] = None
@@ -138,6 +139,7 @@ class TestConnectionRequest(BaseModel):
     """Request to test a database connection."""
     db_url: str
     db_engine_type: str
+    is_encoded: bool = Field(default=False, description="Whether db_url is base64 encoded")
 
 
 class TestConnectionResponse(BaseModel):

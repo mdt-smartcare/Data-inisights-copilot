@@ -24,6 +24,7 @@ from app.modules.audit.helpers import AuditLogger, get_audit_logger
 from app.modules.audit.schemas import AuditAction
 from app.modules.users.schemas import User
 from app.modules.data_sources.service import DataSourceService
+from app.modules.data_sources.utils import decode_db_url
 from app.modules.data_sources.schemas import (
     DatabaseSourceCreate, DataSourceUpdate,
     DataSourceResponse, DataSourceListResponse,
@@ -60,9 +61,17 @@ async def create_database_source(
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[DataSourceResponse]:
     """Create a database connection data source."""
+    # Decode URL if it was base64 encoded
+    db_url = data.db_url
+    if data.is_encoded:
+        try:
+            db_url = decode_db_url(data.db_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
     source = await service.create_database_source(
         title=data.title,
-        db_url=data.db_url,
+        db_url=db_url,
         db_engine_type=data.db_engine_type,
         description=data.description,
         created_by=current_user.id,
@@ -288,7 +297,15 @@ async def test_database_connection(
     service: DataSourceService = Depends(get_data_source_service),
 ) -> BaseResponse[TestConnectionResponse]:
     """Test a database connection before saving."""
-    result = await service.test_connection(data.db_url, data.db_engine_type)
+    # Decode URL if it was base64 encoded
+    db_url = data.db_url
+    if data.is_encoded:
+        try:
+            db_url = decode_db_url(data.db_url)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    
+    result = await service.test_connection(db_url, data.db_engine_type)
     return BaseResponse.ok(data=TestConnectionResponse(**result))
 
 

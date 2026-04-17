@@ -663,3 +663,34 @@ def _extract_excel_columns_fast(file_path: str) -> tuple:
     except Exception as e:
         logger.error(f"Failed to extract Excel columns: {e}")
         return [], []
+
+
+# ==========================================
+# Database URL Security
+# ==========================================
+
+import base64
+
+
+def mask_db_url(db_url: str) -> str:
+    """
+    Mask credentials in a database URL.
+    
+    Example:
+        postgresql://user:password@localhost:5433/db
+        → postgresql://***:***@localhost:5433/db
+    """
+    return re.sub(r'://[^:]+:[^@]+@', '://***:***@', db_url)
+
+
+def decode_db_url(encoded_url: str) -> str:
+    """
+    Decode a base64 encoded database URL received from frontend.
+    
+    Raises:
+        ValueError: If decoding fails
+    """
+    try:
+        return base64.b64decode(encoded_url.encode('utf-8')).decode('utf-8')
+    except Exception as e:
+        raise ValueError(f"Invalid encoded database URL: {e}")
