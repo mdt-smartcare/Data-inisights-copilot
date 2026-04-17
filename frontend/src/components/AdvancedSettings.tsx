@@ -6,6 +6,34 @@ import type { AIModel, ModelType } from '../services/api';
 import AIModelSelector from './AIModelSelector';
 import { useAIRegistryModels } from '../hooks/useAIRegistryModels';
 
+// Validation limits - single source of truth for min/max constraints
+export const VALIDATION_LIMITS = {
+    llm: {
+        maxTokens: { min: 1, max: 128000 },
+    },
+    chunking: {
+        parentChunkSize: { min: 100, max: 10000 },
+        parentChunkOverlap: { min: 0 },
+        childChunkSize: { min: 50, max: 5000 },
+        childChunkOverlap: { min: 0 },
+    },
+    retriever: {
+        topKInitial: { min: 1, max: 500 },
+        topKFinal: { min: 1, max: 100 },
+    },
+} as const;
+
+// Validation error type
+export interface ValidationErrors {
+    'llm.maxTokens'?: string;
+    'chunking.parentChunkSize'?: string;
+    'chunking.parentChunkOverlap'?: string;
+    'chunking.childChunkSize'?: string;
+    'chunking.childChunkOverlap'?: string;
+    'retriever.topKInitial'?: string;
+    'retriever.topKFinal'?: string;
+}
+
 export type AccordionSection = 'embedding' | 'llm' | 'chunking' | 'retrieval';
 
 interface AdvancedSettingsProps {
@@ -38,10 +66,12 @@ interface AdvancedSettingsProps {
     };
     onChange: (settings: AdvancedSettingsProps['settings']) => void;
     readOnly?: boolean;
-    /** If true, only one accordion section can be open at a time. Default: false (multiple can be open) */
+    /** If true, only one accordion section can be open at a time. Default: true */
     singleAccordionMode?: boolean;
-    /** Sections to open by default. Default: ['embedding'] */
+    /** Sections to open by default. Default: [] */
     defaultOpenSections?: AccordionSection[];
+    /** Callback when validation state changes */
+    onValidationChange?: (isValid: boolean, errors: ValidationErrors) => void;
 }
 
 const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
@@ -49,9 +79,90 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
     onChange,
     readOnly = false,
     singleAccordionMode = true,
-    defaultOpenSections = []
+    defaultOpenSections = [],
+    onValidationChange
 }) => {
     const [localSettings, setLocalSettings] = useState(settings);
+    const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
+    
+    // Track raw string values for number inputs to allow clearing
+    const [chunkingInputs, setChunkingInputs] = useState({
+        parentChunkSize: String(settings.chunking.parentChunkSize),
+        parentChunkOverlap: String(settings.chunking.parentChunkOverlap),
+        childChunkSize: String(settings.chunking.childChunkSize),
+        childChunkOverlap: String(settings.chunking.childChunkOverlap),
+    });
+    
+    const [retrieverInputs, setRetrieverInputs] = useState({
+        topKInitial: String(settings.retriever.topKInitial),
+        topKFinal: String(settings.retriever.topKFinal),
+    });
+    
+    const [llmInputs, setLlmInputs] = useState({
+        maxTokens: String(settings.llm.maxTokens),
+    });
+
+    // Validation rules
+    const validateSettings = useCallback((settingsToValidate: typeof settings): ValidationErrors => {
+        const errors: ValidationErrors = {};
+
+        const { llm, chunking, retriever } = VALIDATION_LIMITS;
+
+        // LLM validation
+        if (settingsToValidate.llm.maxTokens < llm.maxTokens.min) {
+            errors['llm.maxTokens'] = `Max tokens must be at least ${llm.maxTokens.min}`;
+        } else if (settingsToValidate.llm.maxTokens > llm.maxTokens.max) {
+            errors['llm.maxTokens'] = `Max tokens cannot exceed ${llm.maxTokens.max.toLocaleString()}`;
+        }
+
+        // Chunking validation
+        const { parentChunkSize, parentChunkOverlap, childChunkSize, childChunkOverlap } = settingsToValidate.chunking;
+
+        if (parentChunkSize < chunking.parentChunkSize.min) {
+            errors['chunking.parentChunkSize'] = `Parent chunk size must be at least ${chunking.parentChunkSize.min}`;
+        } else if (parentChunkSize > chunking.parentChunkSize.max) {
+            errors['chunking.parentChunkSize'] = `Parent chunk size cannot exceed ${chunking.parentChunkSize.max.toLocaleString()}`;
+        }
+
+        if (parentChunkOverlap < chunking.parentChunkOverlap.min) {
+            errors['chunking.parentChunkOverlap'] = 'Overlap cannot be negative';
+        } else if (parentChunkOverlap >= parentChunkSize) {
+            errors['chunking.parentChunkOverlap'] = 'Overlap must be less than chunk size';
+        }
+
+        if (childChunkSize < chunking.childChunkSize.min) {
+            errors['chunking.childChunkSize'] = `Child chunk size must be at least ${chunking.childChunkSize.min}`;
+        } else if (childChunkSize > chunking.childChunkSize.max) {
+            errors['chunking.childChunkSize'] = `Child chunk size cannot exceed ${chunking.childChunkSize.max.toLocaleString()}`;
+        } else if (childChunkSize > parentChunkSize) {
+            errors['chunking.childChunkSize'] = 'Child chunk size should be smaller than parent';
+        }
+
+        if (childChunkOverlap < chunking.childChunkOverlap.min) {
+            errors['chunking.childChunkOverlap'] = 'Overlap cannot be negative';
+        } else if (childChunkOverlap >= childChunkSize) {
+            errors['chunking.childChunkOverlap'] = 'Overlap must be less than chunk size';
+        }
+
+        // Retriever validation
+        const { topKInitial, topKFinal } = settingsToValidate.retriever;
+
+        if (topKInitial < retriever.topKInitial.min) {
+            errors['retriever.topKInitial'] = `Top K (Initial) must be at least ${retriever.topKInitial.min}`;
+        } else if (topKInitial > retriever.topKInitial.max) {
+            errors['retriever.topKInitial'] = `Top K (Initial) cannot exceed ${retriever.topKInitial.max}`;
+        }
+
+        if (topKFinal < retriever.topKFinal.min) {
+            errors['retriever.topKFinal'] = `Top K (Final) must be at least ${retriever.topKFinal.min}`;
+        } else if (topKFinal > topKInitial) {
+            errors['retriever.topKFinal'] = 'Top K (Final) cannot exceed Top K (Initial)';
+        } else if (topKFinal > retriever.topKFinal.max) {
+            errors['retriever.topKFinal'] = `Top K (Final) cannot exceed ${retriever.topKFinal.max}`;
+        }
+
+        return errors;
+    }, []);
 
     // Accordion state - tracks which sections are open
     const [openSections, setOpenSections] = useState<Set<AccordionSection>>(
@@ -107,9 +218,32 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
     // Track if we've synced embedding/LLM defaults
     const hasSetDefaultEmbedding = React.useRef(false);
     const hasSetDefaultLLM = React.useRef(false);
+    
+    // Track if we're the source of the change to avoid circular updates
+    const isInternalUpdate = React.useRef(false);
 
     useEffect(() => {
+        // Skip if this is our own update echoing back
+        if (isInternalUpdate.current) {
+            isInternalUpdate.current = false;
+            return;
+        }
+        
         setLocalSettings(settings);
+        // Sync string inputs when settings change externally
+        setChunkingInputs({
+            parentChunkSize: String(settings.chunking.parentChunkSize),
+            parentChunkOverlap: String(settings.chunking.parentChunkOverlap),
+            childChunkSize: String(settings.chunking.childChunkSize),
+            childChunkOverlap: String(settings.chunking.childChunkOverlap),
+        });
+        setRetrieverInputs({
+            topKInitial: String(settings.retriever.topKInitial),
+            topKFinal: String(settings.retriever.topKFinal),
+        });
+        setLlmInputs({
+            maxTokens: String(settings.llm.maxTokens),
+        });
     }, [settings]);
 
     // Pre-select default reranker model from AI Registry
@@ -136,6 +270,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                 rerankerModelId: defaultReranker.id,  // Store at top level
             };
             setLocalSettings(newSettings);
+            isInternalUpdate.current = true;
             onChange(newSettings);
         }
     }, [aiRegistry.isLoading, aiRegistry.rerankerModels, aiRegistry.defaults?.reranker, readOnly, localSettings, onChange]);
@@ -208,7 +343,10 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
 
             if (needsUpdate) {
                 // Use setTimeout to call onChange after state update to avoid batching issues
-                setTimeout(() => onChange(newSettings), 0);
+                setTimeout(() => {
+                    isInternalUpdate.current = true;
+                    onChange(newSettings);
+                }, 0);
                 return newSettings;
             }
             return currentSettings;
@@ -242,10 +380,21 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
         });
     };
 
-    // Use effect to call onChange when localSettings changes to avoid stale closures in handleChange
+    // Validate and notify parent when localSettings changes
     useEffect(() => {
+        const errors = validateSettings(localSettings);
+        setValidationErrors(errors);
+        
+        // Mark this as internal update to prevent the incoming prop from resetting our string inputs
+        isInternalUpdate.current = true;
         onChange(localSettings);
-    }, [localSettings, onChange]);
+        
+        // Notify parent about validation state if callback provided
+        if (onValidationChange) {
+            const valid = Object.keys(errors).length === 0;
+            onValidationChange(valid, errors);
+        }
+    }, [localSettings, onChange, validateSettings, onValidationChange]);
 
     // Handle embedding model activation via API
     const handleEmbeddingSelect = async (modelId: number) => {
@@ -267,6 +416,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                 embeddingModelId: model.id,  // Store at top level
             };
             setLocalSettings(newSettings);
+            isInternalUpdate.current = true;
             onChange(newSettings);
             setActivationMsg(`✓ Switched to ${model.display_name}`);
             await loadModels();
@@ -298,6 +448,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                 llmModelId: model.id,  // Store at top level
             };
             setLocalSettings(newSettings);
+            isInternalUpdate.current = true;
             onChange(newSettings);
             setActivationMsg(`✓ Switched to ${model.display_name}`);
             await loadModels();
@@ -560,32 +711,26 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                                 <label className="block text-xs font-medium text-gray-700 mb-1">Max Output Tokens</label>
                                                 <input
                                                     type="number"
-                                                    min="1"
-                                                    value={localSettings.llm.maxTokens}
-                                                    onChange={(e) => handleChange('llm', 'maxTokens', parseInt(e.target.value))}
+                                                    min={VALIDATION_LIMITS.llm.maxTokens.min}
+                                                    max={VALIDATION_LIMITS.llm.maxTokens.max}
+                                                    value={llmInputs.maxTokens}
+                                                    onChange={(e) => {
+                                                        setLlmInputs(prev => ({ ...prev, maxTokens: e.target.value }));
+                                                        const val = parseInt(e.target.value, 10);
+                                                        if (!isNaN(val)) handleChange('llm', 'maxTokens', val);
+                                                    }}
                                                     disabled={readOnly}
-                                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-purple-500 focus:ring-purple-500 sm:text-xs p-1.5 border"
+                                                    className={`w-full rounded-md shadow-sm sm:text-xs p-1.5 border ${
+                                                        validationErrors['llm.maxTokens']
+                                                            ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                                                            : 'border-gray-300 focus:border-purple-500 focus:ring-purple-500'
+                                                    }`}
                                                 />
+                                                {validationErrors['llm.maxTokens'] && (
+                                                    <p className="mt-1 text-xs text-red-600">{validationErrors['llm.maxTokens']}</p>
+                                                )}
                                             </div>
                                         </div>
-
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Compatible with {activeEmbedding?.display_name || 'Active Embedding'}
-                                        </label>
-                                        {compatibleLLMs.length === 0 ? (
-                                            <div className="p-3 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg text-center">
-                                                No compatibility data available
-                                            </div>
-                                        ) : (
-                                            <div className="space-y-1">
-                                                {compatibleLLMs.map(m => (
-                                                    <div key={m.id} className="flex items-center gap-2 px-3 py-2 rounded-md bg-emerald-50 border border-emerald-200">
-                                                        <svg className="w-4 h-4 text-emerald-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                                        <span className="text-sm text-emerald-800 font-medium">{m.display_name}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
                                     </div>
                                 </div>
                             )}
@@ -643,27 +788,46 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                             <label className="block text-xs font-medium text-gray-700 mb-1">Chunk Size</label>
                                             <input
                                                 type="number"
-                                                value={localSettings.chunking.parentChunkSize}
+                                                min={VALIDATION_LIMITS.chunking.parentChunkSize.min}
+                                                max={VALIDATION_LIMITS.chunking.parentChunkSize.max}
+                                                value={chunkingInputs.parentChunkSize}
                                                 onChange={(e) => {
-                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    setChunkingInputs(prev => ({ ...prev, parentChunkSize: e.target.value }));
+                                                    const val = parseInt(e.target.value, 10);
                                                     if (!isNaN(val)) handleChange('chunking', 'parentChunkSize', val);
                                                 }}
                                                 disabled={readOnly}
-                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border ${
+                                                    validationErrors['chunking.parentChunkSize']
+                                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                                                        : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
+                                                }`}
                                             />
+                                            {validationErrors['chunking.parentChunkSize'] && (
+                                                <p className="mt-1 text-xs text-red-600">{validationErrors['chunking.parentChunkSize']}</p>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="block text-xs font-medium text-gray-700 mb-1">Overlap</label>
                                             <input
                                                 type="number"
-                                                value={localSettings.chunking.parentChunkOverlap}
+                                                min={VALIDATION_LIMITS.chunking.parentChunkOverlap.min}
+                                                value={chunkingInputs.parentChunkOverlap}
                                                 onChange={(e) => {
-                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    setChunkingInputs(prev => ({ ...prev, parentChunkOverlap: e.target.value }));
+                                                    const val = parseInt(e.target.value, 10);
                                                     if (!isNaN(val)) handleChange('chunking', 'parentChunkOverlap', val);
                                                 }}
                                                 disabled={readOnly}
-                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border"
+                                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border ${
+                                                    validationErrors['chunking.parentChunkOverlap']
+                                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                                                        : 'border-gray-300 focus:border-blue-500 focus:ring-blue-500'
+                                                }`}
                                             />
+                                            {validationErrors['chunking.parentChunkOverlap'] && (
+                                                <p className="mt-1 text-xs text-red-600">{validationErrors['chunking.parentChunkOverlap']}</p>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -679,27 +843,46 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                             <label className="block text-xs font-medium text-gray-700 mb-1">Chunk Size</label>
                                             <input
                                                 type="number"
-                                                value={localSettings.chunking.childChunkSize}
+                                                min={VALIDATION_LIMITS.chunking.childChunkSize.min}
+                                                max={VALIDATION_LIMITS.chunking.childChunkSize.max}
+                                                value={chunkingInputs.childChunkSize}
                                                 onChange={(e) => {
-                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    setChunkingInputs(prev => ({ ...prev, childChunkSize: e.target.value }));
+                                                    const val = parseInt(e.target.value, 10);
                                                     if (!isNaN(val)) handleChange('chunking', 'childChunkSize', val);
                                                 }}
                                                 disabled={readOnly}
-                                                className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border bg-white"
+                                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border bg-white ${
+                                                    validationErrors['chunking.childChunkSize']
+                                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                                                        : 'border-blue-300 focus:border-blue-500 focus:ring-blue-500'
+                                                }`}
                                             />
+                                            {validationErrors['chunking.childChunkSize'] && (
+                                                <p className="mt-1 text-xs text-red-600">{validationErrors['chunking.childChunkSize']}</p>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="block text-xs font-medium text-gray-700 mb-1">Overlap</label>
                                             <input
                                                 type="number"
-                                                value={localSettings.chunking.childChunkOverlap}
+                                                min={VALIDATION_LIMITS.chunking.childChunkOverlap.min}
+                                                value={chunkingInputs.childChunkOverlap}
                                                 onChange={(e) => {
-                                                    const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                    setChunkingInputs(prev => ({ ...prev, childChunkOverlap: e.target.value }));
+                                                    const val = parseInt(e.target.value, 10);
                                                     if (!isNaN(val)) handleChange('chunking', 'childChunkOverlap', val);
                                                 }}
                                                 disabled={readOnly}
-                                                className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm p-2 border bg-white"
+                                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border bg-white ${
+                                                    validationErrors['chunking.childChunkOverlap']
+                                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                                                        : 'border-blue-300 focus:border-blue-500 focus:ring-blue-500'
+                                                }`}
                                             />
+                                            {validationErrors['chunking.childChunkOverlap'] && (
+                                                <p className="mt-1 text-xs text-red-600">{validationErrors['chunking.childChunkOverlap']}</p>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -755,23 +938,51 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Top K (Initial)</label>
                                             <input
                                                 type="number"
-                                                value={localSettings.retriever.topKInitial}
-                                                onChange={(e) => handleChange('retriever', 'topKInitial', parseInt(e.target.value))}
+                                                min={VALIDATION_LIMITS.retriever.topKInitial.min}
+                                                max={VALIDATION_LIMITS.retriever.topKInitial.max}
+                                                value={retrieverInputs.topKInitial}
+                                                onChange={(e) => {
+                                                    setRetrieverInputs(prev => ({ ...prev, topKInitial: e.target.value }));
+                                                    const val = parseInt(e.target.value, 10);
+                                                    if (!isNaN(val)) handleChange('retriever', 'topKInitial', val);
+                                                }}
                                                 disabled={readOnly}
-                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
+                                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border ${
+                                                    validationErrors['retriever.topKInitial']
+                                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                                                        : 'border-gray-300 focus:border-emerald-500 focus:ring-emerald-500'
+                                                }`}
                                             />
-                                            <p className="mt-1 text-xs text-gray-500 leading-tight">Candidates fetched from vector base before reranking</p>
+                                            {validationErrors['retriever.topKInitial'] ? (
+                                                <p className="mt-1 text-xs text-red-600">{validationErrors['retriever.topKInitial']}</p>
+                                            ) : (
+                                                <p className="mt-1 text-xs text-gray-500 leading-tight">Candidates fetched from vector base before reranking</p>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Top K (Final)</label>
                                             <input
                                                 type="number"
-                                                value={localSettings.retriever.topKFinal}
-                                                onChange={(e) => handleChange('retriever', 'topKFinal', parseInt(e.target.value))}
+                                                min={VALIDATION_LIMITS.retriever.topKFinal.min}
+                                                max={VALIDATION_LIMITS.retriever.topKFinal.max}
+                                                value={retrieverInputs.topKFinal}
+                                                onChange={(e) => {
+                                                    setRetrieverInputs(prev => ({ ...prev, topKFinal: e.target.value }));
+                                                    const val = parseInt(e.target.value, 10);
+                                                    if (!isNaN(val)) handleChange('retriever', 'topKFinal', val);
+                                                }}
                                                 disabled={readOnly}
-                                                className="w-full rounded-md border-gray-300 shadow-sm focus:border-emerald-500 focus:ring-emerald-500 sm:text-sm p-2 border"
+                                                className={`w-full rounded-md shadow-sm sm:text-sm p-2 border ${
+                                                    validationErrors['retriever.topKFinal']
+                                                        ? 'border-red-500 focus:border-red-500 focus:ring-red-500'
+                                                        : 'border-gray-300 focus:border-emerald-500 focus:ring-emerald-500'
+                                                }`}
                                             />
-                                            <p className="mt-1 text-xs text-gray-500 leading-tight">Final results sent to LLM context window</p>
+                                            {validationErrors['retriever.topKFinal'] ? (
+                                                <p className="mt-1 text-xs text-red-600">{validationErrors['retriever.topKFinal']}</p>
+                                            ) : (
+                                                <p className="mt-1 text-xs text-gray-500 leading-tight">Final results sent to LLM context window</p>
+                                            )}
                                         </div>
                                     </div>
 
@@ -838,6 +1049,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                                         rerankerModelId: model?.id,  // Store at top level
                                                     };
                                                     setLocalSettings(newSettings);
+                                                    isInternalUpdate.current = true;
                                                     onChange(newSettings);
                                                 }}
                                                 disabled={readOnly || !localSettings.retriever.rerankEnabled}

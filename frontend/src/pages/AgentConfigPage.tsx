@@ -23,6 +23,7 @@ import type { IngestionResponse } from '../services/api';
 import { canPublishPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
 import type { AdvancedSettings } from '../contexts/AgentContext';
+import type { ValidationErrors } from '../components/AdvancedSettings';
 
 // Utility to convert snake_case keys to camelCase
 const snakeToCamel = (str: string): string =>
@@ -109,6 +110,7 @@ const AgentConfigPage: React.FC = () => {
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
+    const [advancedSettingsValid, setAdvancedSettingsValid] = useState(true);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [isDataSourceLocked, setIsDataSourceLocked] = useState(false);
 
@@ -634,6 +636,7 @@ const AgentConfigPage: React.FC = () => {
                                     connectionName={connectionName}
                                     connectionId={connectionId}
                                     fileName={fileUploadResult?.file_name}
+                                    onValidationChange={(isValid: boolean, _errors: ValidationErrors) => setAdvancedSettingsValid(isValid)}
                                 />
                             )}
 
@@ -731,9 +734,9 @@ const AgentConfigPage: React.FC = () => {
                             ) : (
                                 <button
                                     onClick={handleNext}
-                                    disabled={generating || isPublishing || (currentStep === 1 && !selectedDataSource)}
+                                    disabled={generating || isPublishing || (currentStep === 1 && !selectedDataSource) || (currentStep === 4 && !advancedSettingsValid)}
                                     className={`w-full sm:w-auto px-4 sm:px-6 py-2 rounded-md font-medium text-white text-sm sm:text-base transition-colors duration-200 flex items-center justify-center
-                                            ${generating || isPublishing || (currentStep === 1 && !selectedDataSource) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                            ${generating || isPublishing || (currentStep === 1 && !selectedDataSource) || (currentStep === 4 && !advancedSettingsValid) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                 >
                                     Next
                                 </button>
