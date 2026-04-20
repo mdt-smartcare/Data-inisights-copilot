@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.utils.exceptions import AppException, ErrorCode
 from app.core.utils.logging import get_logger
+from app.core.models.auth import Role
 from app.modules.agents.repository import (
     AgentRepository, AgentConfigRepository, UserAgentRepository,
     _config_to_dict
@@ -128,6 +129,7 @@ class AgentService:
     async def list_agents(
         self,
         user_id: UUID,
+        user_role: Optional[str] = None,
         query: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
@@ -135,23 +137,40 @@ class AgentService:
         """
         List agents accessible to user with their roles.
         
-        Filters to only show agents the user has access to.
+        For super_admin users, returns ALL agents with admin role.
+        For other users, filters to only show agents they have access to.
         """
-        agents, total = await self.agents.get_accessible_agents(
-            user_id=user_id,
-            skip=skip,
-            limit=limit,
-        )
+        is_super_admin = user_role == Role.SUPER_ADMIN.value
         
-        # If query provided, filter results
-        if query:
-            query_lower = query.lower()
+        if is_super_admin:
+            # Super admin gets ALL agents with admin role
+            all_agents, total = await self.agents.search_agents(
+                query=query,
+                skip=skip,
+                limit=limit,
+            )
+            # Add admin role to all agents for super_admin
             agents = [
-                a for a in agents
-                if query_lower in a.get("title", "").lower() 
-                or query_lower in (a.get("description") or "").lower()
+                {**a.model_dump(), "user_role": "admin"}
+                for a in all_agents
             ]
-            total = len(agents)
+        else:
+            # Regular users only see agents they have access to
+            agents, total = await self.agents.get_accessible_agents(
+                user_id=user_id,
+                skip=skip,
+                limit=limit,
+            )
+            
+            # If query provided, filter results
+            if query:
+                query_lower = query.lower()
+                agents = [
+                    a for a in agents
+                    if query_lower in a.get("title", "").lower() 
+                    or query_lower in (a.get("description") or "").lower()
+                ]
+                total = len(agents)
         
         return AgentListResponse(
             agents=[AgentWithRole(**a) for a in agents],
@@ -233,8 +252,17 @@ class UserAgentService:
         user_id: UUID,
         agent_id: UUID,
         min_role: str = "user",
+        user_role: Optional[str] = None,
     ) -> bool:
-        """Check if user has access with minimum role."""
+        """
+        Check if user has access with minimum role.
+        
+        Super admin users always have access to all agents.
+        """
+        # Super admin always has access
+        if user_role == Role.SUPER_ADMIN.value:
+            return True
+        
         return await self.user_agents.has_access(user_id, agent_id, min_role)
     
     async def get_agent_users(self, agent_id: UUID) -> UserAgentListResponse:
@@ -246,8 +274,38 @@ class UserAgentService:
             agent_id=agent_id,
         )
     
-    async def get_user_agents(self, user_id: UUID) -> AgentsForUserListResponse:
-        """Get all agents a user has access to."""
+    async def get_user_agents(self, user_id: UUID, user_role: Optional[str] = None) -> AgentsForUserListResponse:
+        """
+        Get all agents a user has access to.
+        
+        Super admin users get all agents with admin role.
+        """
+        if user_role == Role.SUPER_ADMIN.value:
+            # Super admin gets ALL agents with admin role
+            all_agents, _ = await self.agents.search_agents(skip=0, limit=1000)
+            
+            # Build response with admin role for all agents
+            from .schemas import AgentForUserResponse
+            agents = [
+                AgentForUserResponse(
+                    id=a.id,
+                    title=a.title,
+                    description=a.description,
+                    created_by=a.created_by,
+                    created_at=a.created_at,
+                    updated_at=a.updated_at,
+                    role="admin",
+                    granted_at=a.created_at,  # Implicit access from creation
+                    granted_by=None,
+                )
+                for a in all_agents
+            ]
+            return AgentsForUserListResponse(
+                agents=agents,
+                total=len(agents),
+                user_id=user_id,
+            )
+        
         agents = await self.user_agents.get_user_agents_with_details(user_id)
         return AgentsForUserListResponse(
             agents=agents,
