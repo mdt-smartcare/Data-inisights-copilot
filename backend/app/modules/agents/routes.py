@@ -81,7 +81,7 @@ async def verify_agent_access(
         return
     
     ua_service = UserAgentService(service.db)
-    has_access = await ua_service.has_access(user.id, agent_id, min_role)
+    has_access = await ua_service.has_access(user.id, agent_id, min_role, user_role=user.role)
     if not has_access:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -133,6 +133,7 @@ async def list_agents(
     """List agents accessible to current user with their roles."""
     result = await service.list_agents(
         user_id=current_user.id,
+        user_role=current_user.role,
         query=query,
         skip=skip,
         limit=limit,

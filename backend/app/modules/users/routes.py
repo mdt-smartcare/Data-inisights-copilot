@@ -351,10 +351,17 @@ async def get_user_agents(
     **Required Permission:** ADMIN
     
     Returns a list of agents with the user's role for each agent.
+    For super_admin users, returns all agents with admin role.
     """
     from uuid import UUID
+    from app.modules.users.repository import UserRepository
+    
+    # Fetch target user to get their role
+    user_repo = UserRepository(session)
+    target_user = await user_repo.get_by_id(UUID(user_id))
+    target_role = target_user.role if target_user else None
     
     ua_service = UserAgentService(session)
-    result = await ua_service.get_user_agents(UUID(user_id))
+    result = await ua_service.get_user_agents(UUID(user_id), user_role=target_role)
     
     return BaseResponse.ok(data=result)
