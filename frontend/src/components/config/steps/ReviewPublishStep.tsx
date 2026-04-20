@@ -35,6 +35,12 @@ export const ReviewPublishStep: React.FC<ReviewPublishStepProps> = ({
     const { user } = useAuth();
     const canEdit = canEditPrompt(user);
 
+    // Use display name from advancedSettings (set by AdvancedSettings component)
+    // Fallback to model_id string if display name not available
+    const llmDisplayName = advancedSettings?.llmDisplayName 
+        || advancedSettings?.llm?.model 
+        || 'Not configured';
+
     // If no prompt exists yet, show the generate prompt UI
     if (!draftPrompt) {
         return (
@@ -109,7 +115,7 @@ export const ReviewPublishStep: React.FC<ReviewPublishStepProps> = ({
                                 </div>
                                 <div>
                                     <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">AI   Engine</span>
-                                    <p className="text-sm font-bold text-gray-800 mt-0.5 truncate">{advancedSettings?.llm.model}</p>
+                                    <p className="text-sm font-bold text-gray-800 mt-0.5 truncate">{llmDisplayName}</p>
                                 </div>
                                 <div>
                                     <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Schema Scope</span>

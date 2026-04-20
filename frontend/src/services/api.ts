@@ -1446,6 +1446,15 @@ export const deleteDataSourceSqlTable = async (tableName: string): Promise<{ sta
 // AGENT CONFIG DRAFT API - Versioned configuration with draft support
 // ============================================================================
 
+// Model info returned by backend when model IDs are resolved
+export interface ConfigModelInfo {
+  id: number;
+  provider_name: string;
+  display_name: string;
+  model_id: string;
+  model_type: string;
+}
+
 export interface AgentConfig {
   id: number;
   agent_id: string;
@@ -1461,6 +1470,10 @@ export interface AgentConfig {
   llm_model_id?: number;
   embedding_model_id?: number;
   reranker_model_id?: number;
+  // Resolved model info (populated by backend when model IDs are set)
+  llm_model?: ConfigModelInfo;
+  embedding_model?: ConfigModelInfo;
+  reranker_model?: ConfigModelInfo;
   system_prompt?: string;
   example_questions?: string[];
   embedding_path?: string;

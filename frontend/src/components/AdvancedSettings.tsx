@@ -1,10 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import {
-    listAIModels, setAIModelDefault, handleApiError
-} from '../services/api';
-import type { AIModel, ModelType } from '../services/api';
 import AIModelSelector from './AIModelSelector';
 import { useAIRegistryModels } from '../hooks/useAIRegistryModels';
+import type { AdvancedSettings } from '../contexts/SystemSettingsContext';
 
 // Validation limits - single source of truth for min/max constraints
 export const VALIDATION_LIMITS = {
@@ -37,34 +34,8 @@ export interface ValidationErrors {
 export type AccordionSection = 'embedding' | 'llm' | 'chunking' | 'retrieval';
 
 interface AdvancedSettingsProps {
-    settings: {
-        embedding: {
-            model: string;
-        };
-        llm: {
-            model?: string;
-            temperature: number;
-            maxTokens: number;
-        };
-        chunking: {
-            parentChunkSize: number;
-            parentChunkOverlap: number;
-            childChunkSize: number;
-            childChunkOverlap: number;
-        };
-        retriever: {
-            topKInitial: number;
-            topKFinal: number;
-            hybridWeights: [number, number];
-            rerankEnabled: boolean;
-            rerankerModel: string;
-        };
-        // AI Registry model IDs at top level
-        embeddingModelId?: number;
-        llmModelId?: number;
-        rerankerModelId?: number;
-    };
-    onChange: (settings: AdvancedSettingsProps['settings']) => void;
+    settings: AdvancedSettings;
+    onChange: (settings: AdvancedSettings) => void;
     readOnly?: boolean;
     /** If true, only one accordion section can be open at a time. Default: true */
     singleAccordionMode?: boolean;
@@ -195,23 +166,19 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
 
     const isSectionOpen = (section: AccordionSection) => openSections.has(section);
 
-    // Model registry state (from AI Registry)
-    const [embeddingModels, setEmbeddingModels] = useState<AIModel[]>([]);
-    const [llmModels, setLLMModels] = useState<AIModel[]>([]);
-    const [compatibleLLMs, setCompatibleLLMs] = useState<AIModel[]>([]);
-    const [loadingModels, setLoadingModels] = useState(true);
-    const [modelError, setModelError] = useState<string | null>(null);
-
-    // AI Registry models (new system)
+    // AI Registry models - single source for all model data
     const aiRegistry = useAIRegistryModels();
-
-    // Activation state
-    const [activatingId, setActivatingId] = useState<number | null>(null);
-    const [activationMsg, setActivationMsg] = useState<string | null>(null);
-
-    // Active selections
-    const [activeEmbedding, setActiveEmbedding] = useState<AIModel | null>(null);
-    const [activeLLM, setActiveLLM] = useState<AIModel | null>(null);
+    
+    // Derived state from aiRegistry (no separate API calls needed)
+    const embeddingModels = aiRegistry.embeddingModels;
+    const llmModels = aiRegistry.llmModels;
+    const compatibleLLMs = llmModels; // All LLMs compatible for now
+    const loadingModels = aiRegistry.isLoading;
+    const modelError = aiRegistry.error;
+    
+    // Active selections from defaults
+    const activeEmbedding = aiRegistry.defaults?.embedding || null;
+    const activeLLM = aiRegistry.defaults?.llm || null;
 
     // Track if we've already set the default reranker
     const hasSetDefaultReranker = React.useRef(false);
@@ -275,41 +242,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
         }
     }, [aiRegistry.isLoading, aiRegistry.rerankerModels, aiRegistry.defaults?.reranker, readOnly, localSettings, onChange]);
 
-    // Load models from AI Registry
-    const loadModels = useCallback(async () => {
-        setLoadingModels(true);
-        setModelError(null);
-        try {
-            const [embResult, llmResult] = await Promise.all([
-                listAIModels({ model_type: 'embedding' as ModelType }),
-                listAIModels({ model_type: 'llm' as ModelType })
-            ]);
-
-            // Filter to only ready models
-            const embModels = (embResult.models || []).filter(m => m.is_ready);
-            const llModels = (llmResult.models || []).filter(m => m.is_ready);
-
-            setEmbeddingModels(embModels);
-            setLLMModels(llModels);
-            // For compatibility, set all LLMs as compatible for now
-            setCompatibleLLMs(llModels);
-
-            const activeEmb = embModels.find(m => m.is_default) || null;
-            const activeLl = llModels.find(m => m.is_default) || null;
-            setActiveEmbedding(activeEmb);
-            setActiveLLM(activeLl);
-        } catch (err: unknown) {
-            console.error('Failed to load models:', err);
-            setModelError('Could not load AI Registry. Using manual input.');
-        } finally {
-            setLoadingModels(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        loadModels();
-    }, [loadModels]);
-
     // Sync default models to local settings on initial load (only if not already set)
     useEffect(() => {
         if (readOnly || loadingModels) return;
@@ -317,7 +249,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
         // Use functional update to access current state and avoid stale closures
         setLocalSettings(currentSettings => {
             let needsUpdate = false;
-            const newSettings = { ...currentSettings };
+            const newSettings: AdvancedSettings = { ...currentSettings };
 
             // Sync embedding model (model string + top-level embeddingModelId)
             if (activeEmbedding && !hasSetDefaultEmbedding.current && !currentSettings.embeddingModelId) {
@@ -337,6 +269,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                     model: activeLLM.model_id,
                 };
                 newSettings.llmModelId = activeLLM.id;
+                newSettings.llmDisplayName = activeLLM.display_name;
                 hasSetDefaultLLM.current = true;
                 needsUpdate = true;
             }
@@ -398,66 +331,45 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
 
     // Handle embedding model activation via API
     const handleEmbeddingSelect = async (modelId: number) => {
-        if (readOnly || activatingId) return;
+        if (readOnly) return;
         const model = embeddingModels.find(m => m.id === modelId);
-        if (!model || model.is_default) return;
+        if (!model) return;
 
-        setActivatingId(modelId);
-        setActivationMsg(null);
-        try {
-            await setAIModelDefault('embedding', modelId);
-            // Update local settings with model_id string and top-level embeddingModelId
-            const newSettings = {
-                ...localSettings,
-                embedding: {
-                    ...localSettings.embedding,
-                    model: model.model_id,
-                },
-                embeddingModelId: model.id,  // Store at top level
-            };
-            setLocalSettings(newSettings);
-            isInternalUpdate.current = true;
-            onChange(newSettings);
-            setActivationMsg(`✓ Switched to ${model.display_name}`);
-            await loadModels();
-        } catch (err) {
-            setActivationMsg(`✗ ${handleApiError(err)}`);
-        } finally {
-            setActivatingId(null);
-            setTimeout(() => setActivationMsg(null), 4000);
-        }
+        // Just update local settings - don't change global default
+        // The model ID will be saved to agent_config when the step is saved
+        const newSettings = {
+            ...localSettings,
+            embedding: {
+                ...localSettings.embedding,
+                model: model.model_id,
+            },
+            embeddingModelId: model.id,  // Store at top level for DB
+        };
+        setLocalSettings(newSettings);
+        isInternalUpdate.current = true;
+        onChange(newSettings);
     };
 
-    // Handle LLM model activation via API
+    // Handle LLM model selection (does NOT change global default)
     const handleLLMSelect = async (modelId: number) => {
-        if (readOnly || activatingId) return;
+        if (readOnly) return;
         const model = llmModels.find(m => m.id === modelId);
-        if (!model || model.is_default) return;
+        if (!model) return;
 
-        setActivatingId(modelId);
-        setActivationMsg(null);
-        try {
-            await setAIModelDefault('llm', modelId);
-            // Update local settings with model_id string and top-level llmModelId
-            const newSettings = {
-                ...localSettings,
-                llm: {
-                    ...localSettings.llm,
-                    model: model.model_id,
-                },
-                llmModelId: model.id,  // Store at top level
-            };
-            setLocalSettings(newSettings);
-            isInternalUpdate.current = true;
-            onChange(newSettings);
-            setActivationMsg(`✓ Switched to ${model.display_name}`);
-            await loadModels();
-        } catch (err) {
-            setActivationMsg(`✗ ${handleApiError(err)}`);
-        } finally {
-            setActivatingId(null);
-            setTimeout(() => setActivationMsg(null), 4000);
-        }
+        // Just update local settings - don't change global default
+        // The model ID will be saved to agent_config when the step is saved
+        const newSettings = {
+            ...localSettings,
+            llm: {
+                ...localSettings.llm,
+                model: model.model_id,
+            },
+            llmModelId: model.id,  // Store at top level for DB
+            llmDisplayName: model.display_name,  // Store for UI display in other steps
+        };
+        setLocalSettings(newSettings);
+        isInternalUpdate.current = true;
+        onChange(newSettings);
     };
 
     return (
@@ -466,16 +378,6 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
             <p className="text-xs sm:text-sm text-gray-500 mb-4 sm:mb-6">
                 Fine-tune the RAG pipeline parameters. These settings control how data is processed, indexed, and retrieved.
             </p>
-
-            {/* Feedback toast */}
-            {activationMsg && (
-                <div className={`mb-4 px-3 sm:px-4 py-2 sm:py-3 rounded-lg text-xs sm:text-sm font-medium flex items-center gap-2 transition-all duration-300 ${activationMsg.startsWith('✓')
-                    ? 'bg-green-50 text-green-800 border border-green-200'
-                    : 'bg-red-50 text-red-800 border border-red-200'
-                    }`}>
-                    {activationMsg}
-                </div>
-            )}
 
             <div className="space-y-4 sm:space-y-6">
 
@@ -497,11 +399,15 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                     </svg>
                                 </div>
                                 <h3 className="text-base sm:text-lg font-medium text-gray-900">Embedding Strategy</h3>
-                                {activeEmbedding && (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium bg-green-100 text-green-800">
-                                        Active: {activeEmbedding.display_name}
-                                    </span>
-                                )}
+                                {(() => {
+                                    const selectedEmb = embeddingModels.find(m => m.id === localSettings.embeddingModelId);
+                                    const displayModel = selectedEmb || activeEmbedding;
+                                    return displayModel ? (
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] sm:text-xs font-medium ${selectedEmb ? 'bg-indigo-100 text-indigo-800' : 'bg-green-100 text-green-800'}`}>
+                                            {selectedEmb ? 'Selected' : 'Default'}: {displayModel.display_name}
+                                        </span>
+                                    ) : null;
+                                })()}
                             </div>
                             <svg
                                 className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('embedding') ? 'rotate-180' : ''}`}
@@ -532,34 +438,35 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                             ) : (
                                 <div className="grid grid-cols-1 gap-2 sm:gap-3 mb-4">
                                     {embeddingModels.map(m => {
-                                        const isActive = m.is_default;
-                                        const isLoading = activatingId === m.id;
+                                        const isSelected = localSettings.embeddingModelId === m.id;
+                                        const isDefault = m.is_default;
                                         const isLocal = m.deployment_type === 'local';
                                         return (
                                             <button
                                                 key={m.id}
                                                 type="button"
                                                 onClick={() => handleEmbeddingSelect(m.id)}
-                                                disabled={readOnly || isActive || !!activatingId}
-                                                className={`text-left p-3 sm:p-4 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
-                                                    : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                disabled={readOnly}
+                                                className={`text-left p-3 sm:p-4 rounded-lg border-2 transition-all duration-200 ${isSelected ? 'border-indigo-400 bg-indigo-50 ring-1 ring-indigo-200 shadow-sm'
+                                                    : readOnly ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
                                                         : 'border-gray-200 bg-white hover:border-indigo-300 hover:bg-indigo-50/50 cursor-pointer hover:shadow-sm'
                                                     }`}
                                             >
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex flex-wrap items-center gap-1 sm:gap-2 mb-1">
-                                                            <span className={`text-xs sm:text-sm font-semibold ${isActive ? 'text-indigo-900' : 'text-gray-800'}`}>{m.display_name}</span>
-                                                            {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Default</span>}
+                                                            <span className={`text-xs sm:text-sm font-semibold ${isSelected ? 'text-indigo-900' : 'text-gray-800'}`}>{m.display_name}</span>
+                                                            {isSelected && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-100 text-indigo-700">Selected</span>}
+                                                            {isDefault && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Default</span>}
                                                             {/* Deployment Type Badge */}
                                                             <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${isLocal ? 'bg-orange-100 text-orange-700' : 'bg-sky-100 text-sky-700'}`}>
                                                                 {isLocal ? 'Local' : 'Cloud'}
                                                             </span>
                                                         </div>
                                                         <p className="text-[10px] sm:text-xs text-gray-500 truncate">{m.provider_name} • {m.model_id}</p>
-                                                        <p className="text-[10px] text-gray-400 mt-1">{m.dimensions}d{m.max_input_tokens ? ` • Max ${m.max_input_tokens}` : ''}</p>
+                                                        <p className="text-[10px] text-gray-400 mt-1">{m.dimensions}d{m.context_length ? ` • Max ${m.context_length}` : ''}</p>
                                                     </div>
-                                                    {!isLoading && !isActive && !readOnly && <span className="text-[10px] sm:text-xs text-indigo-500 font-medium flex-shrink-0">Select →</span>}
+                                                    {!isSelected && !readOnly && <span className="text-[10px] sm:text-xs text-indigo-500 font-medium flex-shrink-0">Select →</span>}
                                                 </div>
                                             </button>
                                         );
@@ -600,11 +507,15 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                 </svg>
                             </div>
                             <h3 className="text-lg font-medium text-gray-900">LLM Generation Parameters</h3>
-                            {activeLLM && (
-                                <span className="ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                                    Active: {activeLLM.display_name}
-                                </span>
-                            )}
+                            {(() => {
+                                const selectedLlm = llmModels.find(m => m.id === localSettings.llmModelId);
+                                const displayModel = selectedLlm || activeLLM;
+                                return displayModel ? (
+                                    <span className={`ml-2 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${selectedLlm ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800'}`}>
+                                        {selectedLlm ? 'Selected' : 'Default'}: {displayModel.display_name}
+                                    </span>
+                                ) : null;
+                            })()}
                         </div>
                         <svg
                             className={`w-5 h-5 text-gray-500 transition-transform duration-200 ${isSectionOpen('llm') ? 'rotate-180' : ''}`}
@@ -633,28 +544,29 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                         <label className="block text-sm font-medium text-gray-700 mb-2">Select LLM Model</label>
                                         <div className="space-y-2 mb-4">
                                             {llmModels.map(m => {
-                                                const isActive = m.is_default;
+                                                const isSelected = localSettings.llmModelId === m.id;
+                                                const isDefault = m.is_default;
                                                 const isCompatible = compatibleLLMs.some(c => c.id === m.id);
-                                                const isLoading = activatingId === m.id;
                                                 const isLocal = m.deployment_type === 'local';
                                                 return (
                                                     <button
                                                         key={m.id}
                                                         type="button"
                                                         onClick={() => handleLLMSelect(m.id)}
-                                                        disabled={readOnly || isActive || !!activatingId}
-                                                        className={`w-full text-left p-3 rounded-lg border-2 transition-all duration-200 ${isActive ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-200 shadow-sm'
-                                                            : readOnly || activatingId ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
+                                                        disabled={readOnly}
+                                                        className={`w-full text-left p-3 rounded-lg border-2 transition-all duration-200 ${isSelected ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-200 shadow-sm'
+                                                            : readOnly ? 'border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed'
                                                                 : 'border-gray-200 bg-white hover:border-purple-300 hover:bg-purple-50/50 cursor-pointer hover:shadow-sm'
                                                             }`}
                                                     >
                                                         <div className="flex items-center justify-between">
                                                             <div className="flex-1 min-w-0">
                                                                 <div className="flex flex-wrap items-center gap-1 sm:gap-2">
-                                                                    <span className={`text-sm font-semibold ${isActive ? 'text-purple-900' : 'text-gray-800'}`}>{m.display_name}</span>
-                                                                    {isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Default</span>}
-                                                                    {isCompatible && !isActive && <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
-                                                                    {!isCompatible && !isActive && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-600">Incompatible</span>}
+                                                                    <span className={`text-sm font-semibold ${isSelected ? 'text-purple-900' : 'text-gray-800'}`}>{m.display_name}</span>
+                                                                    {isSelected && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-700">Selected</span>}
+                                                                    {isDefault && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-100 text-green-700">Default</span>}
+                                                                    {isCompatible && !isSelected && <svg className="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>}
+                                                                    {!isCompatible && !isSelected && <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-600">Incompatible</span>}
                                                                     {/* Deployment Type Badge */}
                                                                     <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${isLocal ? 'bg-orange-100 text-orange-700' : 'bg-sky-100 text-sky-700'}`}>
                                                                         {isLocal ? 'Local' : 'Cloud'}
@@ -662,7 +574,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                                                 </div>
                                                                 <p className="text-xs text-gray-500 mt-0.5">{m.provider_name} • {m.model_id}</p>
                                                             </div>
-                                                            {!isLoading && !isActive && !readOnly && <span className="text-xs text-purple-500 font-medium ml-2 flex-shrink-0">Select →</span>}
+                                                            {!isSelected && !readOnly && <span className="text-xs text-purple-500 font-medium ml-2 flex-shrink-0">Select →</span>}
                                                         </div>
                                                     </button>
                                                 );
