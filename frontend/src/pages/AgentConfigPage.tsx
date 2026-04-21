@@ -7,7 +7,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { useConfigDraft } from '../hooks';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import { useAgent } from '../contexts/AgentContext';
 import {
     getAgent,
     generatePrompt,
@@ -23,6 +22,7 @@ import type { IngestionResponse } from '../services/api';
 import { canPublishPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
 import type { AdvancedSettings } from '../contexts/AgentContext';
+import type { EmbeddingSettings } from '../components/EmbeddingSettingsModal';
 import type { ValidationErrors } from '../components/AdvancedSettings';
 
 // Utility to convert snake_case keys to camelCase
@@ -69,7 +69,6 @@ const AgentConfigPage: React.FC = () => {
     const { user, isLoading: isAuthLoading } = useAuth();
     const { success: showSuccess, error: showError } = useToast();
     const canPublish = canPublishPrompt(user);
-    const { isLoadingConfig } = useAgent();
 
     // Draft config hook
     const {
@@ -430,7 +429,7 @@ const AgentConfigPage: React.FC = () => {
         }
     };
 
-    const handleStartEmbedding = async (incremental: boolean = false) => {
+    const handleStartEmbedding = async (incremental: boolean = false, settings?: EmbeddingSettings) => {
         if (!agent) return;
         try {
             // Use draft config id directly
@@ -440,10 +439,20 @@ const AgentConfigPage: React.FC = () => {
                 return;
             }
 
-            // Only send config_id and incremental - backend gets all settings from agent_config table
+            // Build request with settings if provided
+            // Note: chunking is NOT sent - backend uses chunking_config from agent_config table
             const result = await startEmbeddingJob({
                 config_id: configId,
                 incremental: incremental,
+                // Spread all settings when provided from modal (excluding chunking)
+                ...(settings && {
+                    batch_size: settings.batch_size,
+                    max_concurrent: settings.max_concurrent,
+                    parallelization: settings.parallelization,
+                    medical_context_config: settings.medical_context_config,
+                    max_consecutive_failures: settings.max_consecutive_failures,
+                    retry_attempts: settings.retry_attempts,
+                }),
             });
             setEmbeddingJobId(result.job_id);
             showSuccess('Embedding Job Started', result.message);

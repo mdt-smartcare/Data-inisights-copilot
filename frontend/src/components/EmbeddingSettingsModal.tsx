@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Cog6ToothIcon, XMarkIcon, InformationCircleIcon, PencilIcon } from '@heroicons/react/24/outline';
+import { Cog6ToothIcon, XMarkIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
 import type { ChunkingConfig, ParallelizationConfig, MedicalContextConfig } from '../types/rag';
 import { useSystemSettings } from '../contexts/SystemSettingsContext';
 
 export interface EmbeddingSettings {
     batch_size: number;
     max_concurrent: number;
-    chunking: ChunkingConfig;
+    chunking?: ChunkingConfig;  // Optional - backend uses agent_config.chunking_config
     parallelization: ParallelizationConfig;
     medical_context_config: MedicalContextConfig;
     max_consecutive_failures: number;
@@ -30,6 +30,8 @@ const Tooltip: React.FC<{ text: string }> = ({ text }) => (
     </div>
 );
 
+const SHOW_SYNC_MODE_SECTION = false; // Flag to hide/show sync mode selection (code preserved for easy re-enable)
+
 const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
     isOpen,
     onClose,
@@ -47,17 +49,12 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
     }, [isOpen, ensureLoaded]);
 
     // Build config from system settings
+    // Note: chunking is NOT included - backend uses chunking_config from agent_config table
     const systemDefaults = getEmbeddingModalDefaults();
 
     const defaultConfig: EmbeddingSettings = {
         batch_size: systemDefaults.batch_size,
         max_concurrent: systemDefaults.max_concurrent,
-        chunking: {
-            parent_chunk_size: systemDefaults.chunking.parent_chunk_size,
-            parent_chunk_overlap: systemDefaults.chunking.parent_chunk_overlap,
-            child_chunk_size: systemDefaults.chunking.child_chunk_size,
-            child_chunk_overlap: systemDefaults.chunking.child_chunk_overlap,
-        },
         parallelization: systemDefaults.parallelization,
         medical_context_config: {
             medical_context: {},
@@ -73,7 +70,6 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
         ...defaultSettings,
     });
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const [editChunking, setEditChunking] = useState(false);
     const [incremental, setIncremental] = useState(true);
 
 
@@ -93,14 +89,7 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
             ...defaultConfig,
             batch_size: newDefaults.batch_size,
             max_concurrent: newDefaults.max_concurrent,
-            chunking: defaultSettings?.chunking ?? {
-                parent_chunk_size: newDefaults.chunking.parent_chunk_size,
-                parent_chunk_overlap: newDefaults.chunking.parent_chunk_overlap,
-                child_chunk_size: newDefaults.chunking.child_chunk_size,
-                child_chunk_overlap: newDefaults.chunking.child_chunk_overlap,
-            },
         });
-        setEditChunking(false);
     };
 
     return (
@@ -124,7 +113,8 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                    {/* Mode Selection */}
+                    {/* Mode Selection - Hidden by flag, code preserved */}
+                    {SHOW_SYNC_MODE_SECTION&& (
                     <div>
                         <label className="text-sm font-semibold text-gray-700 mb-3 block">Sync Mode</label>
                         <div className="flex gap-3">
@@ -156,6 +146,7 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
                             </label>
                         </div>
                     </div>
+                    )}
 
                     {/* Basic Settings */}
                     <div className="grid grid-cols-2 gap-4">
@@ -187,183 +178,6 @@ const EmbeddingSettingsModal: React.FC<EmbeddingSettingsModalProps> = ({
                                 className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                             />
                         </div>
-                    </div>
-
-                    {/* Chunking Section - Collapsible & Editable */}
-                    <div className={`rounded-lg border transition-all ${editChunking ? 'border-blue-200 bg-blue-50/30' : 'border-gray-200 bg-gray-50'}`}>
-                        <div className="p-3 flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                                <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Chunking</span>
-                                {!editChunking && (
-                                    <span className="text-[10px] text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded">from Advanced Settings</span>
-                                )}
-                            </div>
-                            <button
-                                onClick={() => setEditChunking(!editChunking)}
-                                className={`text-xs font-medium flex items-center gap-1 px-2 py-1 rounded transition-colors ${editChunking
-                                    ? 'text-blue-700 bg-blue-100 hover:bg-blue-200'
-                                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200'
-                                    }`}
-                            >
-                                <PencilIcon className="w-3 h-3" />
-                                {editChunking ? 'Editing' : 'Edit'}
-                            </button>
-                        </div>
-
-                        {editChunking ? (
-                            // Editable Mode
-                            <div className="px-3 pb-3 grid grid-cols-2 gap-3 animate-in fade-in duration-200">
-                                <div>
-                                    <label className="text-xs font-medium text-gray-600">Parent Chunk Size</label>
-                                    <input
-                                        type="number"
-                                        min={200}
-                                        max={2000}
-                                        value={settings.chunking.parent_chunk_size || ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
-                                            if (val === '' || !isNaN(val)) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, parent_chunk_size: val === '' ? 0 : val }
-                                                });
-                                            }
-                                        }}
-                                        onBlur={(e) => {
-                                            const val = parseInt(e.target.value, 10);
-                                            if (isNaN(val) || val < 200) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, parent_chunk_size: 200 }
-                                                });
-                                            }
-                                        }}
-                                        className="mt-1 w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                    />
-                                    <span className="text-[10px] text-gray-400">Min: 200</span>
-                                </div>
-                                <div>
-                                    <label className="text-xs font-medium text-gray-600">Parent Overlap</label>
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        max={500}
-                                        value={settings.chunking.parent_chunk_overlap ?? ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
-                                            if (val === '' || !isNaN(val)) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, parent_chunk_overlap: val === '' ? 0 : val }
-                                                });
-                                            }
-                                        }}
-                                        onBlur={(e) => {
-                                            const val = parseInt(e.target.value, 10);
-                                            if (isNaN(val) || val < 0) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, parent_chunk_overlap: 0 }
-                                                });
-                                            }
-                                        }}
-                                        className="mt-1 w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                    />
-                                    <span className="text-[10px] text-gray-400">Min: 0</span>
-                                </div>
-                                <div>
-                                    <label className="text-xs font-medium text-gray-600">Child Chunk Size</label>
-                                    <input
-                                        type="number"
-                                        min={50}
-                                        max={500}
-                                        value={settings.chunking.child_chunk_size || ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
-                                            if (val === '' || !isNaN(val)) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, child_chunk_size: val === '' ? 0 : val }
-                                                });
-                                            }
-                                        }}
-                                        onBlur={(e) => {
-                                            const val = parseInt(e.target.value, 10);
-                                            if (isNaN(val) || val < 50) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, child_chunk_size: 50 }
-                                                });
-                                            }
-                                        }}
-                                        className="mt-1 w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                    />
-                                    <span className="text-[10px] text-gray-400">Min: 50</span>
-                                </div>
-                                <div>
-                                    <label className="text-xs font-medium text-gray-600">Child Overlap</label>
-                                    <input
-                                        type="number"
-                                        min={0}
-                                        max={100}
-                                        value={settings.chunking.child_chunk_overlap ?? ''}
-                                        onChange={(e) => {
-                                            const val = e.target.value === '' ? '' : parseInt(e.target.value, 10);
-                                            if (val === '' || !isNaN(val)) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, child_chunk_overlap: val === '' ? 0 : val }
-                                                });
-                                            }
-                                        }}
-                                        onBlur={(e) => {
-                                            const val = parseInt(e.target.value, 10);
-                                            if (isNaN(val) || val < 0) {
-                                                setSettings({
-                                                    ...settings,
-                                                    chunking: { ...settings.chunking, child_chunk_overlap: 0 }
-                                                });
-                                            }
-                                        }}
-                                        className="mt-1 w-full px-2 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                                    />
-                                    <span className="text-[10px] text-gray-400">Min: 0</span>
-                                </div>
-                                <div className="col-span-2">
-                                    <button
-                                        onClick={() => {
-                                            setSettings({
-                                                ...settings,
-                                                chunking: defaultSettings?.chunking || defaultConfig.chunking
-                                            });
-                                        }}
-                                        className="text-xs text-gray-500 hover:text-gray-700"
-                                    >
-                                        ↩ Reset to saved values
-                                    </button>
-                                </div>
-                            </div>
-                        ) : (
-                            // Read-only Summary Mode
-                            <div className="px-3 pb-3 grid grid-cols-4 gap-2 text-center">
-                                <div>
-                                    <div className="text-lg font-bold text-gray-900">{settings.chunking.parent_chunk_size}</div>
-                                    <div className="text-[10px] text-gray-500">Parent Size</div>
-                                </div>
-                                <div>
-                                    <div className="text-lg font-bold text-gray-900">{settings.chunking.parent_chunk_overlap}</div>
-                                    <div className="text-[10px] text-gray-500">Parent Overlap</div>
-                                </div>
-                                <div>
-                                    <div className="text-lg font-bold text-gray-900">{settings.chunking.child_chunk_size}</div>
-                                    <div className="text-[10px] text-gray-500">Child Size</div>
-                                </div>
-                                <div>
-                                    <div className="text-lg font-bold text-gray-900">{settings.chunking.child_chunk_overlap}</div>
-                                    <div className="text-[10px] text-gray-500">Child Overlap</div>
-                                </div>
-                            </div>
-                        )}
                     </div>
 
                     {/* Advanced Settings Toggle */}

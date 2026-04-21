@@ -20,6 +20,7 @@ import {
   updateDataSource,
   type DataSource,
 } from '../services/api';
+import { formatDateTime } from '../utils/datetime';
 
 // ============================================
 // Types
@@ -329,15 +330,8 @@ export default function DataSourcesPage() {
     );
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  // Using formatDateTime from utils/datetime for consistent local timezone display
+  const formatDate = formatDateTime;
 
   // ============================================
   // Render

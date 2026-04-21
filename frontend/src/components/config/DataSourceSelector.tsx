@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { getDataSources, type DataSource } from '../../services/api';
 import { CircleStackIcon, DocumentTextIcon, PlusIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { CheckCircleIcon } from '@heroicons/react/24/solid';
+import { formatDate } from '../../utils/datetime';
 
 interface DataSourceSelectorProps {
     selectedId: string | null;
@@ -49,12 +50,7 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
         return matchesType && matchesSearch;
     });
 
-    const formatDate = (dateString: string) => {
-        return new Date(dateString).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric'
-        });
-    };
+    // Using formatDate from utils/datetime for consistent local timezone display
 
     if (loading) {
         return (

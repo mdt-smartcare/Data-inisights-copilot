@@ -249,8 +249,7 @@ const AgentDashboardPage: React.FC = () => {
                 batch_size: batchSize,
                 max_concurrent: maxConcurrent,
                 incremental: incremental,
-                // Pass additional settings from modal
-                chunking: settings?.chunking,
+                // Pass additional settings from modal (excluding chunking - backend uses agent_config)
                 parallelization: settings?.parallelization,
                 medical_context_config: settings?.medical_context_config,
                 max_consecutive_failures: settings?.max_consecutive_failures,

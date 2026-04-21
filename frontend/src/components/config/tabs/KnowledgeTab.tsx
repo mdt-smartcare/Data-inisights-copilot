@@ -17,7 +17,7 @@ interface KnowledgeTabProps {
 }
 
 export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
-    activeConfig,
+    activeConfig: _activeConfig,  // Kept for interface compatibility, chunking from agent_config is used by backend
     vectorDbStatus,
     embeddingJobId,
     onStartEmbedding,
@@ -30,38 +30,13 @@ export const KnowledgeTab: React.FC<KnowledgeTabProps> = ({
     // Get system settings from context (loaded from backend Settings page)
     const { getEmbeddingModalDefaults } = useSystemSettings();
 
-    // Get chunking config from activeConfig, falling back to system settings
-    const getChunkingConfig = () => {
-        const systemDefaults = getEmbeddingModalDefaults();
-        try {
-            const chunkConf = activeConfig.chunking_config
-                ? (typeof activeConfig.chunking_config === 'string'
-                    ? JSON.parse(activeConfig.chunking_config)
-                    : activeConfig.chunking_config)
-                : {};
-            return {
-                parent_chunk_size: chunkConf.parentChunkSize || systemDefaults.chunking.parent_chunk_size,
-                parent_chunk_overlap: chunkConf.parentChunkOverlap || systemDefaults.chunking.parent_chunk_overlap,
-                child_chunk_size: chunkConf.childChunkSize || systemDefaults.chunking.child_chunk_size,
-                child_chunk_overlap: chunkConf.childChunkOverlap || systemDefaults.chunking.child_chunk_overlap,
-            };
-        } catch {
-            return {
-                parent_chunk_size: systemDefaults.chunking.parent_chunk_size,
-                parent_chunk_overlap: systemDefaults.chunking.parent_chunk_overlap,
-                child_chunk_size: systemDefaults.chunking.child_chunk_size,
-                child_chunk_overlap: systemDefaults.chunking.child_chunk_overlap,
-            };
-        }
-    };
-
     // Get complete default settings for the modal from system settings
+    // Note: chunking is NOT included - backend uses chunking_config from agent_config table
     const getDefaultSettings = () => {
         const systemDefaults = getEmbeddingModalDefaults();
         return {
             batch_size: systemDefaults.batch_size,
             max_concurrent: systemDefaults.max_concurrent,
-            chunking: getChunkingConfig(),
             parallelization: systemDefaults.parallelization,
             medical_context_config: {
                 medical_context: {},

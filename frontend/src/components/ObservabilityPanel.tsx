@@ -7,6 +7,7 @@ import {
     testLogEmission
 } from '../services/api';
 import { useToast } from './Toast';
+import { formatDateTime } from '../utils/datetime';
 
 interface UsageStats {
     period: string;
@@ -430,7 +431,7 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                 </div>
                 <div className="flex items-center gap-4 flex-shrink-0 ml-4">
                     <span className="text-xs text-gray-400">
-                        {trace.timestamp ? new Date(trace.timestamp).toLocaleString() : '-'}
+                        {formatDateTime(trace.timestamp)}
                     </span>
                     <span className="text-xs text-green-600 font-medium">
                         ${(trace.total_cost || 0).toFixed(4)}
