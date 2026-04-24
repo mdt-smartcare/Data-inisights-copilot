@@ -14,6 +14,10 @@ import type { VectorDbStatus, ActiveConfig } from '../contexts/AgentContext';
 import { OverviewTab, KnowledgeTab, SandboxTab, UsersTab, MonitoringTab, ConfigHistoryTab } from '../components/config/tabs';
 import type { EmbeddingSettings } from '../components/EmbeddingSettingsModal';
 
+// Import reusable agent components
+import AgentDetailsCard from '../components/AgentDetailsCard';
+import AgentDangerZone from '../components/AgentDangerZone';
+
 // Import hooks for data fetching
 import { getActiveConfigMetadata, listEmbeddingJobs, getConnections } from '../services/api';
 
@@ -420,20 +424,35 @@ const AgentDashboardPage: React.FC = () => {
                         ) : dashboardTab === 'users' ? (
                             <UsersTab agentId={agent.id} agentName={agent.name} />
                         ) : (
-                            <div className="min-h-[400px] flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border-2 border-dashed border-gray-200 shadow-sm">
-                                <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
-                                    <Cog6ToothIcon className="w-10 h-10 text-blue-500" />
+                            <div className="space-y-6">
+                                {/* Agent Details Card - Always visible for unconfigured agents */}
+                                <AgentDetailsCard
+                                    agent={agent}
+                                    canEdit={canEdit}
+                                    onAgentUpdate={reloadAgent}
+                                />
+
+                                {/* No Configuration Message */}
+                                <div className="min-h-[300px] flex flex-col items-center justify-center text-center p-12 bg-white rounded-2xl border-2 border-dashed border-gray-200 shadow-sm">
+                                    <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
+                                        <Cog6ToothIcon className="w-10 h-10 text-blue-500" />
+                                    </div>
+                                    <h2 className="text-2xl font-bold text-gray-900 mb-3">No Active Configuration</h2>
+                                    <p className="text-gray-500 max-w-sm mx-auto mb-8">
+                                        This agent has not been configured yet. Start the setup wizard to connect a data source and define behavior.
+                                    </p>
+                                    <button
+                                        onClick={() => navigate(`/agents/${agent.id}/config`)}
+                                        className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-all hover:-translate-y-1 active:translate-y-0"
+                                    >
+                                        Start Setup Wizard
+                                    </button>
                                 </div>
-                                <h2 className="text-2xl font-bold text-gray-900 mb-3">No Active Configuration</h2>
-                                <p className="text-gray-500 max-w-sm mx-auto mb-8">
-                                    This agent has not been configured yet. Start the setup wizard to connect a data source and define behavior.
-                                </p>
-                                <button
-                                    onClick={() => navigate(`/agents/${agent.id}/config`)}
-                                    className="px-8 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-bold shadow-lg shadow-blue-200 transition-all hover:-translate-y-1 active:translate-y-0"
-                                >
-                                    Start Setup Wizard
-                                </button>
+
+                                {/* Danger Zone - Delete Agent */}
+                                {canEdit && (
+                                    <AgentDangerZone agent={agent} />
+                                )}
                             </div>
                         )}
                     </div>
