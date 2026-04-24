@@ -35,6 +35,9 @@ export interface AdvancedSettings {
     embeddingModelId?: number;
     llmModelId?: number;
     rerankerModelId?: number;
+    // Display names for UI (not persisted to backend)
+    llmDisplayName?: string;
+    embeddingDisplayName?: string;
 }
 
 /**

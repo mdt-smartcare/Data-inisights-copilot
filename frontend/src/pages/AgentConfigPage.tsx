@@ -7,7 +7,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { useConfigDraft } from '../hooks';
 import { ArrowLeftIcon } from '@heroicons/react/24/outline';
-import { useAgent } from '../contexts/AgentContext';
 import {
     getAgent,
     generatePrompt,
@@ -23,6 +22,8 @@ import type { IngestionResponse } from '../services/api';
 import { canPublishPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
 import type { AdvancedSettings } from '../contexts/AgentContext';
+import type { EmbeddingSettings } from '../components/EmbeddingSettingsModal';
+import type { ValidationErrors } from '../components/AdvancedSettings';
 
 // Utility to convert snake_case keys to camelCase
 const snakeToCamel = (str: string): string =>
@@ -68,7 +69,6 @@ const AgentConfigPage: React.FC = () => {
     const { user, isLoading: isAuthLoading } = useAuth();
     const { success: showSuccess, error: showError } = useToast();
     const canPublish = canPublishPrompt(user);
-    const { isLoadingConfig } = useAgent();
 
     // Draft config hook
     const {
@@ -109,6 +109,7 @@ const AgentConfigPage: React.FC = () => {
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
+    const [advancedSettingsValid, setAdvancedSettingsValid] = useState(true);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
     const [isDataSourceLocked, setIsDataSourceLocked] = useState(false);
 
@@ -169,18 +170,15 @@ const AgentConfigPage: React.FC = () => {
                     if (!urlStep) {
                         setCurrentStep(Math.min((config.completed_step || 0) + 1, 6));
                     }
-                    // Pre-fill state from config - fetch full data source to get type
+                    // Use data_source from config response (already included by backend)
                     let sourceType: 'database' | 'file' = 'database';
-                    if (config.data_source_id) {
-                        try {
-                            const ds = await getDataSource(config.data_source_id);
-                            setSelectedDataSource(ds);
-                            sourceType = ds.source_type;
-                            setDataSourceType(ds.source_type);
-                        } catch {
-                            // Fallback to minimal object if fetch fails
-                            setSelectedDataSource({ id: config.data_source_id } as DataSource);
-                        }
+                    if (config.data_source) {
+                        setSelectedDataSource(config.data_source);
+                        sourceType = config.data_source.source_type;
+                        setDataSourceType(config.data_source.source_type);
+                    } else if (config.data_source_id) {
+                        // Fallback to minimal object if data_source not included
+                        setSelectedDataSource({ id: config.data_source_id } as DataSource);
                     }
                     if (config.system_prompt) setDraftPrompt(config.system_prompt);
                     if (config.example_questions) setExampleQuestions(config.example_questions);
@@ -222,6 +220,9 @@ const AgentConfigPage: React.FC = () => {
                             ...(config.embedding_model_id && { embeddingModelId: config.embedding_model_id }),
                             ...(config.llm_model_id && { llmModelId: config.llm_model_id }),
                             ...(config.reranker_model_id && { rerankerModelId: config.reranker_model_id }),
+                            // Restore display names from resolved model info (for UI display)
+                            ...(config.llm_model?.display_name && { llmDisplayName: config.llm_model.display_name }),
+                            ...(config.embedding_model?.display_name && { embeddingDisplayName: config.embedding_model.display_name }),
                         }));
                     }
                 } else if (publishedDataSourceId) {
@@ -248,21 +249,8 @@ const AgentConfigPage: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
-    // Fetch schema if it's missing but we have a data source (e.g. on reload)
-    useEffect(() => {
-        if (selectedDataSource?.id && !fullSchema && dataSourceType === 'database') {
-            const fetchSchema = async () => {
-                try {
-                    const { getDataSourceSchema } = await import('../services/api');
-                    const schema = await getDataSourceSchema(selectedDataSource.id);
-                    setFullSchema(schema);
-                } catch (err) {
-                    console.error('Failed to auto-fetch schema:', err);
-                }
-            };
-            fetchSchema();
-        }
-    }, [selectedDataSource, fullSchema, dataSourceType]);
+    // Schema fetching is handled by SchemaSelectionStep component (step 2)
+    // It calls onSchemaFetch to update fullSchema when needed
 
     // Sync state to window for API use (temporary solution)
     useEffect(() => {
@@ -441,7 +429,7 @@ const AgentConfigPage: React.FC = () => {
         }
     };
 
-    const handleStartEmbedding = async (incremental: boolean = false) => {
+    const handleStartEmbedding = async (incremental: boolean = false, settings?: EmbeddingSettings) => {
         if (!agent) return;
         try {
             // Use draft config id directly
@@ -451,10 +439,20 @@ const AgentConfigPage: React.FC = () => {
                 return;
             }
 
-            // Only send config_id and incremental - backend gets all settings from agent_config table
+            // Build request with settings if provided
+            // Note: chunking is NOT sent - backend uses chunking_config from agent_config table
             const result = await startEmbeddingJob({
                 config_id: configId,
                 incremental: incremental,
+                // Spread all settings when provided from modal (excluding chunking)
+                ...(settings && {
+                    batch_size: settings.batch_size,
+                    max_concurrent: settings.max_concurrent,
+                    parallelization: settings.parallelization,
+                    medical_context_config: settings.medical_context_config,
+                    max_consecutive_failures: settings.max_consecutive_failures,
+                    retry_attempts: settings.retry_attempts,
+                }),
             });
             setEmbeddingJobId(result.job_id);
             showSuccess('Embedding Job Started', result.message);
@@ -634,6 +632,7 @@ const AgentConfigPage: React.FC = () => {
                                     connectionName={connectionName}
                                     connectionId={connectionId}
                                     fileName={fileUploadResult?.file_name}
+                                    onValidationChange={(isValid: boolean, _errors: ValidationErrors) => setAdvancedSettingsValid(isValid)}
                                 />
                             )}
 
@@ -731,9 +730,9 @@ const AgentConfigPage: React.FC = () => {
                             ) : (
                                 <button
                                     onClick={handleNext}
-                                    disabled={generating || isPublishing || (currentStep === 1 && !selectedDataSource)}
+                                    disabled={generating || isPublishing || (currentStep === 1 && !selectedDataSource) || (currentStep === 4 && !advancedSettingsValid)}
                                     className={`w-full sm:w-auto px-4 sm:px-6 py-2 rounded-md font-medium text-white text-sm sm:text-base transition-colors duration-200 flex items-center justify-center
-                                            ${generating || isPublishing || (currentStep === 1 && !selectedDataSource) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
+                                            ${generating || isPublishing || (currentStep === 1 && !selectedDataSource) || (currentStep === 4 && !advancedSettingsValid) ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-md'}`}
                                 >
                                     Next
                                 </button>

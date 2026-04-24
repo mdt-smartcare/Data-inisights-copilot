@@ -9,6 +9,7 @@
  */
 import { useState, useEffect, useRef } from 'react';
 import { ChatHeader } from '../components/chat';
+import { useToast } from '../components/Toast';
 import { APP_CONFIG } from '../config';
 import ConfirmationModal from '../components/ConfirmationModal';
 import {
@@ -19,6 +20,7 @@ import {
   updateDataSource,
   type DataSource,
 } from '../services/api';
+import { formatDateTime } from '../utils/datetime';
 
 // ============================================
 // Types
@@ -42,7 +44,9 @@ export default function DataSourcesPage() {
   // Data state
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  
+  // Toast notifications
+  const { error: errorToast } = useToast();
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>('all');
@@ -80,7 +84,6 @@ export default function DataSourcesPage() {
   const loadDataSources = async () => {
     try {
       setLoading(true);
-      setError(null);
       const sourceType = activeTab === 'all' ? undefined : activeTab;
       const response = await getDataSources({ source_type: sourceType });
       setDataSources(response.data_sources || []);
@@ -188,11 +191,24 @@ export default function DataSourcesPage() {
       setDeleteConfirm({ show: false, id: null, title: '' });
       loadDataSources();
     } catch (err: any) {
-      const errorData = err.response?.data?.detail;
-      if (err.response?.status === 409 && errorData?.reason) {
-        setError(errorData.reason);
+      // Handle both error structures:
+      // 1. FastAPI HTTPException: err.response.data.detail
+      // 2. Wrapped error: err.response.data.message
+      const errorDetail = err.response?.data?.detail;
+      const errorMessage = err.response?.data?.message;
+      
+      // Try to get reason from either structure
+      const reason = errorDetail?.reason || errorMessage?.reason;
+      
+      if (err.response?.status === 409 && reason) {
+        errorToast('Cannot Delete', reason);
       } else {
-        setError(errorData?.message || err.response?.data?.detail || 'Failed to delete data source');
+        // Fallback to message or generic error
+        const fallbackMsg = errorDetail?.message || errorMessage?.message || 
+                           (typeof errorDetail === 'string' ? errorDetail : null) ||
+                           (typeof errorMessage === 'string' ? errorMessage : null) ||
+                           'Failed to delete data source';
+        errorToast('Error', fallbackMsg);
       }
       setDeleteConfirm({ show: false, id: null, title: '' });
     }
@@ -207,7 +223,9 @@ export default function DataSourcesPage() {
     setFormState({
       title: source.title,
       description: source.description || '',
-      db_url: source.db_url || '',
+      // Don't pre-fill db_url - it's no longer returned for security
+      // User must re-enter if they want to change it
+      db_url: '',
       db_engine_type: source.db_engine_type || 'postgresql',
     });
     setFormError(null);
@@ -236,7 +254,8 @@ export default function DataSourcesPage() {
         updateData.description = formState.description || undefined;
       }
       if (editingSource.source_type === 'database') {
-        if (formState.db_url !== editingSource.db_url) {
+        // Only update db_url if user provided a new one
+        if (formState.db_url.trim()) {
           updateData.db_url = formState.db_url;
         }
         if (formState.db_engine_type !== editingSource.db_engine_type) {
@@ -311,15 +330,8 @@ export default function DataSourcesPage() {
     );
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+  // Using formatDateTime from utils/datetime for consistent local timezone display
+  const formatDate = formatDateTime;
 
   // ============================================
   // Render
@@ -377,13 +389,6 @@ export default function DataSourcesPage() {
               </button>
             ))}
           </div>
-
-          {/* Error Message */}
-          {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-700">
-              {error}
-            </div>
-          )}
 
           {/* Loading State */}
           {loading && (
@@ -474,7 +479,7 @@ export default function DataSourcesPage() {
                       <td className="px-6 py-4">
                         {source.source_type === 'database' ? (
                           <span className="text-sm text-gray-500 font-mono truncate max-w-xs block">
-                            {source.db_url?.replace(/:[^:@]+@/, ':***@') || '-'}
+                            {source.db_url || '-'}
                           </span>
                         ) : (
                           <div className="text-sm text-gray-500">

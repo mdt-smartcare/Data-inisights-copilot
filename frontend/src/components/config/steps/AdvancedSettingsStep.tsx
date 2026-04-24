@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import AdvancedSettings from '../../AdvancedSettings';
+import AdvancedSettings, { type ValidationErrors } from '../../AdvancedSettings';
 import { canEditPrompt } from '../../../utils/permissions';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
@@ -12,15 +12,13 @@ interface AdvancedSettingsStepProps {
     connectionName: string;
     connectionId: number | null;
     fileName?: string;
+    onValidationChange?: (isValid: boolean, errors: ValidationErrors) => void;
 }
 
 export const AdvancedSettingsStep: React.FC<AdvancedSettingsStepProps> = ({
     advancedSettings,
     setAdvancedSettings,
-    dataSourceType,
-    connectionName,
-    connectionId,
-    fileName
+    onValidationChange
 }) => {
     const { user } = useAuth();
     const canEdit = canEditPrompt(user);
@@ -89,6 +87,7 @@ export const AdvancedSettingsStep: React.FC<AdvancedSettingsStepProps> = ({
                 settings={advancedSettings}
                 onChange={setAdvancedSettings}
                 readOnly={!canEdit}
+                onValidationChange={onValidationChange}
             />
         </div>
     );

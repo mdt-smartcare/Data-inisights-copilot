@@ -313,7 +313,7 @@ class SQLiteDocStore(BaseStore[str, Document]):
         
         logger.info(f"Exported {len(all_docs)} docs to {output_path}")
 
-
+# // NOTE: Never used
 class StreamingDocStore(SQLiteDocStore):
     """
     Extended SQLite docstore with streaming/generator support.

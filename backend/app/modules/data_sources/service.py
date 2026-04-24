@@ -13,6 +13,7 @@ from app.modules.data_sources.repository import DataSourceRepository
 from app.modules.data_sources.schemas import (
     DataSourceResponse, DataSourceListResponse
 )
+from app.modules.data_sources.utils import mask_db_url
 
 
 class DataSourceService:
@@ -26,6 +27,37 @@ class DataSourceService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = DataSourceRepository(db)
+    
+    def _model_to_response(self, source) -> DataSourceResponse:
+        """
+        Convert a DataSourceModel to a DataSourceResponse with masked credentials.
+        """
+        # Get base fields from the model
+        data = {
+            "id": source.id,
+            "title": source.title,
+            "description": source.description,
+            "source_type": source.source_type,
+            "db_engine_type": source.db_engine_type,
+            "original_file_path": source.original_file_path,
+            "file_type": source.file_type,
+            "duckdb_file_path": source.duckdb_file_path,
+            "duckdb_table_name": source.duckdb_table_name,
+            "columns_json": source.columns_json,
+            "row_count": source.row_count,
+            "created_by": source.created_by,
+            "created_at": source.created_at,
+            "updated_at": source.updated_at,
+            # Dependency info (populated by repository)
+            "dependent_agents": getattr(source, 'dependent_agents', []),
+            "dependent_config_count": getattr(source, 'dependent_config_count', 0),
+        }
+        
+        # Mask credentials in db_url
+        if source.db_url:
+            data["db_url"] = mask_db_url(source.db_url)
+        
+        return DataSourceResponse(**data)
     
     async def create_database_source(
         self,
@@ -44,7 +76,7 @@ class DataSourceService:
             "db_engine_type": db_engine_type,
         }
         source = await self.repo.create(data, created_by)
-        return DataSourceResponse.model_validate(source)
+        return self._model_to_response(source)
     
     async def create_file_source(
         self,
@@ -71,13 +103,13 @@ class DataSourceService:
             "row_count": row_count,
         }
         source = await self.repo.create(data, created_by)
-        return DataSourceResponse.model_validate(source)
+        return self._model_to_response(source)
     
     async def get_source(self, source_id: UUID) -> Optional[DataSourceResponse]:
         """Get data source by ID."""
         source = await self.repo.get_by_id(source_id)
         if source:
-            return DataSourceResponse.model_validate(source)
+            return self._model_to_response(source)
         return None
     
     async def get_source_model(self, source_id: UUID):
@@ -92,7 +124,7 @@ class DataSourceService:
         """Update a data source."""
         source = await self.repo.update(source_id, data)
         if source:
-            return DataSourceResponse.model_validate(source)
+            return self._model_to_response(source)
         return None
     
     async def delete_source(self, source_id: UUID) -> Dict[str, Any]:
@@ -189,7 +221,7 @@ class DataSourceService:
             limit=limit,
         )
         return DataSourceListResponse(
-            data_sources=[DataSourceResponse.model_validate(s) for s in sources],
+            data_sources=[self._model_to_response(s) for s in sources],
             total=total,
             skip=skip,
             limit=limit,

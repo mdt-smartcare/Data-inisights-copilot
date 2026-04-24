@@ -193,7 +193,7 @@ async def cancel_job(
             resource_id=job_id,
             resource_name=f"Embedding Job {job_id[:8]}",
             details={
-                "progress_at_cancellation": progress.progress_percent if progress else None,
+                "progress_at_cancellation": progress.progress_percentage if progress else None,
                 "processed_documents": progress.processed_documents if progress else None,
                 "cancelled_by": current_user.username
             },

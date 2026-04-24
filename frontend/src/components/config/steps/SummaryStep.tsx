@@ -1,14 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import EmbeddingProgress from '../../EmbeddingProgress';
+import EmbeddingSettingsModal from '../../EmbeddingSettingsModal';
+import type { EmbeddingSettings } from '../../EmbeddingSettingsModal';
 import {
     CircleStackIcon,
     ArrowPathIcon,
     CheckCircleIcon,
     XCircleIcon,
     ClockIcon,
-    ArrowRightIcon
+    ArrowRightIcon,
+    Cog6ToothIcon
 } from '@heroicons/react/24/outline';
 import { apiClient } from '../../../services/api';
+import { useSystemSettings } from '../../../contexts/SystemSettingsContext';
+import { formatDateTime } from '../../../utils/datetime';
 
 interface EmbeddingJob {
     job_id: string;
@@ -24,7 +29,7 @@ interface EmbeddingJob {
 interface SummaryStepProps {
     configId?: number;
     embeddingJobId: string | null;
-    onStartEmbedding: (incremental: boolean) => void;
+    onStartEmbedding: (incremental: boolean, settings?: EmbeddingSettings) => void;
     onEmbeddingComplete: () => void;
     onEmbeddingError: (err: string) => void;
     onEmbeddingCancel: () => void;
@@ -42,6 +47,32 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
 }) => {
     const [embeddingJobs, setEmbeddingJobs] = useState<EmbeddingJob[]>([]);
     const [isLoadingJobs, setIsLoadingJobs] = useState(false);
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
+    
+    // Get system settings from context for modal defaults
+    const { getEmbeddingModalDefaults } = useSystemSettings();
+    
+    // Get default settings for the modal (excluding chunking - backend uses agent_config)
+    const getDefaultSettings = () => {
+        const systemDefaults = getEmbeddingModalDefaults();
+        return {
+            batch_size: systemDefaults.batch_size,
+            max_concurrent: systemDefaults.max_concurrent,
+            parallelization: systemDefaults.parallelization,
+            medical_context_config: {
+                medical_context: {},
+                clinical_flag_prefixes: ['is_', 'has_', 'was_', 'history_of_', 'confirmed_', 'requires_', 'on_'],
+                use_yaml_defaults: true,
+            },
+            max_consecutive_failures: systemDefaults.max_consecutive_failures,
+            retry_attempts: systemDefaults.retry_attempts,
+        };
+    };
+    
+    const handleEmbeddingConfirm = (settings: EmbeddingSettings, incremental: boolean) => {
+        onStartEmbedding(incremental, settings);
+        setShowSettingsModal(false);
+    };
 
     // Fetch embedding job history
     useEffect(() => {
@@ -86,14 +117,22 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
     };
 
     const formatDate = (dateStr: string | null) => {
-        if (!dateStr) return '-';
-        return new Date(dateStr).toLocaleString();
+        return formatDateTime(dateStr);
     };
 
     const hasCompletedJob = embeddingJobs.some(job => job.status === 'COMPLETED');
 
     return (
         <div className="h-full flex flex-col overflow-y-auto overflow-x-hidden p-2 sm:p-6">
+            {/* Embedding Settings Modal */}
+            <EmbeddingSettingsModal
+                key={showSettingsModal ? 'open' : 'closed'}
+                isOpen={showSettingsModal}
+                onClose={() => setShowSettingsModal(false)}
+                onConfirm={handleEmbeddingConfirm}
+                defaultSettings={getDefaultSettings()}
+            />
+            
             {/* Header */}
             <div className="flex items-center justify-between mb-4 sm:mb-6">
                 <div className="flex items-center gap-3">
@@ -175,7 +214,14 @@ export const SummaryStep: React.FC<SummaryStepProps> = ({
                                     {hasCompletedJob ? 'Rebuild Knowledge Base' : 'Create Vector DB Now'}
                                 </button>
                             </div>
-                            <p className="text-xs text-gray-500 mt-2 sm:mt-3">
+                            <button
+                                onClick={() => setShowSettingsModal(true)}
+                                className="text-sm text-indigo-600 hover:text-indigo-800 font-medium flex items-center gap-1.5 transition-colors mt-2 sm:mt-3"
+                            >
+                                <Cog6ToothIcon className="w-4 h-4" />
+                                Customize Embedding Settings
+                            </button>
+                            <p className="text-xs text-gray-500 mt-1">
                                 Processing time depends on your data size. You can cancel anytime.
                             </p>
                         </div>

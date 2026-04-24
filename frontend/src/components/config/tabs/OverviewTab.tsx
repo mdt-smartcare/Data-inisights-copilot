@@ -134,18 +134,6 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
         }
     }
 
-    // Helper to mask sensitive info in DB URL
-    const maskDbUrl = (url?: string) => {
-        if (!url) return '';
-        try {
-            // Simple regex to mask password in common DB URIs
-            // e.g., postgresql://user:password@host:port/db -> postgresql://user:****@host:port/db
-            return url.replace(/:\/\/([^:]+):([^@]+)@/, '://$1:****@');
-        } catch {
-            return url;
-        }
-    };
-
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
@@ -284,7 +272,7 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
                                     <div className="flex flex-col py-2 border-b border-gray-100">
                                         <span className="text-sm text-gray-500 mb-1">Endpoint</span>
                                         <span className="text-xs font-mono text-gray-600 break-all bg-gray-50 p-2 rounded-md border border-gray-100">
-                                            {maskDbUrl(activeConfig.db_url)}
+                                            {activeConfig.db_url}
                                         </span>
                                     </div>
                                 )}
