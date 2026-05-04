@@ -489,47 +489,67 @@ function ModelForm({ model, onClose, onSaved, onError }: ModelFormProps) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="p-6 border-b">
-          <h2 className="text-xl font-semibold">{model ? 'Edit Model' : 'Add Model'}</h2>
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden border border-gray-200">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-900">{model ? 'Edit Model' : 'Add New Model'}</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          {/* Basic Info */}
-          <div className="grid grid-cols-2 gap-4">
+        <form onSubmit={handleSubmit} className="overflow-y-auto max-h-[calc(90vh-140px)]">
+          <div className="p-6 space-y-5">
+            {/* Model ID */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Model ID *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Model ID <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={form.model_id}
                 onChange={(e) => setForm(f => ({ ...f, model_id: e.target.value }))}
                 placeholder="openai/gpt-4o"
-                className="w-full px-3 py-2 border rounded-lg"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none disabled:bg-gray-100 disabled:text-gray-500"
                 required
+                disabled={!!model && form.deployment_type === 'local'}
               />
-              <p className="text-xs text-gray-500 mt-1">Format: provider/model-name</p>
+              <p className="text-xs text-gray-500 mt-1.5">Format: provider/model-name</p>
             </div>
+
+            {/* Display Name */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Display Name *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Display Name <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 value={form.display_name}
                 onChange={(e) => setForm(f => ({ ...f, display_name: e.target.value }))}
                 placeholder="GPT-4o"
-                className="w-full px-3 py-2 border rounded-lg"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none"
                 required
               />
             </div>
-          </div>
 
-          <div className="grid grid-cols-3 gap-4">
+            {/* Type */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Type *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Type <span className="text-red-500">*</span>
+              </label>
               <select
                 value={form.model_type}
                 onChange={(e) => setForm(f => ({ ...f, model_type: e.target.value as ModelType }))}
-                className="w-full px-3 py-2 border rounded-lg"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none disabled:bg-gray-100 disabled:text-gray-500"
                 disabled={!!model}
               >
                 {MODEL_TYPE_OPTIONS.map(opt => (
@@ -537,14 +557,18 @@ function ModelForm({ model, onClose, onSaved, onError }: ModelFormProps) {
                 ))}
               </select>
             </div>
+
+            {/* Provider */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Provider *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Provider <span className="text-red-500">*</span>
+              </label>
               <input
                 type="text"
                 list="providers"
                 value={form.provider_name}
                 onChange={(e) => setForm(f => ({ ...f, provider_name: e.target.value }))}
-                className="w-full px-3 py-2 border rounded-lg"
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none disabled:bg-gray-100 disabled:text-gray-500"
                 required
                 disabled={!!model}
               />
@@ -552,95 +576,117 @@ function ModelForm({ model, onClose, onSaved, onError }: ModelFormProps) {
                 {COMMON_PROVIDERS.map(p => <option key={p} value={p} />)}
               </datalist>
             </div>
+
+            {/* Deployment */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Deployment *</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Deployment <span className="text-red-500">*</span>
+              </label>
               <select
                 value={form.deployment_type}
                 onChange={(e) => setForm(f => ({ ...f, deployment_type: e.target.value as DeploymentType }))}
-                className="w-full px-3 py-2 border rounded-lg"
-                disabled={!!model}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none disabled:bg-gray-100 disabled:text-gray-500"
+                disabled
               >
                 {DEPLOYMENT_TYPE_OPTIONS.map(opt => (
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
             </div>
-          </div>
 
-          {/* Cloud Config */}
-          {form.deployment_type === 'cloud' && (
-            <div className="border-t pt-4">
-              <h3 className="font-medium text-gray-900 mb-3">Cloud Configuration</h3>
-              <div className="grid grid-cols-2 gap-4">
+            {/* Cloud Config */}
+            {form.deployment_type === 'cloud' && (
+              <div className="bg-blue-50 rounded-lg p-4 border border-blue-100 space-y-4">
+                <h3 className="font-medium text-blue-900 flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+                  </svg>
+                  Cloud Configuration
+                </h3>
+
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">API Base URL</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">API Base URL</label>
                   <input
                     type="text"
                     value={form.api_base_url}
                     onChange={(e) => setForm(f => ({ ...f, api_base_url: e.target.value }))}
                     placeholder="https://api.openai.com/v1"
-                    className="w-full px-3 py-2 border rounded-lg"
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">API Key</label>
                   <input
                     type="password"
                     value={form.api_key}
                     onChange={(e) => setForm(f => ({ ...f, api_key: e.target.value }))}
                     placeholder={model?.has_api_key ? '••••••••' : 'sk-...'}
-                    className="w-full px-3 py-2 border rounded-lg"
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none"
                   />
-                  <p className="text-xs text-gray-500 mt-1">Leave blank to keep existing</p>
+                  <p className="text-xs text-gray-500 mt-1.5">Leave blank to keep existing</p>
                 </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Or use Environment Variable</label>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Or use Environment Variable</label>
                   <input
                     type="text"
                     value={form.api_key_env_var}
                     onChange={(e) => setForm(f => ({ ...f, api_key_env_var: e.target.value }))}
                     placeholder="OPENAI_API_KEY"
-                    className="w-full px-3 py-2 border rounded-lg"
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none"
                   />
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Local Config */}
-          {form.deployment_type === 'local' && (
-            <div className="border-t pt-4">
-              <h3 className="font-medium text-gray-900 mb-3">Local Configuration</h3>
-              <p className="text-sm text-gray-600">The source model ID (e.g., HuggingFace ID) is derived from the Model ID.</p>
-            </div>
-          )}
+            {/* Local Config */}
+            {form.deployment_type === 'local' && (
+              <div className="bg-orange-50 rounded-lg p-4 border border-orange-100">
+                <h3 className="font-medium text-orange-900 flex items-center gap-2 mb-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                  </svg>
+                  Local Configuration
+                </h3>
+                <p className="text-sm text-orange-800">The source model ID (e.g., HuggingFace ID) is derived from the Model ID.</p>
+              </div>
+            )}
 
-          {/* Description */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
-              className="w-full px-3 py-2 border rounded-lg"
-              rows={2}
-            />
+            {/* Description */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">Description</label>
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
+                className="w-full px-3 py-2.5 border border-gray-300 rounded-lg bg-gray-50 focus:bg-white focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 transition-all outline-none resize-none"
+                rows={3}
+                placeholder="Add a description for this model..."
+              />
+            </div>
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 pt-4 border-t">
+          <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-gray-700 border rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 font-medium transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+              className="px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
-              {loading ? 'Saving...' : (model ? 'Update' : 'Create')}
+              {loading && (
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                </svg>
+              )}
+              {loading ? 'Saving...' : (model ? 'Update Model' : 'Create Model')}
             </button>
           </div>
         </form>

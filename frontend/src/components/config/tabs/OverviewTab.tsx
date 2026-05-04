@@ -1,8 +1,10 @@
 import React from 'react';
 import type { ActiveConfig, ModelInfo } from '../../../contexts/AgentContext';
 import type { Agent } from '../../../types/agent';
+import type { AgentConfig } from '../../../services/api';
 import AgentDetailsCard from '../../AgentDetailsCard';
 import AgentDangerZone from '../../AgentDangerZone';
+import NewVersionAlert from '../NewVersionAlert';
 import { CircleStackIcon, SparklesIcon, AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline';
 
 interface OverviewTabProps {
@@ -11,6 +13,10 @@ interface OverviewTabProps {
     agent?: Agent;
     canEdit?: boolean;
     onAgentUpdate?: () => void;
+    /** Latest published config that is NOT active (for new version alert) */
+    latestInactiveConfig?: AgentConfig | null;
+    /** Callback when a config is activated via the alert */
+    onConfigActivated?: () => void;
 }
 
 // Helper to format model display
@@ -33,7 +39,9 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
     connectionName,
     agent,
     canEdit = false,
-    onAgentUpdate
+    onAgentUpdate,
+    latestInactiveConfig,
+    onConfigActivated
 }) => {
     const parseConfig = (config: string | undefined | null) => {
         if (!config) return {};
@@ -71,7 +79,15 @@ export const OverviewTab: React.FC<OverviewTabProps> = ({
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-
+            {/* New Version Alert - Show if there's a newer published config that isn't active */}
+            {latestInactiveConfig && agent && (
+                <NewVersionAlert
+                    inactiveConfig={latestInactiveConfig}
+                    activeVersion={activeConfig.version}
+                    agentId={agent.id}
+                    onActivated={onConfigActivated}
+                />
+            )}
 
             {/* Main Content Grid */}
 

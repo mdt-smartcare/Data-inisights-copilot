@@ -296,6 +296,17 @@ export const getActiveConfigMetadata = async (agentId?: string): Promise<any> =>
   };
 };
 
+/**
+ * Get the latest published config that is NOT active for an agent.
+ * Used to show alerts about newer versions that could be activated.
+ * Returns null if there's no inactive published config.
+ */
+export const getLatestInactiveConfig = async (agentId: string): Promise<AgentConfig | null> => {
+  const response = await apiClient.get(`/api/v1/config/${agentId}/latest-inactive`);
+  // Response is wrapped: { success, message, data }
+  return response.data?.data ?? null;
+};
+
 // ============================================================================
 // AGENT API
 // ============================================================================

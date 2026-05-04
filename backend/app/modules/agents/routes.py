@@ -452,6 +452,24 @@ async def get_active_config(
     return BaseResponse.ok(data=config)
 
 
+@config_router.get("/{agent_id}/latest-inactive", response_model=BaseResponse[Optional[AgentConfigResponse]])
+async def get_latest_inactive_config(
+    agent_id: UUID,
+    current_user: User = Depends(get_current_user),
+    service: AgentConfigService = Depends(get_config_service),
+    agent_service: AgentService = Depends(get_agent_service),
+) -> BaseResponse[Optional[AgentConfigResponse]]:
+    """Get the latest published config that is NOT active for an agent.
+    
+    Used to show alerts about newer versions that could be activated.
+    Returns null data if there's no inactive published config.
+    """
+    await verify_agent_access(agent_id, current_user, agent_service)
+    
+    config = await service.get_latest_inactive_config(agent_id)
+    return BaseResponse.ok(data=config)
+
+
 @config_router.get("/{agent_id}/history", response_model=BaseResponse[AgentConfigListResponse])
 async def get_config_history(
     agent_id: UUID,

@@ -5,7 +5,7 @@ import { APP_CONFIG } from '../config';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../components/Toast';
 import { ArrowLeftIcon, CommandLineIcon, UserGroupIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { getAgent, getDraftConfig } from '../services/api';
+import { getAgent, getDraftConfig, getLatestInactiveConfig, type AgentConfig } from '../services/api';
 import { canEditPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
 import type { ActiveConfig } from '../contexts/AgentContext';
@@ -36,6 +36,7 @@ const AgentDashboardPage: React.FC = () => {
     // Config state
     const [activeConfig, setActiveConfig] = useState<ActiveConfig | null>(null);
     const [connectionName, setConnectionName] = useState('');
+    const [latestInactiveConfig, setLatestInactiveConfig] = useState<AgentConfig | null>(null);
 
     // Dashboard tab state - persist in URL query string
     const validTabs = ['overview', 'knowledge', 'sandbox', 'config-history', 'users', 'monitoring'];
@@ -140,6 +141,26 @@ const AgentDashboardPage: React.FC = () => {
         }
     };
 
+    // Function to reload config data (called after config activation)
+    const reloadConfig = useCallback(async () => {
+        if (!agent) return;
+        try {
+            const [config, inactiveConfig] = await Promise.all([
+                getActiveConfigMetadata(agent.id),
+                getLatestInactiveConfig(agent.id),
+            ]);
+            if (config) {
+                setActiveConfig(config);
+                if (config.data_source?.title) {
+                    setConnectionName(config.data_source.title);
+                }
+            }
+            setLatestInactiveConfig(inactiveConfig);
+        } catch (err) {
+            console.error('Failed to reload config', err);
+        }
+    }, [agent]);
+
     // Load config when agent is loaded
     useEffect(() => {
         let isMounted = true;
@@ -151,7 +172,11 @@ const AgentDashboardPage: React.FC = () => {
             checkForDraft(agent.id);
 
             try {
-                const config = await getActiveConfigMetadata(agent.id);
+                // Fetch active config and latest inactive config in parallel
+                const [config, inactiveConfig] = await Promise.all([
+                    getActiveConfigMetadata(agent.id),
+                    getLatestInactiveConfig(agent.id),
+                ]);
                 if (!isMounted) return;
 
                 if (config) {
@@ -172,6 +197,9 @@ const AgentDashboardPage: React.FC = () => {
                         }
                     }
                 }
+
+                // Set latest inactive config (for new version alert)
+                setLatestInactiveConfig(inactiveConfig);
             } catch (e) {
                 console.error("Failed to load config", e);
             }
@@ -278,6 +306,8 @@ const AgentDashboardPage: React.FC = () => {
                                         agent={agent || undefined}
                                         canEdit={canEdit}
                                         onAgentUpdate={reloadAgent}
+                                        latestInactiveConfig={latestInactiveConfig}
+                                        onConfigActivated={reloadConfig}
                                     />
                                 )}
 

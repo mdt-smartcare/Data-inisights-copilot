@@ -495,6 +495,9 @@ class AgentConfigRepository:
         result = await self.db.execute(count_query)
         other_configs_count = result.scalar() or 0
         
+        # Set status to published
+        config.status = "published"
+        
         # Only auto-activate if this is the first config for the agent
         if other_configs_count == 0:
             config.is_active = 1
@@ -503,6 +506,61 @@ class AgentConfigRepository:
         await self.db.flush()
         await self.db.refresh(config)
         return config
+    
+    async def get_latest_inactive_published(self, agent_id: UUID) -> Optional[AgentConfigModel]:
+        """Get the latest published config that is NOT active and NEWER than the active config.
+        
+        Used to show alerts about newer versions that could be activated.
+        Only returns a config if its version is higher than the currently active one.
+        """
+        # First, get the active config's version
+        active_version_query = (
+            select(AgentConfigModel.version)
+            .where(
+                and_(
+                    AgentConfigModel.agent_id == agent_id,
+                    AgentConfigModel.is_active == 1,
+                )
+            )
+        )
+        active_result = await self.db.execute(active_version_query)
+        active_version = active_result.scalar_one_or_none()
+        
+        # If no active config, return the latest published inactive (first-time setup scenario)
+        if active_version is None:
+            query = (
+                select(AgentConfigModel)
+                .options(selectinload(AgentConfigModel.data_source))
+                .where(
+                    and_(
+                        AgentConfigModel.agent_id == agent_id,
+                        AgentConfigModel.status == "published",
+                        AgentConfigModel.is_active == 0,
+                    )
+                )
+                .order_by(AgentConfigModel.version.desc())
+                .limit(1)
+            )
+            result = await self.db.execute(query)
+            return result.scalar_one_or_none()
+        
+        # Only return inactive published configs with version > active version
+        query = (
+            select(AgentConfigModel)
+            .options(selectinload(AgentConfigModel.data_source))
+            .where(
+                and_(
+                    AgentConfigModel.agent_id == agent_id,
+                    AgentConfigModel.status == "published",
+                    AgentConfigModel.is_active == 0,
+                    AgentConfigModel.version > active_version,
+                )
+            )
+            .order_by(AgentConfigModel.version.desc())
+            .limit(1)
+        )
+        result = await self.db.execute(query)
+        return result.scalar_one_or_none()
     
     async def clone_config_as_draft(
         self,

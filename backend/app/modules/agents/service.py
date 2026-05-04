@@ -427,6 +427,17 @@ class AgentConfigService:
             return await self._to_response_with_models(config)
         return None
     
+    async def get_latest_inactive_config(self, agent_id: UUID) -> Optional[AgentConfigResponse]:
+        """Get the latest published config that is NOT active for an agent.
+        
+        Used to show alerts about newer versions that could be activated.
+        Returns None if there's no inactive published config.
+        """
+        config = await self.configs.get_latest_inactive_published(agent_id)
+        if config:
+            return await self._to_response_with_models(config)
+        return None
+    
     async def update_config(
         self,
         config_id: int,
