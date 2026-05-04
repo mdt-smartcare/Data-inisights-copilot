@@ -58,21 +58,9 @@ class QueryRelevanceChecker:
     Only blocks obvious non-data questions and PII requests.
     """
     
-    def __init__(self, llm=None):
+    def __init__(self):
         """Initialize the query relevance checker."""
-        self._llm = llm
         self._prompt_template = None
-    
-    def _get_llm(self):
-        """Lazy initialization of LLM."""
-        if self._llm is None:
-            from app.core.llm import create_llm_provider
-            provider = create_llm_provider("openai", {
-                "model": "gpt-4o",
-                "temperature": 0,
-            })
-            self._llm = provider.get_langchain_llm()
-        return self._llm
     
     def _get_prompt_template(self) -> str:
         """Load prompt template from file or use fallback."""
@@ -123,14 +111,21 @@ class QueryRelevanceChecker:
             # Default to RELEVANT for any other response
             return RELEVANT, explanation
     
-    def check(
+    async def check(
         self,
         question: str,
         table_names: List[str],
+        llm_helper,
         table_descriptions: Optional[dict] = None
     ) -> Tuple[bool, str]:
         """
         Check if a question is relevant and can be answered by the database.
+        
+        Args:
+            question: User's query
+            table_names: Available table names
+            llm_helper: LLMHelper instance for getting LLM
+            table_descriptions: Optional table descriptions
         
         Returns:
             Tuple of (is_relevant: bool, message: str)
@@ -158,8 +153,8 @@ class QueryRelevanceChecker:
         try:
             prompt = self._build_check_prompt(question, table_names, table_descriptions)
             
-            llm = self._get_llm()
-            response = llm.invoke(prompt)
+            llm = await llm_helper.get_llm(temperature=0.0)
+            response = await llm.ainvoke(prompt)
             
             if hasattr(response, 'content'):
                 response_text = response.content

@@ -74,22 +74,6 @@ async def chat(
     return BaseResponse.ok(data=response)
 
 
-@router.get("/status", response_model=BaseResponse[ChatServiceStatus])
-async def get_chat_status(
-    current_user: Annotated[User, Depends(get_current_user)],
-    service: ChatService = Depends(get_chat_service),
-) -> BaseResponse[ChatServiceStatus]:
-    """
-    Get chat service health status.
-    
-    Returns:
-        ChatServiceStatus with health information
-    """
-    status_info = await service.get_service_status()
-    
-    return BaseResponse.ok(data=ChatServiceStatus(**status_info))
-
-
 @router.post("/feedback", response_model=BaseResponse[FeedbackResponse])
 async def submit_feedback(
     feedback: FeedbackRequest,

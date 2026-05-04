@@ -184,6 +184,7 @@ def get_conversation_memory() -> ConversationMemory:
 async def rewrite_query_with_context(
     query: str,
     session_id: Optional[str],
+    llm_helper=None,
     use_llm: bool = True
 ) -> str:
     """
@@ -195,6 +196,7 @@ async def rewrite_query_with_context(
     Args:
         query: Original user query
         session_id: Session ID for conversation history
+        llm_helper: LLMHelper instance for getting LLM
         use_llm: Whether to use LLM for rewriting
         
     Returns:
@@ -225,13 +227,12 @@ async def rewrite_query_with_context(
     if not needs_context:
         return query
     
-    if not use_llm:
+    if not use_llm or not llm_helper:
         # Simple approach: prepend context summary
         return f"(Context: {context[-200:]}...) {query}"
     
     # Use LLM to rewrite
     try:
-        from app.core.llm import create_llm_provider
         from langchain_core.prompts import ChatPromptTemplate
         
         prompt = ChatPromptTemplate.from_messages([
@@ -246,14 +247,10 @@ Only respond with the rewritten query, nothing else."""),
             ("user", "{query}")
         ])
         
-        provider = create_llm_provider("openai", {
-            "model": "gpt-4o-mini",
-            "temperature": 0,
-        })
-        llm = provider.get_langchain_llm()
+        llm = await llm_helper.get_llm(temperature=0.0)
         
         chain = prompt | llm
-        result = chain.invoke({"context": context, "query": query})
+        result = await chain.ainvoke({"context": context, "query": query})
         
         rewritten = result.content.strip()
         if rewritten and rewritten != query:

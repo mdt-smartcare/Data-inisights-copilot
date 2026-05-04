@@ -32,6 +32,7 @@ from app.modules.chat.schemas import (
 )
 from app.modules.agents.repository import AgentRepository, AgentConfigRepository
 from app.modules.ai_models.repository import AIModelRepository
+from app.modules.data_sources.repository import DataSourceRepository
 
 # Import chat module services (flat structure)
 from app.modules.chat.intent_classifier import (
@@ -70,10 +71,12 @@ class ChatService:
         self.agents = AgentRepository(db)
         self.configs = AgentConfigRepository(db)
         self.ai_models = AIModelRepository(db)
+        self.data_sources = DataSourceRepository(db)
         self._settings = get_settings()
         self._intent_classifier = get_intent_classifier()
         self._memory = get_conversation_memory()
         self._followup_service = get_followup_service()
+        self._sql_factory = SQLServiceFactory(self.configs, self.data_sources)
     
     async def process_query(
         self,
@@ -141,16 +144,21 @@ class ChatService:
                         )
                     
                     # Get SQL service for the agent's data source
-                    sql_service = await SQLServiceFactory.from_agent_config(
-                        request.agent_id, self.db
+                    sql_service = await self._sql_factory(
+                        request.agent_id
                     )
+                
+                # Create LLM helper (fetches config from DB once)
+                from app.modules.chat.llm_helper import LLMHelper
+                llm_helper = LLMHelper(self.db, request.agent_id)
+                logger.info(f"LLM Helper created for agent_id={llm_helper._model}")
                 
                 # Step 2: Rewrite query with conversation context
                 await check_cancelled(fastapi_request)
                 tracing_ctx.add_span("query_rewrite", input=query)
                 
                 rewritten_query = await rewrite_query_with_context(
-                    query, session_id, use_llm=True
+                    query, session_id, llm_helper=llm_helper, use_llm=True
                 )
                 
                 tracing_ctx.update_span("query_rewrite", output=rewritten_query)
@@ -160,8 +168,9 @@ class ChatService:
                 tracing_ctx.add_span("intent_classification", input=rewritten_query)
                 
                 schema_context = sql_service.cached_schema if sql_service else ""
-                classification = self._intent_classifier.classify(
-                    rewritten_query, 
+                classification = await self._intent_classifier.classify(
+                    rewritten_query,
+                    llm_helper=llm_helper,
                     schema_context=schema_context
                 )
                 
@@ -199,20 +208,15 @@ class ChatService:
                     # Intent A: SQL only (with chart generation)
                     await check_cancelled(fastapi_request)
                     answer, reasoning_steps, chart_data = await self._handle_sql_intent(
-                        rewritten_query, sql_service, agent_config, tracing_ctx
+                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
                     )
                     
                     # Generate comparison insights (optional, non-blocking)
                     if sql_service and answer and not answer.startswith("No database"):
                         try:
                             from app.modules.chat.comparison_engine import generate_comparison_insights
-                            from app.core.llm import create_llm_provider
                             
-                            comp_provider = create_llm_provider("openai", {
-                                "model": "gpt-4o-mini",
-                                "temperature": 0.3,
-                            })
-                            comp_llm = comp_provider.get_langchain_llm()
+                            comp_llm = await llm_helper.get_llm(temperature=0.3)
                             schema_ctx = sql_service.cached_schema if sql_service else ""
                             
                             comparison_insights = await generate_comparison_insights(
@@ -239,14 +243,14 @@ class ChatService:
                     await check_cancelled(fastapi_request)
                     answer, sources, reasoning_steps, embedding_info = await self._handle_hybrid_intent(
                         rewritten_query, classification, sql_service, agent_config, 
-                        tracing_ctx, fastapi_request
+                        tracing_ctx, fastapi_request, llm_helper
                     )
                     
                 elif final_intent == QueryIntent.DASHBOARD_GENERATOR.value:
                     # Dashboard: Generate multiple charts
                     await check_cancelled(fastapi_request)
                     answer, reasoning_steps, dashboards = await self._handle_dashboard_intent(
-                        rewritten_query, sql_service, agent_config, tracing_ctx
+                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
                     )
                     
                 else:
@@ -263,7 +267,8 @@ class ChatService:
                 followup_task = asyncio.create_task(
                     generate_followups_background(
                         query, 
-                        answer, 
+                        answer,
+                        llm_helper=llm_helper,
                         conversation_history=conversation_history,
                         timeout=2.0
                     )
@@ -345,6 +350,7 @@ class ChatService:
         sql_service: Optional[SQLService],
         agent_config: Optional[Dict[str, Any]],
         tracing_ctx: TracingContext,
+        llm_helper,
     ) -> Tuple[str, List[ReasoningStep], Optional[ChartData]]:
         """Handle Intent A: SQL-only queries. Returns answer, reasoning steps, and optional chart data."""
         reasoning_steps = []
@@ -357,7 +363,7 @@ class ChatService:
         
         try:
             # Execute natural language SQL query
-            result = await sql_service.query_async(query)
+            result = await sql_service.query_async(query, llm_helper=llm_helper)
             
             reasoning_steps.append(ReasoningStep(
                 tool="sql_query",
@@ -393,6 +399,7 @@ class ChatService:
         sql_service: Optional[SQLService],
         agent_config: Optional[Dict[str, Any]],
         tracing_ctx: TracingContext,
+        llm_helper,
     ) -> Tuple[str, List[ReasoningStep], Optional[List[ChartData]]]:
         """Handle Dashboard Intent: Generates multiple queries in parallel for a dashboard view."""
         reasoning_steps = []
@@ -401,12 +408,7 @@ class ChatService:
             
         tracing_ctx.add_span("dashboard_generation", input=query)
         
-        from app.core.llm import create_llm_provider
-        provider = create_llm_provider("openai", {
-            "model": "gpt-4o-mini",
-            "temperature": 0.2,
-        })
-        llm = provider.get_langchain_llm()
+        llm = await llm_helper.get_llm(temperature=0.2)
         
         schema_context = sql_service.cached_schema if sql_service else ""
         prompt = f"""
@@ -446,7 +448,7 @@ class ChatService:
             async def process_subquery(idx, sub_q):
                 try:
                     # 1. Execute SQL directly asynchronously (avoids event loop mismatch)
-                    sql_result = await sql_service.query_async(sub_q)
+                    sql_result = await sql_service.query_async(sub_q, llm_helper=llm_helper)
                     
                     # 2. Skip synthesis if query failed or returned no data
                     if not sql_result or sql_result.startswith("Failed") or "No results found" in sql_result:
@@ -570,6 +572,7 @@ class ChatService:
         agent_config: Optional[Dict[str, Any]],
         tracing_ctx: TracingContext,
         fastapi_request: Optional[Request] = None,
+        llm_helper=None,
     ) -> Tuple[str, List[SourceChunk], List[ReasoningStep], EmbeddingInfo]:
         """
         Handle Intent C: Hybrid queries.
@@ -597,7 +600,7 @@ class ChatService:
             # The SQL service already has semantic schema retrieval built in
             logger.info("Hybrid intent with schema-aware indexing - using SQL generation")
             answer, sql_reasoning, chart_data = await self._handle_sql_intent(
-                query, sql_service, agent_config, tracing_ctx
+                query, sql_service, agent_config, tracing_ctx, llm_helper
             )
             
             emb_info = EmbeddingInfo(
@@ -651,7 +654,7 @@ class ChatService:
             # No IDs found, fall back to SQL generation
             logger.info("No filter IDs found, falling back to SQL generation")
             answer, sql_reasoning, chart_data = await self._handle_sql_intent(
-                query, sql_service, agent_config, tracing_ctx
+                query, sql_service, agent_config, tracing_ctx, llm_helper
             )
             
             emb_info = EmbeddingInfo(
@@ -944,8 +947,6 @@ class ChatService:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, embedding_model.embed_query, query)
 
-
-    
     def _get_vector_db_name(self, agent_config: Optional[Dict[str, Any]]) -> str:
         """Get the vector database collection name for the agent."""
         if agent_config:
@@ -1021,18 +1022,3 @@ class ChatService:
             logger.error(f"Vector search failed: {e}")
             return [], 0
     
-    async def get_service_status(self) -> Dict[str, Any]:
-        """Get chat service health status."""
-        status = {
-            "healthy": True,
-            "llm_available": bool(self._settings.openai_api_key),
-            "vector_db_available": (self._settings.data_dir / "chromadb").exists(),
-            "active_sessions": self._memory.session_count,
-            "message": "Service operational",
-        }
-        
-        if not status["llm_available"]:
-            status["healthy"] = False
-            status["message"] = "LLM provider not configured"
-        
-        return status

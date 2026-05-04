@@ -704,6 +704,7 @@ class SQLService:
     async def query_async(
         self,
         natural_language_query: str,
+        llm_helper=None,
         max_retries: int = 3,
     ) -> str:
         """
@@ -716,6 +717,7 @@ class SQLService:
         
         Args:
             natural_language_query: User's question in natural language
+            llm_helper: LLMHelper instance for getting LLM
             max_retries: Maximum number of retry attempts (default 3)
             
         Returns:
@@ -724,16 +726,16 @@ class SQLService:
         Raises:
             IrrelevantQueryException: If query is not relevant to the database
         """
-        from app.core.llm import create_llm_provider
         from langchain_core.prompts import ChatPromptTemplate
         
         # Check query relevance first (if enabled)
-        if self._enable_relevance_check and self._relevance_checker:
+        if self._enable_relevance_check and self._relevance_checker and llm_helper:
             table_names = self._discover_tables()
             table_descriptions = self._get_table_descriptions()
-            is_relevant, classification = self._relevance_checker.check(
+            is_relevant, classification = await self._relevance_checker.check(
                 question=natural_language_query,
                 table_names=table_names,
+                llm_helper=llm_helper,
                 table_descriptions=table_descriptions
             )
             
@@ -820,16 +822,12 @@ class SQLService:
         
         full_system_prompt = "\n\n".join(system_prompt_parts)
         
-        # Create LLM provider
-        try:
-            provider = create_llm_provider("openai", {
-                "model": "gpt-4o-mini",
-                "temperature": 0,
-            })
-            llm = provider.get_langchain_llm()
-        except Exception as e:
-            logger.error(f"Failed to create LLM provider: {e}")
-            return f"Failed to initialize LLM: {str(e)}"
+        # Get LLM from helper (temp=0 for deterministic SQL generation)
+        if not llm_helper:
+            logger.error("No llm_helper provided for SQL generation")
+            return "Failed to initialize LLM: no llm_helper provided"
+        
+        llm = await llm_helper.get_llm(temperature=0.0)
         
         # =========================================================================
         # RETRY LOOP: Generate SQL, execute, retry on error with error feedback
@@ -1156,20 +1154,37 @@ class SQLServiceForCSV(SQLService):
 class SQLServiceFactory:
     """Factory for creating SQLService instances from data sources."""
     
-    @staticmethod
-    async def from_data_source_id(
+    def __init__(self, config_repo, data_source_repo):
+        """
+        Initialize factory with repository dependencies.
+        
+        Args:
+            config_repo: AgentConfigRepository instance
+            data_source_repo: DataSourceRepository instance
+        """
+        self.config_repo = config_repo
+        self.data_source_repo = data_source_repo
+    
+    async def __call__(
+        self,
+        agent_id: UUID,
+        enable_few_shot: bool = True
+    ) -> Optional[SQLService]:
+        """Primary factory method - create SQLService for an agent."""
+        return await self.create(agent_id, enable_few_shot)
+    
+    async def create_from_data_source(
+        self,
         data_source_id: UUID,
-        db_session,
         enable_few_shot: bool = True,
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
     ) -> Optional[SQLService]:
         """
-        Create a SQLService from a data source ID.
+        Create a SQLService for the given data source.
         
         Args:
             data_source_id: UUID of the data source
-            db_session: Async SQLAlchemy session
             enable_few_shot: Enable few-shot example retrieval
             config_id: Optional agent config ID for semantic schema retrieval
             agent_id: Optional agent ID for per-agent SQL examples and data dictionary
@@ -1177,13 +1192,8 @@ class SQLServiceFactory:
         Returns:
             SQLService instance or None if not found
         """
-        from sqlalchemy import select
-        from app.modules.data_sources.models import DataSourceModel
-        
         try:
-            stmt = select(DataSourceModel).where(DataSourceModel.id == data_source_id)
-            result = await db_session.execute(stmt)
-            data_source = result.scalar_one_or_none()
+            data_source = await self.data_source_repo.get_by_id(data_source_id)
             
             if not data_source:
                 logger.warning(f"Data source not found: {data_source_id}")
@@ -1191,6 +1201,7 @@ class SQLServiceFactory:
             
             logger.debug(f"Data source found: id={data_source_id}, type={data_source.source_type}")
             
+            # Create SQLService based on data source type
             if data_source.source_type == "database":
                 # Decrypt the database URL if encrypted
                 db_url = data_source.db_url
@@ -1201,7 +1212,12 @@ class SQLServiceFactory:
                     logger.warning(f"Data source {data_source_id} has no db_url configured")
                     return None
                     
-                return SQLService(db_url=db_url, enable_few_shot=enable_few_shot, config_id=config_id, agent_id=agent_id)
+                return SQLService(
+                    db_url=db_url,
+                    enable_few_shot=enable_few_shot,
+                    config_id=config_id,
+                    agent_id=agent_id,
+                )
                 
             elif data_source.source_type == "file":
                 # Use DuckDB for file-based data sources
@@ -1237,28 +1253,24 @@ class SQLServiceFactory:
             logger.error(f"Failed to create SQL service: {e}", exc_info=True)
             return None
     
-    @staticmethod
-    async def from_agent_config(
+    async def create(
+        self,
         agent_id: UUID,
-        db_session,
         enable_few_shot: bool = True
     ) -> Optional[SQLService]:
         """
-        Create a SQLService from an agent's active configuration.
+        Create a SQLService for the given agent (uses agent's active config).
         
-        Gets the data source from the agent's active config.
+        Args:
+            agent_id: UUID of the agent
+            enable_few_shot: Enable few-shot example retrieval
+            
+        Returns:
+            SQLService instance or None if not found
         """
-        from sqlalchemy import select
-        from app.modules.agents.models import AgentConfigModel
-        
         try:
-            # Get the active config for the agent
-            stmt = select(AgentConfigModel).where(
-                AgentConfigModel.agent_id == agent_id,
-                AgentConfigModel.is_active == 1
-            )
-            result = await db_session.execute(stmt)
-            config = result.scalar_one_or_none()
+            # Get the active config for the agent using repository
+            config = await self.config_repo.get_active_config(agent_id)
             
             if not config:
                 logger.warning(f"No active config found for agent: {agent_id}")
@@ -1270,9 +1282,8 @@ class SQLServiceFactory:
                 logger.warning(f"Agent config has no data_source_id")
                 return None
             
-            return await SQLServiceFactory.from_data_source_id(
+            return await self.create_from_data_source(
                 config.data_source_id,
-                db_session,
                 enable_few_shot=enable_few_shot,
                 config_id=config.id,  # Pass config ID for semantic schema retrieval
                 agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples

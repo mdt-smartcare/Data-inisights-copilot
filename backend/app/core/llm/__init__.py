@@ -16,13 +16,11 @@ Usage:
 from app.core.llm.base import LLMProvider
 from app.core.llm.factory import (
     create_llm_provider,
-    get_available_providers,
-    register_provider,
+    get_available_providers
 )
 
 __all__ = [
     "LLMProvider",
     "create_llm_provider",
     "get_available_providers",
-    "register_provider",
 ]

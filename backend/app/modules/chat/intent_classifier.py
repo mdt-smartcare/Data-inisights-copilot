@@ -102,33 +102,9 @@ class IntentClassifier:
         'give me a dashboard', 'show me an overview', 'executive summary'
     ]
     
-    def __init__(self, llm=None):
-        """
-        Initialize the intent classifier.
-        
-        Args:
-            llm: Optional LangChain LLM. If not provided, will initialize from settings.
-        """
-        self._llm = llm
-        self._structured_llm = None
+    def __init__(self):
+        """Initialize the intent classifier."""
         self._settings = get_settings()
-    
-    def _get_llm(self):
-        """Lazy initialization of LLM."""
-        if self._llm is None:
-            from app.core.llm import create_llm_provider
-            provider = create_llm_provider("openai", {
-                "model": "gpt-4o-mini",  # Use smaller model for classification
-                "temperature": 0,
-            })
-            self._llm = provider.get_langchain_llm()
-        return self._llm
-    
-    def _get_structured_llm(self):
-        """Get LLM with structured output."""
-        if self._structured_llm is None:
-            self._structured_llm = self._get_llm().with_structured_output(IntentClassification)
-        return self._structured_llm
     
     def _keyword_classify(self, query: str) -> Optional[IntentClassification]:
         """
@@ -195,7 +171,7 @@ class IntentClassifier:
         # Ambiguous - return None to trigger LLM classification
         return None
     
-    def _llm_classify(self, query: str, schema_context: str = "") -> IntentClassification:
+    async def _llm_classify(self, query: str, llm_helper, schema_context: str = "") -> IntentClassification:
         """
         LLM-based classification for ambiguous queries.
         """
@@ -210,8 +186,10 @@ class IntentClassifier:
         ])
         
         try:
-            chain = prompt | self._get_structured_llm()
-            result = chain.invoke({
+            llm = await llm_helper.get_llm(temperature=0.0)
+            structured_llm = llm.with_structured_output(IntentClassification)
+            chain = prompt | structured_llm
+            result = await chain.ainvoke({
                 "query": query,
                 "schema": schema_context or "No schema provided"
             })
@@ -225,9 +203,10 @@ class IntentClassifier:
                 reason=f"LLM failed, defaulting to SQL: {str(e)}"
             )
     
-    def classify(
+    async def classify(
         self, 
         query: str, 
+        llm_helper,
         schema_context: str = "",
         use_llm: bool = True
     ) -> IntentClassification:
@@ -236,6 +215,7 @@ class IntentClassifier:
         
         Args:
             query: User's natural language query
+            llm_helper: LLMHelper instance for getting LLM
             schema_context: Optional database schema for better classification
             use_llm: Whether to use LLM for ambiguous cases (default True)
             
@@ -267,7 +247,7 @@ class IntentClassifier:
         
         # If uncertain and LLM enabled, use LLM
         if result is None and use_llm:
-            result = self._llm_classify(query, schema_context)
+            result = await self._llm_classify(query, llm_helper, schema_context)
         elif result is None:
             # No LLM, default to fallback
             result = IntentClassification(
@@ -293,13 +273,10 @@ class IntentClassifier:
         return result
 
 
-# Singleton instance
-_classifier_instance: Optional[IntentClassifier] = None
+# Shared instance (stateless, so safe to reuse)
+_classifier = IntentClassifier()
 
 
 def get_intent_classifier() -> IntentClassifier:
-    """Get or create the intent classifier singleton."""
-    global _classifier_instance
-    if _classifier_instance is None:
-        _classifier_instance = IntentClassifier()
-    return _classifier_instance
+    """Get the intent classifier instance."""
+    return _classifier

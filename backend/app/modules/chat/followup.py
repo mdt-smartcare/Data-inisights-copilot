@@ -30,6 +30,7 @@ class FollowupService:
         self,
         original_question: str,
         system_response: str,
+        llm_helper,
         conversation_history: Optional[str] = None,
         max_questions: int = 3,
         callbacks: Optional[List] = None,
@@ -40,6 +41,7 @@ class FollowupService:
         Args:
             original_question: User's original query
             system_response: System's response
+            llm_helper: LLMHelper instance for getting LLM
             conversation_history: Optional previous conversation context
             max_questions: Maximum number of follow-ups to generate
             callbacks: Optional LangChain callbacks for tracing
@@ -48,7 +50,6 @@ class FollowupService:
             List of follow-up question strings
         """
         try:
-            from app.core.llm import create_llm_provider
             from langchain_core.prompts import ChatPromptTemplate
             
             prompt = ChatPromptTemplate.from_messages([
@@ -60,11 +61,7 @@ Response received: {response}
 Suggest {max_questions} follow-up questions:""")
             ])
             
-            provider = create_llm_provider("openai", {
-                "model": "gpt-4o-mini",
-                "temperature": 0.7,  # Some creativity for varied questions
-            })
-            llm = provider.get_langchain_llm()
+            llm = await llm_helper.get_llm(temperature=0.7)
             
             chain = prompt | llm
             
@@ -137,21 +134,19 @@ Suggest {max_questions} follow-up questions:""")
         return questions[:max_questions]
 
 
-# Singleton instance
-_followup_service: Optional[FollowupService] = None
+# Shared instance
+_followup_service = FollowupService()
 
 
 def get_followup_service() -> FollowupService:
-    """Get the follow-up service singleton."""
-    global _followup_service
-    if _followup_service is None:
-        _followup_service = FollowupService()
+    """Get the follow-up service instance."""
     return _followup_service
 
 
 async def generate_followups_background(
     original_question: str,
     system_response: str,
+    llm_helper,
     conversation_history: Optional[str] = None,
     timeout: float = 2.0,
 ) -> List[str]:
@@ -164,6 +159,7 @@ async def generate_followups_background(
     Args:
         original_question: User's original query
         system_response: System's response
+        llm_helper: LLMHelper instance for getting LLM
         conversation_history: Optional previous conversation context
         timeout: Maximum time to wait (seconds)
         
@@ -177,6 +173,7 @@ async def generate_followups_background(
             service.generate_followups(
                 original_question, 
                 system_response,
+                llm_helper=llm_helper,
                 conversation_history=conversation_history,
             ),
             timeout=timeout,
