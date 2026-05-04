@@ -13,7 +13,7 @@ from app.core.models.common import BaseResponse, PaginatedResponse
 from app.core.auth.permissions import require_admin, require_user, can_manage_users, detect_role_change
 from app.modules.audit.helpers import AuditLogger, get_audit_logger
 from app.modules.audit.schemas import AuditAction
-from app.modules.users.service import UserService
+from app.modules.users.service import UserService, get_user_service
 from app.modules.users.schemas import (
     User, UserCreate, UserUpdate
 )
@@ -25,81 +25,73 @@ router = APIRouter()
 
 @router.get("", response_model=BaseResponse[PaginatedResponse[User]])
 async def list_users(
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=1000),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_user)
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    size: int = Query(default=10, ge=1, le=100, description="Items per page"),
+    q: str = Query(default=None, description="Search query (username, email, or name)"),
+    service: UserService = Depends(get_user_service),
+    current_user: User = Depends(require_admin)
 ):
     """
-    List all users with pagination.
+    List all users with pagination and optional search.
     
-    **Required Permission:** USER (any authenticated user)
+    **Required Permission:** ADMIN
+    
+    **Query Parameters:**
+    - page: Page number (1-indexed, default: 1)
+    - size: Items per page (default: 10, max: 100)
+    - q: Optional search query (searches username, email, full_name)
     """
-    service = UserService(session)
-    users = await service.list_users(skip=skip, limit=limit)
-    total = await service.repository.count()
-    pages = (total + limit - 1) // limit  # Ceiling division
+    result = await service.list_users_paginated(
+        page=page,
+        size=size,
+        search=q.strip() if q else None,
+    )
     
-    return BaseResponse.ok(data=PaginatedResponse(
-        items=users,
-        total=total,
-        page=skip // limit,
-        size=limit,
-        pages=pages
-    ))
+    return BaseResponse.ok(data=PaginatedResponse(**result))
 
 
 @router.get("/search", response_model=BaseResponse[PaginatedResponse[User]])
 async def search_users(
-    query: str = Query(default=None, description="Search query (username, email, or name)"),
+    q: str = Query(default=None, alias="query", description="Search query (username, email, or name)"),
     role: str = Query(default=None, description="Filter by role"),
     is_active: bool = Query(default=None, description="Filter by active status"),
-    skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, ge=1, le=1000),
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_user)
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    size: int = Query(default=10, ge=1, le=100, description="Items per page"),
+    service: UserService = Depends(get_user_service),
+    current_user: User = Depends(require_admin)
 ):
     """
     Search users with filters.
     
-    **Required Permission:** USER (any authenticated user)
+    **Required Permission:** ADMIN
     
     **Filters:**
-    - query: Search in username, email, or full name
+    - q/query: Search in username, email, or full name
     - role: Filter by specific role
     - is_active: Filter by active/inactive status
     """
-    service = UserService(session)
-    users, total = await service.search_users(
-        query=query,
+    result = await service.list_users_paginated(
+        page=page,
+        size=size,
+        search=q,
         role=role,
         is_active=is_active,
-        skip=skip,
-        limit=limit
     )
-    pages = (total + limit - 1) // limit  # Ceiling division
     
-    return BaseResponse.ok(data=PaginatedResponse(
-        items=users,
-        total=total,
-        page=skip // limit,
-        size=limit,
-        pages=pages
-    ))
+    return BaseResponse.ok(data=PaginatedResponse(**result))
 
 
 @router.get("/{user_id}", response_model=BaseResponse[User])
 async def get_user(
     user_id: str,
-    session: AsyncSession = Depends(get_db_session),
-    current_user: User = Depends(require_user)
+    service: UserService = Depends(get_user_service),
+    current_user: User = Depends(require_admin)
 ):
     """
     Get user by ID.
     
-    **Required Permission:** USER (any authenticated user)
+    **Required Permission:** ADMIN
     """
-    service = UserService(session)
     user = await service.get_user(user_id)
     
     return BaseResponse.ok(data=user)
@@ -108,7 +100,7 @@ async def get_user(
 @router.post("", response_model=BaseResponse[User], status_code=status.HTTP_201_CREATED)
 async def create_user(
     data: UserCreate,
-    session: AsyncSession = Depends(get_db_session),
+    service: UserService = Depends(get_user_service),
     current_user: User = Depends(require_admin),
 ):
     """
@@ -120,7 +112,6 @@ async def create_user(
     is handled via Keycloak/OIDC JIT provisioning. Kept for API-based 
     user creation scenarios.
     """
-    service = UserService(session)
     user = await service.create_user(data)
     
     return BaseResponse.ok(data=user, message="User created successfully")
@@ -130,7 +121,7 @@ async def create_user(
 async def update_user(
     user_id: str,
     data: UserUpdate,
-    session: AsyncSession = Depends(get_db_session),
+    service: UserService = Depends(get_user_service),
     current_user: User = Depends(require_admin),
     audit: AuditLogger = Depends(get_audit_logger),
 ):
@@ -141,8 +132,6 @@ async def update_user(
     
     **Note:** Only non-null fields will be updated.
     """
-    service = UserService(session)
-    
     # Get existing user to detect role changes
     existing_user = await service.get_user(user_id)
     old_role = existing_user.role
@@ -186,7 +175,7 @@ async def update_user(
 async def patch_user(
     user_id: str,
     data: UserUpdate,
-    session: AsyncSession = Depends(get_db_session),
+    service: UserService = Depends(get_user_service),
     current_user: User = Depends(require_admin),
     audit: AuditLogger = Depends(get_audit_logger),
 ):
@@ -197,8 +186,6 @@ async def patch_user(
     
     **Note:** Only provided fields will be updated.
     """
-    service = UserService(session)
-    
     # Get existing user to detect role changes
     existing_user = await service.get_user(user_id)
     old_role = existing_user.role
@@ -241,7 +228,7 @@ async def patch_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: str,
-    session: AsyncSession = Depends(get_db_session),
+    service: UserService = Depends(get_user_service),
     current_user: User = Depends(require_admin)
 ):
     """
@@ -251,7 +238,6 @@ async def delete_user(
     
     **Warning:** This permanently deletes the user.
     """
-    service = UserService(session)
     await service.delete_user(user_id)
 
 
@@ -262,7 +248,7 @@ async def delete_user(
 @router.post("/{user_id}/deactivate", response_model=BaseResponse[dict])
 async def deactivate_user(
     user_id: str,
-    session: AsyncSession = Depends(get_db_session),
+    service: UserService = Depends(get_user_service),
     current_user: User = Depends(require_admin),
     audit: AuditLogger = Depends(get_audit_logger),
 ):
@@ -273,8 +259,6 @@ async def deactivate_user(
     
     Deactivated users cannot log in but their data is preserved.
     """
-    service = UserService(session)
-    
     # Get user info for audit logging
     user = await service.get_user(user_id)
     
@@ -300,7 +284,7 @@ async def deactivate_user(
 @router.post("/{user_id}/activate", response_model=BaseResponse[dict])
 async def activate_user(
     user_id: str,
-    session: AsyncSession = Depends(get_db_session),
+    service: UserService = Depends(get_user_service),
     current_user: User = Depends(require_admin),
     audit: AuditLogger = Depends(get_audit_logger),
 ):
@@ -311,8 +295,6 @@ async def activate_user(
     
     Re-enables a previously deactivated user account.
     """
-    service = UserService(session)
-    
     # Get user info for audit logging
     user = await service.get_user(user_id)
     

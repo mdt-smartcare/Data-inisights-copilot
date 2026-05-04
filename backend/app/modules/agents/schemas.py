@@ -375,6 +375,9 @@ class UserAgentListResponse(BaseModel):
     """List of users with access to an agent."""
     users: List[UserAgentResponse]
     total: int
+    page: int = 1
+    size: int = 10
+    pages: int = 1
     agent_id: Optional[UUID] = None
 
 

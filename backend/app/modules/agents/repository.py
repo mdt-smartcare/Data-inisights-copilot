@@ -668,9 +668,16 @@ class UserAgentRepository:
         
         return role_levels.get(access.role, 0) >= role_levels.get(min_role, 0)
     
-    async def get_agent_users(self, agent_id: UUID) -> List[UserAgentResponse]:
+    async def get_agent_users(
+        self, 
+        agent_id: UUID, 
+        skip: int = 0, 
+        limit: int = 10,
+        search: Optional[str] = None
+    ) -> Tuple[List[UserAgentResponse], int]:
         """Get all users with access to an agent using explicit JOIN with specific columns."""
-        query = (
+        # Base query with JOIN
+        base_query = (
             select(
                 # User agent columns
                 UserAgentModel.user_id,
@@ -688,10 +695,30 @@ class UserAgentRepository:
             .join(UserModel, UserAgentModel.user_id == UserModel.id)
             .where(UserAgentModel.agent_id == agent_id)
         )
+        
+        # Add search filter if provided
+        if search and search.strip():
+            search_term = f"%{search.strip().lower()}%"
+            base_query = base_query.where(
+                or_(
+                    func.lower(UserModel.username).like(search_term),
+                    func.lower(UserModel.email).like(search_term),
+                    func.lower(UserModel.full_name).like(search_term),
+                )
+            )
+        
+        # Count total
+        count_query = select(func.count()).select_from(base_query.subquery())
+        count_result = await self.db.execute(count_query)
+        total = count_result.scalar() or 0
+        
+        # Add pagination and ordering
+        query = base_query.order_by(UserModel.username).offset(skip).limit(limit)
         result = await self.db.execute(query)
         rows = result.all()
         
-        return [UserAgentResponse(**row._asdict()) for row in rows]
+        users = [UserAgentResponse(**row._asdict()) for row in rows]
+        return users, total
     
     async def get_user_agents(self, user_id: UUID) -> List[UserAgentModel]:
         """Get all agents a user has access to."""

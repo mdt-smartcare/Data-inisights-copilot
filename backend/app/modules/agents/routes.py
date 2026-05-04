@@ -382,13 +382,28 @@ async def revoke_user_access(
 @agents_router.get("/{agent_id}/users", response_model=BaseResponse[UserAgentListResponse])
 async def get_agent_users(
     agent_id: UUID,
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+    size: int = Query(default=10, ge=1, le=100, description="Items per page"),
+    q: str = Query(default=None, description="Search query (username, email, or name)"),
     current_user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
     ua_service: UserAgentService = Depends(get_user_agent_service),
 ) -> BaseResponse[UserAgentListResponse]:
-    """Get users with access to agent. Requires editor access."""
+    """
+    Get users with access to agent. Requires editor access.
+    
+    **Query Parameters:**
+    - page: Page number (1-indexed, default: 1)
+    - size: Items per page (default: 10, max: 100)
+    - q: Optional search query (searches username, email, full_name)
+    """
     await verify_agent_access(agent_id, current_user, service, min_role="editor")
-    result = await ua_service.get_agent_users(agent_id)
+    result = await ua_service.get_agent_users(
+        agent_id, 
+        page=page, 
+        size=size, 
+        search=q
+    )
     return BaseResponse.ok(data=result)
 
 

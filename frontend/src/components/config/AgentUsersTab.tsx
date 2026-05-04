@@ -3,11 +3,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../Toast';
 import Alert from '../Alert';
 import ConfirmationModal from '../ConfirmationModal';
+import UserTable from '../UserTable';
+import SearchInput from '../SearchInput';
 import { getAgentUsers, assignUserToAgent, revokeUserAccess, handleApiError } from '../../services/api';
 import type { AgentUser, SearchUser } from '../../services/api';
-import { getRoleDisplayName } from '../../utils/permissions';
 import UserSearchInput from './UserSearchInput';
-import { formatDateTime } from '../../utils/datetime';
 
 interface AgentUsersTabProps {
     agentId: string;
@@ -23,6 +23,15 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     
+    // Pagination state
+    const [page, setPage] = useState(1);
+    const [pageSize] = useState(10);
+    const [totalItems, setTotalItems] = useState(0);
+    const [totalPages, setTotalPages] = useState(1);
+    
+    // Search state
+    const [search, setSearch] = useState('');
+    
     // Selected users to add (chips)
     const [selectedUsers, setSelectedUsers] = useState<SearchUser[]>([]);
     const [assigning, setAssigning] = useState(false);
@@ -31,22 +40,33 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
     const [removeConfirm, setRemoveConfirm] = useState<{ show: boolean; user: AgentUser | null }>({ show: false, user: null });
     const [removing, setRemoving] = useState(false);
 
-    const loadAgentUsers = useCallback(async () => {
+    const loadAgentUsers = useCallback(async (currentPage: number, currentSearch?: string) => {
         setLoading(true);
         setError(null);
         try {
-            const response = await getAgentUsers(agentId);
+            const response = await getAgentUsers(agentId, currentPage, pageSize, currentSearch);
             setAgentUsers(response.users || []);
+            setTotalItems(response.total);
+            setTotalPages(response.pages);
         } catch (err) {
             setError(handleApiError(err));
         } finally {
             setLoading(false);
         }
-    }, [agentId]);
+    }, [agentId, pageSize]);
 
     useEffect(() => {
-        loadAgentUsers();
-    }, [loadAgentUsers]);
+        loadAgentUsers(page, search);
+    }, [loadAgentUsers, page, search]);
+
+    const handlePageChange = (newPage: number) => {
+        setPage(newPage);
+    };
+
+    const handleSearchChange = (value: string) => {
+        setSearch(value);
+        setPage(1); // Reset to first page on search
+    };
 
     const handleAssignUsers = async () => {
         if (selectedUsers.length === 0) return;
@@ -79,7 +99,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
             }
             
             setSelectedUsers([]);
-            await loadAgentUsers();
+            await loadAgentUsers(page, search);
         } catch (err) {
             showError('Failed to add users', handleApiError(err));
         } finally {
@@ -98,7 +118,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
             await revokeUserAccess(agentId, removeConfirm.user.id);
             success('User Removed', `${removeConfirm.user.username} has been removed from this agent.`);
             setRemoveConfirm({ show: false, user: null });
-            await loadAgentUsers();
+            await loadAgentUsers(page, search);
         } catch (err) {
             showError('Failed to remove user', handleApiError(err));
         } finally {
@@ -134,12 +154,22 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
             </div>
 
             {/* Users Table */}
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                 <div className="px-6 py-4 border-b border-gray-200">
-                    <h3 className="text-lg font-semibold text-gray-900">Assigned Users</h3>
-                    <p className="text-sm text-gray-500 mt-1">
-                        Users who have access to {agentName}
-                    </p>
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div>
+                            <h3 className="text-lg font-semibold text-gray-900">Assigned Users</h3>
+                            <p className="text-sm text-gray-500 mt-1">
+                                Users who have access to {agentName}
+                            </p>
+                        </div>
+                        <SearchInput
+                            value={search}
+                            onChange={handleSearchChange}
+                            placeholder="Search assigned users..."
+                            className="sm:w-64"
+                        />
+                    </div>
                 </div>
 
                 {error && (
@@ -152,75 +182,31 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                     </div>
                 )}
 
-                {loading ? (
-                    <div className="flex flex-col items-center justify-center py-16">
-                        <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600"></div>
-                        <span className="mt-4 text-gray-600 font-medium">Loading users...</span>
-                    </div>
-                ) : agentUsers.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-16 text-gray-500">
-                        <svg className="w-16 h-16 text-gray-300 mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                        </svg>
-                        <p className="text-lg font-medium">No users assigned</p>
-                        <p className="text-sm text-gray-400 mt-1">Add users using the form above</p>
-                    </div>
-                ) : (
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                            {agentUsers.map((agentUser) => (
-                                <tr key={agentUser.id} className={!agentUser.is_active ? 'bg-gray-50 opacity-60' : ''}>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="flex items-center">
-                                            <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold">
-                                                {(agentUser.full_name || agentUser.username || agentUser.email || 'U').charAt(0).toUpperCase()}
-                                            </div>
-                                            <div className="ml-4">
-                                                <div className="text-sm font-medium text-gray-900">{agentUser.full_name || agentUser.username}</div>
-                                                <div className="text-sm text-gray-500">{agentUser.email || 'No email'}</div>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
-                                            ${agentUser.role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
-                                            ${agentUser.role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
-                                        `}>
-                                            {getRoleDisplayName(agentUser.role)}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${agentUser.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                            {agentUser.is_active ? 'Active' : 'Inactive'}
-                                        </span>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {agentUser.granted_at ? formatDateTime(agentUser.granted_at) : '-' }
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        {agentUser.username !== user?.username && (
-                                            <button 
-                                                onClick={() => handleRemoveClick(agentUser)} 
-                                                className="px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
-                                            >
-                                                Remove
-                                            </button>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                )}
+                <UserTable
+                    users={agentUsers}
+                    loading={loading}
+                    dateField="granted_at"
+                    dateColumnLabel="Granted"
+                    pagination={{
+                        page,
+                        pageSize,
+                        totalItems,
+                        totalPages,
+                        onPageChange: handlePageChange,
+                    }}
+                    emptyMessage={search ? `No users found matching "${search}"` : "No users assigned"}
+                    emptySubMessage={search ? "Try adjusting your search terms" : "Add users using the form above"}
+                    renderActions={(agentUser) => (
+                        agentUser.username !== user?.username ? (
+                            <button 
+                                onClick={() => handleRemoveClick(agentUser)} 
+                                className="px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+                            >
+                                Remove
+                            </button>
+                        ) : null
+                    )}
+                />
             </div>
 
             {/* Remove Confirmation Modal */}

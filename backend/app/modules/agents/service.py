@@ -265,12 +265,28 @@ class UserAgentService:
         
         return await self.user_agents.has_access(user_id, agent_id, min_role)
     
-    async def get_agent_users(self, agent_id: UUID) -> UserAgentListResponse:
-        """Get all users with access to an agent."""
-        users = await self.user_agents.get_agent_users(agent_id)
+    async def get_agent_users(
+        self, 
+        agent_id: UUID, 
+        page: int = 1, 
+        size: int = 10,
+        search: Optional[str] = None
+    ) -> UserAgentListResponse:
+        """Get all users with access to an agent with pagination and search."""
+        skip = (page - 1) * size
+        users, total = await self.user_agents.get_agent_users(
+            agent_id, 
+            skip=skip, 
+            limit=size,
+            search=search
+        )
+        pages = (total + size - 1) // size if total > 0 else 1
         return UserAgentListResponse(
             users=users,
-            total=len(users),
+            total=total,
+            page=page,
+            size=size,
+            pages=pages,
             agent_id=agent_id,
         )
     

@@ -3,11 +3,13 @@ User service for business logic.
 
 Handles user CRUD operations, password management, and user searches.
 """
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import timedelta
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database.session import get_db_session
 from app.modules.users.repository import UserRepository
 from app.modules.users.schemas import (
     User, UserCreate, UserUpdate
@@ -159,6 +161,51 @@ class UserService:
         
         return users, total
     
+    async def list_users_paginated(
+        self,
+        page: int = 1,
+        size: int = 10,
+        search: Optional[str] = None,
+        role: Optional[str] = None,
+        is_active: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """
+        List users with pagination (page-based).
+        
+        Args:
+            page: Page number (1-indexed)
+            size: Items per page
+            search: Optional search query
+            role: Filter by role
+            is_active: Filter by active status
+        
+        Returns:
+            Dict with items, total, page, size, pages
+        """
+        skip = (page - 1) * size
+        
+        if search or role is not None or is_active is not None:
+            users, total = await self.search_users(
+                query=search,
+                role=role,
+                is_active=is_active,
+                skip=skip,
+                limit=size
+            )
+        else:
+            users = await self.list_users(skip=skip, limit=size)
+            total = await self.repository.count()
+        
+        pages = (total + size - 1) // size if total > 0 else 1
+        
+        return {
+            "items": users,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+        }
+    
     async def update_user(self, user_id: str, data: UserUpdate) -> User:
         """
         Update user.
@@ -250,3 +297,11 @@ class UserService:
     
     # Note: authenticate() method removed - authentication is handled by Keycloak/OIDC
     # Users authenticate via Keycloak and receive tokens directly from the identity provider
+
+
+# Dependency injection for FastAPI routes
+def get_user_service(
+    session: AsyncSession = Depends(get_db_session),
+) -> UserService:
+    """FastAPI dependency for UserService."""
+    return UserService(session)

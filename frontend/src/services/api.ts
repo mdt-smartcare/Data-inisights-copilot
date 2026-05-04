@@ -339,11 +339,51 @@ export const getAgentDetail = async (agentId: string): Promise<Agent & { active_
   return transformAgent(response.data?.data || response.data);
 };
 
-export const getUsers = async (): Promise<User[]> => {
-  const response = await apiClient.get('/api/v1/users');
+/**
+ * Paginated response wrapper
+ */
+export interface PaginatedResponse<T> {
+  items: T[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+/**
+ * System user with all fields from the backend
+ */
+export interface SystemUser {
+  id: string;
+  username: string;
+  email?: string;
+  full_name?: string;
+  role: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+  external_id?: string;
+}
+
+export const getUsers = async (
+  page: number = 1, 
+  pageSize: number = 10,
+  search?: string
+): Promise<PaginatedResponse<SystemUser>> => {
+  const params: Record<string, any> = { page, size: pageSize };
+  if (search?.trim()) {
+    params.q = search.trim();
+  }
+  const response = await apiClient.get('/api/v1/users', { params });
   // Response wrapped: { success, message, data: { items: [...], total, page, size, pages } }
   const wrapped = response.data?.data || response.data;
-  return wrapped.items || wrapped;
+  return {
+    items: wrapped.items || [],
+    total: wrapped.total || 0,
+    page: wrapped.page || page,
+    size: wrapped.size || pageSize,
+    pages: wrapped.pages || 1,
+  };
 };
 
 export interface SearchUser {
@@ -419,9 +459,35 @@ export interface AgentUser {
   granted_by?: string;
 }
 
-export const getAgentUsers = async (agentId: string): Promise<{ users: AgentUser[]; agent_id: string }> => {
-  const response = await apiClient.get(`/api/v1/agents/${agentId}/users`);
-  return response.data?.data;
+export interface AgentUsersResponse {
+  users: AgentUser[];
+  agent_id: string;
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+export const getAgentUsers = async (
+  agentId: string,
+  page: number = 1,
+  pageSize: number = 10,
+  search?: string
+): Promise<AgentUsersResponse> => {
+  const params: Record<string, any> = { page, size: pageSize };
+  if (search?.trim()) {
+    params.q = search.trim();
+  }
+  const response = await apiClient.get(`/api/v1/agents/${agentId}/users`, { params });
+  const data = response.data?.data || response.data;
+  return {
+    users: data.users || data.items || [],
+    agent_id: data.agent_id || agentId,
+    total: data.total || (data.users?.length || 0),
+    page: data.page || page,
+    size: data.size || pageSize,
+    pages: data.pages || 1,
+  };
 };
 
 export const getUserAgents = async (userId: string): Promise<GetUserAgentsResponse> => {

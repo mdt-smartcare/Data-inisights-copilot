@@ -1,43 +1,44 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { canManageUsers, getRoleDisplayName, ROLE_HIERARCHY, isSuperAdmin } from '../utils/permissions';
 import { ChatHeader } from '../components/chat';
 import RefreshButton from '../components/RefreshButton';
 import Alert from '../components/Alert';
 import ConfirmationModal from '../components/ConfirmationModal';
+import UserTable from '../components/UserTable';
+import SearchInput from '../components/SearchInput';
 import { APP_CONFIG, CONFIRMATION_MESSAGES } from '../config';
-import { apiClient, getAgents, getAllAgents, getUserAgents, bulkAssignAgents, revokeUserAccess, handleApiError } from '../services/api';
+import { apiClient, getUsers, getAgents, getAllAgents, getUserAgents, bulkAssignAgents, revokeUserAccess, handleApiError } from '../services/api';
+import type { SystemUser } from '../services/api';
 import type { Agent, UserAgentAssignment } from '../types';
-import { formatDateTime } from '../utils/datetime';
-
-interface UserData {
-    id: string;
-    username: string;
-    email?: string;
-    full_name?: string;
-    role: string;
-    is_active: boolean;
-    created_at?: string;
-}
 
 const UsersPage: React.FC = () => {
     const { user } = useAuth();
-    const [users, setUsers] = useState<UserData[]>([]);
+    const [users, setUsers] = useState<SystemUser[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    // Pagination state
+    const [page, setPage] = useState(1);
+    const [pageSize] = useState(10);
+    const [totalItems, setTotalItems] = useState(0);
+    const [totalPages, setTotalPages] = useState(1);
+
+    // Search state
+    const [search, setSearch] = useState('');
+
     // Role Change Modal State (shows role buttons directly)
-    const [roleChangeModal, setRoleChangeModal] = useState<{ show: boolean; user: UserData | null; saving: boolean }>({ show: false, user: null, saving: false });
+    const [roleChangeModal, setRoleChangeModal] = useState<{ show: boolean; user: SystemUser | null; saving: boolean }>({ show: false, user: null, saving: false });
 
     // Deactivate Modal State
-    const [deactivateConfirm, setDeactivateConfirm] = useState<{ show: boolean; user: UserData | null }>({ show: false, user: null });
+    const [deactivateConfirm, setDeactivateConfirm] = useState<{ show: boolean; user: SystemUser | null }>({ show: false, user: null });
     // Activate Modal State
-    const [activateConfirm, setActivateConfirm] = useState<{ show: boolean; user: UserData | null }>({ show: false, user: null });
+    const [activateConfirm, setActivateConfirm] = useState<{ show: boolean; user: SystemUser | null }>({ show: false, user: null });
     // Role Change Confirmation Modal State
-    const [roleChangeConfirm, setRoleChangeConfirm] = useState<{ show: boolean; user: UserData | null; newRole: string }>({ show: false, user: null, newRole: '' });
+    const [roleChangeConfirm, setRoleChangeConfirm] = useState<{ show: boolean; user: SystemUser | null; newRole: string }>({ show: false, user: null, newRole: '' });
 
     // Agent Assignment State
-    const [agentModalUser, setAgentModalUser] = useState<UserData | null>(null);
+    const [agentModalUser, setAgentModalUser] = useState<SystemUser | null>(null);
     const [allAgents, setAllAgents] = useState<Agent[]>([]);
     const [userAgents, setUserAgents] = useState<UserAgentAssignment[]>([]);
     const [loadingAgents, setLoadingAgents] = useState(false);
@@ -50,28 +51,37 @@ const UsersPage: React.FC = () => {
     const hasAccess = canManageUsers(user);
     const currentUserIsSuperAdmin = isSuperAdmin(user);
 
-    useEffect(() => {
-        if (hasAccess) {
-            loadUsers();
-        }
-    }, [hasAccess]);
-
-    const loadUsers = async () => {
+    const loadUsers = useCallback(async (currentPage: number, currentSearch?: string) => {
         setLoading(true);
         setError(null);
         try {
-            const res = await apiClient.get('/api/v1/users');
-            // Handle wrapped response: { success, data: { items } }
-            const users = res.data?.data?.items || res.data?.items || (Array.isArray(res.data) ? res.data : []);
-            setUsers(users);
+            const response = await getUsers(currentPage, pageSize, currentSearch);
+            setUsers(response.items);
+            setTotalItems(response.total);
+            setTotalPages(response.pages);
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to load users');
         } finally {
             setLoading(false);
         }
+    }, [pageSize]);
+
+    useEffect(() => {
+        if (hasAccess) {
+            loadUsers(page, search);
+        }
+    }, [hasAccess, page, search, loadUsers]);
+
+    const handlePageChange = (newPage: number) => {
+        setPage(newPage);
     };
 
-    const handleEdit = (u: UserData) => {
+    const handleSearchChange = (value: string) => {
+        setSearch(value);
+        setPage(1); // Reset to first page on search
+    };
+
+    const handleEdit = (u: SystemUser) => {
         setRoleChangeModal({ show: true, user: u, saving: false });
     };
 
@@ -88,7 +98,7 @@ const UsersPage: React.FC = () => {
             await apiClient.patch(`/api/v1/users/${roleChangeConfirm.user.id}`, { role: roleChangeConfirm.newRole });
             setRoleChangeConfirm({ show: false, user: null, newRole: '' });
             setRoleChangeModal({ show: false, user: null, saving: false });
-            loadUsers();
+            loadUsers(page, search);
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to update user role');
             setRoleChangeConfirm({ show: false, user: null, newRole: '' });
@@ -96,7 +106,7 @@ const UsersPage: React.FC = () => {
         }
     };
 
-    const handleDeactivate = (u: UserData) => {
+    const handleDeactivate = (u: SystemUser) => {
         setDeactivateConfirm({ show: true, user: u });
     };
 
@@ -105,13 +115,13 @@ const UsersPage: React.FC = () => {
         try {
             await apiClient.post(`/api/v1/users/${deactivateConfirm.user.id}/deactivate`);
             setDeactivateConfirm({ show: false, user: null });
-            loadUsers();
+            loadUsers(page, search);
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to deactivate user');
         }
     };
 
-    const handleActivate = (u: UserData) => {
+    const handleActivate = (u: SystemUser) => {
         setActivateConfirm({ show: true, user: u });
     };
 
@@ -120,14 +130,14 @@ const UsersPage: React.FC = () => {
         try {
             await apiClient.post(`/api/v1/users/${activateConfirm.user.id}/activate`);
             setActivateConfirm({ show: false, user: null });
-            loadUsers();
+            loadUsers(page, search);
         } catch (err: any) {
             setError(err.response?.data?.detail || err.message || 'Failed to activate user');
         }
     };
 
     // Agent assignment handlers
-    const handleOpenAgentModal = async (u: UserData) => {
+    const handleOpenAgentModal = async (u: SystemUser) => {
         setAgentModalUser(u);
         setLoadingAgents(true);
         setSelectedAgentRoles({}); // Reset selections
@@ -223,7 +233,7 @@ const UsersPage: React.FC = () => {
      * - Super admin can assign agents to admins and users (not other super_admins or self)
      * - Admin can assign agents to admins and users (not super_admins or self)
      */
-    const canAssignAgents = (targetUser: UserData): boolean => {
+    const canAssignAgents = (targetUser: SystemUser): boolean => {
         // Never show for self
         if (targetUser.username === user?.username) return false;
         // Cannot assign agents to super_admins
@@ -234,7 +244,7 @@ const UsersPage: React.FC = () => {
      * Determine if the current user can edit role or deactivate a target user.
      * Only super admin can edit/deactivate (and only for admins and users, not other super_admins)
      */
-    const canEditOrDeactivate = (targetUser: UserData): boolean => {
+    const canEditOrDeactivate = (targetUser: SystemUser): boolean => {
         // Only super admin can edit/deactivate
         if (!currentUserIsSuperAdmin) return false;
         // Never show for self
@@ -284,10 +294,20 @@ const UsersPage: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-3">
                             <RefreshButton
-                                onClick={loadUsers}
+                                onClick={() => loadUsers(page, search)}
                                 isLoading={loading}
                             />
                         </div>
+                    </div>
+
+                    {/* Search */}
+                    <div className="mb-6">
+                        <SearchInput
+                            value={search}
+                            onChange={handleSearchChange}
+                            placeholder="Search by name, username, or email..."
+                            className="max-w-md"
+                        />
                     </div>
 
                     {error && (
@@ -298,107 +318,69 @@ const UsersPage: React.FC = () => {
                         />
                     )}
 
-                    {loading ? (
-                        <div className="flex flex-col items-center justify-center py-16">
-                            <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-200 border-t-blue-600"></div>
-                            <span className="mt-4 text-gray-600 font-medium">Loading users...</span>
-                            <span className="mt-1 text-sm text-gray-400">Please wait</span>
+                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                            <UserTable
+                                users={users}
+                                loading={loading}
+                                dateField="created_at"
+                                dateColumnLabel="Created"
+                                showSuperAdminRole
+                                emptyMessage={search ? `No users found matching "${search}"` : "No users found"}
+                                emptySubMessage={search ? "Try adjusting your search terms" : undefined}
+                                pagination={{
+                                    page,
+                                    pageSize,
+                                    totalItems,
+                                    totalPages,
+                                    onPageChange: handlePageChange,
+                                }}
+                                renderActions={(u) => (
+                                    <>
+                                        {u.is_active ? (
+                                            <>
+                                                {/* Agents button - super admin and admin can assign agents to admins/users */}
+                                                {canAssignAgents(u) && (
+                                                    <button 
+                                                        onClick={() => handleOpenAgentModal(u)} 
+                                                        className="px-3 py-1.5 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-colors"
+                                                    >
+                                                        Agents
+                                                    </button>
+                                                )}
+                                                {/* Change Role button - super admin only */}
+                                                {canEditOrDeactivate(u) && (
+                                                    <button 
+                                                        onClick={() => handleEdit(u)} 
+                                                        className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
+                                                    >
+                                                        Change Role
+                                                    </button>
+                                                )}
+                                                {/* Deactivate button - super admin only */}
+                                                {canEditOrDeactivate(u) && (
+                                                    <button 
+                                                        onClick={() => handleDeactivate(u)} 
+                                                        className="px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+                                                    >
+                                                        Deactivate
+                                                    </button>
+                                                )}
+                                            </>
+                                        ) : (
+                                            /* Activate button - super admin only */
+                                            canEditOrDeactivate(u) && (
+                                                <button 
+                                                    onClick={() => handleActivate(u)} 
+                                                    className="px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-md hover:bg-green-100 transition-colors"
+                                                >
+                                                    Activate
+                                                </button>
+                                            )
+                                        )}
+                                    </>
+                                )}
+                            />
                         </div>
-                    ) : (
-                        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                                <thead className="bg-gray-50">
-                                    <tr>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="bg-white divide-y divide-gray-200">
-                                    {users.map((u) => (
-                                        <tr key={u.id} className={!u.is_active ? 'bg-gray-50 opacity-60' : ''}>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="flex items-center">
-                                                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold">
-                                                        {(u.full_name || u.username || u.email || 'U').charAt(0).toUpperCase()}
-                                                    </div>
-                                                    <div className="ml-4">
-                                                        <div className="text-sm font-medium text-gray-900">{u.full_name || u.username}</div>
-                                                        <div className="text-sm text-gray-500">{u.email || 'No email'}</div>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium 
-                                            ${u.role === 'super_admin' ? 'bg-red-100 text-red-800' : ''}
-                                            ${u.role === 'admin' ? 'bg-purple-100 text-purple-800' : ''}
-                                            ${u.role === 'user' ? 'bg-yellow-100 text-yellow-800' : ''}
-                                          
-                                        `}>
-                                                    {getRoleDisplayName(u.role)}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${u.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                                    {u.is_active ? 'Active' : 'Inactive'}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                                {formatDateTime(u.created_at)}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    {u.is_active ? (
-                                                        <>
-                                                            {/* Agents button - super admin and admin can assign agents to admins/users */}
-                                                            {canAssignAgents(u) && (
-                                                                <button 
-                                                                    onClick={() => handleOpenAgentModal(u)} 
-                                                                    className="px-3 py-1.5 text-sm font-medium text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-colors"
-                                                                >
-                                                                    Agents
-                                                                </button>
-                                                            )}
-                                                            {/* Change Role button - super admin only */}
-                                                            {canEditOrDeactivate(u) && (
-                                                                <button 
-                                                                    onClick={() => handleEdit(u)} 
-                                                                    className="px-3 py-1.5 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
-                                                                >
-                                                                    Change Role
-                                                                </button>
-                                                            )}
-                                                            {/* Deactivate button - super admin only */}
-                                                            {canEditOrDeactivate(u) && (
-                                                                <button 
-                                                                    onClick={() => handleDeactivate(u)} 
-                                                                    className="px-3 py-1.5 text-sm font-medium text-red-700 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
-                                                                >
-                                                                    Deactivate
-                                                                </button>
-                                                            )}
-                                                        </>
-                                                    ) : (
-                                                        /* Activate button - super admin only */
-                                                        canEditOrDeactivate(u) && (
-                                                            <button 
-                                                                onClick={() => handleActivate(u)} 
-                                                                className="px-3 py-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-md hover:bg-green-100 transition-colors"
-                                                            >
-                                                                Activate
-                                                            </button>
-                                                        )
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    )}
 
                     {/* Change Role Modal - Role Selection with Buttons */}
                     {roleChangeModal.show && roleChangeModal.user && (
