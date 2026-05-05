@@ -214,7 +214,7 @@ const AuditLogsPage: React.FC = () => {
                                     type="date"
                                     value={filters.start_date}
                                     onChange={(e) => setFilters(f => ({ ...f, start_date: e.target.value }))}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm [color-scheme:light]"
                                 />
                             </div>
                             <div>
@@ -223,7 +223,7 @@ const AuditLogsPage: React.FC = () => {
                                     type="date"
                                     value={filters.end_date}
                                     onChange={(e) => setFilters(f => ({ ...f, end_date: e.target.value }))}
-                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm"
+                                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm [color-scheme:light]"
                                 />
                             </div>
                             <div className="flex items-end">

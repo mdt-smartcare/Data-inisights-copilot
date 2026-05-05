@@ -1,61 +1,110 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { searchUsers, lookupUsersByEmails, handleApiError } from '../../services/api';
+import { searchUsers, searchAvailableUsersForAgent, lookupAvailableUsersByEmailsForAgent, handleApiError } from '../../services/api';
 import type { SearchUser } from '../../services/api';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 
 interface UserSearchInputProps {
     selectedUsers: SearchUser[];
     onSelectionChange: (users: SearchUser[]) => void;
-    excludeUserIds?: string[];
+    agentId?: string;  // If provided, uses agent-specific endpoints that exclude already-assigned users
     placeholder?: string;
     disabled?: boolean;
 }
 
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PAGE_SIZE = 20;
 
 const UserSearchInput: React.FC<UserSearchInputProps> = ({
     selectedUsers,
     onSelectionChange,
-    excludeUserIds = [],
+    agentId,
     placeholder = "Search users by name or email, or paste emails...",
     disabled = false
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const [hasMore, setHasMore] = useState(false);
     const [showDropdown, setShowDropdown] = useState(false);
     const [focusedIndex, setFocusedIndex] = useState(-1);
     const inputRef = useRef<HTMLInputElement>(null);
     const dropdownRef = useRef<HTMLDivElement>(null);
     const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+    const currentQueryRef = useRef<string>('');
 
-    // Filter out already selected and excluded users
+    // Filter out already selected users
+    // Note: When agentId is provided, backend already excludes assigned users
     const filteredResults = searchResults.filter(
-        user => !selectedUsers.some(s => s.id === user.id) && !excludeUserIds.includes(user.id)
+        user => !selectedUsers.some(s => s.id === user.id)
     );
 
-    // Debounced search
+    // Debounced search - initial load
     const performSearch = useCallback(async (query: string) => {
         if (!query.trim()) {
             setSearchResults([]);
             setShowDropdown(false);
+            setHasMore(false);
             return;
         }
 
+        currentQueryRef.current = query;
         setIsLoading(true);
         try {
-            const results = await searchUsers(query, 10);
+            // Use agent-specific endpoint if agentId provided (excludes already-assigned users and super_admin)
+            const results = agentId 
+                ? await searchAvailableUsersForAgent(agentId, query, PAGE_SIZE, 0)
+                : await searchUsers(query, PAGE_SIZE);
             setSearchResults(results);
+            setHasMore(results.length === PAGE_SIZE);
             setShowDropdown(true);
             setFocusedIndex(-1);
         } catch (err) {
             console.error('Search failed:', handleApiError(err));
             setSearchResults([]);
+            setHasMore(false);
         } finally {
             setIsLoading(false);
         }
-    }, []);
+    }, [agentId]);
+
+    // Load more results
+    const loadMore = useCallback(async () => {
+        if (isLoadingMore || !hasMore || !currentQueryRef.current || !agentId) return;
+
+        setIsLoadingMore(true);
+        try {
+            const results = await searchAvailableUsersForAgent(
+                agentId, 
+                currentQueryRef.current, 
+                PAGE_SIZE, 
+                searchResults.length
+            );
+            
+            if (results.length > 0) {
+                setSearchResults(prev => [...prev, ...results]);
+                setHasMore(results.length === PAGE_SIZE);
+            } else {
+                setHasMore(false);
+            }
+        } catch (err) {
+            console.error('Load more failed:', handleApiError(err));
+        } finally {
+            setIsLoadingMore(false);
+        }
+    }, [agentId, hasMore, isLoadingMore, searchResults.length]);
+
+    // Handle scroll to load more
+    const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+        const target = e.target as HTMLDivElement;
+        const scrollBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+        
+        // Load more when within 50px of bottom
+        if (scrollBottom < 50 && hasMore && !isLoadingMore) {
+            loadMore();
+        }
+    }, [hasMore, isLoadingMore, loadMore]);
 
     useEffect(() => {
         if (debounceTimer.current) {
@@ -69,6 +118,7 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
         } else {
             setSearchResults([]);
             setShowDropdown(false);
+            setHasMore(false);
         }
 
         return () => {
@@ -93,10 +143,15 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
             setIsLoading(true);
             
             try {
-                const users = await lookupUsersByEmails(potentialEmails);
-                // Add users that aren't already selected or excluded
+                // Use agent-specific endpoint (excludes already-assigned users)
+                if (!agentId) {
+                    console.warn('Email lookup requires agentId');
+                    return;
+                }
+                const users = await lookupAvailableUsersByEmailsForAgent(agentId, potentialEmails);
+                // Add users that aren't already selected
                 const newUsers = users.filter(
-                    user => !selectedUsers.some(s => s.id === user.id) && !excludeUserIds.includes(user.id)
+                    user => !selectedUsers.some(s => s.id === user.id)
                 );
                 
                 if (newUsers.length > 0) {
@@ -236,6 +291,7 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
             {showDropdown && filteredResults.length > 0 && (
                 <div 
                     ref={dropdownRef}
+                    onScroll={handleScroll}
                     className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto"
                 >
                     {filteredResults.map((user, index) => (
@@ -245,7 +301,7 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
                             onClick={() => handleSelect(user)}
                             className={`w-full px-4 py-3 text-left flex items-center gap-3 hover:bg-gray-50 transition-colors
                                 ${index === focusedIndex ? 'bg-blue-50' : ''}
-                                ${index !== filteredResults.length - 1 ? 'border-b border-gray-100' : ''}
+                                ${index !== filteredResults.length - 1 || hasMore ? 'border-b border-gray-100' : ''}
                             `}
                         >
                             <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-semibold text-sm">
@@ -266,6 +322,13 @@ const UserSearchInput: React.FC<UserSearchInputProps> = ({
                             </span>
                         </button>
                     ))}
+                    {/* Loading more indicator */}
+                    {isLoadingMore && (
+                        <div className="px-4 py-3 text-center">
+                            <div className="inline-block animate-spin rounded-full h-4 w-4 border-2 border-blue-200 border-t-blue-600"></div>
+                            <span className="ml-2 text-sm text-gray-500">Loading more...</span>
+                        </div>
+                    )}
                 </div>
             )}
 

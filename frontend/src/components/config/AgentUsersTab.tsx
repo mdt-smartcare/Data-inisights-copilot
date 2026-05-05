@@ -126,9 +126,6 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
         }
     };
 
-    // Get IDs of users already assigned to exclude from search
-    const excludeUserIds: string[] = agentUsers.map(u => u.id);
-
     return (
         <div className="space-y-6">
             {/* Add User Section */}
@@ -138,7 +135,7 @@ const AgentUsersTab: React.FC<AgentUsersTabProps> = ({ agentId, agentName }) => 
                     <UserSearchInput
                         selectedUsers={selectedUsers}
                         onSelectionChange={setSelectedUsers}
-                        excludeUserIds={excludeUserIds}
+                        agentId={agentId}
                         disabled={assigning}
                     />
                     <div className="flex justify-end">

@@ -407,6 +407,72 @@ async def get_agent_users(
     return BaseResponse.ok(data=result)
 
 
+@agents_router.get("/{agent_id}/users/available", response_model=BaseResponse[list[User]])
+async def search_available_users_for_agent(
+    agent_id: UUID,
+    query: str = Query(default=None, alias="q", description="Search query (username, email, or name)"),
+    skip: int = Query(default=0, ge=0, description="Number of results to skip (for pagination)"),
+    size: int = Query(default=10, ge=1, le=100, description="Max results per page"),
+    current_user: User = Depends(get_current_user),
+    service: AgentService = Depends(get_agent_service),
+    user_service: UserService = Depends(get_user_service),
+) -> BaseResponse[list[User]]:
+    """
+    Search users available for assignment to this agent.
+    
+    Returns users NOT already assigned to the agent, excluding super_admin users.
+    
+    **Required Permission:** admin access to the agent
+    
+    **Query Parameters:**
+    - query (or q): Search query (username, email, full_name)
+    - skip: Offset for pagination (default: 0)
+    - size: Max results per page (default: 10, max: 100)
+    """
+    await verify_agent_access(agent_id, current_user, service, min_role="admin")
+    
+    users = await user_service.search_users_for_agent(
+        agent_id=agent_id,
+        query=query,
+        skip=skip,
+        limit=size
+    )
+    
+    return BaseResponse.ok(data=users)
+
+
+@agents_router.post("/{agent_id}/users/lookup-by-emails", response_model=BaseResponse[list[User]])
+async def lookup_available_users_by_emails(
+    agent_id: UUID,
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    service: AgentService = Depends(get_agent_service),
+    user_service: UserService = Depends(get_user_service),
+) -> BaseResponse[list[User]]:
+    """
+    Lookup users by emails, excluding those already assigned to the agent.
+    
+    Returns users NOT already assigned to the agent, excluding super_admin users.
+    
+    **Required Permission:** admin access to the agent
+    
+    **Request Body:**
+    - emails: List of email addresses to look up
+    """
+    await verify_agent_access(agent_id, current_user, service, min_role="admin")
+    
+    emails = payload.get("emails", [])
+    if not emails or not isinstance(emails, list):
+        return BaseResponse.ok(data=[])
+    
+    users = await user_service.get_users_by_emails_for_agent(
+        agent_id=agent_id,
+        emails=emails
+    )
+    
+    return BaseResponse.ok(data=users)
+
+
 # ==========================================
 # Agent Config Endpoints
 # ==========================================
@@ -479,7 +545,7 @@ async def get_latest_inactive_config(
     Used to show alerts about newer versions that could be activated.
     Returns null data if there's no inactive published config.
     """
-    await verify_agent_access(agent_id, current_user, agent_service)
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     config = await service.get_latest_inactive_config(agent_id)
     return BaseResponse.ok(data=config)
@@ -493,7 +559,7 @@ async def get_config_history(
     agent_service: AgentService = Depends(get_agent_service),
 ) -> BaseResponse[AgentConfigListResponse]:
     """Get all configuration versions for an agent."""
-    await verify_agent_access(agent_id, current_user, agent_service)
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     result = await service.get_config_history(agent_id)
     return BaseResponse.ok(data=result)
 

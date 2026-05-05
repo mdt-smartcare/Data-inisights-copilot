@@ -4,7 +4,8 @@ User repository for database operations.
 Extends BaseRepository with user-specific queries.
 """
 from typing import Optional, List
-from sqlalchemy import select, or_, func
+from uuid import UUID
+from sqlalchemy import select, or_, func, and_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.base_repository import BaseRepository
@@ -80,6 +81,135 @@ class UserRepository(BaseRepository[UserModel, UserCreate, UserUpdate, User]):
             
         except Exception as e:
             logger.error(f"Error fetching user by email {email}: {e}")
+            raise
+    
+    async def search_users_for_agent(
+        self,
+        agent_id: UUID,
+        query: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Search users available for assignment to an agent.
+        
+        Excludes:
+        - Users already assigned to the agent
+        - super_admin users
+        
+        Uses NOT EXISTS for efficient large dataset handling.
+        
+        Args:
+            agent_id: Agent ID to check assignments against
+            query: Search query (matches username, email, full_name)
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+        
+        Returns:
+            List of available users
+        """
+        from app.modules.agents.models import UserAgentModel
+        
+        try:
+            # NOT EXISTS is more efficient than NOT IN for large datasets
+            # - Short-circuits on first match
+            # - Better index utilization
+            assigned_exists = (
+                select(1)
+                .where(
+                    and_(
+                        UserAgentModel.agent_id == agent_id,
+                        UserAgentModel.user_id == UserModel.id
+                    )
+                )
+            )
+            
+            stmt = select(UserModel).where(
+                and_(
+                    ~exists(assigned_exists),
+                    UserModel.role != "super_admin"
+                )
+            )
+            
+            # Apply search query
+            if query:
+                search_pattern = f"%{query}%"
+                stmt = stmt.where(
+                    or_(
+                        UserModel.username.ilike(search_pattern),
+                        UserModel.email.ilike(search_pattern),
+                        UserModel.full_name.ilike(search_pattern)
+                    )
+                )
+            
+            # Apply ordering and pagination
+            stmt = stmt.order_by(UserModel.username).offset(skip).limit(limit)
+            
+            result = await self.session.execute(stmt)
+            db_objs = result.scalars().all()
+            
+            return [self._to_pydantic(obj) for obj in db_objs]
+            
+        except Exception as e:
+            logger.error(f"Error searching users for agent: {e}")
+            raise
+    
+    async def get_by_emails_for_agent(
+        self,
+        agent_id: UUID,
+        emails: List[str]
+    ) -> List[User]:
+        """
+        Get users by emails, excluding those already assigned to an agent.
+        
+        Excludes:
+        - Users already assigned to the agent
+        - super_admin users
+        
+        Uses NOT EXISTS for efficient large dataset handling.
+        
+        Args:
+            agent_id: Agent ID to check assignments against
+            emails: List of emails to search for
+        
+        Returns:
+            List of available users matching the emails
+        """
+        from app.modules.agents.models import UserAgentModel
+        
+        if not emails:
+            return []
+        
+        try:
+            # Normalize emails to lowercase
+            normalized_emails = [e.lower().strip() for e in emails]
+            
+            # NOT EXISTS is more efficient than NOT IN for large datasets
+            assigned_exists = (
+                select(1)
+                .where(
+                    and_(
+                        UserAgentModel.agent_id == agent_id,
+                        UserAgentModel.user_id == UserModel.id
+                    )
+                )
+            )
+            
+            stmt = select(UserModel).where(
+                and_(
+                    func.lower(UserModel.email).in_(normalized_emails),
+                    ~exists(assigned_exists),
+                    UserModel.role != "super_admin"
+                )
+            )
+            
+            result = await self.session.execute(stmt)
+            db_objs = result.scalars().all()
+            
+            return [self._to_pydantic(obj) for obj in db_objs]
+            
+        except Exception as e:
+            logger.error(f"Error fetching users by emails for agent: {e}")
             raise
     
     async def get_by_external_id(self, external_id: str) -> Optional[User]:
