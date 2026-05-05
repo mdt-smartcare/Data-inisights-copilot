@@ -682,7 +682,7 @@ export default function DataSourcesPage() {
                       ref={fileInputRef}
                       type="file"
                       onChange={handleFileSelect}
-                      accept=".csv,.xlsx,.xls,.pdf,.json"
+                      accept=".csv,.xlsx,.xls"
                       className="hidden"
                     />
                     {selectedFile ? (
@@ -715,7 +715,7 @@ export default function DataSourcesPage() {
                           <span className="font-medium text-blue-600">Click to upload</span> or drag and drop
                         </p>
                         <p className="text-xs text-gray-500 mt-1">
-                          CSV, Excel (.xlsx), PDF, or JSON
+                          CSV, Excel (.xlsx)
                         </p>
                       </div>
                     )}
