@@ -107,6 +107,40 @@ class UserService:
         """Get user by external ID (OIDC)."""
         return await self.repository.get_by_external_id(external_id)
     
+    async def search_users_for_agent(
+        self,
+        agent_id,
+        query: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100
+    ) -> List[User]:
+        """
+        Search users available for assignment to an agent.
+        
+        Excludes users already assigned and super_admin users.
+        """
+        return await self.repository.search_users_for_agent(
+            agent_id=agent_id,
+            query=query,
+            skip=skip,
+            limit=limit
+        )
+    
+    async def get_users_by_emails_for_agent(
+        self,
+        agent_id,
+        emails: List[str]
+    ) -> List[User]:
+        """
+        Get users by emails, excluding those already assigned to an agent.
+        
+        Excludes users already assigned and super_admin users.
+        """
+        return await self.repository.get_by_emails_for_agent(
+            agent_id=agent_id,
+            emails=emails
+        )
+    
     async def list_users(
         self,
         skip: int = 0,

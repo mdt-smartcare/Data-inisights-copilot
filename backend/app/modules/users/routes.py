@@ -52,7 +52,7 @@ async def list_users(
 
 @router.get("/search", response_model=BaseResponse[PaginatedResponse[User]])
 async def search_users(
-    q: str = Query(default=None, alias="query", description="Search query (username, email, or name)"),
+    q: str = Query(default=None, description="Search query (username, email, or name)"),
     role: str = Query(default=None, description="Filter by role"),
     is_active: bool = Query(default=None, description="Filter by active status"),
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
@@ -66,7 +66,7 @@ async def search_users(
     **Required Permission:** ADMIN
     
     **Filters:**
-    - q/query: Search in username, email, or full name
+    - q: Search in username, email, or full name
     - role: Filter by specific role
     - is_active: Filter by active/inactive status
     """

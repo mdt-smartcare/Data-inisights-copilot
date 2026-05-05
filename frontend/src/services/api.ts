@@ -396,15 +396,29 @@ export interface SearchUser {
 }
 
 export const searchUsers = async (query: string, limit: number = 20): Promise<SearchUser[]> => {
-  const response = await apiClient.get('/api/v1/users/search', { params: { q: query, limit } });
+  const response = await apiClient.get('/api/v1/users/search', { params: { query, size: limit } });
   // Response wrapped: { success, message, data: { items: [...], total, page, size, pages } }
   const wrapped = response.data?.data || response.data;
   return wrapped.items || wrapped;
 };
 
-export const lookupUsersByEmails = async (emails: string[]): Promise<SearchUser[]> => {
-  const response = await apiClient.post('/api/v1/users/lookup-by-emails', { emails });
-  return response.data;
+export const searchAvailableUsersForAgent = async (
+  agentId: string, 
+  query: string, 
+  limit: number = 10,
+  skip: number = 0
+): Promise<SearchUser[]> => {
+  const response = await apiClient.get(`/api/v1/agents/${agentId}/users/available`, { 
+    params: { query, size: limit, skip } 
+  });
+  // Response wrapped: { success, message, data: [...] }
+  return response.data?.data || response.data || [];
+};
+
+export const lookupAvailableUsersByEmailsForAgent = async (agentId: string, emails: string[]): Promise<SearchUser[]> => {
+  const response = await apiClient.post(`/api/v1/agents/${agentId}/users/lookup-by-emails`, { emails });
+  // Response wrapped: { success, message, data: [...] }
+  return response.data?.data || response.data || [];
 };
 
 export const getActivePrompt = async (agentId?: string): Promise<{ prompt_text: string }> => {
