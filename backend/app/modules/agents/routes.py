@@ -410,7 +410,7 @@ async def get_agent_users(
 @agents_router.get("/{agent_id}/users/available", response_model=BaseResponse[list[User]])
 async def search_available_users_for_agent(
     agent_id: UUID,
-    query: str = Query(default=None, alias="q", description="Search query (username, email, or name)"),
+    query: str = Query(default=None, description="Search query (username, email, or name)"),
     skip: int = Query(default=0, ge=0, description="Number of results to skip (for pagination)"),
     size: int = Query(default=10, ge=1, le=100, description="Max results per page"),
     current_user: User = Depends(get_current_user),
