@@ -498,10 +498,10 @@ export default function DataSourcesPage() {
                         {formatDate(source.created_at)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {source.dependent_config_count && source.dependent_config_count > 0 ? (
+                        {source.dependent_agents?.length && source.dependent_agents?.length > 0 ? (
                           <div className="flex flex-col">
                             <span className="text-sm font-medium text-orange-600">
-                              {source.dependent_config_count} Agent{source.dependent_config_count > 1 ? 's' : ''}
+                              {source.dependent_agents?.length || 0} Agent{source.dependent_agents?.length > 1 ? 's' : ''}
                             </span>
                             <span
                               className="text-xs text-gray-500 truncate max-w-[150px] cursor-help"
