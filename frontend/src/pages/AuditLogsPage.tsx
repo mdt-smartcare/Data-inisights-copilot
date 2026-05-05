@@ -131,22 +131,132 @@ const AuditLogsPage: React.FC = () => {
         return 'text-gray-600 bg-gray-50';
     };
 
+    const formatValue = (value: any): string => {
+        if (value === null || value === undefined) return '-';
+        if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+        if (typeof value === 'string') return value;
+        if (typeof value === 'number') return String(value);
+        if (Array.isArray(value)) {
+            if (value.length === 0) return '[]';
+            // For arrays of objects, show count
+            if (typeof value[0] === 'object') {
+                return `[${value.length} item${value.length > 1 ? 's' : ''}]`;
+            }
+            return value.join(', ');
+        }
+        if (typeof value === 'object') {
+            // For nested objects, show a brief summary
+            const keys = Object.keys(value);
+            if (keys.length === 0) return '{}';
+            return `{${keys.slice(0, 2).join(', ')}${keys.length > 2 ? '...' : ''}}`;
+        }
+        return String(value);
+    };
+
+    const renderNestedValue = (value: any, depth: number = 0): React.ReactNode => {
+        if (value === null || value === undefined) return <span className="text-gray-400">-</span>;
+        if (typeof value === 'boolean') {
+            return <span className={value ? 'text-green-600' : 'text-red-600'}>{value ? 'Yes' : 'No'}</span>;
+        }
+        if (typeof value === 'string' || typeof value === 'number') {
+            return <span className="text-gray-700">{String(value)}</span>;
+        }
+        if (Array.isArray(value)) {
+            if (value.length === 0) return <span className="text-gray-400">[]</span>;
+            return (
+                <div className={`${depth > 0 ? 'ml-3 mt-1' : ''}`}>
+                    {value.map((item, index) => (
+                        <div key={index} className="border-l-2 border-gray-200 pl-2 py-1 my-1">
+                            {typeof item === 'object' ? renderNestedValue(item, depth + 1) : (
+                                <span className="text-gray-700">{String(item)}</span>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+        if (typeof value === 'object') {
+            return (
+                <div className={`${depth > 0 ? 'ml-3 mt-1' : ''} space-y-1`}>
+                    {Object.entries(value).map(([key, val]) => (
+                        <div key={key} className="flex flex-wrap items-start gap-1">
+                            <span className="text-gray-500 text-xs font-medium">{key.replace(/_/g, ' ')}:</span>
+                            {typeof val === 'object' ? renderNestedValue(val, depth + 1) : (
+                                <span className="text-gray-700 text-xs">{formatValue(val)}</span>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+        return <span className="text-gray-700">{String(value)}</span>;
+    };
+
     const renderDetails = (details: Record<string, any> | undefined) => {
         if (!details || Object.keys(details).length === 0) return '-';
+        
+        const entries = Object.entries(details);
+        const hasComplexValues = entries.some(([, value]) => 
+            Array.isArray(value) || (typeof value === 'object' && value !== null)
+        );
+
+        if (!hasComplexValues && entries.length <= 2) {
+            // Simple case: just show badges, no expandable needed
+            return (
+                <div className="flex items-center gap-2 py-1">
+                    {entries.map(([key, value]) => (
+                        <div key={key} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-gray-50 border border-gray-200 rounded text-[10px] leading-none whitespace-nowrap">
+                            <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">{key.replace(/_/g, ' ')}:</span>
+                            <span className={`font-semibold truncate max-w-[80px] ${typeof value === 'boolean' ? (value ? 'text-green-600' : 'text-red-600') : 'text-gray-700'}`}>
+                                {typeof value === 'boolean' ? (value ? 'Active' : 'Inactive') :
+                                    key === 'role' ? getRoleDisplayName(value) : formatValue(value)}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
 
         return (
-            <div className="flex flex-wrap gap-2 py-1">
-                {Object.entries(details).map(([key, value]) => (
-                    <div key={key} className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-gray-50 border border-gray-200 rounded text-[10px] leading-none whitespace-nowrap">
-                        <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">{key.replace(/_/g, ' ')}:</span>
-                        <span className={`font-semibold ${typeof value === 'boolean' ? (value ? 'text-green-600' : 'text-red-600') : 'text-gray-700'}`}>
-                            {typeof value === 'boolean' ? (value ? 'Active' : 'Inactive') :
-                                key === 'role' ? getRoleDisplayName(value) :
-                                    String(value).length > 30 ? String(value).slice(0, 30) + '...' : String(value)}
-                        </span>
+            <details className="group">
+                <summary className="flex items-center gap-2 py-1 cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+                    <div className="flex items-center gap-1.5 overflow-hidden">
+                        {entries.slice(0, 2).map(([key, value]) => (
+                            <div key={key} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-gray-50 border border-gray-200 rounded text-[10px] leading-none whitespace-nowrap">
+                                <span className="text-gray-400 font-bold uppercase tracking-wider text-[9px]">{key.replace(/_/g, ' ')}:</span>
+                                <span className={`font-semibold truncate max-w-[80px] ${typeof value === 'boolean' ? (value ? 'text-green-600' : 'text-red-600') : 'text-gray-700'}`}>
+                                    {typeof value === 'boolean' ? (value ? 'Active' : 'Inactive') :
+                                        key === 'role' ? getRoleDisplayName(value) : formatValue(value)}
+                                </span>
+                            </div>
+                        ))}
+                        {entries.length > 2 && (
+                            <span className="text-[10px] text-gray-400 whitespace-nowrap">+{entries.length - 2}</span>
+                        )}
                     </div>
-                ))}
-            </div>
+                    <span className="text-[10px] text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-0.5 whitespace-nowrap flex-shrink-0">
+                        <svg className="w-2.5 h-2.5 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                        <span className="group-open:hidden">View</span>
+                        <span className="hidden group-open:inline">Hide</span>
+                    </span>
+                </summary>
+                <div className="mt-1 bg-gray-50 border border-gray-200 rounded-lg p-3 max-w-lg">
+                    <div className="space-y-2">
+                        {entries.map(([key, value]) => (
+                            <div key={key} className="text-xs">
+                                <span className="text-gray-500 font-medium uppercase tracking-wider text-[10px]">
+                                    {key.replace(/_/g, ' ')}:
+                                </span>
+                                <div className="mt-0.5">
+                                    {renderNestedValue(value)}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </details>
         );
     };
 
@@ -279,7 +389,7 @@ const AuditLogsPage: React.FC = () => {
                                     </thead>
                                     <tbody className="bg-white divide-y divide-gray-200">
                                         {logs.map((log) => (
-                                            <tr key={log.id} className="hover:bg-gray-50">
+                                            <tr key={log.id} className="hover:bg-gray-50 align-top">
                                                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-500">
                                                     {formatDateTime(log.timestamp)}
                                                 </td>
@@ -296,7 +406,7 @@ const AuditLogsPage: React.FC = () => {
                                                     <div className="text-sm text-gray-900">{log.resource_name || log.resource_id || '-'}</div>
                                                     <div className="text-xs text-gray-500">{log.resource_type}</div>
                                                 </td>
-                                                <td className="px-4 py-3 max-w-sm">
+                                                <td className="px-4 py-3 max-w-md">
                                                     {renderDetails(log.details)}
                                                 </td>
                                             </tr>
