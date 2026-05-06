@@ -134,6 +134,7 @@ const AgentDashboardPage: React.FC = () => {
     const reloadAgent = async () => {
         if (!id) return;
         try {
+            reloadConfig(); // Also reload config to get latest data source info
             const foundAgent = await getAgent(id);
             setAgent(foundAgent);
         } catch (err) {
