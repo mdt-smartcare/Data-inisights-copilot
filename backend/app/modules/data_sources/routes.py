@@ -18,7 +18,7 @@ from fastapi import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session as get_db
-from app.core.auth.permissions import get_current_user, require_editor, require_admin
+from app.core.auth.permissions import get_current_user, require_admin
 from app.core.models.common import BaseResponse
 from app.modules.audit.helpers import AuditLogger, get_audit_logger
 from app.modules.audit.schemas import AuditAction
@@ -56,7 +56,7 @@ def get_data_source_service(db: AsyncSession = Depends(get_db)) -> DataSourceSer
 @router.post("/database", response_model=BaseResponse[DataSourceResponse], status_code=status.HTTP_201_CREATED)
 async def create_database_source(
     data: DatabaseSourceCreate,
-    current_user: User = Depends(require_editor),
+    current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_data_source_service),
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[DataSourceResponse]:
@@ -201,7 +201,7 @@ async def get_data_source_preview(
 async def update_data_source(
     source_id: UUID,
     data: DataSourceUpdate,
-    current_user: User = Depends(require_editor),
+    current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_data_source_service),
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[DataSourceResponse]:
@@ -293,7 +293,7 @@ async def delete_data_source(
 @router.post("/test-connection", response_model=BaseResponse[TestConnectionResponse])
 async def test_database_connection(
     data: TestConnectionRequest,
-    current_user: User = Depends(require_editor),
+    current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_data_source_service),
 ) -> BaseResponse[TestConnectionResponse]:
     """Test a database connection before saving."""
@@ -326,7 +326,7 @@ async def upload_file(
     file: UploadFile = File(...),
     title: Optional[str] = Query(None, description="Optional title for the data source"),
     description: Optional[str] = Query(None, description="Optional description"),
-    current_user: User = Depends(require_editor),
+    current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_data_source_service),
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[IngestionResponse]:
@@ -567,7 +567,7 @@ async def get_table_schema(
 @router.delete("/sql/tables/{table_name}", response_model=BaseResponse[dict])
 async def delete_sql_table(
     table_name: str,
-    current_user: User = Depends(require_editor),
+    current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_data_source_service),
 ) -> BaseResponse[dict]:
     """Delete an uploaded file table and its CSV data."""

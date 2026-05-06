@@ -33,7 +33,6 @@ security = HTTPBearer()
 ROLE_HIERARCHY: List[str] = [
     Role.SUPER_ADMIN.value,
     Role.ADMIN.value,
-    Role.EDITOR.value,
     Role.USER.value,
 ]
 
@@ -300,6 +299,26 @@ async def get_current_user(
                         },
                     )
                 
+                # Sync email and name from Keycloak token
+                update_fields = {}
+                if claims.email and claims.email != user.email:
+                    update_fields["email"] = claims.email
+                if claims.name and claims.name != user.full_name:
+                    update_fields["full_name"] = claims.name
+                
+                if update_fields:
+                    from app.modules.users.schemas import UserUpdate
+                    await user_repo.update(user.id, UserUpdate(**update_fields))
+                    # Update local user object to reflect changes
+                    if "email" in update_fields:
+                        user.email = update_fields["email"]
+                    if "full_name" in update_fields:
+                        user.full_name = update_fields["full_name"]
+                    logger.info(
+                        f"Synced user profile from Keycloak: {list(update_fields.keys())}",
+                        extra={"user_id": str(user.id)}
+                    )
+                
                 return user
             else:
                 # Create new user (JIT provisioning)
@@ -388,7 +407,6 @@ def require_role(required_role: Role) -> Callable:
 
 # Convenience dependencies for common role checks
 require_user = require_role(Role.USER)
-require_editor = require_role(Role.EDITOR)
 require_admin = require_role(Role.ADMIN)
 require_super_admin = require_role(Role.SUPER_ADMIN)
 

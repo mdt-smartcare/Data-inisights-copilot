@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, File, UploadFile, 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session as get_db
-from app.core.auth.permissions import get_current_user, require_editor, require_admin
+from app.core.auth.permissions import get_current_user, require_admin
 from app.core.models.common import BaseResponse
 from app.modules.users.schemas import User
 from app.modules.data_sources.service import DataSourceService
@@ -75,7 +75,7 @@ async def get_table_schema(
 @router.delete("/sql/tables/{table_name}", response_model=BaseResponse[dict])
 async def delete_sql_table(
     table_name: str,
-    current_user: User = Depends(require_editor),
+    current_user: User = Depends(require_admin),
     service: DataSourceService = Depends(get_service),
 ) -> BaseResponse[dict]:
     """Delete an uploaded file table and its CSV data."""

@@ -93,7 +93,7 @@ const mockUsers = [
     username: 'editor1',
     email: 'editor@example.com',
     full_name: 'Editor One',
-    role: 'editor',
+    role: 'admin',
     is_active: true,
     created_at: '2024-01-10T00:00:00Z',
   },

@@ -16,10 +16,9 @@ class Role(str, Enum):
     User role hierarchy.
     
     Roles are ordered by permission level (lowest to highest):
-    USER < EDITOR < ADMIN < SUPER_ADMIN
+    USER < ADMIN < SUPER_ADMIN
     """
     USER = "user"                    # Can view and query
-    EDITOR = "editor"                # Can edit configurations
     ADMIN = "admin"                  # Can manage users and agents
     SUPER_ADMIN = "super_admin"      # Full system access
     
@@ -28,9 +27,8 @@ class Role(str, Enum):
         """Get numeric level for role comparison."""
         hierarchy = {
             cls.USER: 0,
-            cls.EDITOR: 1,
-            cls.ADMIN: 2,
-            cls.SUPER_ADMIN: 3
+            cls.ADMIN: 1,
+            cls.SUPER_ADMIN: 2
         }
         return hierarchy.get(role, -1)
     
@@ -133,7 +131,7 @@ class TokenData(BaseModel):
             "example": {
                 "sub": "john_doe",
                 "user_id": "123e4567-e89b-12d3-a456-426614174000",
-                "role": "editor",
+                "role": "admin",
                 "exp": "2026-03-30T16:00:00Z",
                 "iat": "2026-03-30T14:00:00Z"
             }

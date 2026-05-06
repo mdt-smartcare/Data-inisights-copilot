@@ -55,7 +55,7 @@ const mockLogs = [
     timestamp: '2024-01-15T09:00:00Z',
     actor_id: 2,
     actor_username: 'editor1',
-    actor_role: 'editor',
+    actor_role: 'user',
     action: 'user.create',
     resource_type: 'user',
     resource_id: '10',

@@ -152,7 +152,7 @@ class UserAgentModel(Base):
     User-Agent access control (RBAC).
     
     Defines which users have access to which agents and with what role.
-    Roles: user, editor, admin
+    Roles: user, admin
     """
     __tablename__ = "user_agents"
     

@@ -653,21 +653,6 @@ class UserAgentRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
     
-    async def has_access(
-        self,
-        user_id: UUID,
-        agent_id: UUID,
-        min_role: str = "user",
-    ) -> bool:
-        """Check if user has access with minimum role."""
-        role_levels = {"user": 0, "editor": 1, "admin": 2}
-        
-        access = await self.get_access(user_id, agent_id)
-        if not access:
-            return False
-        
-        return role_levels.get(access.role, 0) >= role_levels.get(min_role, 0)
-    
     async def get_agent_users(
         self, 
         agent_id: UUID, 
