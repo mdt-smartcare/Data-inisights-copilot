@@ -1011,6 +1011,84 @@ async def clone_config_as_draft(
 
 
 # ==========================================
+# Schema Cache Management
+# ==========================================
+
+@config_router.post("/cache/invalidate", response_model=BaseResponse[dict])
+async def invalidate_schema_cache(
+    source_id: Optional[UUID] = Query(None, description="Specific data source to invalidate, or all if not provided"),
+    current_user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> BaseResponse[dict]:
+    """
+    Invalidate schema caches to force refresh on next query.
+    
+    Use when:
+    - Database schema has been modified (new tables, columns)
+    - Data dictionary has been updated
+    - Experiencing stale schema issues in SQL generation
+    
+    Requires admin role.
+    """
+    from app.modules.agents.schema_cache_manager import schema_cache_manager
+    
+    if source_id:
+        callbacks_invoked = schema_cache_manager.invalidate_source(str(source_id))
+        message = f"Invalidated schema caches for source {source_id}"
+    else:
+        callbacks_invoked = schema_cache_manager.invalidate_all()
+        message = "Invalidated all schema caches"
+    
+    # Audit log
+    await audit.log(
+        action=AuditAction.CONFIG_SETTINGS_UPDATED,
+        actor=current_user,
+        resource_type="schema_cache",
+        resource_id=str(source_id) if source_id else "all",
+        resource_name="Schema Cache",
+        details={
+            "action": "invalidate",
+            "source_id": str(source_id) if source_id else None,
+            "callbacks_invoked": callbacks_invoked,
+        },
+    )
+    
+    logger.info(f"{message} ({callbacks_invoked} cache callbacks invoked) by user {current_user.email}")
+    
+    return BaseResponse.ok(data={
+        "message": message,
+        "callbacks_invoked": callbacks_invoked,
+    })
+
+
+@config_router.post("/{agent_id}/version/{version_id}/validate-dictionary", response_model=BaseResponse[dict])
+async def validate_data_dictionary(
+    agent_id: UUID,
+    version_id: int,
+    current_user: User = Depends(get_current_user),
+    service: AgentConfigService = Depends(get_config_service),
+    agent_service: AgentService = Depends(get_agent_service),
+) -> BaseResponse[dict]:
+    """
+    Validate the data dictionary against the actual database schema.
+    
+    Returns validation errors and warnings for:
+    - Tables referenced in data dictionary that don't exist in the database
+    - Columns referenced that don't exist in their tables
+    - Incorrect FHIR identifier patterns (e.g., using patient_id on patient_gold)
+    
+    Use this before generating prompts to catch schema-dictionary drift.
+    """
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    
+    try:
+        validation_result = await service.validate_data_dictionary(version_id)
+        return BaseResponse.ok(data=validation_result)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+# ==========================================
 # Include all routers
 # ==========================================
 

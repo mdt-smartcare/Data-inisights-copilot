@@ -14,6 +14,7 @@ from app.modules.data_sources.schemas import (
     DataSourceResponse, DataSourceListResponse
 )
 from app.modules.data_sources.utils import mask_db_url
+from app.modules.agents.schema_cache_manager import schema_cache_manager
 
 
 class DataSourceService:
@@ -23,10 +24,42 @@ class DataSourceService:
     # Maps source_id -> (timestamp, schema_data)
     _schema_cache = {}
     _CACHE_TTL = 300  # 5 minutes cache TTL
+    _cache_callback_registered = False
     
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = DataSourceRepository(db)
+        
+        # Register cache invalidation callback (once per class)
+        if not DataSourceService._cache_callback_registered:
+            schema_cache_manager.register_invalidation_callback(
+                self._invalidate_cache_callback,
+                name="DataSourceService._schema_cache"
+            )
+            DataSourceService._cache_callback_registered = True
+    
+    @classmethod
+    def _invalidate_cache_callback(cls, source_id: Optional[str]) -> None:
+        """Callback to invalidate schema cache when triggered by cache manager."""
+        if source_id is None:
+            # Invalidate all
+            cls._schema_cache.clear()
+        else:
+            # Invalidate specific source
+            # Try both string and UUID forms
+            cls._schema_cache.pop(source_id, None)
+            try:
+                cls._schema_cache.pop(UUID(source_id), None)
+            except (ValueError, TypeError):
+                pass
+    
+    @classmethod
+    def invalidate_schema_cache(cls, source_id: Optional[str] = None) -> None:
+        """Public method to invalidate schema cache."""
+        if source_id:
+            schema_cache_manager.invalidate_source(source_id)
+        else:
+            schema_cache_manager.invalidate_all()
     
     def _model_to_response(self, source) -> DataSourceResponse:
         """

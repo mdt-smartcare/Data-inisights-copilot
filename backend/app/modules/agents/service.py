@@ -31,6 +31,11 @@ from app.modules.agents.schemas import (
 )
 # Import data source repository for config validation
 from app.modules.data_sources.repository import DataSourceRepository
+from app.modules.agents.schema_validator import (
+    SchemaValidator, 
+    ValidationResult, 
+    format_validation_report
+)
 from app.core.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -838,6 +843,107 @@ class AgentConfigService:
             "completed_step": max(3, config.completed_step),
         })
         return self._to_response(updated)
+
+    async def validate_data_dictionary(
+        self,
+        version_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Validate a data dictionary against the actual database schema.
+        
+        This helps catch schema-dictionary drift that can cause NL2SQL errors.
+        
+        Returns:
+            Dict with validation_result, errors, warnings, and report
+        """
+        import json
+        import yaml
+        
+        config = await self.configs.get_by_id(version_id)
+        if not config:
+            raise AppException(
+                error_code=ErrorCode.RESOURCE_NOT_FOUND,
+                message=f"Version {version_id} not found",
+                status_code=404,
+            )
+        
+        # Get data source to get database URL
+        db_url = None
+        if config.data_source_id:
+            source = await self.sources.get_by_id(config.data_source_id)
+            if source and source.source_type == "database" and source.db_url:
+                db_url = source.db_url
+        
+        # Parse data dictionary
+        data_dict = {}
+        if config.data_dictionary:
+            try:
+                data_dict_raw = json.loads(config.data_dictionary)
+                # Handle wrapper format
+                if isinstance(data_dict_raw, dict) and "content" in data_dict_raw:
+                    content = data_dict_raw["content"]
+                    if isinstance(content, str):
+                        # Try YAML first, then JSON
+                        try:
+                            data_dict = yaml.safe_load(content)
+                        except:
+                            data_dict = json.loads(content)
+                    else:
+                        data_dict = content
+                else:
+                    data_dict = data_dict_raw
+            except (json.JSONDecodeError, yaml.YAMLError) as e:
+                return {
+                    "is_valid": False,
+                    "errors": [{"error_type": "parse_error", "message": f"Failed to parse data dictionary: {e}"}],
+                    "warnings": [],
+                    "report": f"Failed to parse data dictionary: {e}"
+                }
+        
+        if not data_dict:
+            return {
+                "is_valid": True,
+                "errors": [],
+                "warnings": [{"error_type": "empty", "message": "No data dictionary configured"}],
+                "report": "No data dictionary to validate"
+            }
+        
+        # Create validator
+        try:
+            validator = SchemaValidator(db_url=db_url) if db_url else SchemaValidator()
+            result = validator.validate_data_dictionary(data_dict)
+            
+            return {
+                "is_valid": result.is_valid,
+                "errors": [
+                    {
+                        "error_type": e.error_type,
+                        "location": e.location,
+                        "message": e.message,
+                        "suggested_fix": e.suggested_fix
+                    }
+                    for e in result.errors
+                ],
+                "warnings": [
+                    {
+                        "error_type": w.error_type,
+                        "location": w.location,
+                        "message": w.message,
+                        "suggested_fix": w.suggested_fix
+                    }
+                    for w in result.warnings
+                ],
+                "report": format_validation_report(result),
+                "validated_tables": list(result.validated_tables)
+            }
+        except Exception as e:
+            logger.warning(f"Schema validation failed: {e}")
+            return {
+                "is_valid": True,  # Don't block on validation errors
+                "errors": [],
+                "warnings": [{"error_type": "validation_error", "message": f"Could not validate against schema: {e}"}],
+                "report": f"Validation skipped: {e}"
+            }
     
     async def upsert_settings_step(
         self,
@@ -1326,10 +1432,20 @@ Return ONLY the system prompt text. Do not include any other text or explanation
         except Exception as e:
             logger.error(f"Error during reasoning generation: {type(e).__name__}: {e}")
         
+        # Run schema validation to catch potential issues
+        validation_result = None
+        try:
+            validation_result = await self.validate_data_dictionary(version_id)
+            if not validation_result.get("is_valid"):
+                logger.warning(f"Data dictionary validation found issues: {validation_result.get('report', 'Unknown')}")
+        except Exception as e:
+            logger.warning(f"Schema validation skipped: {e}")
+        
         return {
             "draft_prompt": prompt_content,
             "reasoning": reasoning,
             "example_questions": questions,
+            "validation": validation_result,
         }
 
     def _compress_schema_for_prompt(self, selected_columns: Dict[str, List[str]]) -> str:
