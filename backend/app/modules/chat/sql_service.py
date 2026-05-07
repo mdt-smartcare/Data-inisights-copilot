@@ -63,6 +63,25 @@ from app.modules.chat.query.query_planner import QueryPlanner
 from app.modules.chat.query.token_budget import TokenBudgetManager, get_token_budget_manager
 from app.modules.chat.query.schema_graph import SchemaGraph
 
+# New imports for NL2SQL enhancements (per article recommendations)
+from app.modules.chat.query.semantic_cache import (
+    SemanticQueryCache,
+    get_semantic_cache,
+    SemanticCacheResult,
+)
+from app.modules.chat.query.structured_output import (
+    StructuredOutputParser,
+    get_structured_parser,
+    get_structured_output_instructions,
+)
+from app.modules.chat.query.multi_candidate import (
+    MultiCandidateGenerator,
+)
+from app.modules.chat.query.index_hints import (
+    IndexMetadataExtractor,
+    enrich_schema_with_index_hints,
+)
+
 logger = get_logger(__name__)
 
 # Relevance check statistics (for monitoring, not logged with query content)
@@ -141,6 +160,7 @@ class SQLService:
         enable_few_shot: bool = True,
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
+        embedding_model: Optional[str] = None,
     ):
         """
         Initialize SQL service with a database URL.
@@ -152,6 +172,7 @@ class SQLService:
             enable_few_shot: Enable few-shot example retrieval (default True)
             config_id: Optional agent config ID for semantic schema retrieval
             agent_id: Optional agent ID for per-agent SQL examples and data dictionary
+            embedding_model: Optional embedding model name (e.g., "huggingface/BAAI/bge-base-en-v1.5")
         """
         self._db_url = db_url
         self._schema = schema
@@ -163,6 +184,7 @@ class SQLService:
         self._enable_few_shot = enable_few_shot
         self._config_id = config_id  # For semantic schema retrieval
         self._agent_id = agent_id  # For per-agent SQL examples and data dictionary
+        self._embedding_model = embedding_model or "huggingface/BAAI/bge-base-en-v1.5"  # Default embedding model
         
         # Initialize query relevance checker
         self._enable_relevance_check = getattr(self._settings, 'enable_query_relevance_check', True)
@@ -262,6 +284,45 @@ class SQLService:
         except Exception as e:
             logger.warning(f"Failed to initialize TokenBudgetManager: {e}")
             self._token_budget_manager = None
+        
+        # =========================================================================
+        # NL2SQL ENHANCEMENTS (per article recommendations)
+        # =========================================================================
+        
+        # Semantic query cache - reuse SQL for semantically similar questions
+        self._semantic_cache: Optional[SemanticQueryCache] = None
+        self._enable_semantic_cache = getattr(self._settings, 'enable_semantic_query_cache', True)
+        if self._enable_semantic_cache:
+            try:
+                self._semantic_cache = get_semantic_cache(
+                    similarity_threshold=0.92,
+                    max_size=1000,
+                    ttl_seconds=3600
+                )
+                logger.info("SemanticQueryCache initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize SemanticQueryCache: {e}")
+                self._semantic_cache = None
+        
+        # Structured output parser - parse <thinking>/<query> format
+        self._structured_parser: Optional[StructuredOutputParser] = None
+        self._enable_structured_output = getattr(self._settings, 'enable_structured_output', True)
+        if self._enable_structured_output:
+            try:
+                self._structured_parser = get_structured_parser()
+                logger.info("StructuredOutputParser initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize StructuredOutputParser: {e}")
+                self._structured_parser = None
+        
+        # Multi-candidate generator - generate N candidates and rank
+        self._multi_candidate_generator: Optional[MultiCandidateGenerator] = None
+        self._enable_multi_candidate = getattr(self._settings, 'enable_multi_candidate', False)
+        self._multi_candidate_count = getattr(self._settings, 'multi_candidate_count', 3)
+        
+        # Index metadata extractor - enrich schema with index hints
+        self._index_extractor: Optional[IndexMetadataExtractor] = None
+        self._enable_index_hints = getattr(self._settings, 'enable_index_hints', True)
     
     def set_tenant_id(self, tenant_id: str) -> None:
         """
@@ -483,6 +544,100 @@ class SQLService:
             formatted_parts.append("")
         
         return "\n".join(formatted_parts)
+    
+    async def generate_multi_candidate_sql(
+        self,
+        question: str,
+        schema_context: str,
+        system_prompt: str,
+        llm_helper,
+        num_candidates: int = 3,
+        run_self_check: bool = True
+    ) -> Tuple[Optional[str], Optional[str], List[Dict]]:
+        """
+        Generate multiple SQL candidates and return the best one.
+        
+        This is useful for complex queries where generating multiple
+        candidates and ranking them can improve accuracy.
+        
+        Args:
+            question: Natural language question
+            schema_context: Database schema
+            system_prompt: System prompt with rules
+            llm_helper: LLMHelper instance
+            num_candidates: Number of candidates to generate (default 3)
+            run_self_check: Whether to run LLM self-check on candidates
+            
+        Returns:
+            Tuple of (best_sql, thinking, all_candidates_info)
+        """
+        if not self._enable_multi_candidate:
+            logger.debug("Multi-candidate generation disabled")
+            return None, None, []
+        
+        try:
+            from app.modules.chat.query.multi_candidate import (
+                MultiCandidateGenerator,
+                create_schema_validator,
+                create_self_check_fn
+            )
+            
+            llm = await llm_helper.get_llm(temperature=0.0)
+            
+            # Create schema validator if we have query_validator
+            schema_validator = None
+            if self._query_validator:
+                schema_validator = create_schema_validator(self._query_validator)
+            
+            # Create self-check function (optional)
+            self_check_fn = None
+            if run_self_check:
+                self_check_fn = await create_self_check_fn(llm)
+            
+            # Initialize generator
+            generator = MultiCandidateGenerator(
+                llm=llm,
+                parser=self._structured_parser,
+                schema_validator=schema_validator,
+                self_check_fn=self_check_fn
+            )
+            
+            # Generate and rank candidates
+            result = await generator.generate(
+                question=question,
+                schema_context=schema_context,
+                system_prompt=system_prompt,
+                num_candidates=num_candidates,
+                run_self_check=run_self_check
+            )
+            
+            if result.success and result.best_candidate:
+                logger.info(
+                    f"Multi-candidate generation: best of {result.generation_count} "
+                    f"(confidence={result.best_candidate.confidence:.2f})"
+                )
+                
+                candidates_info = [
+                    {
+                        "sql": c.sql[:100] + "..." if len(c.sql) > 100 else c.sql,
+                        "confidence": c.confidence,
+                        "status": c.status.value
+                    }
+                    for c in result.all_candidates
+                ]
+                
+                return (
+                    result.best_candidate.sql,
+                    result.best_candidate.thinking,
+                    candidates_info
+                )
+            else:
+                logger.warning("Multi-candidate generation failed to produce valid SQL")
+                return None, None, []
+                
+        except Exception as e:
+            logger.warning(f"Multi-candidate generation failed: {e}")
+            return None, None, []
     
     def _extract_tables_from_schema_context(self, schema_context: str) -> List[str]:
         """
@@ -879,6 +1034,20 @@ class SQLService:
         # DuckDB handles standard ISO strings correctly in CAST(col AS TIMESTAMP)
         # No automatic SUBSTRING injection needed - it breaks DATE columns.
         
+        # CRITICAL FIX: Remove is_latest = true from queries on *_latest_gold tables
+        # These tables are PRE-FILTERED at ETL level and the is_latest column may be NULL
+        # Adding is_latest = true causes 0 rows to be returned
+        import re
+        sql_lower = sql.lower()
+        if ('bp_log_latest_gold' in sql_lower or 'glucose_log_latest_gold' in sql_lower):
+            # Remove is_latest = true (with various whitespace patterns)
+            original_sql = sql
+            sql = re.sub(r'\s+and\s+is_latest\s*=\s*true', '', sql, flags=re.IGNORECASE)
+            sql = re.sub(r'where\s+is_latest\s*=\s*true\s+and\s+', 'where ', sql, flags=re.IGNORECASE)
+            sql = re.sub(r'where\s+is_latest\s*=\s*true\s*$', '', sql, flags=re.IGNORECASE)
+            if sql != original_sql:
+                logger.info(f"Removed is_latest filter from *_latest_gold query (pre-filtered table)")
+        
         engine = self._get_engine()
         
         # Do NOT add automatic LIMIT - data analysts need full results
@@ -1093,6 +1262,12 @@ class SQLService:
                     data_dictionary=self._data_dictionary
                 )
                 logger.info("SchemaLinker initialized for fuzzy matching")
+                
+                # Re-initialize ReflectionService with SchemaGraph for column/type validation
+                if self._reflection_service is not None:
+                    from app.modules.chat.query.reflection_service import ReflectionService
+                    self._reflection_service = ReflectionService(schema_graph=self._schema_graph)
+                    logger.info("ReflectionService upgraded with SchemaGraph for column validation")
             
             if self._schema_linker:
                 schema_link_result = self._schema_linker.link(
@@ -1255,6 +1430,77 @@ class SQLService:
         
         full_system_prompt = "\n\n".join(system_prompt_parts)
         
+        # =========================================================================
+        # NL2SQL ENHANCEMENTS
+        # =========================================================================
+        
+        # 1. SEMANTIC QUERY CACHE: Check if similar query was already processed
+        schema_hash = SemanticQueryCache.compute_schema_hash(schema) if self._semantic_cache else ""
+        cache_result: Optional[SemanticCacheResult] = None
+        
+        if self._semantic_cache and self._enable_semantic_cache:
+            try:
+                # Lazily initialize embedding function from embeddings service
+                if self._semantic_cache._embed_fn is None:
+                    from app.modules.embeddings.service import _get_embedding_provider
+                    # Get the embed function using agent's configured embedding model
+                    embed_fn = await _get_embedding_provider(self._embedding_model)
+                    # Wrap to take single text and return single embedding
+                    self._semantic_cache.set_embed_fn(lambda text: embed_fn([text])[0])
+                    logger.debug(f"Semantic cache using embedding model: {self._embedding_model}")
+                
+                cache_result = self._semantic_cache.get(
+                    nl_query=natural_language_query,
+                    current_schema_hash=schema_hash
+                )
+                
+                if cache_result.hit:
+                    logger.info(
+                        f"Semantic cache HIT: similarity={cache_result.similarity:.3f}, "
+                        f"skipping LLM call",
+                        original_query=cache_result.original_query[:50] if cache_result.original_query else ""
+                    )
+                    # Execute the cached SQL directly
+                    sql = cache_result.sql
+                    results, count = self.execute_query(sql)
+                    execution_time = time.time() - start_time
+                    
+                    # Record in audit trail
+                    if self._audit_trail:
+                        self._audit_trail.record(
+                            question=natural_language_query,
+                            generated_sql=sql,
+                            execution_time_ms=int(execution_time * 1000),
+                            status="success_cached",
+                            row_count=count,
+                            tenant_id=self._tenant_id
+                        )
+                    
+                    return self._format_results(results, count)
+            except Exception as e:
+                logger.warning(f"Semantic cache lookup failed: {e}")
+                cache_result = None
+        
+        # 2. INDEX HINTS: Enrich schema with index metadata
+        if self._enable_index_hints and selected_tables:
+            try:
+                engine = self._get_engine()
+                schema = enrich_schema_with_index_hints(
+                    schema_context=schema,
+                    engine=engine,
+                    table_names=selected_tables,
+                    schema_name=self._schema or "public"
+                )
+                logger.debug("Schema enriched with index hints")
+            except Exception as e:
+                logger.debug(f"Index hints enrichment skipped: {e}")
+        
+        # 3. STRUCTURED OUTPUT: Add <thinking>/<query> format instructions
+        if self._enable_structured_output and self._structured_parser:
+            structured_instructions = get_structured_output_instructions()
+            full_system_prompt = f"{full_system_prompt}\n\n{structured_instructions}"
+            logger.debug("Added structured output instructions to prompt")
+        
         # Get LLM from helper (temp=0 for deterministic SQL generation)
         if not llm_helper:
             logger.error("No llm_helper provided for SQL generation")
@@ -1270,6 +1516,7 @@ class SQLService:
         # =========================================================================
         previous_error: Optional[str] = None
         last_sql: Optional[str] = None
+        thinking_log: Optional[str] = None  # Store thinking for observability
         
         for attempt in range(max_retries):
             try:
@@ -1308,12 +1555,32 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     "question": natural_language_query
                 })
                 
-                # Extract SQL from response (remove markdown code blocks if present)
-                sql = response.content.strip()
-                sql = re.sub(r'^```sql\s*', '', sql)
-                sql = re.sub(r'^```\s*', '', sql)
-                sql = re.sub(r'\s*```$', '', sql)
-                sql = sql.strip()
+                # =========================================================
+                # PARSE STRUCTURED OUTPUT (if enabled)
+                # =========================================================
+                if self._enable_structured_output and self._structured_parser:
+                    parsed_output = self._structured_parser.parse(response.content)
+                    sql = parsed_output.query
+                    thinking_log = parsed_output.thinking
+                    
+                    if parsed_output.parse_success:
+                        logger.info(
+                            "Structured output parsed successfully",
+                            thinking_length=len(thinking_log),
+                            sql_length=len(sql)
+                        )
+                        if thinking_log:
+                            logger.debug(f"LLM reasoning: {thinking_log[:200]}...")
+                    else:
+                        logger.debug("Fallback SQL extraction used (no structured tags)")
+                else:
+                    # Legacy: Extract SQL from response (remove markdown code blocks if present)
+                    sql = response.content.strip()
+                    sql = re.sub(r'^```sql\s*', '', sql)
+                    sql = re.sub(r'^```\s*', '', sql)
+                    sql = re.sub(r'\s*```$', '', sql)
+                    sql = sql.strip()
+                
                 last_sql = sql
                 generated_sql = sql  # Track for audit
                 
@@ -1464,6 +1731,20 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                         tables_used=tables_used,
                         tenant_id=self._tenant_id
                     )
+                
+                # =========================================================
+                # SEMANTIC CACHE: Store successful query for future reuse
+                # =========================================================
+                if self._semantic_cache and self._enable_semantic_cache and schema_hash:
+                    try:
+                        self._semantic_cache.put(
+                            nl_query=natural_language_query,
+                            generated_sql=sql,
+                            schema_hash=schema_hash
+                        )
+                        logger.debug("Cached query in semantic cache")
+                    except Exception as e:
+                        logger.debug(f"Failed to cache query: {e}")
                 
                 return self._format_results(results, count)
                 
@@ -1721,16 +2002,18 @@ class SQLServiceForCSV(SQLService):
 class SQLServiceFactory:
     """Factory for creating SQLService instances from data sources."""
     
-    def __init__(self, config_repo, data_source_repo):
+    def __init__(self, config_repo, data_source_repo, ai_model_repo=None):
         """
         Initialize factory with repository dependencies.
         
         Args:
             config_repo: AgentConfigRepository instance
             data_source_repo: DataSourceRepository instance
+            ai_model_repo: Optional AIModelRepository for embedding model lookup
         """
         self.config_repo = config_repo
         self.data_source_repo = data_source_repo
+        self.ai_model_repo = ai_model_repo
     
     async def __call__(
         self,
@@ -1746,6 +2029,8 @@ class SQLServiceFactory:
         enable_few_shot: bool = True,
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        **kwargs,
     ) -> Optional[SQLService]:
         """
         Create a SQLService for the given data source.
@@ -1755,6 +2040,7 @@ class SQLServiceFactory:
             enable_few_shot: Enable few-shot example retrieval
             config_id: Optional agent config ID for semantic schema retrieval
             agent_id: Optional agent ID for per-agent SQL examples and data dictionary
+            embedding_model: Optional embedding model name for semantic cache
             
         Returns:
             SQLService instance or None if not found
@@ -1784,6 +2070,7 @@ class SQLServiceFactory:
                     enable_few_shot=enable_few_shot,
                     config_id=config_id,
                     agent_id=agent_id,
+                    embedding_model=embedding_model,
                 )
                 
             elif data_source.source_type == "file":
@@ -1798,6 +2085,7 @@ class SQLServiceFactory:
                         enable_few_shot=enable_few_shot,
                         config_id=config_id,
                         agent_id=agent_id,
+                        embedding_model=embedding_model,
                     )
                 
                 # Fallback: Create DuckDB service that reads CSV directly
@@ -1849,11 +2137,37 @@ class SQLServiceFactory:
                 logger.warning(f"Agent config has no data_source_id")
                 return None
             
+            # Look up the embedding model name for this agent
+            embedding_model = None
+            try:
+                # First, try to get from AI model registry if we have the repo
+                if self.ai_model_repo and config.embedding_model_id:
+                    ai_model = await self.ai_model_repo.get_by_id(config.embedding_model_id)
+                    if ai_model:
+                        embedding_model = ai_model.model_id
+                        logger.debug(f"Using agent's embedding model: {embedding_model}")
+                
+                # Fallback: check embedding_config JSON for model name
+                if not embedding_model and config.embedding_config:
+                    import json
+                    try:
+                        embed_cfg = config.embedding_config
+                        if isinstance(embed_cfg, str):
+                            embed_cfg = json.loads(embed_cfg)
+                        if isinstance(embed_cfg, dict) and embed_cfg.get("model"):
+                            embedding_model = embed_cfg["model"]
+                            logger.debug(f"Using embedding model from config: {embedding_model}")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            except Exception as e:
+                logger.debug(f"Could not determine embedding model: {e}")
+            
             return await self.create_from_data_source(
                 config.data_source_id,
                 enable_few_shot=enable_few_shot,
                 config_id=config.id,  # Pass config ID for semantic schema retrieval
                 agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples
+                embedding_model=embedding_model,  # Pass agent's embedding model
             )
             
         except Exception as e:
