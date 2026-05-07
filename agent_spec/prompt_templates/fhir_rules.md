@@ -55,6 +55,7 @@ Always apply appropriate soft-delete filters:
 ## Latest Record Patterns
 
 For "latest" or "current" data:
-- **BP readings**: Use `bp_log_latest_gold` (pre-filtered to latest per patient)
-- **Glucose readings**: Use `glucose_log_latest_gold` (pre-filtered to latest per patient)
-- **General pattern**: Use tables with `*_latest_*` suffix when available
+- **BP readings**: Use `bp_log_gold` - the `bp_log_latest_gold` table is currently EMPTY. For latest per patient, use window functions: `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY bp_taken_on DESC) = 1`
+- **Glucose readings**: Use `glucose_log_gold` - the `glucose_log_latest_gold` table may be empty. Use similar window function pattern.
+- **For distribution/analysis queries**: Use `bp_log_gold` or `glucose_log_gold` directly without latest filtering
+- **AVOID**: `bp_log_latest_gold` and `glucose_log_latest_gold` tables (currently empty/stale)

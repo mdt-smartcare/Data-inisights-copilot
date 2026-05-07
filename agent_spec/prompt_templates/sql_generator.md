@@ -61,6 +61,15 @@ When asked "how many patients", "total patients", "patient count", etc.:
 14. **GREATEST/LEAST for row-wise comparisons**: To find min/max across columns in a row, use GREATEST() and LEAST(), NOT max() or min():
     - WRONG: max(col1, col2, col3)
     - CORRECT: GREATEST(col1, col2, col3)
+15. **ROUND() in PostgreSQL requires numeric casting**: PostgreSQL's ROUND(value, decimals) only works with NUMERIC types, not DOUBLE PRECISION. Always cast to ::numeric first:
+    - WRONG: ROUND(AVG(column), 2)
+    - CORRECT: ROUND(AVG(column)::numeric, 2)
+    - CORRECT: ROUND(CAST(value AS numeric), 2)
+16. **CRITICAL: Use `bp_log_gold` instead of `bp_log_latest_gold`**: The `bp_log_latest_gold` table is currently EMPTY (0 rows). Always use `bp_log_gold` for BP-related queries.
+    - For distribution/aggregate queries: Use `bp_log_gold` directly
+    - For latest BP per patient: Use `bp_log_gold` with `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY bp_taken_on DESC) = 1`
+    - WRONG: `SELECT * FROM bp_log_latest_gold` (empty table!)
+    - CORRECT: `SELECT * FROM bp_log_gold WHERE avg_systolic IS NOT NULL`
 
 ## Table Selection Strategy
 
@@ -68,6 +77,41 @@ When the user asks about a specific metric or column:
 1. First, scan ALL tables in the schema to find which table(s) contain the requested column
 2. If the column exists in only one table, you MUST use that table
 3. If the column exists in multiple tables, prefer the table with more relevant context for the question
+
+## Cross-Table JOIN Strategy (CRITICAL)
+
+**If a required column doesn't exist in the primary table, JOIN to a related table via `patient_id`:**
+
+### Common Join Patterns
+| When you need | Primary Table | JOIN to | Via |
+|---|---|---|---|
+| Patient demographics (age, gender, name) | `bp_log_gold`, `appointment_gold`, etc. | `patient_tracker_gold` | `patient_id` |
+| Patient birth_date | Clinical tables | `patient_gold` | `patient_id` (→ `res_id` in patient_gold) |
+| BP measurements | `patient_tracker_gold` | `bp_log_gold` or `bp_log_latest_gold` | `patient_id` |
+| Conditions/diagnoses | Any clinical table | `condition_gold` | `patient_id` |
+
+### Example: Average BP by Age Group
+If asked "What is the average blood pressure by age group?" and bp_log_gold has BP but no age:
+```sql
+SELECT 
+  CASE 
+    WHEN pt.patient_age < 30 THEN 'Under 30'
+    WHEN pt.patient_age BETWEEN 30 AND 50 THEN '30-50'
+    ELSE 'Over 50'
+  END AS age_group,
+  ROUND(AVG(bp.avg_systolic)::numeric, 2) AS avg_systolic,
+  ROUND(AVG(bp.avg_diastolic)::numeric, 2) AS avg_diastolic
+FROM bp_log_latest_gold bp
+INNER JOIN patient_tracker_gold pt ON bp.patient_id = pt.patient_id
+WHERE pt.is_deleted = false
+GROUP BY 1
+ORDER BY 1
+```
+
+### Key Rules
+- ALWAYS check if a JOIN is needed before returning "Insufficient data"
+- Use INNER JOIN when both tables must have matching records
+- Apply mandatory filters on BOTH tables (e.g., `is_deleted = false`, `is_src_deleted IS NULL`)
 
 ## Input Format
 
