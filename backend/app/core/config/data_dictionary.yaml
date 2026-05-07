@@ -181,8 +181,8 @@ business_definitions:
   # =========================================================================
   latest assessment:
     table: bp_log_latest_gold
-    condition: "is_latest = true"
-    description: "Most recent BP assessment for each patient"
+    condition: ""
+    description: "Most recent BP assessment for each patient (table is pre-filtered to latest records only, no additional filter needed)"
 
   pre-diagnosis reading:
     table: bp_log_gold
@@ -339,6 +339,18 @@ synonyms:
     - "visit date"
     - "measurement date"
 
+  # Encounter synonyms
+  encounter_type:
+    - "visit type"
+    - "encounter"
+    - "type of visit"
+    - "service delivery point"
+
+  assessment_category:
+    - "assessment type"
+    - "visit category"
+    - "purpose"
+
 # =============================================================================
 # Default Filters - Applied automatically to queries
 # =============================================================================
@@ -352,42 +364,12 @@ default_filters:
     description: "Exclude deleted FHIR patient resources"
   
   bp_log_gold:
-    filter: "is_src_deleted = false OR is_src_deleted IS NULL"
-    description: "Exclude deleted BP log entries"
+    filter: "is_src_deleted IS DISTINCT FROM 'true'"
+    description: "Exclude deleted BP log entries (is_src_deleted is VARCHAR not boolean)"
   
   bp_log_latest_gold:
-    filter: "is_latest = true"
-    description: "Only latest BP reading per patient"
-    - "reading date"
-
-  # Encounter synonyms
-  encounter_type:
-    - "visit type"
-    - "encounter"
-    - "type of visit"
-    - "service delivery point"
-
-  assessment_category:
-    - "assessment type"
-    - "visit category"
-    - "purpose"
-
-  # Patient identifiers
-  patient_id:
-    - "patient"
-    - "patient identifier"
-    - "patient number"
-
-# =============================================================================
-# Default Filters - Always Applied Unless Explicitly Overridden
-# =============================================================================
-default_filters:
-  patient_tracker_gold:
-    - "is_deleted = false"
-    - "is_active = true"
-
-  bp_log_latest_gold:
-    - "is_latest = true"  # Default to latest readings only
+    filter: ""
+    description: "Table is pre-filtered to contain only the latest BP reading per patient - no additional is_latest filter needed"
 
 # =============================================================================
 # Healthcare Metric Templates
@@ -508,7 +490,6 @@ column_semantics:
 
   patient_tracker_gold:
     patient_id: "Unique patient identifier"
-    is_active: "Whether patient is currently active in program"
     is_deleted: "Soft-delete flag - exclude from queries"
     is_screening: "Whether patient completed initial screening"
     is_enrolled: "Whether patient is enrolled in NCD program"
@@ -518,6 +499,8 @@ column_semantics:
     cvd_risk_level: "Most recent CVD risk classification"
     created_at: "Date patient was registered"
     last_visit_date: "Date of most recent clinical visit"
+    site_id: "Site/facility identifier (FK to site_gold)"
+    country_id: "Country identifier"
 
 # =============================================================================
 # Validation Rules - Healthcare Data Governance
@@ -525,8 +508,11 @@ column_semantics:
 validation_rules:
   required_filters:
     - "Queries on patient_tracker_gold must include is_deleted = false"
-    - "Patient-level queries should filter to is_active = true unless analyzing dropouts"
     - "Use is_latest = true for current patient status, remove for trend analysis"
+  
+  column_type_warnings:
+    - "bp_log_gold.is_src_deleted is VARCHAR not boolean - use IS DISTINCT FROM 'true' or COALESCE(..., 'false') != 'true'"
+    - "patient_gold has NO patient_id column - use res_id instead"
   
   clinical_thresholds:
     - "Hypertension: systolic >= 140 OR diastolic >= 90"
@@ -554,8 +540,8 @@ query_patterns:
 
   patient_risk_distribution:
     description: "Distribution of patients by CVD risk level"
-    pattern: "SELECT cvd_risk_level, COUNT(DISTINCT patient_id) as patient_count FROM bp_log_latest_gold WHERE is_latest = true GROUP BY cvd_risk_level"
+    pattern: "SELECT cvd_risk_level, COUNT(DISTINCT patient_id) as patient_count FROM bp_log_latest_gold GROUP BY cvd_risk_level"
 
   bmi_category_breakdown:
     description: "Patient distribution by BMI category"
-    pattern: "SELECT bmi_category, COUNT(DISTINCT patient_id) as count FROM bp_log_latest_gold WHERE is_latest = true GROUP BY bmi_category"
+    pattern: "SELECT bmi_category, COUNT(DISTINCT patient_id) as count FROM bp_log_latest_gold GROUP BY bmi_category"
