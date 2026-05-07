@@ -268,7 +268,7 @@ GET    /agents/{agent_id}/prompts/active
 - Agent CRUD with default initialization from `/core/config/defaults.py`
 - Agent-level configs stored as JSON in `prompt_configs` table
 - System prompt versioning and activation
-- User-agent RBAC (3-tier: user/editor/admin)
+- User-agent RBAC (3-tier: user/admin/super admin)
 - Configuration caching per-agent
 
 **Dependencies:** modules.users, core.config.defaults, core.database

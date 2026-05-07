@@ -173,7 +173,7 @@ sequenceDiagram
 | **Token Type** | JWT (HS256) via `python-jose`, stored in `localStorage` |
 | **Token Lifetime** | 720 minutes (12 hours), configurable via `access_token_expire_minutes` |
 | **Password Hashing** | bcrypt via `DatabaseService.verify_password()` |
-| **RBAC Model** | Hierarchical: `super_admin > editor > user > viewer` |
+| **RBAC Model** | Hierarchical: `super_admin > admin > user` |
 | **Session Restore** | On app mount, `AuthContext` calls `GET /auth/me` if token exists |
 | **401 Handling** | Axios response interceptor clears tokens and redirects to `/login` |
 | **Frontend Routing** | Role-based redirect: `super_admin` → `/insights`, others → `/chat` |
