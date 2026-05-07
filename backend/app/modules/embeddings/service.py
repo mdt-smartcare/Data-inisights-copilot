@@ -1074,9 +1074,11 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
                     m = SentenceTransformer(local_path, device=device)
                     logger.info(f"Loaded embedding model from local path: {local_path} on {device}")
                 else:
-                    logger.info(f"Model not found locally, downloading from HuggingFace: {actual_model}")
+                    # Note: SentenceTransformer uses ~/.cache/torch/sentence_transformers/ or ~/.cache/huggingface/
+                    # If previously downloaded, it will load from cache (fast). Only first-ever load downloads.
+                    logger.info(f"Loading model via SentenceTransformer: {actual_model} (uses HuggingFace cache)")
                     m = SentenceTransformer(actual_model, device=device)
-                    logger.info(f"Loaded embedding model from HuggingFace: {actual_model} on {device}")
+                    logger.info(f"Loaded embedding model: {actual_model} on {device}")
             except Exception as e:
                 # Fallback for MPS "meta tensor" error or other device issues
                 if device == "mps":
