@@ -386,7 +386,22 @@ class SchemaGraph:
         if not table:
             return False
         return any(col.name == column_name for col in table.columns)
-    
+
+    def get_column(self, table_name: str, column_name: str) -> Optional[ColumnInfo]:
+        """Get column metadata including type."""
+        table = self._tables.get(table_name)
+        if not table:
+            return None
+        for col in table.columns:
+            if col.name == column_name:
+                return col
+        return None
+
+    def get_column_type(self, table_name: str, column_name: str) -> Optional[str]:
+        """Get the data type of a column."""
+        col = self.get_column(table_name, column_name)
+        return col.data_type if col else None
+
     def get_join_path(self, source: str, target: str, max_depth: int = 4) -> Optional[JoinPath]:
         """
         Find the shortest join path between two tables using BFS.

@@ -279,15 +279,40 @@ class FeedbackLoop:
         """
         examples = []
         
-        # Prioritize corrections (they have both wrong and right)
-        for correction in list(self._corrections.values())[-max_examples:]:
-            examples.append({
-                "wrong_sql": correction.original_sql,
-                "error": correction.correction_reason,
-                "correct_sql": correction.corrected_sql
-            })
+        # If question provided, filter corrections by relevance first
+        if question:
+            question_words = set(question.lower().split())
+            relevant_corrections = []
+            for correction in self._corrections.values():
+                correction_words = set(correction.question.lower().split())
+                # Check word overlap (at least 2 common words for relevance)
+                overlap = question_words & correction_words
+                if len(overlap) >= 2:
+                    relevant_corrections.append(correction)
+            
+            # Sort by timestamp, most recent first
+            relevant_corrections.sort(key=lambda x: x.timestamp, reverse=True)
+            
+            for correction in relevant_corrections[:max_examples]:
+                examples.append({
+                    "wrong_sql": correction.original_sql,
+                    "error": correction.correction_reason,
+                    "correct_sql": correction.corrected_sql
+                })
         
-        # If not enough, add uncorrected failures
+        # Fall back to recent corrections if not enough relevant
+        if len(examples) < max_examples:
+            remaining = max_examples - len(examples)
+            recent_corrections = list(self._corrections.values())[-remaining:]
+            for correction in recent_corrections:
+                if correction.original_sql not in [e["wrong_sql"] for e in examples]:
+                    examples.append({
+                        "wrong_sql": correction.original_sql,
+                        "error": correction.correction_reason,
+                        "correct_sql": correction.corrected_sql
+                    })
+        
+        # If still not enough, add uncorrected failures
         if len(examples) < max_examples:
             remaining = max_examples - len(examples)
             uncorrected = [
