@@ -76,7 +76,7 @@ class ChatService:
         self._intent_classifier = get_intent_classifier()
         self._memory = get_conversation_memory()
         self._followup_service = get_followup_service()
-        self._sql_factory = SQLServiceFactory(self.configs, self.data_sources)
+        self._sql_factory = SQLServiceFactory(self.configs, self.data_sources, self.ai_models)
     
     async def process_query(
         self,
@@ -214,20 +214,27 @@ class ChatService:
                     # Generate comparison insights (optional, non-blocking)
                     if sql_service and answer and not answer.startswith("No database"):
                         try:
+                            import asyncio
                             from app.modules.chat.comparison_engine import generate_comparison_insights
                             
                             comp_llm = await llm_helper.get_llm(temperature=0.3)
                             schema_ctx = sql_service.cached_schema if sql_service else ""
                             
-                            comparison_insights = await generate_comparison_insights(
-                                original_question=rewritten_query,
-                                original_sql=reasoning_steps[0].input if reasoning_steps else rewritten_query,
-                                original_results=answer[:2000],
-                                schema_context=schema_ctx,
-                                sql_service=sql_service,
-                                llm=comp_llm,
-                                dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                            # Wrap with timeout - comparisons are optional, don't block main response
+                            comparison_insights = await asyncio.wait_for(
+                                generate_comparison_insights(
+                                    original_question=rewritten_query,
+                                    original_sql=reasoning_steps[0].input if reasoning_steps else rewritten_query,
+                                    original_results=answer[:2000],
+                                    schema_context=schema_ctx,
+                                    sql_service=sql_service,
+                                    llm=comp_llm,
+                                    dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                                ),
+                                timeout=75.0  # Max 75s for entire comparison phase
                             )
+                        except asyncio.TimeoutError:
+                            logger.info("Comparison insights timed out (75s), skipping")
                         except Exception as e:
                             logger.debug(f"Comparison insights generation failed: {e}")
                     
@@ -745,15 +752,27 @@ class ChatService:
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
+        # Truncate large result sets to avoid overwhelming the LLM and token limits
+        # For chart generation, we only need representative data, not all rows
+        result_lines = sql_result.split('\n')
+        if len(result_lines) > 50:
+            # Keep first 40 rows + summary
+            truncated_result = '\n'.join(result_lines[:40])
+            truncated_result += f"\n\n[... {len(result_lines) - 40} more rows truncated for brevity ...]\n"
+            truncated_result += f"Total rows: {len(result_lines) - 2}"  # Subtract header rows
+            sql_result_for_llm = truncated_result
+        else:
+            sql_result_for_llm = sql_result
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Query: {query}\n\nResults:\n{sql_result}\n\nProvide a clear, helpful summary of these results. If the data is suitable for visualization, include a chart JSON block."},
+                    {"role": "user", "content": f"Query: {query}\n\nResults:\n{sql_result_for_llm}\n\nProvide a clear, helpful summary of these results. If the data is suitable for visualization, include a chart JSON block."},
                 ],
                 temperature=0.0,
-                max_tokens=2000,
+                max_tokens=3000,  # Increased from 2000 to prevent JSON truncation
             )
             return response.choices[0].message.content
         except Exception as e:

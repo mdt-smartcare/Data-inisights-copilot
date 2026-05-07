@@ -114,7 +114,60 @@ def _try_parse_json(json_str: str) -> Optional[Dict[str, Any]]:
     except (ValueError, SyntaxError):
         pass
     
+    # Strategy 5: Fix truncated JSON by closing unclosed brackets/braces
+    try:
+        fixed = _fix_truncated_json(json_str)
+        if fixed:
+            return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    
     return None
+
+
+def _fix_truncated_json(json_str: str) -> Optional[str]:
+    """
+    Attempt to fix truncated JSON by closing unclosed brackets/braces.
+    
+    This is useful when LLM output gets cut off mid-JSON due to token limits.
+    """
+    # Count open vs close brackets
+    open_braces = json_str.count('{')
+    close_braces = json_str.count('}')
+    open_brackets = json_str.count('[')
+    close_brackets = json_str.count(']')
+    
+    # If balanced, not truncated
+    if open_braces == close_braces and open_brackets == close_brackets:
+        return None
+    
+    # Attempt to fix: find the chart_json structure and truncate values array
+    fixed = json_str.strip()
+    
+    # Remove trailing partial content (incomplete strings, numbers)
+    # Find the last complete value (ends with }, ], number, or quoted string)
+    import re
+    # Remove trailing incomplete data after last complete element
+    fixed = re.sub(r',\s*[\d"\']*$', '', fixed)  # Remove trailing partial value
+    fixed = re.sub(r',\s*$', '', fixed)  # Remove trailing comma
+    
+    # Close unclosed brackets/braces
+    missing_brackets = open_brackets - close_brackets
+    missing_braces = open_braces - close_braces
+    
+    # Add closing brackets/braces in reverse order they would appear
+    if missing_brackets > 0:
+        fixed += ']' * missing_brackets
+    if missing_braces > 0:
+        fixed += '}' * missing_braces
+    
+    # Validate it's now parseable
+    try:
+        json.loads(fixed)
+        logger.info(f"Fixed truncated JSON by closing {missing_braces} braces and {missing_brackets} brackets")
+        return fixed
+    except json.JSONDecodeError:
+        return None
 
 
 def parse_chart_data(response: str) -> Tuple[Optional[ChartData], str]:
@@ -161,8 +214,14 @@ def parse_chart_data(response: str) -> Tuple[Optional[ChartData], str]:
             except Exception as e:
                 logger.warning(f"Failed to create ChartData: {e}")
         else:
+            # Log at INFO level to help debug common issues
             logger.warning(f"Failed to parse chart JSON after all retry strategies")
-            logger.debug(f"JSON string was: {json_str[:500]}...")
+            # Check if JSON appears truncated
+            if json_str.count('{') != json_str.count('}'):
+                logger.warning(f"JSON appears truncated: {json_str.count('{')} open braces vs {json_str.count('}')} close braces")
+            if json_str.count('[') != json_str.count(']'):
+                logger.warning(f"JSON appears truncated: {json_str.count('[')} open brackets vs {json_str.count(']')} close brackets")
+            logger.info(f"JSON string was: {json_str[:800]}...")
     
     # Clean the response by removing JSON blocks
     cleaned_response = clean_response_text(response)

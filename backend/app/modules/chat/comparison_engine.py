@@ -21,6 +21,24 @@ MAX_COMPARISONS = 3
 # Fallback prompt if template file not found
 _FALLBACK_PROMPT = "Generate 3 SQL comparison questions for cross-validation."
 
+# Common column typos: wrong → correct
+_COLUMN_TYPO_CORRECTIONS = {
+    r'\bynd\b': 'ymd',           # ynd → ymd (date partition column)
+    r'\bpatient_idx\b': 'patient_id',
+    r'\bres_idx\b': 'res_id',
+    r'\bencounter_idx\b': 'encounter_id',
+    r'\bcreated_att\b': 'created_at',
+    r'\bupdated_att\b': 'updated_at',
+}
+
+
+def _fix_common_typos(sql: str) -> str:
+    """Fix common LLM-generated column name typos."""
+    fixed_sql = sql
+    for pattern, replacement in _COLUMN_TYPO_CORRECTIONS.items():
+        fixed_sql = re.sub(pattern, replacement, fixed_sql, flags=re.IGNORECASE)
+    return fixed_sql
+
 
 def _get_comparison_prompt() -> str:
     """Load the comparison generator prompt template."""
@@ -78,21 +96,32 @@ async def generate_comparison_insights(
         questions = comparison_data["questions"][:MAX_COMPARISONS]
         logger.info(f"Generated {len(questions)} comparison questions")
         
-        # Step 3: Execute each comparison query
+        # Step 3: Execute each comparison query with total time budget
+        import time
+        start_time = time.time()
+        TOTAL_TIME_BUDGET = 60  # Max 60s for all comparison queries combined
+        PER_QUERY_TIMEOUT = 20  # 20s per query (fail fast, try more)
+        
         comparison_results = []
         for i, item in enumerate(questions):
+            # Check if we've exceeded total time budget
+            elapsed = time.time() - start_time
+            if elapsed > TOTAL_TIME_BUDGET:
+                logger.info(f"Comparison time budget exceeded ({elapsed:.1f}s), skipping remaining {len(questions) - i} queries")
+                break
+            
             q = item.get("question", "")
             sql = item.get("sql_query", "")
             
             if not sql:
                 continue
                 
-            # DuckDB handles standard ISO strings correctly in CAST(col AS TIMESTAMP)
-            # No automatic SUBSTRING injection needed - it breaks DATE columns.
-            pass
+            # Fix common LLM typos (e.g., ynd → ymd)
+            sql = _fix_common_typos(sql)
             
             try:
-                results, count = sql_service.execute_query(sql, timeout_seconds=15)
+                # Shorter per-query timeout to fit within budget
+                results, count = sql_service.execute_query(sql, timeout_seconds=PER_QUERY_TIMEOUT)
                 formatted = sql_service._format_results(results, count)
                 comparison_results.append({
                     "question": q,
