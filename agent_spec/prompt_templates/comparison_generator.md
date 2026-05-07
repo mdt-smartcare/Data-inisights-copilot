@@ -23,6 +23,24 @@ Generate exactly 3 follow-up comparison questions with valid SQL queries that:
   - **NEVER use SUBSTRING() on DATE/TIMESTAMP columns** - it only works on strings
 - For PostgreSQL: Use DATE_TRUNC('month', column_name) directly on timestamp columns
 - For DuckDB with VARCHAR date columns: Use CAST(column_name AS TIMESTAMP) before DATE_TRUNC
+
+## CRITICAL: PostgreSQL ROUND() Function
+**ROUND(value, decimals) ONLY works with NUMERIC types in PostgreSQL.**
+- **WRONG (will error):** `ROUND(AVG(column), 2)`
+- **CORRECT:** `ROUND(AVG(column)::numeric, 2)`
+
+ALWAYS cast to `::numeric` before calling ROUND with decimal precision:
+```sql
+-- Examples:
+ROUND(AVG(bp.avg_systolic)::numeric, 2) AS avg_systolic
+ROUND(COUNT(*)::numeric / total_count::numeric * 100, 2) AS percentage
+```
+
+## Cross-Table JOINs
+- If a needed column (e.g., patient_age, gender) doesn't exist in the primary table, JOIN to related tables via `patient_id`:
+  - Patient demographics (age, gender): JOIN to `patient_tracker_gold`
+  - BP data: JOIN to `bp_log_gold` or `bp_log_latest_gold`
+  - Example: `FROM bp_log_gold bp INNER JOIN patient_tracker_gold pt ON bp.patient_id = pt.patient_id`
 - Ensure all queries are executable and free of syntax errors
 - Use aggregations (COUNT, SUM, AVG) — never return individual-level data
 

@@ -8,6 +8,9 @@ When the query results contain data suitable for visualization, you MUST include
 2. The JSON MUST be valid and parseable - no trailing commas, no missing commas
 3. Always include the chart JSON block AFTER your text explanation
 4. Do NOT just describe the chart - you MUST provide the actual JSON
+5. **KEEP CHARTS SIMPLE**: Limit labels/values arrays to 20-30 items maximum
+6. For large datasets (100+ rows), AGGREGATE the data first (e.g., by month, by category)
+7. Never include raw patient-level data in charts - always aggregate
 
 ## Chart Type Selection Guidelines
 
