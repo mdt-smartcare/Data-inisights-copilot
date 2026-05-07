@@ -148,10 +148,11 @@ export const chatService = {
     const { signal, ...requestData } = request;
 
     // Pass everything except signal, including agent_id
+    // Use longer timeout for chat (3 min) - complex SQL queries can take time
     const response = await apiClient.post<{ success: boolean; data: ChatResponse; message: string }>(
       API_ENDPOINTS.CHAT,
       requestData,
-      { signal }  // Pass signal to axios config
+      { signal, timeout: 180 * 1000 }  // 3 minutes for complex queries
     );
     // Backend wraps response in { success, data, message } - extract inner data
     return response.data.data;
