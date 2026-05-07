@@ -89,12 +89,27 @@ class SchemaGraph:
     # Introspection (runs once at init)
     # =========================================================================
     
+    # Implicit FK naming conventions for FHIR healthcare data
+    # Maps column name pattern → (target_table, target_column)
+    IMPLICIT_FK_CONVENTIONS = {
+        "patient_id": ("patient_tracker_gold", "patient_id"),
+        "organization_id": ("organization_gold", "res_id"),
+        "site_id": ("site_gold", "res_id"),
+        "encounter_id": ("encounter_gold", "res_id"),
+        "practitioner_id": ("practitioner_gold", "res_id"),
+        "facility_id": ("facility_gold", "res_id"),
+        "condition_id": ("condition_gold", "res_id"),
+        "appointment_id": ("appointment_gold", "res_id"),
+    }
+
     def _introspect(self):
         """Introspect the database to build the schema graph."""
         with self.engine.connect() as conn:
             self._introspect_tables_and_columns(conn)
             self._introspect_primary_keys(conn)
             self._introspect_foreign_keys(conn)
+        # After explicit FKs, infer implicit ones from naming conventions
+        self._infer_implicit_foreign_keys()
     
     def _introspect_tables_and_columns(self, conn):
         """Load all tables and their columns from information_schema."""
@@ -273,6 +288,68 @@ class SchemaGraph:
             logger.warning(
                 f"Failed to introspect foreign keys: {e}. Join path computation will be limited."
             )
+
+    def _infer_implicit_foreign_keys(self):
+        """
+        Infer FK relationships from column naming conventions.
+        
+        For healthcare FHIR data, columns like `patient_id`, `organization_id` etc.
+        follow predictable patterns even without explicit FK constraints.
+        """
+        inferred_count = 0
+        existing_pairs = {
+            (fk.source_table, fk.source_column, fk.target_table, fk.target_column)
+            for fk in self._foreign_keys
+        }
+        
+        for table_name, table_info in self._tables.items():
+            for col in table_info.columns:
+                # Skip if already has an explicit FK
+                if col.is_foreign_key:
+                    continue
+                    
+                # Check naming conventions
+                col_lower = col.name.lower()
+                if col_lower not in self.IMPLICIT_FK_CONVENTIONS:
+                    continue
+                    
+                target_table, target_column = self.IMPLICIT_FK_CONVENTIONS[col_lower]
+                
+                # Skip if target table doesn't exist
+                if target_table not in self._tables:
+                    continue
+                    
+                # Skip self-references
+                if table_name == target_table:
+                    continue
+                    
+                # Skip if this relationship already exists
+                pair = (table_name, col.name, target_table, target_column)
+                if pair in existing_pairs:
+                    continue
+                    
+                # Create implicit FK
+                fk = ForeignKey(
+                    source_table=table_name,
+                    source_column=col.name,
+                    target_table=target_table,
+                    target_column=target_column,
+                    constraint_name=f"implicit_{table_name}_{col.name}",
+                )
+                self._foreign_keys.append(fk)
+                existing_pairs.add(pair)
+                
+                # Build bidirectional adjacency
+                self._adjacency[fk.source_table][fk.target_table].append(fk)
+                self._adjacency[fk.target_table][fk.source_table].append(fk)
+                
+                # Mark FK column
+                col.is_foreign_key = True
+                table_info.foreign_keys.append(fk)
+                inferred_count += 1
+        
+        if inferred_count > 0:
+            logger.info(f"Inferred {inferred_count} implicit FK relationships from naming conventions")
     
     # =========================================================================
     # Query Methods

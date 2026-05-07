@@ -1141,10 +1141,10 @@ class AgentConfigService:
         version_id: int,
     ) -> Dict[str, Any]:
         """
-        Generate a system prompt based on saved config data.
+        Generate a system prompt using deterministic template composition.
         
-        Reads data_dictionary, selected_columns, and llm_config from DB,
-        then uses LLM to generate a production-ready system prompt.
+        Uses direct template concatenation for reproducible, complete prompts.
+        LLM is only used to generate example questions (where it adds value).
         
         Returns:
             Dict with draft_prompt, reasoning, and example_questions
@@ -1155,13 +1155,11 @@ class AgentConfigService:
         from app.core.llm import create_llm_provider
         from app.core.prompts import (
             get_chart_generator_prompt, 
-            get_database_generator_prompt, 
-            get_file_generator_prompt, 
-            get_reasoning_generator_prompt,
-            get_intent_router_prompt,
-            get_query_planner_prompt,
+            get_base_system_prompt,
+            get_fhir_rules_prompt,
             get_sql_generator_prompt,
-            get_reflection_critique_prompt
+            get_duckdb_sql_rules_prompt,
+            get_reasoning_generator_prompt,
         )
         
         config = await self.configs.get_by_id(version_id)
@@ -1184,38 +1182,109 @@ class AgentConfigService:
             if source:
                 data_source_type = source.source_type
         
-        # Build context for prompt generation
-        context_parts = []
+        # =========================================================================
+        # DETERMINISTIC TEMPLATE COMPOSITION
+        # =========================================================================
         
+        # Build schema context (only included ONCE)
+        schema_parts = []
         if selected_columns:
-            # Compress similar tables to reduce token usage for large schemas
             compressed_schema = self._compress_schema_for_prompt(selected_columns)
-            context_parts.append("SELECTED SCHEMA:")
-            context_parts.append(compressed_schema)
+            schema_parts.append(compressed_schema)
         
+        # Extract data dictionary content
+        data_dict_content = ""
         if data_dictionary:
-            context_parts.append("\nDATA DICTIONARY:")
-            # Extract content from wrapper if present (frontend stores as {"content": "..."})
             if isinstance(data_dictionary, dict) and "content" in data_dictionary:
                 dict_content = data_dictionary["content"]
-                # If content is a string, use it directly; otherwise JSON dump it
                 if isinstance(dict_content, str):
-                    context_parts.append(dict_content)
+                    data_dict_content = dict_content
                 else:
-                    context_parts.append(json.dumps(dict_content, indent=2))
+                    data_dict_content = json.dumps(dict_content, indent=2)
             else:
-                context_parts.append(json.dumps(data_dictionary, indent=2))
+                data_dict_content = json.dumps(data_dictionary, indent=2)
         
-        data_context = "\n".join(context_parts) if context_parts else "No schema information provided."
+        # Compose the system prompt from templates (deterministic, no LLM)
+        prompt_sections = []
         
-        # Escape curly braces
-        safe_context = data_context.replace("{", "{{").replace("}", "}}")
+        # Section 1: Core Identity
+        prompt_sections.append("""# CORE IDENTITY & PIPELINE
+
+You are a Senior Healthcare Data Analyst and SQL Architect operating against a live relational healthcare analytics database. You must reason in clinical context, use medical terminology precisely, and protect patient privacy by minimizing exposure of identifiable data unless explicitly requested and authorized by the user's analytical need.
+
+You must execute the planning pipeline in this exact order:
+1. Intent Parser
+2. Schema Mapper
+3. Query Planner
+4. SQL Generator
+5. Validator
+
+Operational principles:
+- Prefer deterministic, auditable, read-only analytical SQL.
+- Treat patient-level, encounter-level, and organization-level data as distinct analytical grains.
+- Use healthcare semantics correctly: patient_id is the primary longitudinal key; encounter_id is a clinical interaction key; organization_id is a care-delivery context key.
+- Never invent tables, columns, join keys, or clinical meanings not grounded in the schema context.
+- Never expose passwords, tokens, or other sensitive operational credentials.
+- For any user request, generate an executable analytical answer, not a narrative approximation.""")
         
-        # Get chart generation rules from external template
-        # Note: We don't escape braces here since chart_rules goes into the LLM prompt as literal text
-        chart_rules = get_chart_generator_prompt()
+        # Section 2: FHIR Rules (critical for healthcare data)
+        prompt_sections.append("# FHIR IDENTIFIER RULES - CRITICAL\n\n" + get_fhir_rules_prompt())
         
-        # Get LLM configuration from ai_models table using llm_model_id
+        # Section 3: Schema & Data Dictionary (injected ONCE here)
+        if schema_parts or data_dict_content:
+            schema_section = "# DATA DICTIONARY & SCHEMA\n\n"
+            if schema_parts:
+                schema_section += "## SELECTED SCHEMA\n" + "\n".join(schema_parts) + "\n\n"
+            if data_dict_content:
+                schema_section += "## DATA DICTIONARY\n" + data_dict_content
+            prompt_sections.append(schema_section)
+        
+        # Section 4: SQL Generation Rules
+        prompt_sections.append("# SQL GENERATION RULES\n\n" + get_sql_generator_prompt())
+        
+        # Section 5: DuckDB-specific rules (if applicable)
+        # Note: At runtime, sql_service will add these based on actual DB type
+        # We include a placeholder instruction here
+        prompt_sections.append("""# DATABASE DIALECT
+
+The SQL dialect will be determined at runtime. Follow standard PostgreSQL syntax by default.
+For DuckDB connections, additional dialect-specific rules will be injected at query time.""")
+        
+        # Section 6: Chart Visualization Rules
+        prompt_sections.append("# CHART VISUALIZATION RULES\n\n" + get_chart_generator_prompt())
+        
+        # Section 7: Data Quality & Validation
+        prompt_sections.append("""# DATA QUALITY & VALIDATION RULES
+
+## SQL Style Guidelines
+- Use lowercase for SQL keywords for consistency
+- Use explicit column names (never SELECT *)
+- Use consistent table aliasing (e.g., first letter or meaningful abbreviation)
+- Apply appropriate soft-delete filters based on table type
+
+## Aggregation Rules
+- Use COUNT(DISTINCT entity_id) for unique entity counts to prevent fan-out bugs
+- Ensure all non-aggregated SELECT columns appear in GROUP BY
+- Filter NULL values appropriately for aggregate functions
+
+## Validation Checklist
+Before returning SQL:
+1. Verify all tables and columns exist in the schema
+2. Check join conditions are correct and won't cause Cartesian products
+3. Ensure GROUP BY includes all non-aggregated columns
+4. Confirm soft-delete filters are applied where appropriate
+5. Validate the query answers the user's original intent""")
+        
+        # Combine all sections
+        prompt_content = "\n\n---\n\n".join(prompt_sections)
+        
+        logger.info(f"Generated deterministic prompt with {len(prompt_sections)} sections, {len(prompt_content)} chars")
+        
+        # =========================================================================
+        # LLM CALL: Only for generating example questions (value-add task)
+        # =========================================================================
+        
+        # Get LLM configuration
         from ..ai_models.models import AIModel
         from app.core.encryption import decrypt_value
         from app.core.config import get_settings
@@ -1232,11 +1301,10 @@ class AgentConfigService:
         
         # Get model name, provider, and API key
         if ai_model:
-            model_id = ai_model.model_id  # e.g., "openai/gpt-4o"
-            provider_name = ai_model.provider_name.lower()  # e.g., "openai"
+            model_id = ai_model.model_id
+            provider_name = ai_model.provider_name.lower()
             api_base_url = ai_model.api_base_url
             
-            # Get API key - try env var first, then encrypted key
             api_key = None
             if ai_model.api_key_env_var:
                 api_key = os.environ.get(ai_model.api_key_env_var)
@@ -1245,194 +1313,107 @@ class AgentConfigService:
             if not api_key:
                 api_key = settings.openai_api_key
         else:
-            # Fallback to config or default
             model_id = llm_config.get("model", "openai/gpt-4o-mini")
             provider_name = "openai"
             api_key = settings.openai_api_key
             api_base_url = None
         
-        # Get temperature from llm_config
         temperature = llm_config.get("temperature", 0.0)
         
-        # Validate API key is available
-        if not api_key:
-            raise AppException(
-                message="No API key configured. Please either set OPENAI_API_KEY environment variable or configure an LLM model with API key in AI Registry.",
-                status_code=400,
-                error_code=ErrorCode.BAD_REQUEST
-            )
-        
-        # Extract model name from model_id format "provider/model"
-        if "/" in model_id:
-            model_name = model_id.split("/", 1)[1]
-        else:
-            model_name = model_id
-        
-        # Create LLM provider using core/llm abstraction
-        provider_config = {
-            "model": model_name,
-            "temperature": temperature,
-            "api_key": api_key,
-        }
-        if api_base_url:
-            provider_config["base_url"] = api_base_url
-        
-        provider = create_llm_provider(provider_name, provider_config)
-        llm = provider.get_langchain_llm()
-        
-        # Determine which template to use based on data source type
-        if data_source_type == "file":
-            generator_template = get_file_generator_prompt()
-        else:
-            generator_template = get_database_generator_prompt()
-        
-        # Build the data context for the template
-        data_dict_text = safe_context
-        
-        # Build prompt using the template
-        system_role = "You are a Data Architect and AI System Prompt Engineer specializing in creating precise, production-ready system prompts."
-        
-        # Inject data dictionary into the template
-        template_with_data = generator_template.replace("{data_dictionary}", data_dict_text)
-        
-        instruction = f"""{template_with_data}
-
-CHART VISUALIZATION RULES (MUST BE APPENDED TO THE GENERATED PROMPT):
-{chart_rules}
-
-**CRITICAL**: The generated system prompt MUST include the CHART VISUALIZATION section with the chart generation rules above. This is a KEY FEATURE.
-
----
-
-## MANDATORY OUTPUT FORMAT
-
-Your response MUST contain TWO parts separated by the exact string '---REASONING---':
-
-### PART 1: System Prompt
-The complete system prompt text (everything before the separator).
-
-### PART 2: JSON Metadata (REQUIRED)
-After the '---REASONING---' separator, you MUST include a valid JSON object with:
-
-```json
-{{
-  "selection_reasoning": {{
-    "column_name_1": "Why this column is important for queries",
-    "column_name_2": "Why this column is important for queries"
-  }},
-  "example_questions": [
-    "What is the average BMI across all patients?",
-    "How many patients have high CVD risk level?",
-    "Show the distribution of patients by county",
-    "What is the trend of blood pressure readings over time?",
-    "Which facilities have the most assessments?"
-  ]
-}}
-```
-
-**IMPORTANT**: 
-- The example_questions MUST be 5 specific, realistic questions that users could ask about THIS dataset
-- Questions should cover different types: aggregations, distributions, trends, comparisons
-- The selection_reasoning should explain 3-5 key columns and why they matter for analysis
-
-DO NOT skip the ---REASONING--- section. It is mandatory."""
-
-        # First LLM call: Generate the system prompt
-        pipeline_context = f"""
----
-PIPELINE DEFAULT PROMPTS CONTEXT:
-Below are instructions for the individual pipeline components. 
-CRITICAL META-INSTRUCTION: You are GENERATING the final system prompt that will be used. 
-You must synthesize the rules from the components below into your generated prompt.
-HOWEVER, DO NOT WRITE OUT THE SCHEMA OR DATA DICTIONARY! The schema is provided as context so you understand what rules apply, but DO NOT include it in your output. It will be automatically injected by the backend.
-You MUST extract the literal and concrete rules from the component prompts below (e.g., specific rules about CASTING dates, LIMIT clauses, GREATEST() function usage) and write them out fully into your generated prompt. Write a fully populated, exhaustive instruction manual for the agent.
-
-[INTENT ROUTER]
-{get_intent_router_prompt()}
-
-[QUERY PLANNER]
-{get_query_planner_prompt()}
-
-[SQL GENERATOR]
-{get_sql_generator_prompt()}
-
-[REFLECTION & CRITIQUE]
-{get_reflection_critique_prompt()}
----
-"""
-
-        prompt_instruction = f"""{template_with_data}
-
-{pipeline_context}
-
-CHART VISUALIZATION RULES (MUST BE APPENDED TO THE GENERATED PROMPT):
-{chart_rules}
-
-**CRITICAL**: The generated system prompt MUST include the CHART VISUALIZATION section with the chart generation rules above. This is a KEY FEATURE.
-
-Return ONLY the system prompt text. Do not include any other text or explanations."""
-
-        messages = [
-            SystemMessage(content=system_role),
-            HumanMessage(content=prompt_instruction)
-        ]
-        
-        # Invoke LLM for system prompt
-        response = llm.invoke(messages)
-        prompt_content = response.content.strip()
-        
-        # Prepend the data dictionary explicitly to avoid having the LLM waste tokens rewriting it
-        prompt_content = f"## DATA DICTIONARY & SCHEMA\n{data_dict_text}\n\n{prompt_content}"
-
-        # Clean up the prompt content - remove any unwanted prefixes
-        import re
-        # Remove "### PART 1: System Prompt" or similar headers
-        pattern1 = r'^###?\s*PART\s*1[:\s]*System\s*Prompt\s*\n*'
-        prompt_content = re.sub(pattern1, '', prompt_content, flags=re.IGNORECASE).strip()
-        # Remove "### System Prompt" headers  
-        pattern2 = r'^###?\s*System\s*Prompt\s*\n*'
-        prompt_content = re.sub(pattern2, '', prompt_content, flags=re.IGNORECASE).strip()
-        # Ensure it starts with a proper header
-        if not prompt_content.startswith("#"):
-            prompt_content = "# SYSTEM PROMPT\n\n" + prompt_content
-        
-        # Second LLM call: Generate reasoning and example questions using template
-        reasoning_template = get_reasoning_generator_prompt()
-        reasoning_instruction = reasoning_template.replace("{data_dictionary}", data_dict_text)
-
-        reasoning_messages = [
-            SystemMessage(content="You are a data analyst. Return only valid JSON, no markdown formatting or extra text."),
-            HumanMessage(content=reasoning_instruction)
-        ]
-        
-        # Invoke LLM for reasoning/questions
+        # Generate example questions using LLM (optional - graceful degradation)
         reasoning = {}
         questions = []
-        try:
-            logger.info("Invoking LLM for reasoning and example questions...")
-            reasoning_response = llm.invoke(reasoning_messages)
-            reasoning_text = reasoning_response.content.strip()
-            logger.debug(f"Raw reasoning response: {reasoning_text[:500]}...")
-            
-            # Clean up JSON - remove markdown code blocks if present
-            reasoning_text = reasoning_text.replace("```json", "").replace("```", "").strip()
-            
-            # Try to find JSON object in the response
-            import re
-            json_match = re.search(r'\{[\s\S]*\}', reasoning_text)
-            if json_match:
-                reasoning_text = json_match.group()
-            
-            parsed = json.loads(reasoning_text)
-            reasoning = parsed.get("selection_reasoning", {})
-            questions = parsed.get("example_questions", [])
-            logger.info(f"Successfully parsed reasoning with {len(reasoning)} items and {len(questions)} questions")
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse reasoning JSON: {e}. Response was: {reasoning_text[:200] if 'reasoning_text' in dir() else 'N/A'}")
-        except Exception as e:
-            logger.error(f"Error during reasoning generation: {type(e).__name__}: {e}")
         
-        # Run schema validation to catch potential issues
+        if api_key:
+            try:
+                if "/" in model_id:
+                    model_name = model_id.split("/", 1)[1]
+                else:
+                    model_name = model_id
+                
+                provider_config = {
+                    "model": model_name,
+                    "temperature": temperature,
+                    "api_key": api_key,
+                }
+                if api_base_url:
+                    provider_config["base_url"] = api_base_url
+                
+                provider = create_llm_provider(provider_name, provider_config)
+                llm = provider.get_langchain_llm()
+                
+                # Build concise context for question generation (not the full schema)
+                table_names = list(selected_columns.keys()) if selected_columns else []
+                table_summary = ", ".join(table_names[:20])  # First 20 tables
+                if len(table_names) > 20:
+                    table_summary += f", ... and {len(table_names) - 20} more"
+                
+                reasoning_instruction = f"""Based on this healthcare analytics database schema, generate example questions.
+
+Available tables: {table_summary}
+
+Data dictionary summary:
+{data_dict_content[:2000] if data_dict_content else 'Healthcare patient and clinical data'}
+
+Return a JSON object with:
+{{
+  "selection_reasoning": {{
+    "key_column_1": "Why important",
+    "key_column_2": "Why important"
+  }},
+  "example_questions": [
+    "Question 1 about aggregations",
+    "Question 2 about distributions", 
+    "Question 3 about trends",
+    "Question 4 about comparisons",
+    "Question 5 about filtering/cohorts"
+  ]
+}}
+
+Return ONLY valid JSON, no markdown formatting."""
+
+                reasoning_messages = [
+                    SystemMessage(content="You are a healthcare data analyst. Return only valid JSON."),
+                    HumanMessage(content=reasoning_instruction)
+                ]
+                
+                logger.info("Invoking LLM for example questions generation...")
+                reasoning_response = llm.invoke(reasoning_messages)
+                reasoning_text = reasoning_response.content.strip()
+                
+                # Clean and parse JSON
+                reasoning_text = reasoning_text.replace("```json", "").replace("```", "").strip()
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', reasoning_text)
+                if json_match:
+                    reasoning_text = json_match.group()
+                
+                parsed = json.loads(reasoning_text)
+                reasoning = parsed.get("selection_reasoning", {})
+                questions = parsed.get("example_questions", [])
+                logger.info(f"Generated {len(questions)} example questions")
+                
+            except Exception as e:
+                logger.warning(f"Example question generation failed (non-fatal): {e}")
+                # Provide default questions as fallback
+                questions = [
+                    "How many patients are currently enrolled?",
+                    "What is the distribution of patients by CVD risk level?",
+                    "Show the trend of blood pressure readings over the past year",
+                    "Which facilities have the highest patient volume?",
+                    "What percentage of patients have controlled hypertension?"
+                ]
+        else:
+            logger.warning("No API key configured - using default example questions")
+            questions = [
+                "How many patients are currently enrolled?",
+                "What is the distribution of patients by CVD risk level?",
+                "Show the trend of blood pressure readings over the past year",
+                "Which facilities have the highest patient volume?",
+                "What percentage of patients have controlled hypertension?"
+            ]
+        
+        # Run schema validation
         validation_result = None
         try:
             validation_result = await self.validate_data_dictionary(version_id)

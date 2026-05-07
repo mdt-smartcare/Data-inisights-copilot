@@ -172,3 +172,8 @@ Rules:
 3. Return ONLY the corrected SQL, no explanations
 4. If the error cannot be fixed, return the original query with a comment explaining why
 """)
+
+
+def get_fhir_rules_prompt() -> str:
+    """Get the FHIR identifier rules prompt for healthcare schemas."""
+    return load_prompt("fhir_rules", fallback="Follow FHIR data model conventions for patient identifiers.")

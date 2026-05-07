@@ -513,11 +513,8 @@ class SQLService:
         """
         Extract SQL-relevant rules from agent's system prompt.
         
-        Looks for sections containing:
-        - FHIR identifier rules
-        - Column naming conventions
-        - Table usage rules
-        - SQL generation guidelines
+        Now designed for deterministic template-based prompts with clear section headers.
+        Extracts entire sections that are relevant to SQL generation.
         
         Args:
             system_prompt: The agent's full system prompt
@@ -530,34 +527,62 @@ class SQLService:
         
         relevant_sections = []
         
-        # Keywords that indicate SQL-relevant content
-        sql_keywords = [
-            "patient_id", "res_id", "fhir", "identifier",
-            "sql", "query", "table", "column",
-            "count", "distinct", "join", "where",
-            "do not use", "always use", "never use",
-            "critical", "important", "mandatory"
+        # Priority sections to extract (these headers match the deterministic template)
+        priority_headers = [
+            "# FHIR IDENTIFIER RULES",
+            "# SQL GENERATION RULES", 
+            "# DATA QUALITY & VALIDATION",
         ]
         
-        # Split into paragraphs/sections
-        sections = system_prompt.split("\n\n")
+        # Extract sections by header
+        for header in priority_headers:
+            if header in system_prompt:
+                # Find the section start
+                start_idx = system_prompt.find(header)
+                # Find the next major section (starts with "# " or "---")
+                remaining = system_prompt[start_idx + len(header):]
+                
+                # Look for next section delimiter
+                next_section = len(remaining)
+                for delimiter in ["\n# ", "\n---\n"]:
+                    pos = remaining.find(delimiter)
+                    if pos != -1 and pos < next_section:
+                        next_section = pos
+                
+                section_content = remaining[:next_section].strip()
+                
+                # Limit individual section length
+                if len(section_content) > 1500:
+                    section_content = section_content[:1500] + "..."
+                
+                if section_content:
+                    relevant_sections.append(f"{header}\n{section_content}")
         
-        for section in sections:
-            section_lower = section.lower()
-            # Check if section contains SQL-relevant keywords
-            relevance_score = sum(1 for kw in sql_keywords if kw in section_lower)
+        # Fallback: If no priority sections found, use keyword-based extraction
+        if not relevant_sections:
+            sql_keywords = [
+                "patient_id", "res_id", "fhir", "identifier",
+                "sql", "query", "table", "column",
+                "count", "distinct", "join", "where",
+                "do not use", "always use", "never use",
+                "critical", "important", "mandatory"
+            ]
             
-            if relevance_score >= 2:  # At least 2 keywords
-                # Limit section length
-                if len(section) <= 500:
-                    relevant_sections.append(section.strip())
-                else:
-                    # Take first 500 chars
-                    relevant_sections.append(section[:500].strip() + "...")
+            sections = system_prompt.split("\n\n")
+            
+            for section in sections:
+                section_lower = section.lower()
+                relevance_score = sum(1 for kw in sql_keywords if kw in section_lower)
+                
+                if relevance_score >= 2:
+                    if len(section) <= 500:
+                        relevant_sections.append(section.strip())
+                    else:
+                        relevant_sections.append(section[:500].strip() + "...")
         
-        # Limit total extracted rules
+        # Combine and limit total output
         combined = "\n\n".join(relevant_sections[:5])
-        return combined[:2000] if combined else ""
+        return combined[:4000] if combined else ""
     
     def _classify_error_type(self, error_message: str) -> str:
         """
