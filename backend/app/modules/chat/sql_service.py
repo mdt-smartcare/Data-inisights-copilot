@@ -10,9 +10,13 @@ Features:
 - Direct SQL execution
 - Result formatting for LLM consumption
 - Query relevance checking to filter irrelevant queries early
+- Thread-safe connection pooling with tenant isolation
+- Query complexity estimation and warnings
+- LLM rate limiting
+- Query audit trail
 """
-import asyncio
 import re
+import time
 from typing import Optional, Dict, Any, List, Tuple
 from uuid import UUID
 
@@ -35,6 +39,29 @@ from app.modules.chat.query.data_dictionary import (
     get_data_dictionary,
     DataDictionary,
 )
+from app.modules.chat.query.query_validator import QueryValidator, get_query_validator
+from app.modules.chat.query.feedback_loop import FeedbackLoop, get_feedback_loop
+from app.core.cache_manager import check_and_refresh_caches
+
+# New imports for enhanced functionality
+from app.core.thread_safe_cache import (
+    get_engine_cache,
+    get_result_cache,
+    get_rate_limiter,
+)
+from app.modules.chat.query.complexity_estimator import (
+    QueryComplexityEstimator,
+    get_complexity_estimator,
+    ComplexityLevel,
+)
+from app.modules.chat.query.audit_trail import (
+    QueryAuditTrail,
+    get_audit_trail,
+)
+from app.modules.chat.query.schema_linker import SchemaLinker
+from app.modules.chat.query.query_planner import QueryPlanner
+from app.modules.chat.query.token_budget import TokenBudgetManager, get_token_budget_manager
+from app.modules.chat.query.schema_graph import SchemaGraph
 
 logger = get_logger(__name__)
 
@@ -47,11 +74,10 @@ _relevance_stats = {
     "passed": 0,
 }
 
-# Cache for database engines (connection pooling)
+# DEPRECATED: These global caches are now replaced by ThreadSafeEngineCache
+# Kept for backward compatibility with any external code that might access them
+# Use get_engine_cache() instead for new code
 _ENGINE_CACHE: Dict[str, Engine] = {}
-
-# Global cache for discovered table names (keyed by normalized db_url)
-# This prevents re-querying the database for table discovery on every request
 _TABLE_NAMES_CACHE: Dict[str, List[str]] = {}
 
 # Query type classification keywords
@@ -177,6 +203,110 @@ class SQLService:
         except Exception as e:
             logger.warning(f"Failed to initialize ReflectionService: {e}")
             self._reflection_service = None
+        
+        # Initialize query validator for proactive schema validation
+        self._query_validator: Optional[QueryValidator] = None
+        
+        # Initialize feedback loop for tracking failures and corrections
+        self._feedback_loop: Optional[FeedbackLoop] = None
+        try:
+            self._feedback_loop = get_feedback_loop(agent_id=agent_id)
+            logger.info("FeedbackLoop initialized for query tracking", agent_id=agent_id)
+        except Exception as e:
+            logger.warning(f"Failed to initialize FeedbackLoop: {e}")
+            self._feedback_loop = None
+        
+        # Initialize query complexity estimator
+        self._complexity_estimator: Optional[QueryComplexityEstimator] = None
+        try:
+            self._complexity_estimator = get_complexity_estimator()
+            logger.info("QueryComplexityEstimator initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize complexity estimator: {e}")
+            self._complexity_estimator = None
+        
+        # Initialize query audit trail
+        self._audit_trail: Optional[QueryAuditTrail] = None
+        try:
+            self._audit_trail = get_audit_trail(agent_id=agent_id)
+            logger.info("QueryAuditTrail initialized", agent_id=agent_id)
+        except Exception as e:
+            logger.warning(f"Failed to initialize audit trail: {e}")
+            self._audit_trail = None
+        
+        # Get thread-safe caches
+        self._engine_cache = get_engine_cache()
+        self._result_cache = get_result_cache()
+        self._rate_limiter = get_rate_limiter()
+        
+        # Tenant ID for isolation (can be set later)
+        self._tenant_id: Optional[str] = None
+        
+        # Agent's custom system prompt (for SQL generation context)
+        self._agent_system_prompt: Optional[str] = None
+        
+        # Initialize schema graph for join path resolution (lazy loaded)
+        self._schema_graph: Optional[SchemaGraph] = None
+        
+        # Initialize schema linker for fuzzy table/column matching
+        self._schema_linker: Optional[SchemaLinker] = None
+        
+        # Initialize query planner for structured query decomposition
+        self._query_planner: Optional[QueryPlanner] = None
+        
+        # Initialize token budget manager for context size management
+        self._token_budget_manager: Optional[TokenBudgetManager] = None
+        try:
+            self._token_budget_manager = get_token_budget_manager(max_tokens=8000)
+            logger.info("TokenBudgetManager initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize TokenBudgetManager: {e}")
+            self._token_budget_manager = None
+    
+    def set_tenant_id(self, tenant_id: str) -> None:
+        """
+        Set tenant ID for multi-tenant isolation.
+        
+        Args:
+            tenant_id: Tenant identifier
+        """
+        self._tenant_id = tenant_id
+        logger.debug("Tenant ID set for SQL service", tenant_id=tenant_id)
+    
+    def set_agent_system_prompt(self, system_prompt: str) -> None:
+        """
+        Set the agent's custom system prompt for SQL generation.
+        
+        This allows FHIR rules and domain-specific instructions from the agent
+        to be included in SQL generation prompts.
+        
+        Args:
+            system_prompt: The agent's system prompt containing domain rules
+        """
+        self._agent_system_prompt = system_prompt
+        logger.debug("Agent system prompt set for SQL generation", 
+                    prompt_length=len(system_prompt) if system_prompt else 0)
+    
+    def _initialize_query_validator(self) -> None:
+        """Initialize the query validator with the database engine."""
+        if self._query_validator is not None:
+            return
+            
+        try:
+            engine = self._get_engine()
+            fhir_rules = {}
+            if self._data_dictionary:
+                fhir_rules = self._data_dictionary._fhir_identifier_rules
+            
+            self._query_validator = get_query_validator(
+                engine=engine,
+                schema_name=self._schema or "public",
+                fhir_rules=fhir_rules
+            )
+            logger.info("QueryValidator initialized for proactive validation")
+        except Exception as e:
+            logger.warning(f"Failed to initialize QueryValidator: {e}")
+            self._query_validator = None
     
     def _classify_query_type(self, question: str) -> str:
         """
@@ -354,61 +484,151 @@ class SQLService:
         
         return "\n".join(formatted_parts)
     
+    def _extract_tables_from_schema_context(self, schema_context: str) -> List[str]:
+        """
+        Extract table names from schema context string.
+        
+        Used for logging query plan - which tables were selected for the query.
+        
+        Args:
+            schema_context: Schema context string
+            
+        Returns:
+            List of table names found in the schema context
+        """
+        tables = []
+        
+        # Pattern: "- table_name:" at start of line
+        for line in schema_context.split("\n"):
+            line = line.strip()
+            if line.startswith("- ") and ":" in line:
+                # Extract table name between "- " and ":"
+                table_part = line[2:line.index(":")]
+                if table_part and not table_part.startswith(" "):
+                    tables.append(table_part.strip())
+        
+        return tables
+    
+    def _extract_sql_relevant_rules(self, system_prompt: str) -> str:
+        """
+        Extract SQL-relevant rules from agent's system prompt.
+        
+        Looks for sections containing:
+        - FHIR identifier rules
+        - Column naming conventions
+        - Table usage rules
+        - SQL generation guidelines
+        
+        Args:
+            system_prompt: The agent's full system prompt
+            
+        Returns:
+            Extracted rules relevant to SQL generation
+        """
+        if not system_prompt:
+            return ""
+        
+        relevant_sections = []
+        
+        # Keywords that indicate SQL-relevant content
+        sql_keywords = [
+            "patient_id", "res_id", "fhir", "identifier",
+            "sql", "query", "table", "column",
+            "count", "distinct", "join", "where",
+            "do not use", "always use", "never use",
+            "critical", "important", "mandatory"
+        ]
+        
+        # Split into paragraphs/sections
+        sections = system_prompt.split("\n\n")
+        
+        for section in sections:
+            section_lower = section.lower()
+            # Check if section contains SQL-relevant keywords
+            relevance_score = sum(1 for kw in sql_keywords if kw in section_lower)
+            
+            if relevance_score >= 2:  # At least 2 keywords
+                # Limit section length
+                if len(section) <= 500:
+                    relevant_sections.append(section.strip())
+                else:
+                    # Take first 500 chars
+                    relevant_sections.append(section[:500].strip() + "...")
+        
+        # Limit total extracted rules
+        combined = "\n\n".join(relevant_sections[:5])
+        return combined[:2000] if combined else ""
+    
+    def _classify_error_type(self, error_message: str) -> str:
+        """
+        Classify an error message into a category.
+        
+        Used for feedback loop tracking and analysis.
+        
+        Args:
+            error_message: The error message string
+            
+        Returns:
+            Error type category string
+        """
+        error_lower = error_message.lower()
+        
+        if "column" in error_lower and ("does not exist" in error_lower or "not found" in error_lower):
+            return "column_not_found"
+        elif "table" in error_lower and ("does not exist" in error_lower or "not found" in error_lower):
+            return "table_not_found"
+        elif "patient_id" in error_lower and "patient_gold" in error_lower:
+            return "fhir_patient_gold_violation"
+        elif "fhir" in error_lower:
+            return "fhir_violation"
+        elif "syntax" in error_lower:
+            return "syntax_error"
+        elif "timeout" in error_lower:
+            return "timeout"
+        elif "permission" in error_lower or "denied" in error_lower:
+            return "permission_denied"
+        elif "ambiguous" in error_lower:
+            return "ambiguous_column"
+        else:
+            return "other"
+    
     def _is_duckdb(self) -> bool:
         """Check if the database is DuckDB."""
         return self._db_url.startswith("duckdb://")
     
     def _get_engine(self) -> Engine:
-        """Get or create a database engine with connection pooling."""
+        """
+        Get or create a database engine with thread-safe connection pooling.
+        
+        Uses ThreadSafeEngineCache for:
+        - Thread safety
+        - Tenant isolation
+        - Connection health checks
+        """
         if self._engine is not None:
             return self._engine
         
-        # Normalize the database URL (handle postgres:// -> postgresql://)
-        db_url = self._db_url
-        if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
-            logger.debug(f"Normalized database URL from postgres:// to postgresql://")
-        
-        # Check cache
-        if db_url in _ENGINE_CACHE:
-            self._engine = _ENGINE_CACHE[db_url]
-            return self._engine
-        
-        # Create new engine
+        # Use thread-safe cache with tenant isolation
         try:
-            # Handle DuckDB specially
-            if db_url.startswith("duckdb://"):
-                # DuckDB uses different connection parameters
-                file_path = self._db_url.replace("duckdb://", "")
-                self._engine = create_engine(
-                    f"duckdb:///{file_path}",
-                    connect_args={"read_only": True},
-                )
-                
-                # Load ICU extension for DuckDB to handle non-UTC timestamps
+            self._engine = self._engine_cache.get_or_create(
+                db_url=self._db_url,
+                tenant_id=self._tenant_id
+            )
+            
+            # Load ICU extension for DuckDB
+            if self._is_duckdb():
                 try:
                     with self._engine.connect() as conn:
                         conn.execute(text("INSTALL icu; LOAD icu;"))
                         conn.commit()
-                    logger.info("Loaded ICU extension for DuckDB")
+                    logger.debug("Loaded ICU extension for DuckDB")
                 except Exception as e:
-                    logger.warning(f"Failed to load DuckDB ICU extension: {e}")
-            else:
-                # PostgreSQL, MySQL, etc.
-                self._engine = create_engine(
-                    db_url,
-                    pool_size=5,
-                    max_overflow=10,
-                    pool_timeout=30,
-                    pool_recycle=3600,
-                )
+                    logger.debug(f"ICU extension not loaded (may already be loaded): {e}")
             
-            _ENGINE_CACHE[db_url] = self._engine
-            logger.info("Database engine created", db_url=db_url[:50] + "...")
             return self._engine
             
         except Exception as e:
-            logger.error(f"Failed to create database engine: {e}")
+            logger.error(f"Failed to get database engine: {e}")
             raise
     
     def _get_cache_key(self) -> str:
@@ -715,6 +935,11 @@ class SQLService:
         Implements retry logic: if SQL execution fails, the error is appended to the
         prompt and the LLM is asked to fix the query (up to max_retries attempts).
         
+        Features:
+        - Rate limiting to prevent API quota exhaustion
+        - Query complexity estimation with warnings
+        - Query audit trail for debugging and compliance
+        
         Args:
             natural_language_query: User's question in natural language
             llm_helper: LLMHelper instance for getting LLM
@@ -727,6 +952,32 @@ class SQLService:
             IrrelevantQueryException: If query is not relevant to the database
         """
         from langchain_core.prompts import ChatPromptTemplate
+        
+        start_time = time.time()
+        generated_sql = ""
+        tables_used = []
+        
+        # Rate limiting check
+        try:
+            if not await self._rate_limiter.acquire_async(
+                tenant_id=self._tenant_id or "default",
+                tokens=1.0,
+                timeout=30.0
+            ):
+                logger.warning("Rate limit exceeded", tenant_id=self._tenant_id)
+                return "Rate limit exceeded. Please wait a moment before retrying."
+            else:
+                logger.info("Rate limit check passed", tenant_id=self._tenant_id or "default")
+        except Exception as e:
+            logger.debug(f"Rate limiting skipped: {e}")
+        
+        # Check and refresh caches if config files changed
+        try:
+            changed_files = check_and_refresh_caches()
+            if changed_files:
+                logger.info(f"Caches refreshed due to config changes: {len(changed_files)} files")
+        except Exception as e:
+            logger.debug(f"Cache refresh check skipped: {e}")
         
         # Check query relevance first (if enabled)
         if self._enable_relevance_check and self._relevance_checker and llm_helper:
@@ -790,6 +1041,128 @@ class SQLService:
             top_k=5,  # Retrieve top 5 most relevant tables
         )
         
+        # Log query plan: which tables were selected
+        selected_tables = self._extract_tables_from_schema_context(schema)
+        logger.info(
+            "Query plan: tables selected for schema context",
+            tables=selected_tables,
+            question=natural_language_query[:80]
+        )
+        
+        # =========================================================================
+        # ENHANCED PIPELINE: SchemaLinker → QueryPlanner → TokenBudget
+        # =========================================================================
+        
+        # 1. SCHEMA LINKER: Fuzzy match table/column names
+        schema_link_result = None
+        try:
+            # Lazy-initialize schema linker
+            if self._schema_linker is None and self._schema_graph is None:
+                # Build schema graph from database introspection
+                engine = self._get_engine()
+                self._schema_graph = SchemaGraph(engine=engine, schema_name="public")
+                logger.info("SchemaGraph initialized via introspection", table_count=len(self._schema_graph._tables))
+                
+                self._schema_linker = SchemaLinker(
+                    schema_graph=self._schema_graph,
+                    data_dictionary=self._data_dictionary
+                )
+                logger.info("SchemaLinker initialized for fuzzy matching")
+            
+            if self._schema_linker:
+                schema_link_result = self._schema_linker.link(
+                    question=natural_language_query,
+                    max_tables=6
+                )
+                if schema_link_result and schema_link_result.tables:
+                    logger.info(
+                        "SchemaLinker matched entities",
+                        matched_tables=schema_link_result.tables,
+                        columns_count=sum(len(v) for v in (schema_link_result.columns or {}).values()),
+                        default_filters_count=len(schema_link_result.default_filters or []),
+                        confidence=getattr(schema_link_result, 'confidence', 0.0)
+                    )
+        except Exception as e:
+            logger.warning(f"Schema linking failed (continuing without): {e}")
+            schema_link_result = None
+        
+        # 2. QUERY PLANNER: Generate structured query plan
+        query_plan = None
+        query_plan_context = ""
+        if llm_helper:
+            try:
+                # Lazy-initialize query planner
+                if self._query_planner is None:
+                    planner_llm = await llm_helper.get_llm(temperature=0.0)
+                    self._query_planner = QueryPlanner(
+                        llm=planner_llm,
+                        schema_graph=self._schema_graph
+                    )
+                    logger.info("QueryPlanner initialized for structured planning")
+                
+                query_plan = self._query_planner.plan(
+                    question=natural_language_query,
+                    schema_context=schema,
+                    data_dictionary_context=self._get_data_dictionary_context(),
+                    schema_link_result=schema_link_result
+                )
+                
+                if query_plan:
+                    query_plan_context = self._query_planner.plan_to_prompt_context(query_plan)
+                    logger.info(
+                        "QueryPlanner generated plan",
+                        entities=query_plan.entities,
+                        metrics_count=len(query_plan.metrics),
+                        filters_count=len(query_plan.filters),
+                        join_count=len(query_plan.join_strategy),
+                        reasoning=query_plan.reasoning[:100] if query_plan.reasoning else "N/A"
+                    )
+            except Exception as e:
+                logger.warning(f"Query planning failed (continuing without): {e}")
+                query_plan = None
+                query_plan_context = ""
+        
+        # 3. TOKEN BUDGET: Ensure schema fits within limits
+        if self._token_budget_manager:
+            try:
+                schema_tokens = self._token_budget_manager.estimate_tokens(schema)
+                max_schema_tokens = 6000  # Reserve for prompt, plan, few-shot
+                
+                if schema_tokens > max_schema_tokens:
+                    # Build priority map from query plan
+                    table_priorities = {}
+                    if query_plan and query_plan.entities:
+                        for i, table in enumerate(query_plan.entities):
+                            table_priorities[table] = 1.0 - (i * 0.1)  # First table highest priority
+                    
+                    # Truncate schema to fit budget
+                    tables_ddl = {}
+                    for table in selected_tables:
+                        # Extract DDL for each table from schema
+                        table_pattern = rf"^-\s*{re.escape(table)}:.*$"
+                        match = re.search(table_pattern, schema, re.MULTILINE)
+                        if match:
+                            tables_ddl[table] = match.group(0)
+                    
+                    truncated_schema, included_tables = self._token_budget_manager.fit_schema_to_budget(
+                        tables_ddl=tables_ddl,
+                        table_priorities=table_priorities,
+                        additional_context=query_plan_context
+                    )
+                    
+                    logger.info(
+                        "TokenBudget trimmed schema context",
+                        original_tokens=schema_tokens,
+                        max_tokens=max_schema_tokens,
+                        included_tables=len(included_tables),
+                        excluded_tables=len(selected_tables) - len(included_tables)
+                    )
+                    schema = truncated_schema
+                else:
+                    logger.debug(f"Schema within token budget: {schema_tokens} tokens")
+            except Exception as e:
+                logger.warning(f"Token budget management failed (continuing with full schema): {e}")
+        
         # Get few-shot examples
         few_shot_examples = []
         few_shot_section = ""
@@ -799,8 +1172,28 @@ class SQLService:
                 top_k=3,
                 min_score=0.5
             )
+            
+            # Validate few-shot examples against current schema
+            if self._query_validator and few_shot_examples:
+                valid_examples, invalid_examples = self._query_validator.validate_few_shot_examples(
+                    few_shot_examples
+                )
+                if invalid_examples:
+                    logger.warning(
+                        f"Filtered {len(invalid_examples)} stale few-shot examples",
+                        invalid_count=len(invalid_examples)
+                    )
+                few_shot_examples = valid_examples
+            
             few_shot_section = self._format_few_shot_examples(few_shot_examples)
             logger.info(f"Using {len(few_shot_examples)} few-shot examples for SQL generation")
+        
+        # Get negative examples from feedback loop (common mistakes to avoid)
+        negative_examples_section = ""
+        if self._feedback_loop:
+            negative_examples_section = self._feedback_loop.format_negative_examples_for_prompt(
+                max_examples=2
+            )
         
         # Build the enhanced prompt with DuckDB rules, data dictionary, and few-shot examples
         base_prompt = get_sql_generator_prompt()
@@ -812,10 +1205,25 @@ class SQLService:
         data_dict_context = self._get_data_dictionary_context()
         
         system_prompt_parts = [base_prompt]
+        
+        # Include agent's custom system prompt (FHIR rules, domain-specific instructions)
+        if self._agent_system_prompt:
+            # Extract relevant sections from agent's system prompt
+            agent_rules = self._extract_sql_relevant_rules(self._agent_system_prompt)
+            if agent_rules:
+                system_prompt_parts.append(f"AGENT-SPECIFIC RULES:\n{agent_rules}")
+                logger.debug("Included agent-specific rules in SQL generation prompt")
+        
         if db_rules:
             system_prompt_parts.append(db_rules)
         if data_dict_context:
             system_prompt_parts.append(data_dict_context)
+        # Include structured query plan from QueryPlanner
+        if query_plan_context:
+            system_prompt_parts.append(query_plan_context)
+            logger.info("Included QueryPlanner structured plan in prompt")
+        if negative_examples_section:
+            system_prompt_parts.append(negative_examples_section)
         if few_shot_section:
             system_prompt_parts.append(few_shot_section)
         system_prompt_parts.append("Database Schema:\n{schema}")
@@ -828,6 +1236,9 @@ class SQLService:
             return "Failed to initialize LLM: no llm_helper provided"
         
         llm = await llm_helper.get_llm(temperature=0.0)
+        
+        # Initialize query validator if not done yet
+        self._initialize_query_validator()
         
         # =========================================================================
         # RETRY LOOP: Generate SQL, execute, retry on error with error feedback
@@ -879,8 +1290,94 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 sql = re.sub(r'\s*```$', '', sql)
                 sql = sql.strip()
                 last_sql = sql
+                generated_sql = sql  # Track for audit
                 
                 logger.info("LLM generated SQL", attempt=attempt + 1, generated_sql=sql, question=natural_language_query[:100])
+                
+                # =========================================================
+                # QUERY COMPLEXITY ESTIMATION
+                # =========================================================
+                timeout_seconds = 30  # default
+                if self._complexity_estimator:
+                    try:
+                        complexity = self._complexity_estimator.analyze(sql)
+                        tables_used = complexity.query_plan.get("tables_selected", []) if hasattr(complexity, "query_plan") else []
+                        
+                        # Adjust timeout based on complexity
+                        timeout_seconds = complexity.timeout_recommendation
+                        
+                        # Log complexity analysis for all queries
+                        logger.info(
+                            "Query complexity analyzed",
+                            complexity_level=complexity.complexity_level.value,
+                            join_count=complexity.join_count,
+                            timeout_recommendation=timeout_seconds,
+                            is_complex=complexity.is_complex
+                        )
+                        
+                        if complexity.is_complex:
+                            logger.warning(
+                                f"Complex query detected: {complexity.complexity_level.value}",
+                                estimated_rows=complexity.estimated_rows,
+                                join_count=complexity.join_count,
+                                suggestions=complexity.suggestions
+                            )
+                            # Include warning in response if query is very complex
+                            if complexity.complexity_level == ComplexityLevel.VERY_HIGH:
+                                logger.warning(f"Very high complexity query: {complexity.warning_message}")
+                    except Exception as e:
+                        logger.debug(f"Complexity estimation skipped: {e}")
+                
+                # =========================================================
+                # PROACTIVE SCHEMA VALIDATION: Check tables/columns exist
+                # =========================================================
+                if self._query_validator:
+                    validation = self._query_validator.validate_sql(sql, schema)
+                    
+                    # Log query plan for debugging
+                    if validation.query_plan:
+                        logger.info(
+                            "Query plan explanation",
+                            tables=validation.query_plan.get("tables_selected", []),
+                            join_pattern=validation.query_plan.get("join_pattern"),
+                            aggregations=validation.query_plan.get("aggregations", []),
+                            filters=validation.query_plan.get("filters", [])[:3]  # Limit for logging
+                        )
+                    
+                    if not validation.is_valid:
+                        logger.warning(
+                            f"Schema validation failed (attempt {attempt + 1}): {validation.error_message}",
+                            invalid_tables=validation.invalid_tables,
+                            invalid_columns=validation.invalid_columns,
+                            fhir_violations=validation.fhir_violations
+                        )
+                        
+                        # Build detailed error message for retry
+                        error_parts = []
+                        if validation.invalid_tables:
+                            error_parts.append(f"Non-existent tables: {', '.join(validation.invalid_tables)}")
+                        if validation.invalid_columns:
+                            cols = [f"{t}.{c}" for t, c in validation.invalid_columns]
+                            error_parts.append(f"Non-existent columns: {', '.join(cols)}")
+                        if validation.fhir_violations:
+                            error_parts.append(f"FHIR violations: {'; '.join(validation.fhir_violations)}")
+                        if validation.suggested_corrections:
+                            error_parts.append(f"Suggestions: {'; '.join(validation.suggested_corrections[:3])}")
+                        
+                        previous_error = "SCHEMA VALIDATION FAILED: " + " | ".join(error_parts)
+                        
+                        # Record failure in feedback loop
+                        if self._feedback_loop:
+                            self._feedback_loop.record_failure(
+                                question=natural_language_query,
+                                failed_sql=sql,
+                                error_message=previous_error,
+                                tables_attempted=validation.query_plan.get("tables_selected") if validation.query_plan else None
+                            )
+                        
+                        continue  # Skip to next retry
+                    else:
+                        logger.debug(f"Schema validation passed (attempt {attempt + 1})")
                 
                 # =========================================================
                 # REFLECTION GATE: Validate SQL before execution
@@ -919,6 +1416,30 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 
                 # Success! Format and return results
                 logger.info(f"Query succeeded on attempt {attempt + 1}")
+                
+                # Record correction in feedback loop if this was a retry
+                if attempt > 0 and self._feedback_loop and previous_error:
+                    self._feedback_loop.record_correction(
+                        question=natural_language_query,
+                        failed_sql=last_sql or "",
+                        corrected_sql=sql,
+                        correction_reason=f"Fixed after error: {previous_error[:100]}",
+                        error_type=self._classify_error_type(previous_error)
+                    )
+                
+                # Record success in audit trail
+                execution_time = time.time() - start_time
+                if self._audit_trail:
+                    self._audit_trail.record(
+                        question=natural_language_query,
+                        generated_sql=generated_sql,
+                        execution_time_ms=int(execution_time * 1000),
+                        status="success",
+                        row_count=count,
+                        tables_used=tables_used,
+                        tenant_id=self._tenant_id
+                    )
+                
                 return self._format_results(results, count)
                 
             except Exception as e:
@@ -929,8 +1450,29 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     f"SQL execution failed on attempt {attempt + 1}/{max_retries}: {error_str[:200]}"
                 )
                 
+                # Record failure in feedback loop
+                if self._feedback_loop and last_sql:
+                    self._feedback_loop.record_failure(
+                        question=natural_language_query,
+                        failed_sql=last_sql,
+                        error_message=error_str[:500]
+                    )
+                
                 # If this was the last attempt, return error
                 if attempt == max_retries - 1:
+                    # Record failure in audit trail
+                    execution_time = time.time() - start_time
+                    if self._audit_trail:
+                        self._audit_trail.record(
+                            question=natural_language_query,
+                            generated_sql=generated_sql,
+                            execution_time_ms=int(execution_time * 1000),
+                            status="error",
+                            error_message=error_str[:500],
+                            tables_used=tables_used,
+                            tenant_id=self._tenant_id
+                        )
+                    
                     logger.error(
                         f"All {max_retries} attempts failed. Last error: {error_str}"
                     )
