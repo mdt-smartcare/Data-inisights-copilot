@@ -100,6 +100,9 @@ class ChatService:
         session_id = request.session_id or uuid.uuid4().hex
         query = request.query.strip()
         
+        # Timing dictionary to track each phase
+        timings: Dict[str, float] = {}
+        
         logger.info(
             "Processing chat query",
             trace_id=trace_id,
@@ -160,10 +163,12 @@ class ChatService:
                 await check_cancelled(fastapi_request)
                 tracing_ctx.add_span("query_rewrite", input=query)
                 
+                phase_start = time.time()
                 llm_config = tracing_ctx.get_llm_config()
                 rewritten_query = await rewrite_query_with_context(
                     query, session_id, llm_helper=llm_helper, use_llm=True, llm_config=llm_config
                 )
+                timings["query_rewrite_ms"] = int((time.time() - phase_start) * 1000)
                 
                 tracing_ctx.update_span("query_rewrite", output=rewritten_query)
                 
@@ -171,6 +176,7 @@ class ChatService:
                 await check_cancelled(fastapi_request)
                 tracing_ctx.add_span("intent_classification", input=rewritten_query)
                 
+                phase_start = time.time()
                 schema_context = sql_service.cached_schema if sql_service else ""
                 llm_config = tracing_ctx.get_llm_config()
                 classification = await self._intent_classifier.classify(
@@ -179,6 +185,7 @@ class ChatService:
                     schema_context=schema_context,
                     llm_config=llm_config
                 )
+                timings["intent_classification_ms"] = int((time.time() - phase_start) * 1000)
                 
                 tracing_ctx.update_span(
                     "intent_classification",
@@ -213,15 +220,24 @@ class ChatService:
                 if final_intent == QueryIntent.SQL_ONLY.value:
                     # Intent A: SQL only (with chart generation)
                     await check_cancelled(fastapi_request)
+                    phase_start = time.time()
                     answer, reasoning_steps, chart_data = await self._handle_sql_intent(
                         rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
                     )
+                    timings["sql_intent_ms"] = int((time.time() - phase_start) * 1000)
+                    logger.info(
+                        "TIMING: SQL intent completed",
+                        trace_id=trace_id,
+                        duration_ms=timings["sql_intent_ms"],
+                    )
                     
                     # Generate comparison insights (optional, non-blocking)
-                    if sql_service and answer and not answer.startswith("No database"):
+                    # Skip if streaming is requested - comparisons will be sent via SSE
+                    if sql_service and answer and not answer.startswith("No database") and not request.stream:
                         try:
-                            from app.modules.chat.comparison_engine import generate_comparison_insights
+                            from app.modules.chat.query.comparison_engine import generate_comparison_insights
                             
+                            phase_start = time.time()
                             comp_llm = await llm_helper.get_llm(temperature=0.3)
                             schema_ctx = sql_service.cached_schema if sql_service else ""
                             
@@ -238,9 +254,17 @@ class ChatService:
                                 ),
                                 timeout=75.0  # Max 75s for entire comparison phase
                             )
+                            timings["comparison_insights_ms"] = int((time.time() - phase_start) * 1000)
+                            logger.info(
+                                "TIMING: Comparison insights completed",
+                                trace_id=trace_id,
+                                duration_ms=timings["comparison_insights_ms"],
+                            )
                         except asyncio.TimeoutError:
-                            logger.info("Comparison insights timed out (75s), skipping")
+                            timings["comparison_insights_ms"] = 75000
+                            logger.info("Comparison insights timed out (75s), skipping", trace_id=trace_id)
                         except Exception as e:
+                            timings["comparison_insights_ms"] = int((time.time() - phase_start) * 1000)
                             logger.debug(f"Comparison insights generation failed: {e}")
                     
                 elif final_intent == QueryIntent.VECTOR_ONLY.value:
@@ -310,6 +334,20 @@ class ChatService:
                 
                 # Build response
                 duration = time.time() - start_time
+                timings["total_ms"] = int(duration * 1000)
+                
+                # Log detailed timing breakdown
+                logger.info(
+                    "TIMING BREAKDOWN",
+                    trace_id=trace_id,
+                    intent=final_intent,
+                    query_rewrite_ms=timings.get("query_rewrite_ms", 0),
+                    intent_classification_ms=timings.get("intent_classification_ms", 0),
+                    sql_intent_ms=timings.get("sql_intent_ms", 0),
+                    comparison_insights_ms=timings.get("comparison_insights_ms", 0),
+                    total_ms=timings["total_ms"],
+                )
+                
                 logger.info(
                     "Chat query completed",
                     trace_id=trace_id,
@@ -381,6 +419,292 @@ class ChatService:
                 status_code=500,
                 details={"error": str(e)},
             )
+    
+    async def process_query_stream(
+        self,
+        request: ChatRequest,
+        user_id: uuid.UUID,
+        fastapi_request: Optional[Request] = None,
+    ):
+        """
+        Process a user query and yield SSE events.
+        
+        Returns answer immediately, then streams comparison insights in background.
+        
+        Yields:
+            SSE events with event type and JSON data payload
+        """
+        from app.modules.chat.schemas import StreamEventType
+        
+        trace_id = generate_trace_id()
+        start_time = time.time()
+        session_id = request.session_id or uuid.uuid4().hex
+        query = request.query.strip()
+        timings: Dict[str, float] = {}
+        
+        logger.info(
+            "Processing STREAMING chat query",
+            trace_id=trace_id,
+            agent_id=str(request.agent_id) if request.agent_id else None,
+            query_length=len(query),
+            session_id=session_id,
+        )
+        
+        tracing_ctx = TracingContext(
+            name="chat_request_stream",
+            trace_id=trace_id,
+            user_id=str(user_id),
+            session_id=session_id,
+            metadata={
+                "agent_id": str(request.agent_id) if request.agent_id else None,
+                "streaming": True,
+            },
+        )
+        
+        try:
+            with tracing_ctx:
+                await check_cancelled(fastapi_request)
+                
+                # === PROGRESS: Starting ===
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "init", "message": "Understanding your question...", "percent": 5},
+                    "trace_id": trace_id,
+                }
+                
+                # Step 1: Get agent config and SQL service
+                agent_config = None
+                sql_service = None
+                
+                if request.agent_id:
+                    agent_config = await self._get_agent_config(
+                        request.agent_id, 
+                        config_id=request.config_id
+                    )
+                    if not agent_config:
+                        yield {
+                            "event": StreamEventType.ERROR,
+                            "data": {"message": "Agent not found or has no active configuration"},
+                            "trace_id": trace_id,
+                        }
+                        return
+                    
+                    sql_service = await self._sql_factory(request.agent_id)
+                
+                from app.modules.chat.llm_helper import LLMHelper
+                llm_helper = LLMHelper(self.db, request.agent_id)
+                
+                # === PROGRESS: Query rewrite ===
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "rewrite", "message": "Adding conversation context...", "percent": 10},
+                    "trace_id": trace_id,
+                }
+                
+                # Step 2: Rewrite query
+                phase_start = time.time()
+                llm_config = tracing_ctx.get_llm_config()
+                rewritten_query = await rewrite_query_with_context(
+                    query, session_id, llm_helper=llm_helper, use_llm=True, llm_config=llm_config
+                )
+                timings["query_rewrite_ms"] = int((time.time() - phase_start) * 1000)
+                
+                # === PROGRESS: Intent classification ===
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "classify", "message": "Classifying query intent...", "percent": 15},
+                    "trace_id": trace_id,
+                }
+                
+                # Step 3: Classify intent
+                phase_start = time.time()
+                schema_context = sql_service.cached_schema if sql_service else ""
+                classification = await self._intent_classifier.classify(
+                    rewritten_query,
+                    llm_helper=llm_helper,
+                    schema_context=schema_context,
+                    llm_config=llm_config
+                )
+                timings["intent_classification_ms"] = int((time.time() - phase_start) * 1000)
+                
+                final_intent = classification.intent
+                if classification.confidence_score < 0.6 and final_intent in ["A", "B", "C"]:
+                    final_intent = QueryIntent.FALLBACK.value
+                
+                # === PROGRESS: Intent determined ===
+                intent_labels = {
+                    "A": "SQL query",
+                    "B": "Document search", 
+                    "C": "Hybrid analysis",
+                    "D": "Dashboard generation",
+                }
+                intent_label = intent_labels.get(final_intent, "analysis")
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "intent", "message": f"Using {intent_label} mode...", "percent": 20},
+                    "trace_id": trace_id,
+                }
+                
+                answer = ""
+                chart_data = None
+                reasoning_steps = []
+                sources = []
+                
+                # Step 4: Execute intent handler (SQL path for streaming)
+                if final_intent == QueryIntent.SQL_ONLY.value:
+                    # === PROGRESS: Schema retrieval ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "schema", "message": "Finding relevant tables...", "percent": 25},
+                        "trace_id": trace_id,
+                    }
+                    
+                    # Small delay to ensure progress event is sent
+                    await asyncio.sleep(0.01)
+                    
+                    # === PROGRESS: SQL generation ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "sql_gen", "message": "Generating SQL query...", "percent": 40},
+                        "trace_id": trace_id,
+                    }
+                    
+                    phase_start = time.time()
+                    answer, reasoning_steps, chart_data = await self._handle_sql_intent(
+                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
+                    )
+                    timings["sql_intent_ms"] = int((time.time() - phase_start) * 1000)
+                    
+                    # === PROGRESS: Synthesizing ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "synthesize", "message": "Preparing response...", "percent": 85},
+                        "trace_id": trace_id,
+                    }
+                else:
+                    # === PROGRESS: Vector search ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "vector", "message": "Searching documents...", "percent": 40},
+                        "trace_id": trace_id,
+                    }
+                    
+                    # For non-SQL intents, fall back to standard processing
+                    answer, sources, reasoning_steps, _ = await self._handle_vector_intent(
+                        rewritten_query, agent_config, tracing_ctx, fastapi_request
+                    )
+                
+                # === STREAM: Send answer immediately ===
+                yield {
+                    "event": StreamEventType.ANSWER,
+                    "data": {
+                        "answer": answer,
+                        "intent": final_intent,
+                        "session_id": session_id,
+                    },
+                    "trace_id": trace_id,
+                }
+                
+                # === STREAM: Send chart data if available ===
+                if chart_data:
+                    yield {
+                        "event": StreamEventType.CHART,
+                        "data": chart_data.model_dump(),
+                        "trace_id": trace_id,
+                    }
+                
+                # === STREAM: Send reasoning steps ===
+                if reasoning_steps:
+                    yield {
+                        "event": StreamEventType.REASONING,
+                        "data": {"steps": [s.model_dump() for s in reasoning_steps]},
+                        "trace_id": trace_id,
+                    }
+                
+                # === STREAM: Generate suggestions in parallel ===
+                conversation_history = self._memory.get_context(session_id, max_messages=5)
+                try:
+                    suggested_questions = await asyncio.wait_for(
+                        generate_followups_background(
+                            query, answer, llm_helper=llm_helper,
+                            conversation_history=conversation_history,
+                            timeout=2.0, llm_config=llm_config,
+                        ),
+                        timeout=3.0
+                    )
+                    if suggested_questions:
+                        yield {
+                            "event": StreamEventType.SUGGESTIONS,
+                            "data": {"questions": suggested_questions},
+                            "trace_id": trace_id,
+                        }
+                except Exception:
+                    pass  # Suggestions are optional
+                
+                # Save to memory
+                self._memory.add_exchange(session_id, query, answer)
+                
+                # === STREAM: Generate comparison insights in background ===
+                if final_intent == QueryIntent.SQL_ONLY.value and sql_service and answer and not answer.startswith("No database"):
+                    # === PROGRESS: Cross-validation ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "compare", "message": "Running cross-validation queries...", "percent": 92},
+                        "trace_id": trace_id,
+                    }
+                    
+                    try:
+                        from app.modules.chat.query.comparison_engine import generate_comparison_insights
+                        
+                        phase_start = time.time()
+                        comp_llm = await llm_helper.get_llm(temperature=0.3)
+                        schema_ctx = sql_service.cached_schema if sql_service else ""
+                        
+                        comparison_insights = await asyncio.wait_for(
+                            generate_comparison_insights(
+                                original_question=rewritten_query,
+                                original_sql=reasoning_steps[0].input if reasoning_steps else rewritten_query,
+                                original_results=answer[:2000],
+                                schema_context=schema_ctx,
+                                sql_service=sql_service,
+                                llm=comp_llm,
+                                dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                            ),
+                            timeout=75.0
+                        )
+                        timings["comparison_insights_ms"] = int((time.time() - phase_start) * 1000)
+                        
+                        if comparison_insights:
+                            yield {
+                                "event": StreamEventType.COMPARISON,
+                                "data": {"insights": comparison_insights},
+                                "trace_id": trace_id,
+                            }
+                            
+                    except asyncio.TimeoutError:
+                        logger.info("STREAM: Comparison insights timed out", trace_id=trace_id)
+                    except Exception as e:
+                        logger.debug(f"STREAM: Comparison generation failed: {e}")
+                
+                # === STREAM: Complete signal ===
+                timings["total_ms"] = int((time.time() - start_time) * 1000)
+                yield {
+                    "event": StreamEventType.COMPLETE,
+                    "data": {"timings": timings},
+                    "trace_id": trace_id,
+                }
+                
+                logger.info(
+                    "STREAMING chat query completed",
+                    trace_id=trace_id,
+                    total_ms=timings["total_ms"],
+                )
+                
+        except RequestCancelled:
+            yield {"event": StreamEventType.ERROR, "data": {"message": "Request cancelled"}, "trace_id": trace_id}
+        except Exception as e:
+            logger.error(f"Stream query failed: {e}", exc_info=True)
+            yield {"event": StreamEventType.ERROR, "data": {"message": str(e)}, "trace_id": trace_id}
     
     async def _handle_sql_intent(
         self,
