@@ -62,6 +62,21 @@ interface ChildObservation {
     level: string;
 }
 
+interface RelatedTrace {
+    id: string;
+    name: string;
+    trace_type: string;  // "main" or "child"
+    model: string;
+    timestamp: string;
+    latency: number;
+    input_preview: string;
+    output_preview: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost: number;
+    status: string;
+}
+
 interface RecentTrace {
     id: string;
     trace_id: string;
@@ -79,8 +94,11 @@ interface RecentTrace {
     session_id?: string;
     // Hierarchical children for detailed breakdown
     children?: ChildObservation[];
+    // Related traces in the same session
+    related_traces?: RelatedTrace[];
     total_input_tokens?: number;
     total_output_tokens?: number;
+    aggregated_cost?: number;
 }
 
 const ObservabilityPanel: React.FC = () => {
@@ -433,7 +451,10 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
     const [expanded, setExpanded] = useState(false);
     
     const hasChildren = trace.children && trace.children.length > 0;
+    const hasRelatedTraces = trace.related_traces && trace.related_traces.length > 0;
     const totalTokens = (trace.total_input_tokens || trace.input_tokens || 0) + (trace.total_output_tokens || trace.output_tokens || 0);
+    const displayCost = trace.aggregated_cost || trace.total_cost || 0;
+    const stepsCount = (trace.children?.length || 0) + (trace.related_traces?.length || 0);
     
     return (
         <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -455,14 +476,14 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                         {formatDateTime(trace.timestamp)}
                     </span>
                     <span className="text-xs text-green-600 font-medium">
-                        ${(trace.total_cost || 0).toFixed(4)}
+                        ${displayCost.toFixed(4)}
                     </span>
                     <span className="text-xs text-gray-500">
                         {(trace.latency || 0).toFixed(2)}s
                     </span>
-                    {hasChildren && (
+                    {stepsCount > 0 && (
                         <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
-                            {trace.children!.length} steps
+                            {stepsCount} {hasRelatedTraces ? 'ops' : 'steps'}
                         </span>
                     )}
                     <svg 
@@ -519,19 +540,38 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                                     <ChildObservationCard key={child.id || idx} child={child} index={idx + 1} />
                                 ))}
                             </div>
-                            
-                            {/* Aggregated Totals */}
-                            <div className="mt-4 pt-3 border-t border-gray-200">
-                                <div className="flex items-center justify-between bg-purple-50 rounded-lg px-4 py-3">
-                                    <span className="text-sm font-medium text-purple-800">Total</span>
-                                    <div className="flex items-center gap-6 text-sm">
-                                        <div className="text-gray-600">
-                                            <span className="font-medium">{totalTokens.toLocaleString()}</span>
-                                            <span className="text-gray-400 ml-1">tokens</span>
-                                        </div>
-                                        <div className="text-green-600 font-semibold">
-                                            ${(trace.total_cost || 0).toFixed(4)}
-                                        </div>
+                        </div>
+                    )}
+                    
+                    {/* Related Traces (LLM operations in same session) */}
+                    {hasRelatedTraces && (
+                        <div>
+                            <div className="flex items-center gap-2 mb-3">
+                                <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                </svg>
+                                <span className="text-xs font-medium text-gray-500 uppercase">Related Operations (Same Session)</span>
+                            </div>
+                            <div className="space-y-2">
+                                {trace.related_traces!.map((rt, idx) => (
+                                    <RelatedTraceCard key={rt.id || idx} trace={rt} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    
+                    {/* Aggregated Totals */}
+                    {(hasChildren || hasRelatedTraces) && (
+                        <div className="mt-4 pt-3 border-t border-gray-200">
+                            <div className="flex items-center justify-between bg-purple-50 rounded-lg px-4 py-3">
+                                <span className="text-sm font-medium text-purple-800">Session Total</span>
+                                <div className="flex items-center gap-6 text-sm">
+                                    <div className="text-gray-600">
+                                        <span className="font-medium">{totalTokens.toLocaleString()}</span>
+                                        <span className="text-gray-400 ml-1">tokens</span>
+                                    </div>
+                                    <div className="text-green-600 font-semibold">
+                                        ${displayCost.toFixed(4)}
                                     </div>
                                 </div>
                             </div>
@@ -671,6 +711,84 @@ const ChildObservationCard = ({ child, index }: { child: ChildObservation; index
                             </p>
                         </div>
                     )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Related Trace Card for session-grouped LLM operations
+const RelatedTraceCard = ({ trace }: { trace: RelatedTrace }) => {
+    const [showDetails, setShowDetails] = useState(false);
+    
+    const hasCost = trace.cost > 0;
+    const hasTokens = trace.input_tokens > 0 || trace.output_tokens > 0;
+    const totalTokens = trace.input_tokens + trace.output_tokens;
+    
+    return (
+        <div className="border border-indigo-200 bg-indigo-50 rounded-lg overflow-hidden">
+            <button
+                onClick={() => setShowDetails(!showDetails)}
+                className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-indigo-100 transition-colors"
+            >
+                <div className="flex items-center gap-2">
+                    <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-indigo-100 text-indigo-700">
+                        {trace.name === 'RunnableSequence' ? 'LLM Chain' : trace.name}
+                    </span>
+                    {trace.model !== 'unknown' && (
+                        <span className="text-xs text-gray-500 font-mono">
+                            ({trace.model})
+                        </span>
+                    )}
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                    {hasTokens && (
+                        <span className="text-gray-600">
+                            {totalTokens.toLocaleString()} tokens
+                        </span>
+                    )}
+                    {hasCost && (
+                        <span className="text-green-600 font-medium">
+                            ${trace.cost.toFixed(4)}
+                        </span>
+                    )}
+                    {trace.latency > 0 && (
+                        <span className="text-gray-400">
+                            {(trace.latency).toFixed(2)}s
+                        </span>
+                    )}
+                    <svg 
+                        className={`w-3 h-3 text-gray-400 transition-transform ${showDetails ? 'rotate-180' : ''}`} 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+            </button>
+            
+            {showDetails && (
+                <div className="px-3 py-2 border-t border-indigo-200 bg-white space-y-2">
+                    {trace.input_preview && (
+                        <div>
+                            <span className="text-xs text-gray-500">Input:</span>
+                            <p className="text-xs text-gray-700 mt-1 bg-gray-50 p-2 rounded max-h-20 overflow-y-auto">
+                                {trace.input_preview}
+                            </p>
+                        </div>
+                    )}
+                    {trace.output_preview && (
+                        <div>
+                            <span className="text-xs text-gray-500">Output:</span>
+                            <p className="text-xs text-gray-700 mt-1 bg-gray-50 p-2 rounded max-h-20 overflow-y-auto">
+                                {trace.output_preview}
+                            </p>
+                        </div>
+                    )}
+                    <div className="text-xs text-gray-400">
+                        Trace ID: {trace.id.slice(0, 8)}...
+                    </div>
                 </div>
             )}
         </div>

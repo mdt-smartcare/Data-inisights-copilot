@@ -114,7 +114,10 @@ class ChatService:
             trace_id=trace_id,
             user_id=str(user_id),
             session_id=session_id,
-            metadata={"agent_id": str(request.agent_id) if request.agent_id else None},
+            metadata={
+                "agent_id": str(request.agent_id) if request.agent_id else None,
+                "query_preview": query[:200] if query else None,
+            },
         )
         
         try:
@@ -216,7 +219,6 @@ class ChatService:
                     # Generate comparison insights (optional, non-blocking)
                     if sql_service and answer and not answer.startswith("No database"):
                         try:
-                            import asyncio
                             from app.modules.chat.comparison_engine import generate_comparison_insights
                             
                             comp_llm = await llm_helper.get_llm(temperature=0.3)
@@ -324,6 +326,12 @@ class ChatService:
                         search_method="sql" if final_intent == "A" else "hybrid",
                         docs_retrieved=len(sources),
                     )
+                
+                # Set the trace output before returning
+                tracing_ctx.set_trace_output(
+                    output={"answer": answer[:500] if answer else None},
+                    answer_preview=answer[:200] if answer else None,
+                )
                 
                 return ChatResponse(
                     answer=answer,

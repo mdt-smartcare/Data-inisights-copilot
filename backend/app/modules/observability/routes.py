@@ -123,6 +123,22 @@ class ChildObservation(BaseModel):
     level: str = "DEFAULT"  # DEBUG, DEFAULT, WARNING, ERROR
 
 
+class RelatedTrace(BaseModel):
+    """A related trace within the same session (e.g., SQL generation, follow-up)."""
+    id: str
+    name: str
+    trace_type: str = "child"  # "main" or "child"
+    model: str = "unknown"
+    timestamp: str
+    latency: float = 0.0
+    input_preview: str = ""
+    output_preview: str = ""
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cost: float = 0.0
+    status: str = "completed"
+
+
 class RecentTrace(BaseModel):
     """A recent trace from Langfuse with hierarchical children."""
     id: str
@@ -139,11 +155,14 @@ class RecentTrace(BaseModel):
     status: str = "unknown"
     user_id: Optional[str] = None
     session_id: Optional[str] = None
-    # Hierarchical children for detailed breakdown
+    # Hierarchical children for detailed breakdown (observations within this trace)
     children: List[ChildObservation] = []
-    # Aggregated totals
+    # Related traces in the same session (grouped LLM calls)
+    related_traces: List[RelatedTrace] = []
+    # Aggregated totals (including related traces)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    aggregated_cost: float = 0.0
 
 
 # ============================================
@@ -287,187 +306,350 @@ async def _fetch_langfuse_usage(client, from_time: datetime, to_time: datetime) 
 
 
 async def _fetch_langfuse_traces(client, limit: int) -> List[RecentTrace]:
-    """Fetch recent traces from Langfuse with hierarchical children for cost/token breakdown."""
+    """Fetch recent traces from Langfuse, showing each chat_request as a separate entry."""
     try:
-        traces = []
-        
         # SDK v3: Use client.api.trace.list()
-        if hasattr(client, 'api') and hasattr(client.api, 'trace'):
-            result = client.api.trace.list(limit=limit)
-            trace_data_list = result.data if hasattr(result, 'data') else []
-            
-            for trace in trace_data_list:
-                trace_data = RecentTrace(
-                    id=str(getattr(trace, 'id', '')),
-                    trace_id=str(getattr(trace, 'id', '')),
-                    name=getattr(trace, 'name', 'unknown'),
-                    timestamp=str(getattr(trace, 'timestamp', datetime.utcnow())),
-                    user_id=getattr(trace, 'user_id', None),
-                    session_id=getattr(trace, 'session_id', None),
-                    status="completed" if getattr(trace, 'level', None) != 'ERROR' else "error"
-                )
-                
-                # Try to get metadata
-                metadata = getattr(trace, 'metadata', {}) or {}
-                if metadata.get('query_preview'):
-                    trace_data.user_query = metadata['query_preview']
-                if metadata.get('user_id'):
-                    trace_data.user_id = metadata['user_id']
-                if metadata.get('session_id'):
-                    trace_data.session_id = metadata['session_id']
-                
-                # Try to get output - check various formats
-                output = getattr(trace, 'output', None)
-                if output and isinstance(output, dict):
-                    # LangChain format: content field
-                    content = output.get('content', '')
-                    if content:
-                        # Clean up if it's an LLM response with thinking tags
-                        if '<query>' in content:
-                            # Extract just the query part for SQL responses
-                            query_match = re.search(r'<query>(.*?)</query>', content, re.DOTALL)
-                            if query_match:
-                                trace_data.final_answer = query_match.group(1).strip()[:200]
-                            else:
-                                trace_data.final_answer = content[:200]
-                        else:
-                            trace_data.final_answer = content[:200]
-                    # Fallback to 'answer' key
-                    elif output.get('answer'):
-                        trace_data.final_answer = str(output.get('answer', ''))[:200]
-                
-                # Latency
-                latency = getattr(trace, 'latency', None)
-                if latency:
-                    trace_data.latency = latency
-                
-                # Fetch observations to get hierarchical breakdown
-                try:
-                    observations = client.api.observations.get_many(
-                        trace_id=trace.id,
-                        limit=50  # Fetch more to capture all children
-                    )
-                    obs_list = observations.data if hasattr(observations, 'data') else []
-                    
-                    total_cost = 0.0
-                    total_input = 0
-                    total_output = 0
-                    model_name = "unknown"
-                    children = []
-                    
-                    for obs in obs_list:
-                        obs_type = getattr(obs, 'type', 'SPAN')
-                        obs_name = getattr(obs, 'name', 'unknown')
-                        obs_model = getattr(obs, 'model', None) or 'unknown'
-                        obs_level = getattr(obs, 'level', 'DEFAULT') or 'DEFAULT'
-                        
-                        # Get cost
-                        cost = getattr(obs, 'calculated_total_cost', 0) or 0
-                        total_cost += cost
-                        
-                        # Get tokens
-                        obs_input_tokens = 0
-                        obs_output_tokens = 0
-                        usage = getattr(obs, 'usage', None)
-                        if usage:
-                            obs_input_tokens = getattr(usage, 'input', 0) or 0
-                            obs_output_tokens = getattr(usage, 'output', 0) or 0
-                            total_input += obs_input_tokens
-                            total_output += obs_output_tokens
-                        
-                        # Get latency
-                        obs_latency = getattr(obs, 'latency', 0) or 0
-                        
-                        # Extract input/output previews
-                        input_preview = ""
-                        output_preview = ""
-                        
-                        obs_input = getattr(obs, 'input', None)
-                        if obs_input:
-                            if isinstance(obs_input, str):
-                                input_preview = obs_input[:100]
-                            elif isinstance(obs_input, list) and len(obs_input) > 0:
-                                # LangChain messages format - get last user message
-                                last_msg = obs_input[-1] if obs_input else {}
-                                if isinstance(last_msg, dict):
-                                    input_preview = str(last_msg.get('content', ''))[:100]
-                            elif isinstance(obs_input, dict):
-                                # Dict input - try to extract question/query
-                                input_preview = str(obs_input.get('question', obs_input.get('query', '')))[:100]
-                        
-                        obs_output = getattr(obs, 'output', None)
-                        if obs_output:
-                            if isinstance(obs_output, str):
-                                output_preview = obs_output[:150]
-                            elif isinstance(obs_output, dict):
-                                content = obs_output.get('content', '')
-                                if content:
-                                    # Clean up SQL responses
-                                    if '<query>' in content:
-                                        query_match = re.search(r'<query>(.*?)</query>', content, re.DOTALL)
-                                        if query_match:
-                                            output_preview = query_match.group(1).strip()[:150]
-                                        else:
-                                            output_preview = content[:150]
-                                    else:
-                                        output_preview = content[:150]
-                                else:
-                                    output_preview = str(obs_output.get('answer', ''))[:150]
-                        
-                        # Set trace-level model from first GENERATION
-                        if obs_type == 'GENERATION' and model_name == 'unknown' and obs_model != 'unknown':
-                            model_name = obs_model
-                        
-                        # Get final answer from GENERATION if not set
-                        if not trace_data.final_answer and obs_type == 'GENERATION' and output_preview:
-                            trace_data.final_answer = output_preview[:200]
-                        
-                        # Get user query from input if not set
-                        if not trace_data.user_query and input_preview:
-                            trace_data.user_query = input_preview[:100]
-                        
-                        # Create child observation for the hierarchy
-                        # Only include meaningful observations (with tokens, cost, or named operations)
-                        if cost > 0 or obs_input_tokens > 0 or obs_type == 'GENERATION' or obs_name not in ['unknown', 'RunnableSequence']:
-                            child = ChildObservation(
-                                id=str(getattr(obs, 'id', '')),
-                                name=_get_friendly_name(obs_name, obs_type),
-                                type=obs_type,
-                                model=obs_model,
-                                input_preview=input_preview,
-                                output_preview=output_preview,
-                                input_tokens=obs_input_tokens,
-                                output_tokens=obs_output_tokens,
-                                cost=cost,
-                                latency_ms=obs_latency,
-                                level=obs_level,
-                            )
-                            children.append(child)
-                    
-                    # Sort children by type priority: GENERATION first, then CHAIN, then SPAN
-                    type_order = {'GENERATION': 0, 'CHAIN': 1, 'SPAN': 2, 'TOOL': 3}
-                    children.sort(key=lambda c: type_order.get(c.type, 4))
-                    
-                    trace_data.total_cost = total_cost
-                    trace_data.input_tokens = total_input
-                    trace_data.output_tokens = total_output
-                    trace_data.total_input_tokens = total_input
-                    trace_data.total_output_tokens = total_output
-                    trace_data.model = model_name
-                    trace_data.children = children
-                    
-                except Exception as e:
-                    logger.debug(f"Failed to get observations for trace {trace.id}: {e}")
-                
-                traces.append(trace_data)
-            
-            return traces
+        if not hasattr(client, 'api') or not hasattr(client.api, 'trace'):
+            return []
         
-        return []
+        # Fetch traces
+        result = client.api.trace.list(limit=limit * 3)
+        trace_data_list = result.data if hasattr(result, 'data') else []
+        
+        # Group LangChain traces by their metadata trace_id (links to parent chat_request)
+        # This connects follow-up generation traces back to their parent query
+        langchain_by_parent: Dict[str, List] = {}
+        
+        for trace in trace_data_list:
+            trace_name = getattr(trace, 'name', '')
+            metadata = getattr(trace, 'metadata', {}) or {}
+            
+            # LangChain traces (RunnableSequence, etc.) have a metadata.trace_id linking to parent
+            if trace_name != 'chat_request' and metadata.get('trace_id'):
+                parent_id = metadata['trace_id']
+                if parent_id not in langchain_by_parent:
+                    langchain_by_parent[parent_id] = []
+                langchain_by_parent[parent_id].append(trace)
+        
+        traces = []
+        seen_trace_ids = set()
+        
+        # Process chat_request traces first (primary traces)
+        for trace in trace_data_list:
+            trace_name = getattr(trace, 'name', '')
+            trace_id = str(getattr(trace, 'id', ''))
+            
+            # Skip non-chat_request traces (they'll be attached as related)
+            # Also skip if we somehow have duplicate trace IDs
+            if trace_name != 'chat_request' or trace_id in seen_trace_ids:
+                continue
+            
+            seen_trace_ids.add(trace_id)
+            
+            # Process the main chat_request trace
+            trace_data = await _process_single_trace(client, trace)
+            
+            # Find related LangChain traces that reference this trace
+            # Check by the trace_id stored in our metadata
+            our_trace_id = None
+            metadata = getattr(trace, 'metadata', {}) or {}
+            our_trace_id = metadata.get('trace_id')
+            
+            if our_trace_id and our_trace_id in langchain_by_parent:
+                related_traces = langchain_by_parent[our_trace_id]
+                
+                aggregated_cost = trace_data.total_cost
+                aggregated_input = trace_data.total_input_tokens
+                aggregated_output = trace_data.total_output_tokens
+                
+                for related in related_traces:
+                    related_data = await _process_related_trace(client, related)
+                    trace_data.related_traces.append(related_data)
+                    aggregated_cost += related_data.cost
+                    aggregated_input += related_data.input_tokens
+                    aggregated_output += related_data.output_tokens
+                
+                trace_data.aggregated_cost = aggregated_cost
+                trace_data.total_input_tokens = aggregated_input
+                trace_data.total_output_tokens = aggregated_output
+                
+                # Update model from related traces if unknown
+                if trace_data.model == 'unknown':
+                    for rt in trace_data.related_traces:
+                        if rt.model != 'unknown':
+                            trace_data.model = rt.model
+                            break
+            
+            traces.append(trace_data)
+            
+            if len(traces) >= limit:
+                break
+        
+        # If we still need more traces, include other named traces (test queries, etc.)
+        if len(traces) < limit:
+            for trace in trace_data_list:
+                trace_name = getattr(trace, 'name', '')
+                trace_id = str(getattr(trace, 'id', ''))
+                
+                # Skip chat_request (already processed) and RunnableSequence (child traces)
+                if trace_name == 'chat_request' or 'RunnableSequence' in trace_name:
+                    continue
+                if trace_id in seen_trace_ids:
+                    continue
+                
+                seen_trace_ids.add(trace_id)
+                trace_data = await _process_single_trace(client, trace)
+                traces.append(trace_data)
+                
+                if len(traces) >= limit:
+                    break
+        
+        return traces
         
     except Exception as e:
         logger.warning(f"Failed to fetch Langfuse traces: {e}")
         return []
+
+
+async def _process_single_trace(client, trace) -> RecentTrace:
+    """Process a single trace and fetch its observations."""
+    trace_data = RecentTrace(
+        id=str(getattr(trace, 'id', '')),
+        trace_id=str(getattr(trace, 'id', '')),
+        name=getattr(trace, 'name', 'unknown'),
+        timestamp=str(getattr(trace, 'timestamp', datetime.utcnow())),
+        user_id=getattr(trace, 'user_id', None),
+        session_id=getattr(trace, 'session_id', None),
+        status="completed" if getattr(trace, 'level', None) != 'ERROR' else "error"
+    )
+    
+    # Try to get metadata
+    metadata = getattr(trace, 'metadata', {}) or {}
+    if metadata.get('query_preview'):
+        trace_data.user_query = metadata['query_preview']
+    if metadata.get('user_id'):
+        trace_data.user_id = metadata['user_id']
+    if metadata.get('session_id'):
+        trace_data.session_id = metadata['session_id']
+    
+    # Also try to get query from trace input
+    trace_input = getattr(trace, 'input', None)
+    if trace_input and not trace_data.user_query:
+        if isinstance(trace_input, dict):
+            trace_data.user_query = str(trace_input.get('query_preview', trace_input.get('query', '')))[:200]
+        elif isinstance(trace_input, str):
+            trace_data.user_query = trace_input[:200]
+    
+    # Try to get output
+    output = getattr(trace, 'output', None)
+    if output and isinstance(output, dict):
+        # First check for 'answer' key (our format)
+        answer = output.get('answer')
+        if answer:
+            trace_data.final_answer = str(answer)[:200]
+        else:
+            # Fallback to 'content' (LangChain format)
+            content = output.get('content', '')
+            if content:
+                if '<query>' in content:
+                    query_match = re.search(r'<query>(.*?)</query>', content, re.DOTALL)
+                    if query_match:
+                        trace_data.final_answer = query_match.group(1).strip()[:200]
+                    else:
+                        trace_data.final_answer = content[:200]
+                else:
+                    trace_data.final_answer = content[:200]
+    
+    # Latency
+    latency = getattr(trace, 'latency', None)
+    if latency:
+        trace_data.latency = latency
+    
+    # Fetch observations for hierarchical breakdown
+    try:
+        observations = client.api.observations.get_many(
+            trace_id=trace.id,
+            limit=50
+        )
+        obs_list = observations.data if hasattr(observations, 'data') else []
+        
+        total_cost = 0.0
+        total_input = 0
+        total_output = 0
+        model_name = "unknown"
+        children = []
+        
+        for obs in obs_list:
+            obs_type = getattr(obs, 'type', 'SPAN')
+            obs_name = getattr(obs, 'name', 'unknown')
+            obs_model = getattr(obs, 'model', None) or 'unknown'
+            obs_level = getattr(obs, 'level', 'DEFAULT') or 'DEFAULT'
+            
+            cost = getattr(obs, 'calculated_total_cost', 0) or 0
+            total_cost += cost
+            
+            obs_input_tokens = 0
+            obs_output_tokens = 0
+            usage = getattr(obs, 'usage', None)
+            if usage:
+                obs_input_tokens = getattr(usage, 'input', 0) or 0
+                obs_output_tokens = getattr(usage, 'output', 0) or 0
+                total_input += obs_input_tokens
+                total_output += obs_output_tokens
+            
+            obs_latency = getattr(obs, 'latency', 0) or 0
+            
+            # Extract previews
+            input_preview = _extract_preview(getattr(obs, 'input', None), 100)
+            output_preview = _extract_output_preview(getattr(obs, 'output', None), 150)
+            
+            if obs_type == 'GENERATION' and model_name == 'unknown' and obs_model != 'unknown':
+                model_name = obs_model
+            
+            if not trace_data.final_answer and obs_type == 'GENERATION' and output_preview:
+                trace_data.final_answer = output_preview[:200]
+            
+            if not trace_data.user_query and input_preview:
+                trace_data.user_query = input_preview[:100]
+            
+            # Add meaningful observations
+            if cost > 0 or obs_input_tokens > 0 or obs_type == 'GENERATION' or obs_name not in ['unknown', 'RunnableSequence']:
+                child = ChildObservation(
+                    id=str(getattr(obs, 'id', '')),
+                    name=_get_friendly_name(obs_name, obs_type),
+                    type=obs_type,
+                    model=obs_model,
+                    input_preview=input_preview,
+                    output_preview=output_preview,
+                    input_tokens=obs_input_tokens,
+                    output_tokens=obs_output_tokens,
+                    cost=cost,
+                    latency_ms=obs_latency,
+                    level=obs_level,
+                )
+                children.append(child)
+        
+        # Sort children: GENERATION first
+        type_order = {'GENERATION': 0, 'CHAIN': 1, 'SPAN': 2, 'TOOL': 3}
+        children.sort(key=lambda c: type_order.get(c.type, 4))
+        
+        trace_data.total_cost = total_cost
+        trace_data.input_tokens = total_input
+        trace_data.output_tokens = total_output
+        trace_data.total_input_tokens = total_input
+        trace_data.total_output_tokens = total_output
+        trace_data.aggregated_cost = total_cost
+        trace_data.model = model_name
+        trace_data.children = children
+        
+    except Exception as e:
+        logger.debug(f"Failed to get observations for trace {trace.id}: {e}")
+    
+    return trace_data
+
+
+async def _process_related_trace(client, trace) -> RelatedTrace:
+    """Process a related trace for session grouping."""
+    trace_name = getattr(trace, 'name', 'unknown')
+    trace_type = "child"
+    if trace_name == 'chat_request':
+        trace_type = "main"
+    
+    related = RelatedTrace(
+        id=str(getattr(trace, 'id', '')),
+        name=trace_name,
+        trace_type=trace_type,
+        timestamp=str(getattr(trace, 'timestamp', datetime.utcnow())),
+        status="completed" if getattr(trace, 'level', None) != 'ERROR' else "error"
+    )
+    
+    latency = getattr(trace, 'latency', None)
+    if latency:
+        related.latency = latency
+    
+    # Fetch observations for cost/tokens
+    try:
+        observations = client.api.observations.get_many(
+            trace_id=trace.id,
+            limit=50
+        )
+        obs_list = observations.data if hasattr(observations, 'data') else []
+        
+        total_cost = 0.0
+        total_input = 0
+        total_output = 0
+        model_name = "unknown"
+        
+        for obs in obs_list:
+            cost = getattr(obs, 'calculated_total_cost', 0) or 0
+            total_cost += cost
+            
+            usage = getattr(obs, 'usage', None)
+            if usage:
+                total_input += getattr(usage, 'input', 0) or 0
+                total_output += getattr(usage, 'output', 0) or 0
+            
+            obs_type = getattr(obs, 'type', 'SPAN')
+            obs_model = getattr(obs, 'model', None) or 'unknown'
+            if obs_type == 'GENERATION' and model_name == 'unknown' and obs_model != 'unknown':
+                model_name = obs_model
+            
+            # Get previews from first GENERATION
+            if obs_type == 'GENERATION':
+                related.input_preview = _extract_preview(getattr(obs, 'input', None), 100)
+                related.output_preview = _extract_output_preview(getattr(obs, 'output', None), 150)
+        
+        related.cost = total_cost
+        related.input_tokens = total_input
+        related.output_tokens = total_output
+        related.model = model_name
+        
+    except Exception as e:
+        logger.debug(f"Failed to get observations for related trace {trace.id}: {e}")
+    
+    return related
+
+
+def _extract_preview(input_data, max_len: int) -> str:
+    """Extract a preview string from various input formats."""
+    if not input_data:
+        return ""
+    
+    if isinstance(input_data, str):
+        return input_data[:max_len]
+    elif isinstance(input_data, list) and len(input_data) > 0:
+        # LangChain messages format
+        last_msg = input_data[-1] if input_data else {}
+        if isinstance(last_msg, dict):
+            return str(last_msg.get('content', ''))[:max_len]
+    elif isinstance(input_data, dict):
+        return str(input_data.get('question', input_data.get('query', '')))[:max_len]
+    
+    return ""
+
+
+def _extract_output_preview(output_data, max_len: int) -> str:
+    """Extract a preview string from various output formats."""
+    if not output_data:
+        return ""
+    
+    if isinstance(output_data, str):
+        return output_data[:max_len]
+    elif isinstance(output_data, dict):
+        content = output_data.get('content', '')
+        if content:
+            if '<query>' in content:
+                query_match = re.search(r'<query>(.*?)</query>', content, re.DOTALL)
+                if query_match:
+                    return query_match.group(1).strip()[:max_len]
+                else:
+                    return content[:max_len]
+            else:
+                return content[:max_len]
+        else:
+            return str(output_data.get('answer', ''))[:max_len]
+    
+    return ""
 
 
 def _get_friendly_name(name: str, obs_type: str) -> str:

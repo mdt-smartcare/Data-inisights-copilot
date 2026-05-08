@@ -185,6 +185,30 @@ class TracingContext:
         
         return False  # Don't suppress exceptions
     
+    def set_trace_output(self, output: Any, answer_preview: str = None):
+        """
+        Set the final output on the main trace.
+        
+        Args:
+            output: Output data (dict or any serializable)
+            answer_preview: Short preview of the answer for display
+        """
+        if not self._trace:
+            return
+        
+        try:
+            # SDK v3: update the trace with output
+            if hasattr(self._trace, 'update'):
+                self._trace.update(output=output)
+            
+            # Also update the trace metadata with answer preview
+            if answer_preview and hasattr(self._trace, 'update_trace'):
+                self._trace.update_trace(
+                    output={"answer": answer_preview[:500] if answer_preview else None}
+                )
+        except Exception as e:
+            logger.warning(f"Failed to set trace output: {e}")
+    
     def add_span(
         self,
         name: str,
