@@ -29,6 +29,8 @@ class LLMHelper:
     """
     Simple LLM helper — fetches config from DB on first use, provides LLMs on demand.
     
+    Caches LLM instances by temperature to avoid repeated provider creation.
+    
     Usage:
         llm_helper = LLMHelper(db, agent_id)
         llm = await llm_helper.get_llm(temperature=0.0)
@@ -45,19 +47,27 @@ class LLMHelper:
         self._api_base_url: Optional[str] = None
         self._local_path: Optional[str] = None
         self._is_local: bool = False
+        # Cache LLM instances by temperature to avoid repeated creation
+        self._llm_cache: Dict[float, BaseChatModel] = {}
     
     async def get_llm(self, temperature: float = 0.0) -> BaseChatModel:
         """
-        Get LLM with specified temperature.
+        Get LLM with specified temperature (cached to avoid repeated creation).
         
         Args:
             temperature: 0.0 = deterministic, 0.7 = creative (default: 0.0)
         """
-        logger.info(f"LLMHelper initialized: {self._initialized}")
         if not self._initialized:
+            logger.info("LLMHelper initializing config...")
             await self._fetch_config()
             self._initialized = True
-        logger.info(f"LLMHelper initialized Completed: {self._initialized}")
+            logger.info("LLMHelper config initialized")
+        
+        # Check cache first - avoid creating duplicate providers
+        if temperature in self._llm_cache:
+            logger.debug(f"Using cached LLM for temp={temperature}")
+            return self._llm_cache[temperature]
+        
         from app.core.llm import create_llm_provider
         
         provider_config: Dict[str, Any] = {
@@ -75,7 +85,11 @@ class LLMHelper:
         logger.info(f"Creating LLM: {self._provider_name}/{self._model}, temp={temperature}")
         
         provider = create_llm_provider(self._provider_name, provider_config)
-        return provider.get_langchain_llm()
+        llm = provider.get_langchain_llm()
+        
+        # Cache for reuse
+        self._llm_cache[temperature] = llm
+        return llm
     
     async def _fetch_config(self):
         """Fetch LLM config from DB or fallback to env."""

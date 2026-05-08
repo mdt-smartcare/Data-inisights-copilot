@@ -216,15 +216,9 @@ class SQLService:
             logger.warning(f"Failed to initialize data dictionary: {e}")
             self._data_dictionary = None
         
-        # Initialize reflection service for SQL validation
+        # ReflectionService is lazily initialized with SchemaGraph during query processing
+        # (see _generate_sql_internal where SchemaGraph is built)
         self._reflection_service = None
-        try:
-            from app.modules.chat.query.reflection_service import ReflectionService
-            self._reflection_service = ReflectionService()
-            logger.info("ReflectionService initialized for SQL validation")
-        except Exception as e:
-            logger.warning(f"Failed to initialize ReflectionService: {e}")
-            self._reflection_service = None
         
         # Initialize query validator for proactive schema validation
         self._query_validator: Optional[QueryValidator] = None
@@ -1265,11 +1259,11 @@ class SQLService:
                 )
                 logger.info("SchemaLinker initialized for fuzzy matching")
                 
-                # Re-initialize ReflectionService with SchemaGraph for column/type validation
-                if self._reflection_service is not None:
+                # Initialize ReflectionService with SchemaGraph for column/type validation
+                if self._reflection_service is None:
                     from app.modules.chat.query.reflection_service import ReflectionService
                     self._reflection_service = ReflectionService(schema_graph=self._schema_graph)
-                    logger.info("ReflectionService upgraded with SchemaGraph for column validation")
+                    logger.info("ReflectionService initialized with SchemaGraph for column validation")
             
             if self._schema_linker:
                 schema_link_result = self._schema_linker.link(
