@@ -268,7 +268,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="FHIR RAG API",
-    version="1.0.0",
+    version="1.3.1",
     lifespan=lifespan
 )
 

@@ -715,8 +715,11 @@ class ChatService:
         llm_helper,
     ) -> Tuple[str, List[ReasoningStep], Optional[ChartData]]:
         """Handle Intent A: SQL-only queries. Returns answer, reasoning steps, and optional chart data."""
+        import time as timing_module
+        
         reasoning_steps = []
         chart_data = None
+        sql_intent_start = timing_module.perf_counter()
         
         if not sql_service:
             return "No database connection configured for this agent.", reasoning_steps, None
@@ -724,13 +727,17 @@ class ChatService:
         tracing_ctx.add_span("sql_query", input=query)
         
         try:
-            # Execute natural language SQL query with tracing
+            # ============================================================
+            # PHASE 1: SQL Generation + Validation + Execution (query_async)
+            # ============================================================
+            phase1_start = timing_module.perf_counter()
             llm_config = tracing_ctx.get_llm_config()
             result = await sql_service.query_async(
                 query, 
                 llm_helper=llm_helper,
                 llm_config=llm_config
             )
+            phase1_duration = timing_module.perf_counter() - phase1_start
             
             reasoning_steps.append(ReasoningStep(
                 tool="sql_query",
@@ -740,21 +747,43 @@ class ChatService:
             
             tracing_ctx.update_span("sql_query", output=result[:500])
             
-            # Get schema context for domain-aware analysis
+            # ============================================================
+            # PHASE 2: Response Synthesis with Chart Generation
+            # ============================================================
+            phase2_start = timing_module.perf_counter()
             schema_context = sql_service.cached_schema if sql_service else ""
-            
-            # Synthesize response with LLM (includes chart generation instructions)
             raw_answer = await self._synthesize_sql_response_with_chart(
                 query, result, agent_config, schema_context, tracing_ctx=tracing_ctx
             )
+            phase2_duration = timing_module.perf_counter() - phase2_start
             
-            # Parse chart data from LLM response
+            # ============================================================
+            # PHASE 3: Chart Parsing
+            # ============================================================
+            phase3_start = timing_module.perf_counter()
             chart_data, answer = parse_chart_data(raw_answer)
+            phase3_duration = timing_module.perf_counter() - phase3_start
             
             if chart_data:
                 logger.info(f"Chart generated: type={chart_data.type}, title={chart_data.title}")
                 tracing_ctx.add_span("chart_generation", input="SQL results")
                 tracing_ctx.update_span("chart_generation", output={"type": chart_data.type})
+            
+            # ============================================================
+            # TIMING SUMMARY LOG
+            # ============================================================
+            total_duration = timing_module.perf_counter() - sql_intent_start
+            logger.info(
+                "⏱ SQL_INTENT_TIMING: "
+                f"total={total_duration:.2f}s | "
+                f"sql_pipeline={phase1_duration:.2f}s ({phase1_duration/total_duration*100:.1f}%) | "
+                f"synthesis={phase2_duration:.2f}s ({phase2_duration/total_duration*100:.1f}%) | "
+                f"chart_parse={phase3_duration:.3f}s",
+                sql_pipeline_ms=int(phase1_duration * 1000),
+                synthesis_ms=int(phase2_duration * 1000),
+                chart_parse_ms=int(phase3_duration * 1000),
+                total_ms=int(total_duration * 1000),
+            )
             
             return answer, reasoning_steps, chart_data
             

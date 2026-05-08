@@ -997,7 +997,9 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
     """
     global _EMBEDDING_MODEL_CACHE
     import os
+    import time as perf_time
     
+    provider_start = perf_time.perf_counter()
     provider_name = model_name.split('/')[0].lower() if '/' in model_name else 'openai'
     
     if provider_name == 'openai':
@@ -1035,7 +1037,8 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
         
         # Check if model is already cached
         if cache_key in _EMBEDDING_MODEL_CACHE:
-            logger.info(f"Using cached embedding model: {actual_model}")
+            cache_time = perf_time.perf_counter() - provider_start
+            logger.info(f"⏱️ EMBED_PROVIDER: cache_hit=true | time={cache_time:.3f}s | model={actual_model}")
             model, embed_fn = _EMBEDDING_MODEL_CACHE[cache_key]
             return embed_fn
         
@@ -1150,7 +1153,8 @@ async def _get_embedding_provider(model_name: str, api_key: str = None, api_base
         
         # Cache the model and SYNC embed function
         _EMBEDDING_MODEL_CACHE[cache_key] = (model, embed_texts_sync)
-        logger.info(f"Cached embedding model (sync): {cache_key}")
+        load_time = perf_time.perf_counter() - provider_start
+        logger.info(f"⏱️ EMBED_PROVIDER: cache_hit=false | load_time={load_time:.2f}s | model={actual_model} | device={device}")
         
         return embed_texts_sync
     

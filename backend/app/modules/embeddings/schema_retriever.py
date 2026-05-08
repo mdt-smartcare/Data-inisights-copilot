@@ -315,13 +315,25 @@ class SchemaRetriever:
     
     async def _embed_query(self, query: str) -> List[float]:
         """Generate embedding for query."""
-        embed_fn = await self._get_embed_fn()
+        import time as perf_time
         
+        get_fn_start = perf_time.perf_counter()
+        embed_fn = await self._get_embed_fn()
+        get_fn_time = perf_time.perf_counter() - get_fn_start
+        
+        embed_start = perf_time.perf_counter()
         if asyncio.iscoroutinefunction(embed_fn):
             embeddings = await embed_fn([query])
         else:
             loop = asyncio.get_event_loop()
             embeddings = await loop.run_in_executor(None, embed_fn, [query])
+        embed_time = perf_time.perf_counter() - embed_start
+        
+        logger.info(
+            f"⏱ EMBED_QUERY: get_fn={get_fn_time:.2f}s | encode={embed_time:.2f}s",
+            get_fn_ms=int(get_fn_time * 1000),
+            encode_ms=int(embed_time * 1000),
+        )
         
         return embeddings[0]
     
@@ -404,21 +416,45 @@ class SchemaRetriever:
         Returns:
             List of RetrievedTable with DDL and FK metadata
         """
+        import time as perf_time
+        method_start = perf_time.perf_counter()
+        
         # Ensure we have a valid vector store (with fallback logic)
+        ensure_start = perf_time.perf_counter()
         await self._ensure_vector_store()
+        ensure_time = perf_time.perf_counter() - ensure_start
         
         # Check if collection exists
+        check_start = perf_time.perf_counter()
         if not await self.vector_store.collection_exists():
             logger.warning(f"Schema collection not found: {self.collection_name}")
             return []
+        check_time = perf_time.perf_counter() - check_start
         
         # Generate query embedding
+        embed_start = perf_time.perf_counter()
         query_embedding = await self._embed_query(query)
+        embed_time = perf_time.perf_counter() - embed_start
         
         # Search vector store
+        search_start = perf_time.perf_counter()
         results = await self.vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k + 1,  # +1 to account for potential _relationships doc
+        )
+        search_time = perf_time.perf_counter() - search_start
+        
+        # Log timing breakdown
+        total_time = perf_time.perf_counter() - method_start
+        logger.info(
+            f"⏱️ RETRIEVE_TABLES: total={total_time:.2f}s | "
+            f"ensure_store={ensure_time:.2f}s | collection_check={check_time:.2f}s | "
+            f"embed_query={embed_time:.2f}s | vector_search={search_time:.2f}s",
+            ensure_store_ms=int(ensure_time * 1000),
+            collection_check_ms=int(check_time * 1000),
+            embed_query_ms=int(embed_time * 1000),
+            vector_search_ms=int(search_time * 1000),
+            total_ms=int(total_time * 1000),
         )
         
         tables = []

@@ -15,6 +15,7 @@ Features:
 - LLM rate limiting
 - Query audit trail
 """
+import asyncio
 import re
 import time
 from typing import Optional, Dict, Any, List, Tuple
@@ -1142,12 +1143,48 @@ class SQLService:
             IrrelevantQueryException: If query is not relevant to the database
         """
         from langchain_core.prompts import ChatPromptTemplate
+        import time as perf_time
         
         start_time = time.time()
+        pipeline_start = perf_time.perf_counter()
         generated_sql = ""
         tables_used = []
         
+        # ============================================================
+        # TIMING INSTRUMENTATION: Track each phase duration
+        # ============================================================
+        phase_timings = {
+            "rate_limiting": 0.0,
+            "relevance_check": 0.0,
+            "schema_retrieval": 0.0,
+            "schema_linking": 0.0,
+            "query_planning": 0.0,
+            "few_shot_retrieval": 0.0,
+            "prompt_building": 0.0,
+            "semantic_cache_lookup": 0.0,
+            "llm_init": 0.0,  # LLM cold-start time
+            "llm_sql_generation": 0.0,
+            "schema_validation": 0.0,
+            "reflection_gate": 0.0,
+            "sql_execution": 0.0,
+            "semantic_cache_store": 0.0,
+        }
+        
+        def _log_phase_summary():
+            """Log timing summary at end of method."""
+            total = perf_time.perf_counter() - pipeline_start
+            sorted_phases = sorted(phase_timings.items(), key=lambda x: x[1], reverse=True)
+            top_phases = [(k, v, v/total*100 if total > 0 else 0) for k, v in sorted_phases[:5] if v > 0.01]
+            
+            summary_parts = [f"{k}={v:.2f}s({pct:.1f}%)" for k, v, pct in top_phases]
+            logger.info(
+                f"⏱️ SQL_PIPELINE_TIMING: total={total:.2f}s | " + " | ".join(summary_parts),
+                total_ms=int(total * 1000),
+                **{f"{k}_ms": int(v * 1000) for k, v in phase_timings.items() if v > 0.001}
+            )
+        
         # Rate limiting check
+        phase_start = perf_time.perf_counter()
         try:
             if not await self._rate_limiter.acquire_async(
                 tenant_id=self._tenant_id or "default",
@@ -1160,6 +1197,7 @@ class SQLService:
                 logger.info("Rate limit check passed", tenant_id=self._tenant_id or "default")
         except Exception as e:
             logger.debug(f"Rate limiting skipped: {e}")
+        phase_timings["rate_limiting"] = perf_time.perf_counter() - phase_start
         
         # Check and refresh caches if config files changed
         try:
@@ -1169,18 +1207,54 @@ class SQLService:
         except Exception as e:
             logger.debug(f"Cache refresh check skipped: {e}")
         
-        # Check query relevance first (if enabled)
-        if self._enable_relevance_check and self._relevance_checker and llm_helper:
+        # =========================================================================
+        # PARALLEL EXECUTION: relevance_check + schema_retrieval (independent ops)
+        # This saves ~2-7s by running both concurrently instead of sequentially
+        # =========================================================================
+        parallel_start = perf_time.perf_counter()
+        
+        # Define async tasks for parallel execution
+        async def _do_relevance_check():
+            """Check query relevance (LLM call)."""
+            if not (self._enable_relevance_check and self._relevance_checker and llm_helper):
+                return True, "RELEVANT"  # Skip if not enabled
+            
             table_names = self._discover_tables()
             table_descriptions = self._get_table_descriptions()
-            is_relevant, classification = await self._relevance_checker.check(
+            return await self._relevance_checker.check(
                 question=natural_language_query,
                 table_names=table_names,
                 llm_helper=llm_helper,
                 table_descriptions=table_descriptions
             )
-            
-            # Update statistics (without logging query content for privacy)
+        
+        async def _do_schema_retrieval():
+            """Retrieve semantic schema context (embedding + vector search)."""
+            return await self.get_semantic_schema_context(
+                query=natural_language_query,
+                top_k=5,
+            )
+        
+        # Run both in parallel
+        relevance_task = asyncio.create_task(_do_relevance_check())
+        schema_task = asyncio.create_task(_do_schema_retrieval())
+        
+        # Wait for both to complete
+        (is_relevant, classification), schema = await asyncio.gather(
+            relevance_task, schema_task
+        )
+        
+        parallel_duration = perf_time.perf_counter() - parallel_start
+        logger.info(
+            f"⏱️ PARALLEL_OPS: relevance_check + schema_retrieval completed in {parallel_duration:.2f}s (parallel)",
+            parallel_ms=int(parallel_duration * 1000),
+        )
+        
+        # Process relevance check result (may raise exception)
+        phase_timings["relevance_check"] = parallel_duration  # Approximate - ran in parallel
+        phase_timings["schema_retrieval"] = parallel_duration  # Approximate - ran in parallel
+        
+        if self._enable_relevance_check and self._relevance_checker:
             _relevance_stats["total_checked"] += 1
             
             if not is_relevant:
@@ -1225,12 +1299,6 @@ class SQLService:
                     _relevance_stats["passed"]
                 )
         
-        # Use semantic schema retrieval based on the query (not blind loading)
-        schema = await self.get_semantic_schema_context(
-            query=natural_language_query,
-            top_k=5,  # Retrieve top 5 most relevant tables
-        )
-        
         # Log query plan: which tables were selected
         selected_tables = self._extract_tables_from_schema_context(schema)
         logger.info(
@@ -1244,6 +1312,7 @@ class SQLService:
         # =========================================================================
         
         # 1. SCHEMA LINKER: Fuzzy match table/column names
+        phase_start = perf_time.perf_counter()
         schema_link_result = None
         try:
             # Lazy-initialize schema linker
@@ -1281,8 +1350,10 @@ class SQLService:
         except Exception as e:
             logger.warning(f"Schema linking failed (continuing without): {e}")
             schema_link_result = None
+        phase_timings["schema_linking"] = perf_time.perf_counter() - phase_start
         
         # 2. QUERY PLANNER: Generate structured query plan
+        phase_start = perf_time.perf_counter()
         query_plan = None
         query_plan_context = ""
         if llm_helper:
@@ -1317,6 +1388,7 @@ class SQLService:
                 logger.warning(f"Query planning failed (continuing without): {e}")
                 query_plan = None
                 query_plan_context = ""
+        phase_timings["query_planning"] = perf_time.perf_counter() - phase_start
         
         # 3. TOKEN BUDGET: Ensure schema fits within limits
         if self._token_budget_manager:
@@ -1360,6 +1432,7 @@ class SQLService:
                 logger.warning(f"Token budget management failed (continuing with full schema): {e}")
         
         # Get few-shot examples
+        phase_start = perf_time.perf_counter()
         few_shot_examples = []
         few_shot_section = ""
         if self._enable_few_shot and self._sql_examples_store:
@@ -1425,12 +1498,14 @@ class SQLService:
         system_prompt_parts.append("Database Schema:\n{schema}")
         
         full_system_prompt = "\n\n".join(system_prompt_parts)
+        phase_timings["few_shot_retrieval"] = perf_time.perf_counter() - phase_start
         
         # =========================================================================
         # NL2SQL ENHANCEMENTS
         # =========================================================================
         
         # 1. SEMANTIC QUERY CACHE: Check if similar query was already processed
+        phase_start = perf_time.perf_counter()
         schema_hash = SemanticQueryCache.compute_schema_hash(schema) if self._semantic_cache else ""
         cache_result: Optional[SemanticCacheResult] = None
         
@@ -1458,7 +1533,11 @@ class SQLService:
                     )
                     # Execute the cached SQL directly
                     sql = cache_result.sql
+                    phase_timings["semantic_cache_lookup"] = perf_time.perf_counter() - phase_start
+                    
+                    exec_start = perf_time.perf_counter()
                     results, count = self.execute_query(sql)
+                    phase_timings["sql_execution"] = perf_time.perf_counter() - exec_start
                     execution_time = time.time() - start_time
                     
                     # Record in audit trail
@@ -1472,10 +1551,12 @@ class SQLService:
                             tenant_id=self._tenant_id
                         )
                     
+                    _log_phase_summary()
                     return self._format_results(results, count)
             except Exception as e:
                 logger.warning(f"Semantic cache lookup failed: {e}")
                 cache_result = None
+        phase_timings["semantic_cache_lookup"] = perf_time.perf_counter() - phase_start
         
         # 2. INDEX HINTS: Enrich schema with index metadata
         if self._enable_index_hints and selected_tables:
@@ -1502,7 +1583,13 @@ class SQLService:
             logger.error("No llm_helper provided for SQL generation")
             return "Failed to initialize LLM: no llm_helper provided"
         
+        # Time LLM initialization (potential cold-start bottleneck)
+        llm_init_start = perf_time.perf_counter()
         llm = await llm_helper.get_llm(temperature=0.0)
+        llm_init_time = perf_time.perf_counter() - llm_init_start
+        phase_timings["llm_init"] = llm_init_time
+        if llm_init_time > 1.0:
+            logger.warning(f"⚠️ LLM initialization took {llm_init_time:.2f}s (cold start?)")
         
         # Initialize query validator if not done yet
         self._initialize_query_validator()
@@ -1546,10 +1633,12 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     chain = prompt | llm
                 
                 # Generate SQL using LLM (with optional tracing callback)
+                llm_gen_start = perf_time.perf_counter()
                 response = chain.invoke(
                     {"schema": schema, "question": natural_language_query},
                     config=llm_config
                 )
+                phase_timings["llm_sql_generation"] += perf_time.perf_counter() - llm_gen_start
                 
                 # =========================================================
                 # PARSE STRUCTURED OUTPUT (if enabled)
@@ -1619,8 +1708,10 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 # =========================================================
                 # PROACTIVE SCHEMA VALIDATION: Check tables/columns exist
                 # =========================================================
+                validation_start = perf_time.perf_counter()
                 if self._query_validator:
                     validation = self._query_validator.validate_sql(sql, schema)
+                    phase_timings["schema_validation"] += perf_time.perf_counter() - validation_start
                     
                     # Log query plan for debugging
                     if validation.query_plan:
@@ -1670,6 +1761,7 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 # =========================================================
                 # REFLECTION GATE: Validate SQL before execution
                 # =========================================================
+                reflection_start = perf_time.perf_counter()
                 if self._reflection_service:
                     try:
                         critique = self._reflection_service.critique(
@@ -1677,6 +1769,7 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                             sql_query=sql,
                             schema_context=schema,
                         )
+                        phase_timings["reflection_gate"] += perf_time.perf_counter() - reflection_start
                         if not critique.is_valid:
                             logger.warning(
                                 f"Reflection rejected SQL (attempt {attempt + 1}): {critique.issues}"
@@ -1697,10 +1790,13 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                         else:
                             logger.info(f"Reflection validated SQL (attempt {attempt + 1})")
                     except Exception as e:
+                        phase_timings["reflection_gate"] += perf_time.perf_counter() - reflection_start
                         logger.warning(f"Reflection service error, proceeding without validation: {e}")
                 
                 # Execute the generated SQL using read-only session
+                exec_start = perf_time.perf_counter()
                 results, count = self.execute_query(sql)
+                phase_timings["sql_execution"] += perf_time.perf_counter() - exec_start
                 
                 # Success! Format and return results
                 logger.info(f"Query succeeded on attempt {attempt + 1}")
@@ -1731,6 +1827,7 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 # =========================================================
                 # SEMANTIC CACHE: Store successful query for future reuse
                 # =========================================================
+                cache_store_start = perf_time.perf_counter()
                 if self._semantic_cache and self._enable_semantic_cache and schema_hash:
                     try:
                         self._semantic_cache.put(
@@ -1741,7 +1838,9 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                         logger.debug("Cached query in semantic cache")
                     except Exception as e:
                         logger.debug(f"Failed to cache query: {e}")
+                phase_timings["semantic_cache_store"] = perf_time.perf_counter() - cache_store_start
                 
+                _log_phase_summary()
                 return self._format_results(results, count)
                 
             except Exception as e:
@@ -1778,12 +1877,14 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     logger.error(
                         f"All {max_retries} attempts failed. Last error: {error_str}"
                     )
+                    _log_phase_summary()
                     return f"Failed to execute query after {max_retries} attempts. Last error: {error_str}"
                 
                 # Otherwise, continue to next iteration with error feedback
                 continue
         
         # Should not reach here, but just in case
+        _log_phase_summary()
         return f"Failed to execute query: Unknown error after {max_retries} attempts"
     
     def query(self, natural_language_query: str) -> str:

@@ -109,7 +109,7 @@ class LLMDefaults:
     """Default LLM configuration."""
     provider: str = "openai"
     model: str = "gpt-4o-mini"
-    temperature: float = 0.3
+    temperature: float = 0.0
     max_tokens: int = 2000
     top_p: float = 1.0
     frequency_penalty: float = 0.0
