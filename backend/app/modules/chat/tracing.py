@@ -328,7 +328,7 @@ class TracingContext:
         level: str = "DEFAULT",
     ):
         """
-        Update a span with output.
+        Update a span with output and end it.
         
         Args:
             name: Span name
@@ -336,16 +336,19 @@ class TracingContext:
             metadata: Additional metadata
             level: Log level (DEFAULT, DEBUG, WARNING, ERROR)
         """
-        span = self._spans.get(name)
+        span = self._spans.pop(name, None)  # Remove from tracking since we're ending it
         if span:
             try:
+                # Update with output
                 span.update(
                     output=output,
                     metadata=metadata,
                     level=level,
                 )
+                # End the span to set the end time
+                span.end()
             except Exception as e:
-                logger.warning(f"Failed to update span {name}: {e}")
+                logger.warning(f"Failed to update/end span {name}: {e}")
     
     def end_span(self, name: str):
         """End a span."""

@@ -155,6 +155,8 @@ class RecentTrace(BaseModel):
     status: str = "unknown"
     user_id: Optional[str] = None
     session_id: Optional[str] = None
+    # Link to view full trace in Langfuse dashboard
+    langfuse_url: Optional[str] = None
     # Hierarchical children for detailed breakdown (observations within this trace)
     children: List[ChildObservation] = []
     # Related traces in the same session (grouped LLM calls)
@@ -305,7 +307,7 @@ async def _fetch_langfuse_usage(client, from_time: datetime, to_time: datetime) 
         return None
 
 
-async def _fetch_langfuse_traces(client, limit: int) -> List[RecentTrace]:
+async def _fetch_langfuse_traces(client, limit: int, langfuse_host: Optional[str] = None) -> List[RecentTrace]:
     """Fetch recent traces from Langfuse, showing each chat_request as a separate entry."""
     try:
         # SDK v3: Use client.api.trace.list()
@@ -347,7 +349,7 @@ async def _fetch_langfuse_traces(client, limit: int) -> List[RecentTrace]:
             seen_trace_ids.add(trace_id)
             
             # Process the main chat_request trace
-            trace_data = await _process_single_trace(client, trace)
+            trace_data = await _process_single_trace(client, trace, langfuse_host)
             
             # Find related LangChain traces that reference this trace
             # Check by the trace_id stored in our metadata
@@ -398,7 +400,7 @@ async def _fetch_langfuse_traces(client, limit: int) -> List[RecentTrace]:
                     continue
                 
                 seen_trace_ids.add(trace_id)
-                trace_data = await _process_single_trace(client, trace)
+                trace_data = await _process_single_trace(client, trace, langfuse_host)
                 traces.append(trace_data)
                 
                 if len(traces) >= limit:
@@ -414,16 +416,26 @@ async def _fetch_langfuse_traces(client, limit: int) -> List[RecentTrace]:
         return []
 
 
-async def _process_single_trace(client, trace) -> RecentTrace:
+async def _process_single_trace(client, trace, langfuse_host: Optional[str] = None) -> RecentTrace:
     """Process a single trace and fetch its observations."""
+    trace_id = str(getattr(trace, 'id', ''))
+    
+    # Build Langfuse URL if host is available
+    langfuse_url = None
+    if langfuse_host and trace_id:
+        # Strip trailing slash and build trace URL
+        host = langfuse_host.rstrip('/')
+        langfuse_url = f"{host}/trace/{trace_id}"
+    
     trace_data = RecentTrace(
-        id=str(getattr(trace, 'id', '')),
-        trace_id=str(getattr(trace, 'id', '')),
+        id=trace_id,
+        trace_id=trace_id,
         name=getattr(trace, 'name', 'unknown'),
         timestamp=str(getattr(trace, 'timestamp', datetime.utcnow())),
         user_id=getattr(trace, 'user_id', None),
         session_id=getattr(trace, 'session_id', None),
-        status="completed" if getattr(trace, 'level', None) != 'ERROR' else "error"
+        status="completed" if getattr(trace, 'level', None) != 'ERROR' else "error",
+        langfuse_url=langfuse_url
     )
     
     # Try to get metadata
@@ -819,7 +831,8 @@ async def get_traces(
     if not client:
         return []
     
-    return await _fetch_langfuse_traces(client, limit)
+    langfuse_host = settings.langfuse_base_url or settings.langfuse_host
+    return await _fetch_langfuse_traces(client, limit, langfuse_host)
 
 
 @router.post("/test-log")

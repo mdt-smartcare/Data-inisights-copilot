@@ -160,8 +160,9 @@ class ChatService:
                 await check_cancelled(fastapi_request)
                 tracing_ctx.add_span("query_rewrite", input=query)
                 
+                llm_config = tracing_ctx.get_llm_config()
                 rewritten_query = await rewrite_query_with_context(
-                    query, session_id, llm_helper=llm_helper, use_llm=True
+                    query, session_id, llm_helper=llm_helper, use_llm=True, llm_config=llm_config
                 )
                 
                 tracing_ctx.update_span("query_rewrite", output=rewritten_query)
