@@ -1340,7 +1340,11 @@ Before returning SQL:
                     provider_config["base_url"] = api_base_url
                 
                 provider = create_llm_provider(provider_name, provider_config)
-                llm = provider.get_langchain_llm()
+                raw_llm = provider.get_langchain_llm()
+                
+                # Wrap with PHI protection
+                from app.core.llm.base import wrap_llm_with_phi_protection
+                llm = wrap_llm_with_phi_protection(raw_llm)
                 
                 # Build concise context for question generation (not the full schema)
                 table_names = list(selected_columns.keys()) if selected_columns else []

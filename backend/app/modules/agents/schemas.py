@@ -57,6 +57,7 @@ class RAGConfig(BaseModel):
     reranking_enabled: bool = Field(default=False, alias="rerankEnabled")
     reranker_model: Optional[str] = Field(None, alias="rerankerModel", description="AI Registry model_id for reranker")
     similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0, alias="similarityThreshold")
+    skip_result_synthesis: bool = Field(default=False, alias="skipResultSynthesis", description="Skip LLM interpretation and return raw SQL results")
     
     model_config = {"populate_by_name": True}
     

@@ -232,7 +232,30 @@ class Settings(BaseSettings):
     enable_query_relevance_check: bool = Field(
         default=True,
         description="Enable pre-filtering of queries for relevance before SQL generation"
-
+    )
+    
+    # ============================================
+    # Result Synthesis Configuration
+    # ============================================
+    skip_result_synthesis: bool = Field(
+        default=False,
+        description="Skip LLM interpretation and return raw SQL results directly"
+    )
+    
+    # ============================================
+    # PHI (Protected Health Information) Redaction
+    # ============================================
+    phi_redaction_enabled: bool = Field(
+        default=True,
+        description="Enable PHI redaction before sending data to external LLM APIs"
+    )
+    phi_redaction_log_activity: bool = Field(
+        default=True,
+        description="Log PHI redaction activity (counts only, not content)"
+    )
+    phi_restore_in_response: bool = Field(
+        default=False,
+        description="Restore PHI placeholders in LLM responses (use with caution)"
     )
     
     def __init__(self, **kwargs):
