@@ -159,25 +159,24 @@ class TracingContext:
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """End the trace and flush."""
+        """
+        Exit the trace context.
+        
+        NOTE: We do NOT end the span here because async operations (like follow-up
+        generation) may still be adding observations. Call end_trace() explicitly
+        after all async operations complete, or let the trace end naturally via
+        the Langfuse callback handler.
+        """
         if self._trace:
             try:
                 if exc_type:
-                    # Update with error info
+                    # Update with error info but don't end - async tasks may still run
                     if hasattr(self._trace, 'update'):
                         self._trace.update(
                             output={"error": str(exc_val)},
                             level="ERROR",
                         )
-                    elif hasattr(self._trace, 'end'):
-                        self._trace.end(
-                            output={"error": str(exc_val)},
-                            level="ERROR",
-                        )
-                else:
-                    # End the span normally (v3)
-                    if hasattr(self._trace, 'end'):
-                        self._trace.end()
+                # Don't end the span here - let end_trace() or callback handler do it
                 
                 self._langfuse.flush()
             except Exception as e:
@@ -208,6 +207,46 @@ class TracingContext:
                 )
         except Exception as e:
             logger.warning(f"Failed to set trace output: {e}")
+    
+    def end_trace(self, output: Any = None, level: str = "DEFAULT"):
+        """
+        Explicitly end the trace span.
+        
+        Call this after all async operations (like follow-up generation) are complete.
+        This ensures the parent span's end time reflects when all work finished.
+        
+        Args:
+            output: Optional final output data
+            level: Log level (DEFAULT, DEBUG, WARNING, ERROR)
+        """
+        if not self._trace:
+            return
+        
+        try:
+            # End all open child spans first
+            for name, span in list(self._spans.items()):
+                try:
+                    if hasattr(span, 'end'):
+                        span.end()
+                except Exception:
+                    pass
+            self._spans.clear()
+            
+            # End the main trace span
+            if hasattr(self._trace, 'end'):
+                end_kwargs = {}
+                if output is not None:
+                    end_kwargs["output"] = output
+                if level != "DEFAULT":
+                    end_kwargs["level"] = level
+                self._trace.end(**end_kwargs)
+            
+            # Flush to ensure data is sent
+            self.flush()
+            logger.debug(f"Trace ended: {self.trace_id}")
+        except Exception as e:
+            logger.warning(f"Failed to end trace: {e}")
+    
     
     def add_span(
         self,

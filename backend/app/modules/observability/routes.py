@@ -404,6 +404,9 @@ async def _fetch_langfuse_traces(client, limit: int) -> List[RecentTrace]:
                 if len(traces) >= limit:
                     break
         
+        # Sort traces by timestamp descending (most recent first)
+        traces.sort(key=lambda t: t.timestamp, reverse=True)
+        
         return traces
         
     except Exception as e:

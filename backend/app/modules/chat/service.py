@@ -333,6 +333,16 @@ class ChatService:
                     answer_preview=answer[:200] if answer else None,
                 )
                 
+                # End the trace after all operations (including follow-up) are complete
+                # This ensures parent span end time reflects actual completion
+                tracing_ctx.end_trace(
+                    output={
+                        "answer_length": len(answer) if answer else 0,
+                        "suggested_questions_count": len(suggested_questions),
+                        "chart_generated": chart_data is not None,
+                    }
+                )
+                
                 return ChatResponse(
                     answer=answer,
                     chart_data=chart_data,
@@ -409,7 +419,9 @@ class ChatService:
             schema_context = sql_service.cached_schema if sql_service else ""
             
             # Synthesize response with LLM (includes chart generation instructions)
-            raw_answer = await self._synthesize_sql_response_with_chart(query, result, agent_config, schema_context)
+            raw_answer = await self._synthesize_sql_response_with_chart(
+                query, result, agent_config, schema_context, tracing_ctx=tracing_ctx
+            )
             
             # Parse chart data from LLM response
             chart_data, answer = parse_chart_data(raw_answer)
@@ -497,7 +509,7 @@ class ChatService:
                         
                     # 3. Synthesize results with chart generation
                     raw_answer = await self._synthesize_sql_response_with_chart(
-                        sub_q, sql_result, agent_config, schema_context
+                        sub_q, sql_result, agent_config, schema_context, tracing_ctx=tracing_ctx
                     )
                     
                     # 4. Parse chart data
@@ -587,7 +599,7 @@ class ChatService:
         
         # Synthesize response with LLM
         tracing_ctx.add_span("llm_synthesis", input=query)
-        answer = await self._synthesize_rag_response(query, sources, agent_config)
+        answer = await self._synthesize_rag_response(query, sources, agent_config, tracing_ctx=tracing_ctx)
         
         reasoning_steps.append(ReasoningStep(
             tool="llm_synthesis",
@@ -734,7 +746,7 @@ class ChatService:
         await check_cancelled(fastapi_request)
         
         # Step 3: Synthesize response
-        answer = await self._synthesize_rag_response(query, sources, agent_config)
+        answer = await self._synthesize_rag_response(query, sources, agent_config, tracing_ctx=tracing_ctx)
         
         reasoning_steps.append(ReasoningStep(
             tool="llm_synthesis",
@@ -757,6 +769,7 @@ class ChatService:
         sql_result: str,
         agent_config: Optional[Dict[str, Any]],
         schema_context: str = "",
+        tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a natural language response from SQL results with chart generation."""
         from openai import AsyncOpenAI
@@ -798,6 +811,14 @@ class ChatService:
         else:
             sql_result_for_llm = sql_result
         
+        # Track this generation in Langfuse
+        if tracing_ctx:
+            tracing_ctx.add_generation(
+                name="sql_synthesis_with_chart",
+                model="gpt-4o",
+                input={"query": query, "results_preview": sql_result_for_llm[:500]},
+            )
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
@@ -808,9 +829,28 @@ class ChatService:
                 temperature=0.0,
                 max_tokens=3000,  # Increased from 2000 to prevent JSON truncation
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            
+            # End generation tracking with usage stats
+            if tracing_ctx and response.usage:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis_with_chart",
+                    output=content[:500] if content else None,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total_tokens,
+                    }
+                )
+            
+            return content
         except Exception as e:
             logger.error(f"SQL response synthesis failed: {e}")
+            if tracing_ctx:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis_with_chart",
+                    output={"error": str(e)},
+                )
             return sql_result  # Return raw results as fallback
     
     async def _synthesize_sql_response(
@@ -819,6 +859,7 @@ class ChatService:
         sql_result: str,
         agent_config: Optional[Dict[str, Any]],
         schema_context: str = "",
+        tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a natural language response from SQL results (without chart)."""
         from openai import AsyncOpenAI
@@ -845,6 +886,14 @@ class ChatService:
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
+        # Track this generation in Langfuse
+        if tracing_ctx:
+            tracing_ctx.add_generation(
+                name="sql_synthesis",
+                model="gpt-4o",
+                input={"query": query, "results_preview": sql_result[:500]},
+            )
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
@@ -855,9 +904,28 @@ class ChatService:
                 temperature=0.0,
                 max_tokens=1000,
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            
+            # End generation tracking with usage stats
+            if tracing_ctx and response.usage:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis",
+                    output=content[:500] if content else None,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total_tokens,
+                    }
+                )
+            
+            return content
         except Exception as e:
             logger.error(f"SQL response synthesis failed: {e}")
+            if tracing_ctx:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis",
+                    output={"error": str(e)},
+                )
             return sql_result  # Return raw results as fallback
     
     async def _synthesize_rag_response(
@@ -865,6 +933,7 @@ class ChatService:
         query: str,
         sources: List[SourceChunk],
         agent_config: Optional[Dict[str, Any]],
+        tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a response from RAG sources using LLM."""
         from openai import AsyncOpenAI
@@ -882,6 +951,14 @@ class ChatService:
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
+        # Track this generation in Langfuse
+        if tracing_ctx:
+            tracing_ctx.add_generation(
+                name="rag_synthesis",
+                model="gpt-4o",
+                input={"query": query, "sources_count": len(sources)},
+            )
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
@@ -892,9 +969,28 @@ class ChatService:
                 temperature=0.0,
                 max_tokens=2000,
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            
+            # End generation tracking with usage stats
+            if tracing_ctx and response.usage:
+                tracing_ctx.end_generation(
+                    name="rag_synthesis",
+                    output=content[:500] if content else None,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total_tokens,
+                    }
+                )
+            
+            return content
         except Exception as e:
             logger.error(f"RAG response synthesis failed: {e}")
+            if tracing_ctx:
+                tracing_ctx.end_generation(
+                    name="rag_synthesis",
+                    output={"error": str(e)},
+                )
             return f"I encountered an error generating a response: {str(e)}"
     
     async def _get_agent_config(
