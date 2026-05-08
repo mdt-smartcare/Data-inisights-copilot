@@ -5,7 +5,7 @@ Provides standardized exceptions and error responses across the application.
 """
 from enum import Enum
 from typing import Optional, Any, Dict
-from fastapi import HTTPException, status
+from fastapi import status
 
 
 class ErrorCode(str, Enum):
@@ -14,6 +14,7 @@ class ErrorCode(str, Enum):
     AUTHENTICATION_FAILED = "AUTHENTICATION_FAILED"
     TOKEN_EXPIRED = "TOKEN_EXPIRED"
     INVALID_TOKEN = "INVALID_TOKEN"
+    USER_INACTIVE = "USER_INACTIVE"
     
     # Authorization errors
     INSUFFICIENT_PERMISSIONS = "INSUFFICIENT_PERMISSIONS"
@@ -98,6 +99,12 @@ class InvalidTokenError(AuthenticationError):
     """Raised when JWT token is invalid."""
     def __init__(self, message: str = "Invalid token", **kwargs):
         super().__init__(message=message, error_code="INVALID_TOKEN", **kwargs)
+
+
+class UserInactiveError(AuthenticationError):
+    """Raised when user account is inactive/deactivated."""
+    def __init__(self, message: str = "User account is inactive", **kwargs):
+        super().__init__(message=message, error_code="USER_INACTIVE", **kwargs)
 
 
 # ============================================
@@ -304,26 +311,6 @@ class RateLimitExceededError(AppException):
             details={"limit": limit, "window": window},
             **kwargs
         )
-
-
-# ============================================
-# Utility Functions
-# ============================================
-
-def convert_app_exception_to_http(exc: AppException) -> HTTPException:
-    """
-    Convert AppException to FastAPI HTTPException.
-    
-    Args:
-        exc: AppException instance
-    
-    Returns:
-        HTTPException instance
-    """
-    return HTTPException(
-        status_code=exc.status_code,
-        detail=exc.to_dict()
-    )
 
 
 class IrrelevantQueryException(AppException):

@@ -77,10 +77,11 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     // Handle authentication errors globally
     if (error.response?.status === 401) {
-      const responseData = error.response?.data as { detail?: string | { message?: string; error_code?: string }; error_code?: string };
-      const errorCode = typeof responseData?.detail === 'object'
-        ? responseData.detail?.error_code
-        : responseData?.error_code;
+      const responseData = error.response?.data as {
+        error_code?: string;
+        message?: string;
+      };
+      const errorCode = responseData.error_code;
 
       // Inactive user - logout from Keycloak and redirect to login with error
       if (errorCode === ErrorCode.USER_INACTIVE) {
