@@ -76,7 +76,7 @@ class ChatService:
         self._intent_classifier = get_intent_classifier()
         self._memory = get_conversation_memory()
         self._followup_service = get_followup_service()
-        self._sql_factory = SQLServiceFactory(self.configs, self.data_sources)
+        self._sql_factory = SQLServiceFactory(self.configs, self.data_sources, self.ai_models)
     
     async def process_query(
         self,
@@ -100,6 +100,9 @@ class ChatService:
         session_id = request.session_id or uuid.uuid4().hex
         query = request.query.strip()
         
+        # Timing dictionary to track each phase
+        timings: Dict[str, float] = {}
+        
         logger.info(
             "Processing chat query",
             trace_id=trace_id,
@@ -114,7 +117,10 @@ class ChatService:
             trace_id=trace_id,
             user_id=str(user_id),
             session_id=session_id,
-            metadata={"agent_id": str(request.agent_id) if request.agent_id else None},
+            metadata={
+                "agent_id": str(request.agent_id) if request.agent_id else None,
+                "query_preview": query[:200] if query else None,
+            },
         )
         
         try:
@@ -157,9 +163,12 @@ class ChatService:
                 await check_cancelled(fastapi_request)
                 tracing_ctx.add_span("query_rewrite", input=query)
                 
+                phase_start = time.time()
+                llm_config = tracing_ctx.get_llm_config()
                 rewritten_query = await rewrite_query_with_context(
-                    query, session_id, llm_helper=llm_helper, use_llm=True
+                    query, session_id, llm_helper=llm_helper, use_llm=True, llm_config=llm_config
                 )
+                timings["query_rewrite_ms"] = int((time.time() - phase_start) * 1000)
                 
                 tracing_ctx.update_span("query_rewrite", output=rewritten_query)
                 
@@ -167,12 +176,16 @@ class ChatService:
                 await check_cancelled(fastapi_request)
                 tracing_ctx.add_span("intent_classification", input=rewritten_query)
                 
+                phase_start = time.time()
                 schema_context = sql_service.cached_schema if sql_service else ""
+                llm_config = tracing_ctx.get_llm_config()
                 classification = await self._intent_classifier.classify(
                     rewritten_query,
                     llm_helper=llm_helper,
-                    schema_context=schema_context
+                    schema_context=schema_context,
+                    llm_config=llm_config
                 )
+                timings["intent_classification_ms"] = int((time.time() - phase_start) * 1000)
                 
                 tracing_ctx.update_span(
                     "intent_classification",
@@ -207,28 +220,51 @@ class ChatService:
                 if final_intent == QueryIntent.SQL_ONLY.value:
                     # Intent A: SQL only (with chart generation)
                     await check_cancelled(fastapi_request)
+                    phase_start = time.time()
                     answer, reasoning_steps, chart_data = await self._handle_sql_intent(
                         rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
                     )
+                    timings["sql_intent_ms"] = int((time.time() - phase_start) * 1000)
+                    logger.info(
+                        "TIMING: SQL intent completed",
+                        trace_id=trace_id,
+                        duration_ms=timings["sql_intent_ms"],
+                    )
                     
                     # Generate comparison insights (optional, non-blocking)
-                    if sql_service and answer and not answer.startswith("No database"):
+                    # Skip if streaming is requested - comparisons will be sent via SSE
+                    if sql_service and answer and not answer.startswith("No database") and not request.stream:
                         try:
-                            from app.modules.chat.comparison_engine import generate_comparison_insights
+                            from app.modules.chat.query.comparison_engine import generate_comparison_insights
                             
+                            phase_start = time.time()
                             comp_llm = await llm_helper.get_llm(temperature=0.3)
                             schema_ctx = sql_service.cached_schema if sql_service else ""
                             
-                            comparison_insights = await generate_comparison_insights(
-                                original_question=rewritten_query,
-                                original_sql=reasoning_steps[0].input if reasoning_steps else rewritten_query,
-                                original_results=answer[:2000],
-                                schema_context=schema_ctx,
-                                sql_service=sql_service,
-                                llm=comp_llm,
-                                dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                            # Wrap with timeout - comparisons are optional, don't block main response
+                            comparison_insights = await asyncio.wait_for(
+                                generate_comparison_insights(
+                                    original_question=rewritten_query,
+                                    original_sql=reasoning_steps[0].input if reasoning_steps else rewritten_query,
+                                    original_results=answer[:2000],
+                                    schema_context=schema_ctx,
+                                    sql_service=sql_service,
+                                    llm=comp_llm,
+                                    dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                                ),
+                                timeout=75.0  # Max 75s for entire comparison phase
                             )
+                            timings["comparison_insights_ms"] = int((time.time() - phase_start) * 1000)
+                            logger.info(
+                                "TIMING: Comparison insights completed",
+                                trace_id=trace_id,
+                                duration_ms=timings["comparison_insights_ms"],
+                            )
+                        except asyncio.TimeoutError:
+                            timings["comparison_insights_ms"] = 75000
+                            logger.info("Comparison insights timed out (75s), skipping", trace_id=trace_id)
                         except Exception as e:
+                            timings["comparison_insights_ms"] = int((time.time() - phase_start) * 1000)
                             logger.debug(f"Comparison insights generation failed: {e}")
                     
                 elif final_intent == QueryIntent.VECTOR_ONLY.value:
@@ -264,13 +300,20 @@ class ChatService:
                 # Get conversation history for context-aware followups
                 conversation_history = self._memory.get_context(session_id, max_messages=5)
                 
+                # Get LLM config for tracing - follow-ups will be linked to parent trace
+                llm_config = tracing_ctx.get_llm_config()
+                
+                # Add span for follow-up generation tracking
+                tracing_ctx.add_span("followup_generation", input={"query": query[:100]})
+                
                 followup_task = asyncio.create_task(
                     generate_followups_background(
                         query, 
                         answer,
                         llm_helper=llm_helper,
                         conversation_history=conversation_history,
-                        timeout=2.0
+                        timeout=2.0,
+                        llm_config=llm_config,
                     )
                 )
                 
@@ -281,13 +324,30 @@ class ChatService:
                 suggested_questions = []
                 try:
                     suggested_questions = await asyncio.wait_for(followup_task, timeout=2.0)
+                    tracing_ctx.update_span("followup_generation", output={"questions": suggested_questions})
                 except asyncio.TimeoutError:
                     logger.debug("Follow-up generation timed out")
+                    tracing_ctx.update_span("followup_generation", output={"error": "timeout"})
                 except Exception as e:
                     logger.debug(f"Follow-up generation failed: {e}")
+                    tracing_ctx.update_span("followup_generation", output={"error": str(e)})
                 
                 # Build response
                 duration = time.time() - start_time
+                timings["total_ms"] = int(duration * 1000)
+                
+                # Log detailed timing breakdown
+                logger.info(
+                    "TIMING BREAKDOWN",
+                    trace_id=trace_id,
+                    intent=final_intent,
+                    query_rewrite_ms=timings.get("query_rewrite_ms", 0),
+                    intent_classification_ms=timings.get("intent_classification_ms", 0),
+                    sql_intent_ms=timings.get("sql_intent_ms", 0),
+                    comparison_insights_ms=timings.get("comparison_insights_ms", 0),
+                    total_ms=timings["total_ms"],
+                )
+                
                 logger.info(
                     "Chat query completed",
                     trace_id=trace_id,
@@ -305,6 +365,22 @@ class ChatService:
                         search_method="sql" if final_intent == "A" else "hybrid",
                         docs_retrieved=len(sources),
                     )
+                
+                # Set the trace output before returning
+                tracing_ctx.set_trace_output(
+                    output={"answer": answer[:500] if answer else None},
+                    answer_preview=answer[:200] if answer else None,
+                )
+                
+                # End the trace after all operations (including follow-up) are complete
+                # This ensures parent span end time reflects actual completion
+                tracing_ctx.end_trace(
+                    output={
+                        "answer_length": len(answer) if answer else 0,
+                        "suggested_questions_count": len(suggested_questions),
+                        "chart_generated": chart_data is not None,
+                    }
+                )
                 
                 return ChatResponse(
                     answer=answer,
@@ -344,6 +420,292 @@ class ChatService:
                 details={"error": str(e)},
             )
     
+    async def process_query_stream(
+        self,
+        request: ChatRequest,
+        user_id: uuid.UUID,
+        fastapi_request: Optional[Request] = None,
+    ):
+        """
+        Process a user query and yield SSE events.
+        
+        Returns answer immediately, then streams comparison insights in background.
+        
+        Yields:
+            SSE events with event type and JSON data payload
+        """
+        from app.modules.chat.schemas import StreamEventType
+        
+        trace_id = generate_trace_id()
+        start_time = time.time()
+        session_id = request.session_id or uuid.uuid4().hex
+        query = request.query.strip()
+        timings: Dict[str, float] = {}
+        
+        logger.info(
+            "Processing STREAMING chat query",
+            trace_id=trace_id,
+            agent_id=str(request.agent_id) if request.agent_id else None,
+            query_length=len(query),
+            session_id=session_id,
+        )
+        
+        tracing_ctx = TracingContext(
+            name="chat_request_stream",
+            trace_id=trace_id,
+            user_id=str(user_id),
+            session_id=session_id,
+            metadata={
+                "agent_id": str(request.agent_id) if request.agent_id else None,
+                "streaming": True,
+            },
+        )
+        
+        try:
+            with tracing_ctx:
+                await check_cancelled(fastapi_request)
+                
+                # === PROGRESS: Starting ===
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "init", "message": "Understanding your question...", "percent": 5},
+                    "trace_id": trace_id,
+                }
+                
+                # Step 1: Get agent config and SQL service
+                agent_config = None
+                sql_service = None
+                
+                if request.agent_id:
+                    agent_config = await self._get_agent_config(
+                        request.agent_id, 
+                        config_id=request.config_id
+                    )
+                    if not agent_config:
+                        yield {
+                            "event": StreamEventType.ERROR,
+                            "data": {"message": "Agent not found or has no active configuration"},
+                            "trace_id": trace_id,
+                        }
+                        return
+                    
+                    sql_service = await self._sql_factory(request.agent_id)
+                
+                from app.modules.chat.llm_helper import LLMHelper
+                llm_helper = LLMHelper(self.db, request.agent_id)
+                
+                # === PROGRESS: Query rewrite ===
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "rewrite", "message": "Adding conversation context...", "percent": 10},
+                    "trace_id": trace_id,
+                }
+                
+                # Step 2: Rewrite query
+                phase_start = time.time()
+                llm_config = tracing_ctx.get_llm_config()
+                rewritten_query = await rewrite_query_with_context(
+                    query, session_id, llm_helper=llm_helper, use_llm=True, llm_config=llm_config
+                )
+                timings["query_rewrite_ms"] = int((time.time() - phase_start) * 1000)
+                
+                # === PROGRESS: Intent classification ===
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "classify", "message": "Classifying query intent...", "percent": 15},
+                    "trace_id": trace_id,
+                }
+                
+                # Step 3: Classify intent
+                phase_start = time.time()
+                schema_context = sql_service.cached_schema if sql_service else ""
+                classification = await self._intent_classifier.classify(
+                    rewritten_query,
+                    llm_helper=llm_helper,
+                    schema_context=schema_context,
+                    llm_config=llm_config
+                )
+                timings["intent_classification_ms"] = int((time.time() - phase_start) * 1000)
+                
+                final_intent = classification.intent
+                if classification.confidence_score < 0.6 and final_intent in ["A", "B", "C"]:
+                    final_intent = QueryIntent.FALLBACK.value
+                
+                # === PROGRESS: Intent determined ===
+                intent_labels = {
+                    "A": "SQL query",
+                    "B": "Document search", 
+                    "C": "Hybrid analysis",
+                    "D": "Dashboard generation",
+                }
+                intent_label = intent_labels.get(final_intent, "analysis")
+                yield {
+                    "event": StreamEventType.PROGRESS,
+                    "data": {"step": "intent", "message": f"Using {intent_label} mode...", "percent": 20},
+                    "trace_id": trace_id,
+                }
+                
+                answer = ""
+                chart_data = None
+                reasoning_steps = []
+                sources = []
+                
+                # Step 4: Execute intent handler (SQL path for streaming)
+                if final_intent == QueryIntent.SQL_ONLY.value:
+                    # === PROGRESS: Schema retrieval ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "schema", "message": "Finding relevant tables...", "percent": 25},
+                        "trace_id": trace_id,
+                    }
+                    
+                    # Small delay to ensure progress event is sent
+                    await asyncio.sleep(0.01)
+                    
+                    # === PROGRESS: SQL generation ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "sql_gen", "message": "Generating SQL query...", "percent": 40},
+                        "trace_id": trace_id,
+                    }
+                    
+                    phase_start = time.time()
+                    answer, reasoning_steps, chart_data = await self._handle_sql_intent(
+                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
+                    )
+                    timings["sql_intent_ms"] = int((time.time() - phase_start) * 1000)
+                    
+                    # === PROGRESS: Synthesizing ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "synthesize", "message": "Preparing response...", "percent": 85},
+                        "trace_id": trace_id,
+                    }
+                else:
+                    # === PROGRESS: Vector search ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "vector", "message": "Searching documents...", "percent": 40},
+                        "trace_id": trace_id,
+                    }
+                    
+                    # For non-SQL intents, fall back to standard processing
+                    answer, sources, reasoning_steps, _ = await self._handle_vector_intent(
+                        rewritten_query, agent_config, tracing_ctx, fastapi_request
+                    )
+                
+                # === STREAM: Send answer immediately ===
+                yield {
+                    "event": StreamEventType.ANSWER,
+                    "data": {
+                        "answer": answer,
+                        "intent": final_intent,
+                        "session_id": session_id,
+                    },
+                    "trace_id": trace_id,
+                }
+                
+                # === STREAM: Send chart data if available ===
+                if chart_data:
+                    yield {
+                        "event": StreamEventType.CHART,
+                        "data": chart_data.model_dump(),
+                        "trace_id": trace_id,
+                    }
+                
+                # === STREAM: Send reasoning steps ===
+                if reasoning_steps:
+                    yield {
+                        "event": StreamEventType.REASONING,
+                        "data": {"steps": [s.model_dump() for s in reasoning_steps]},
+                        "trace_id": trace_id,
+                    }
+                
+                # === STREAM: Generate suggestions in parallel ===
+                conversation_history = self._memory.get_context(session_id, max_messages=5)
+                try:
+                    suggested_questions = await asyncio.wait_for(
+                        generate_followups_background(
+                            query, answer, llm_helper=llm_helper,
+                            conversation_history=conversation_history,
+                            timeout=2.0, llm_config=llm_config,
+                        ),
+                        timeout=3.0
+                    )
+                    if suggested_questions:
+                        yield {
+                            "event": StreamEventType.SUGGESTIONS,
+                            "data": {"questions": suggested_questions},
+                            "trace_id": trace_id,
+                        }
+                except Exception:
+                    pass  # Suggestions are optional
+                
+                # Save to memory
+                self._memory.add_exchange(session_id, query, answer)
+                
+                # === STREAM: Generate comparison insights in background ===
+                if final_intent == QueryIntent.SQL_ONLY.value and sql_service and answer and not answer.startswith("No database"):
+                    # === PROGRESS: Cross-validation ===
+                    yield {
+                        "event": StreamEventType.PROGRESS,
+                        "data": {"step": "compare", "message": "Running cross-validation queries...", "percent": 92},
+                        "trace_id": trace_id,
+                    }
+                    
+                    try:
+                        from app.modules.chat.query.comparison_engine import generate_comparison_insights
+                        
+                        phase_start = time.time()
+                        comp_llm = await llm_helper.get_llm(temperature=0.3)
+                        schema_ctx = sql_service.cached_schema if sql_service else ""
+                        
+                        comparison_insights = await asyncio.wait_for(
+                            generate_comparison_insights(
+                                original_question=rewritten_query,
+                                original_sql=reasoning_steps[0].input if reasoning_steps else rewritten_query,
+                                original_results=answer[:2000],
+                                schema_context=schema_ctx,
+                                sql_service=sql_service,
+                                llm=comp_llm,
+                                dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                            ),
+                            timeout=75.0
+                        )
+                        timings["comparison_insights_ms"] = int((time.time() - phase_start) * 1000)
+                        
+                        if comparison_insights:
+                            yield {
+                                "event": StreamEventType.COMPARISON,
+                                "data": {"insights": comparison_insights},
+                                "trace_id": trace_id,
+                            }
+                            
+                    except asyncio.TimeoutError:
+                        logger.info("STREAM: Comparison insights timed out", trace_id=trace_id)
+                    except Exception as e:
+                        logger.debug(f"STREAM: Comparison generation failed: {e}")
+                
+                # === STREAM: Complete signal ===
+                timings["total_ms"] = int((time.time() - start_time) * 1000)
+                yield {
+                    "event": StreamEventType.COMPLETE,
+                    "data": {"timings": timings},
+                    "trace_id": trace_id,
+                }
+                
+                logger.info(
+                    "STREAMING chat query completed",
+                    trace_id=trace_id,
+                    total_ms=timings["total_ms"],
+                )
+                
+        except RequestCancelled:
+            yield {"event": StreamEventType.ERROR, "data": {"message": "Request cancelled"}, "trace_id": trace_id}
+        except Exception as e:
+            logger.error(f"Stream query failed: {e}", exc_info=True)
+            yield {"event": StreamEventType.ERROR, "data": {"message": str(e)}, "trace_id": trace_id}
+    
     async def _handle_sql_intent(
         self,
         query: str,
@@ -353,8 +715,11 @@ class ChatService:
         llm_helper,
     ) -> Tuple[str, List[ReasoningStep], Optional[ChartData]]:
         """Handle Intent A: SQL-only queries. Returns answer, reasoning steps, and optional chart data."""
+        import time as timing_module
+        
         reasoning_steps = []
         chart_data = None
+        sql_intent_start = timing_module.perf_counter()
         
         if not sql_service:
             return "No database connection configured for this agent.", reasoning_steps, None
@@ -362,8 +727,17 @@ class ChatService:
         tracing_ctx.add_span("sql_query", input=query)
         
         try:
-            # Execute natural language SQL query
-            result = await sql_service.query_async(query, llm_helper=llm_helper)
+            # ============================================================
+            # PHASE 1: SQL Generation + Validation + Execution (query_async)
+            # ============================================================
+            phase1_start = timing_module.perf_counter()
+            llm_config = tracing_ctx.get_llm_config()
+            result = await sql_service.query_async(
+                query, 
+                llm_helper=llm_helper,
+                llm_config=llm_config
+            )
+            phase1_duration = timing_module.perf_counter() - phase1_start
             
             reasoning_steps.append(ReasoningStep(
                 tool="sql_query",
@@ -373,19 +747,43 @@ class ChatService:
             
             tracing_ctx.update_span("sql_query", output=result[:500])
             
-            # Get schema context for domain-aware analysis
+            # ============================================================
+            # PHASE 2: Response Synthesis with Chart Generation
+            # ============================================================
+            phase2_start = timing_module.perf_counter()
             schema_context = sql_service.cached_schema if sql_service else ""
+            raw_answer = await self._synthesize_sql_response_with_chart(
+                query, result, agent_config, schema_context, tracing_ctx=tracing_ctx
+            )
+            phase2_duration = timing_module.perf_counter() - phase2_start
             
-            # Synthesize response with LLM (includes chart generation instructions)
-            raw_answer = await self._synthesize_sql_response_with_chart(query, result, agent_config, schema_context)
-            
-            # Parse chart data from LLM response
+            # ============================================================
+            # PHASE 3: Chart Parsing
+            # ============================================================
+            phase3_start = timing_module.perf_counter()
             chart_data, answer = parse_chart_data(raw_answer)
+            phase3_duration = timing_module.perf_counter() - phase3_start
             
             if chart_data:
                 logger.info(f"Chart generated: type={chart_data.type}, title={chart_data.title}")
                 tracing_ctx.add_span("chart_generation", input="SQL results")
                 tracing_ctx.update_span("chart_generation", output={"type": chart_data.type})
+            
+            # ============================================================
+            # TIMING SUMMARY LOG
+            # ============================================================
+            total_duration = timing_module.perf_counter() - sql_intent_start
+            logger.info(
+                "⏱ SQL_INTENT_TIMING: "
+                f"total={total_duration:.2f}s | "
+                f"sql_pipeline={phase1_duration:.2f}s ({phase1_duration/total_duration*100:.1f}%) | "
+                f"synthesis={phase2_duration:.2f}s ({phase2_duration/total_duration*100:.1f}%) | "
+                f"chart_parse={phase3_duration:.3f}s",
+                sql_pipeline_ms=int(phase1_duration * 1000),
+                synthesis_ms=int(phase2_duration * 1000),
+                chart_parse_ms=int(phase3_duration * 1000),
+                total_ms=int(total_duration * 1000),
+            )
             
             return answer, reasoning_steps, chart_data
             
@@ -431,7 +829,9 @@ class ChatService:
         """
         
         try:
-            response = await llm.ainvoke(prompt)
+            # Pass tracing callback to capture token usage
+            llm_config = tracing_ctx.get_llm_config()
+            response = await llm.ainvoke(prompt, config=llm_config)
             # Split by lines and remove leading numbering (e.g., "1. ")
             questions = [re.sub(r'^\d+[\.\)]\s*', '', q.strip()) for q in response.content.splitlines() if q.strip()]
 
@@ -444,11 +844,18 @@ class ChatService:
                 output="Generated dashboard queries:\n" + "\n".join(questions),
             ))
             
+            # Get LLM config for tracing
+            sub_llm_config = tracing_ctx.get_llm_config()
+            
             # Helper for parallel sub-query processing (SQL + Synthesis)
             async def process_subquery(idx, sub_q):
                 try:
                     # 1. Execute SQL directly asynchronously (avoids event loop mismatch)
-                    sql_result = await sql_service.query_async(sub_q, llm_helper=llm_helper)
+                    sql_result = await sql_service.query_async(
+                        sub_q, 
+                        llm_helper=llm_helper,
+                        llm_config=sub_llm_config
+                    )
                     
                     # 2. Skip synthesis if query failed or returned no data
                     if not sql_result or sql_result.startswith("Failed") or "No results found" in sql_result:
@@ -456,7 +863,7 @@ class ChatService:
                         
                     # 3. Synthesize results with chart generation
                     raw_answer = await self._synthesize_sql_response_with_chart(
-                        sub_q, sql_result, agent_config, schema_context
+                        sub_q, sql_result, agent_config, schema_context, tracing_ctx=tracing_ctx
                     )
                     
                     # 4. Parse chart data
@@ -546,7 +953,7 @@ class ChatService:
         
         # Synthesize response with LLM
         tracing_ctx.add_span("llm_synthesis", input=query)
-        answer = await self._synthesize_rag_response(query, sources, agent_config)
+        answer = await self._synthesize_rag_response(query, sources, agent_config, tracing_ctx=tracing_ctx)
         
         reasoning_steps.append(ReasoningStep(
             tool="llm_synthesis",
@@ -693,7 +1100,7 @@ class ChatService:
         await check_cancelled(fastapi_request)
         
         # Step 3: Synthesize response
-        answer = await self._synthesize_rag_response(query, sources, agent_config)
+        answer = await self._synthesize_rag_response(query, sources, agent_config, tracing_ctx=tracing_ctx)
         
         reasoning_steps.append(ReasoningStep(
             tool="llm_synthesis",
@@ -710,14 +1117,135 @@ class ChatService:
         
         return answer, sources, reasoning_steps, emb_info
     
+    # PHI column names that should have their values redacted
+    PHI_COLUMNS = {
+        'first_name', 'last_name', 'middle_name', 'name', 'patient_name', 'full_name',
+        'birth_date', 'birthdate', 'dob', 'date_of_birth',
+        'phone_number', 'phone', 'mobile', 'contact_number', 'telephone',
+        'email', 'email_address',
+        'address', 'street_address', 'home_address',
+        'ssn', 'social_security_number', 'national_id', 'identity_value',
+        'mrn', 'medical_record_number',
+    }
+    
+    def _redact_tabular_phi(self, sql_result: str) -> str:
+        """
+        Redact PHI values from tabular SQL results based on column names.
+        
+        This catches names and other PHI that pattern-based redaction misses.
+        """
+        lines = sql_result.strip().split('\n')
+        if len(lines) < 2:
+            return sql_result
+        
+        # Parse header to find PHI columns
+        header = lines[0]
+        columns = [col.strip().lower() for col in header.split('|')]
+        
+        # Find indices of PHI columns
+        phi_indices = []
+        for i, col in enumerate(columns):
+            if col in self.PHI_COLUMNS:
+                phi_indices.append(i)
+        
+        if not phi_indices:
+            return sql_result
+        
+        # Redact values in PHI columns (skip header and separator lines)
+        redacted_lines = [lines[0]]  # Keep header
+        phi_counter = {}
+        
+        for line in lines[1:]:
+            # Skip separator lines (e.g., "------|------")
+            if line.strip().startswith('-') or '---' in line:
+                redacted_lines.append(line)
+                continue
+            
+            parts = line.split('|')
+            for i in phi_indices:
+                if i < len(parts):
+                    original_value = parts[i].strip()
+                    if original_value and original_value.lower() not in ('none', 'null', ''):
+                        # Get column name for placeholder
+                        col_name = columns[i].upper()
+                        if col_name not in phi_counter:
+                            phi_counter[col_name] = 0
+                        phi_counter[col_name] += 1
+                        placeholder = f"[{col_name}_{phi_counter[col_name]:03d}]"
+                        parts[i] = f" {placeholder} "
+            
+            redacted_lines.append('|'.join(parts))
+        
+        if phi_counter:
+            total_redacted = sum(phi_counter.values())
+            logger.info(f"Column-based PHI redacted: {total_redacted} values from columns {list(phi_counter.keys())}")
+        
+        return '\n'.join(redacted_lines)
+    
+    def _format_raw_sql_results(self, sql_result: str) -> str:
+        """
+        Format raw SQL results for display without LLM interpretation.
+        
+        Returns the SQL results in a clean, readable format with:
+        - Row count summary
+        - Tabular data preserved
+        - No AI interpretation or analysis
+        - PHI redacted for HIPAA compliance
+        """
+        if not sql_result or sql_result.strip() == "":
+            return "No results returned from query."
+        
+        # Check for error messages
+        if "Failed to execute query" in sql_result or "Error:" in sql_result:
+            return sql_result
+        
+        # Apply column-based PHI redaction first (catches names in known columns)
+        sql_result = self._redact_tabular_phi(sql_result)
+        
+        # Apply pattern-based PHI redaction (catches SSN, dates, phones in any column)
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(sql_result)
+            sql_result = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"Pattern-based PHI redacted from raw SQL results: {redaction_result.phi_count} items")
+        
+        # Count rows (subtract header row if present)
+        lines = sql_result.strip().split('\n')
+        row_count = len(lines) - 1 if len(lines) > 1 else 0
+        
+        # Format with a header indicating raw results mode
+        formatted = "**Raw Query Results**\n\n"
+        formatted += f"*{row_count} row(s) returned*\n\n"
+        formatted += "```\n"
+        formatted += sql_result
+        formatted += "\n```"
+        
+        return formatted
+    
     async def _synthesize_sql_response_with_chart(
         self,
         query: str,
         sql_result: str,
         agent_config: Optional[Dict[str, Any]],
         schema_context: str = "",
+        tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a natural language response from SQL results with chart generation."""
+        # Check if synthesis should be skipped (raw results mode)
+        skip_synthesis = self._settings.skip_result_synthesis
+        if agent_config:
+            # Agent-level config overrides global setting (check rag_config)
+            rag_config = agent_config.get("rag_config", {})
+            if isinstance(rag_config, str):
+                rag_config = json.loads(rag_config) if rag_config else {}
+            skip_synthesis = rag_config.get("skip_result_synthesis", rag_config.get("skipResultSynthesis", skip_synthesis))
+        
+        if skip_synthesis:
+            logger.info("Skipping LLM synthesis - returning raw SQL results")
+            return self._format_raw_sql_results(sql_result)
+        
         from openai import AsyncOpenAI
         
         base_prompt = get_data_analyst_prompt()
@@ -745,19 +1273,68 @@ class ChatService:
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
+        # Truncate large result sets to avoid overwhelming the LLM and token limits
+        # For chart generation, we only need representative data, not all rows
+        result_lines = sql_result.split('\n')
+        if len(result_lines) > 50:
+            # Keep first 40 rows + summary
+            truncated_result = '\n'.join(result_lines[:40])
+            truncated_result += f"\n\n[... {len(result_lines) - 40} more rows truncated for brevity ...]\n"
+            truncated_result += f"Total rows: {len(result_lines) - 2}"  # Subtract header rows
+            sql_result_for_llm = truncated_result
+        else:
+            sql_result_for_llm = sql_result
+        
+        # Track this generation in Langfuse
+        if tracing_ctx:
+            tracing_ctx.add_generation(
+                name="sql_synthesis_with_chart",
+                model="gpt-4o",
+                input={"query": query, "results_preview": sql_result_for_llm[:500]},
+            )
+        
+        # Apply PHI redaction to SQL results before sending to LLM
+        # This protects patient names, DOBs, and other HIPAA identifiers
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(sql_result_for_llm)
+            sql_result_for_llm = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"PHI redacted from synthesis input: {redaction_result.phi_count} items")
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Query: {query}\n\nResults:\n{sql_result}\n\nProvide a clear, helpful summary of these results. If the data is suitable for visualization, include a chart JSON block."},
+                    {"role": "user", "content": f"Query: {query}\n\nResults:\n{sql_result_for_llm}\n\nProvide a clear, helpful summary of these results. If the data is suitable for visualization, include a chart JSON block."},
                 ],
                 temperature=0.0,
-                max_tokens=2000,
+                max_tokens=3000,  # Increased from 2000 to prevent JSON truncation
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            
+            # End generation tracking with usage stats
+            if tracing_ctx and response.usage:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis_with_chart",
+                    output=content[:500] if content else None,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total_tokens,
+                    }
+                )
+            
+            return content
         except Exception as e:
             logger.error(f"SQL response synthesis failed: {e}")
+            if tracing_ctx:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis_with_chart",
+                    output={"error": str(e)},
+                )
             return sql_result  # Return raw results as fallback
     
     async def _synthesize_sql_response(
@@ -766,8 +1343,22 @@ class ChatService:
         sql_result: str,
         agent_config: Optional[Dict[str, Any]],
         schema_context: str = "",
+        tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a natural language response from SQL results (without chart)."""
+        # Check if synthesis should be skipped (raw results mode)
+        skip_synthesis = self._settings.skip_result_synthesis
+        if agent_config:
+            # Agent-level config overrides global setting (check rag_config)
+            rag_config = agent_config.get("rag_config", {})
+            if isinstance(rag_config, str):
+                rag_config = json.loads(rag_config) if rag_config else {}
+            skip_synthesis = rag_config.get("skip_result_synthesis", rag_config.get("skipResultSynthesis", skip_synthesis))
+        
+        if skip_synthesis:
+            logger.info("Skipping LLM synthesis - returning raw SQL results")
+            return self._format_raw_sql_results(sql_result)
+        
         from openai import AsyncOpenAI
         
         system_prompt = get_data_analyst_prompt()
@@ -792,6 +1383,23 @@ class ChatService:
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
+        # Track this generation in Langfuse
+        if tracing_ctx:
+            tracing_ctx.add_generation(
+                name="sql_synthesis",
+                model="gpt-4o",
+                input={"query": query, "results_preview": sql_result[:500]},
+            )
+        
+        # Apply PHI redaction to SQL results before sending to LLM
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(sql_result)
+            sql_result = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"PHI redacted from synthesis input: {redaction_result.phi_count} items")
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
@@ -802,9 +1410,28 @@ class ChatService:
                 temperature=0.0,
                 max_tokens=1000,
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            
+            # End generation tracking with usage stats
+            if tracing_ctx and response.usage:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis",
+                    output=content[:500] if content else None,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total_tokens,
+                    }
+                )
+            
+            return content
         except Exception as e:
             logger.error(f"SQL response synthesis failed: {e}")
+            if tracing_ctx:
+                tracing_ctx.end_generation(
+                    name="sql_synthesis",
+                    output={"error": str(e)},
+                )
             return sql_result  # Return raw results as fallback
     
     async def _synthesize_rag_response(
@@ -812,6 +1439,7 @@ class ChatService:
         query: str,
         sources: List[SourceChunk],
         agent_config: Optional[Dict[str, Any]],
+        tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a response from RAG sources using LLM."""
         from openai import AsyncOpenAI
@@ -829,6 +1457,23 @@ class ChatService:
         
         client = AsyncOpenAI(api_key=self._settings.openai_api_key)
         
+        # Track this generation in Langfuse
+        if tracing_ctx:
+            tracing_ctx.add_generation(
+                name="rag_synthesis",
+                model="gpt-4o",
+                input={"query": query, "sources_count": len(sources)},
+            )
+        
+        # Apply PHI redaction to RAG context before sending to LLM
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(context)
+            context = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"PHI redacted from RAG context: {redaction_result.phi_count} items")
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
@@ -839,9 +1484,28 @@ class ChatService:
                 temperature=0.0,
                 max_tokens=2000,
             )
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            
+            # End generation tracking with usage stats
+            if tracing_ctx and response.usage:
+                tracing_ctx.end_generation(
+                    name="rag_synthesis",
+                    output=content[:500] if content else None,
+                    usage={
+                        "input": response.usage.prompt_tokens,
+                        "output": response.usage.completion_tokens,
+                        "total": response.usage.total_tokens,
+                    }
+                )
+            
+            return content
         except Exception as e:
             logger.error(f"RAG response synthesis failed: {e}")
+            if tracing_ctx:
+                tracing_ctx.end_generation(
+                    name="rag_synthesis",
+                    output={"error": str(e)},
+                )
             return f"I encountered an error generating a response: {str(e)}"
     
     async def _get_agent_config(

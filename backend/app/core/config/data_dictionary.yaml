@@ -6,54 +6,84 @@
 #
 # DOMAIN: Healthcare / Public Health / NCD Programs
 # USE CASE: Blood pressure monitoring, CVD risk assessment, patient tracking
+#
+# CRITICAL: FHIR Identifier Rules
+# - patient_gold: uses res_id as patient identifier (FHIR Patient resource)
+# - patient_tracker_gold: uses patient_id as patient identifier (operational)
+# - Clinical tables: use patient_id as FK, res_id as record PK
 # =============================================================================
+
+# =============================================================================
+# FHIR Identifier Guidance (CRITICAL for SQL Generation)
+# =============================================================================
+fhir_identifier_rules:
+  patient_count_tables:
+    patient_tracker_gold:
+      identifier: patient_id
+      description: "Use COUNT(DISTINCT patient_id) for patient counts"
+    patient_gold:
+      identifier: res_id
+      description: "Use COUNT(DISTINCT res_id) for patient counts - NO patient_id column exists"
+  
+  clinical_tables_with_patient_id:
+    - bp_log_gold
+    - bp_log_latest_gold
+    - glucose_log_gold
+    - glucose_log_latest_gold
+    - appointment_gold
+    - careplan_gold
+    - condition_gold
+    - encounter_gold
+    - prescription_gold
+    - patient_visit_gold
+    - screening_log_gold
 
 business_definitions:
   # =========================================================================
   # Blood Pressure Classifications (WHO/ISH Guidelines)
   # =========================================================================
   hypertensive patient:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic >= 140 OR avg_diastolic >= 90"
     description: "Patient with blood pressure readings indicating hypertension (systolic ≥140 or diastolic ≥90 mmHg)"
 
   controlled hypertension:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic < 140 AND avg_diastolic < 90"
     description: "Hypertensive patient whose BP is now controlled (systolic <140 AND diastolic <90 mmHg)"
 
   uncontrolled hypertension:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic >= 140 OR avg_diastolic >= 90"
     description: "Patient with uncontrolled blood pressure despite treatment"
 
   stage 1 hypertension:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "(avg_systolic >= 140 AND avg_systolic < 160) OR (avg_diastolic >= 90 AND avg_diastolic < 100)"
     description: "Mild hypertension (systolic 140-159 or diastolic 90-99 mmHg)"
 
   stage 2 hypertension:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic >= 160 OR avg_diastolic >= 100"
     description: "Moderate to severe hypertension (systolic ≥160 or diastolic ≥100 mmHg)"
 
   stage 3 hypertension:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic >= 180 OR avg_diastolic >= 110"
     description: "Severe/crisis hypertension requiring immediate attention (systolic ≥180 or diastolic ≥110 mmHg)"
 
   normal blood pressure:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic < 120 AND avg_diastolic < 80"
     description: "Normal blood pressure (systolic <120 AND diastolic <80 mmHg)"
 
   elevated blood pressure:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic >= 120 AND avg_systolic < 130 AND avg_diastolic < 80"
     description: "Elevated BP, pre-hypertension stage (systolic 120-129 AND diastolic <80 mmHg)"
 
   isolated systolic hypertension:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "avg_systolic >= 140 AND avg_diastolic < 90"
     description: "High systolic with normal diastolic, common in elderly patients"
 
@@ -61,22 +91,22 @@ business_definitions:
   # CVD Risk Stratification
   # =========================================================================
   high cvd risk:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "cvd_risk_level = 'High risk'"
     description: "Patient with high cardiovascular disease risk (>20% 10-year risk)"
 
   moderate cvd risk:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "cvd_risk_level = 'Medium risk'"
     description: "Patient with moderate cardiovascular disease risk (10-20% 10-year risk)"
 
   low cvd risk:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "cvd_risk_level = 'Low risk'"
     description: "Patient with low cardiovascular disease risk (<10% 10-year risk)"
 
   high risk patient:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "cvd_risk_level = 'High risk' OR cvd_risk_score >= 20"
     description: "Patient requiring intensive intervention due to high CVD risk"
 
@@ -84,93 +114,98 @@ business_definitions:
   # BMI Classifications (WHO Standards)
   # =========================================================================
   obese patient:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "bmi_category IN ('Obese', 'Extremely Obese') OR bmi >= 30"
     description: "Patient with BMI ≥30 kg/m² (obese classification)"
 
   morbidly obese:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "bmi_category = 'Extremely Obese' OR bmi >= 40"
     description: "Patient with BMI ≥40 kg/m² (morbidly/extremely obese)"
 
   overweight patient:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "bmi_category = 'Overweight' OR (bmi >= 25 AND bmi < 30)"
     description: "Patient with BMI 25-29.9 kg/m² (overweight)"
 
   normal weight:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "bmi_category = 'Normal' OR (bmi >= 18.5 AND bmi < 25)"
     description: "Patient with healthy BMI 18.5-24.9 kg/m²"
 
   underweight patient:
-    table: wdf_bp_assessment_data
+    table: bp_log_latest_gold
     condition: "bmi_category = 'Underweight' OR bmi < 18.5"
     description: "Patient with BMI <18.5 kg/m² (underweight)"
 
   # =========================================================================
   # Patient Tracking & Program Status
   # =========================================================================
+  total patients:
+    table: patient_tracker_gold
+    condition: "COUNT(DISTINCT patient_id) WHERE is_deleted = false"
+    description: "Total count of patients in the system"
+
   active patient:
-    table: patient_tracker
-    condition: "is_active = true AND is_deleted = false"
+    table: patient_tracker_gold
+    condition: "is_deleted = false"
     description: "Patient currently enrolled and active in the NCD program"
 
   enrolled patient:
-    table: patient_tracker
-    condition: "is_enrolled = true AND is_active = true AND is_deleted = false"
+    table: patient_tracker_gold
+    condition: "is_deleted = false"
     description: "Patient successfully enrolled in the hypertension management program"
 
   screened patient:
-    table: patient_tracker
-    condition: "is_screening = true"
+    table: patient_tracker_gold
+    condition: "is_screening = true AND is_deleted = false"
     description: "Patient who has completed initial BP screening"
 
   diagnosed patient:
-    table: patient_tracker
-    condition: "is_confirmed_diagnosis = true"
+    table: patient_tracker_gold
+    condition: "is_confirmed_diagnosis = true AND is_deleted = false"
     description: "Patient with confirmed hypertension diagnosis"
 
   lost to follow up:
-    table: patient_tracker
-    condition: "is_active = false AND is_deleted = false AND last_visit_date < CURRENT_DATE - INTERVAL '90 days'"
+    table: patient_tracker_gold
+    condition: "is_deleted = false AND last_review_date < CURRENT_DATE - INTERVAL '90 days'"
     description: "Patient who hasn't visited in over 90 days"
 
   new patient:
-    table: patient_tracker
-    condition: "created_at >= CURRENT_DATE - INTERVAL '30 days'"
+    table: patient_tracker_gold
+    condition: "created_at >= CURRENT_DATE - INTERVAL '30 days' AND is_deleted = false"
     description: "Patient registered in the last 30 days"
 
   # =========================================================================
   # Assessment & Visit Types
   # =========================================================================
   latest assessment:
-    table: wdf_bp_assessment_data
-    condition: "is_latest = 'true'"
-    description: "Most recent BP assessment for each patient"
+    table: bp_log_latest_gold
+    condition: ""
+    description: "Most recent BP assessment for each patient (table is pre-filtered to latest records only, no additional filter needed)"
 
   pre-diagnosis reading:
-    table: wdf_bp_assessment_data
-    condition: "is_before_htn_diagnosis = 'true'"
+    table: bp_log_gold
+    condition: "is_before_htn_diagnosis = true"
     description: "BP reading taken before hypertension was officially diagnosed"
 
   facility visit:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "encounter_type = 'Facility-based'"
     description: "Assessment conducted at a health facility/clinic"
 
   community outreach:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "encounter_type = 'Community Outreach'"
     description: "Assessment conducted during community health outreach"
 
   screening visit:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "assessment_category = 'Screening'"
     description: "Initial screening assessment for new patients"
 
   follow up visit:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "assessment_category = 'Follow-up'"
     description: "Follow-up visit for existing patients"
 
@@ -178,27 +213,27 @@ business_definitions:
   # Time-Based Filters
   # =========================================================================
   this month:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "ymd >= DATE_TRUNC('month', CURRENT_DATE)"
     description: "Assessments from the current calendar month"
 
   last month:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "ymd >= DATE_TRUNC('month', CURRENT_DATE - INTERVAL '1 month') AND ymd < DATE_TRUNC('month', CURRENT_DATE)"
     description: "Assessments from the previous calendar month"
 
   last 30 days:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "ymd >= CURRENT_DATE - INTERVAL '30 days'"
     description: "Assessments from the last 30 days"
 
   last 90 days:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "ymd >= CURRENT_DATE - INTERVAL '90 days'"
     description: "Assessments from the last 90 days (quarterly)"
 
   this year:
-    table: wdf_bp_assessment_data
+    table: bp_log_gold
     condition: "ymd >= DATE_TRUNC('year', CURRENT_DATE)"
     description: "Assessments from the current calendar year"
 
@@ -206,8 +241,8 @@ business_definitions:
 # Healthcare Synonyms - Medical Terminology Mapping
 # =============================================================================
 synonyms:
-  # Table synonyms
-  wdf_bp_assessment_data:
+  # Table synonyms - Updated with correct _gold suffix tables
+  bp_log_gold:
     - "bp assessments"
     - "blood pressure data"
     - "bp readings"
@@ -215,13 +250,25 @@ synonyms:
     - "bp measurements"
     - "vitals"
     - "vital signs"
-    - "sheet1"
+    - "bp logs"
 
-  patient_tracker:
+  bp_log_latest_gold:
+    - "latest bp"
+    - "current bp"
+    - "most recent bp"
+    - "latest assessment"
+
+  patient_tracker_gold:
     - "patients"
     - "patient records"
     - "patient registry"
     - "enrolled patients"
+    - "patient tracking"
+
+  patient_gold:
+    - "patient demographics"
+    - "patient resource"
+    - "fhir patients"
 
   # Blood pressure synonyms
   avg_systolic:
@@ -274,23 +321,16 @@ synonyms:
     - "weight status"
     - "obesity status"
 
-  # Location synonyms
-  facility_name:
-    - "facility"
-    - "clinic"
-    - "health center"
-    - "hospital"
-    - "health facility"
+  # Identifier synonyms - CRITICAL
+  patient_id:
+    - "patient identifier"
+    - "patient key"
+    - "patient fk"
 
-  county:
-    - "region"
-    - "province"
-    - "state"
-
-  subcounty:
-    - "sub-county"
-    - "district"
-    - "sub-region"
+  res_id:
+    - "resource id"
+    - "fhir id"
+    - "resource identifier"
 
   # Date/Time synonyms
   ymd:
@@ -298,7 +338,6 @@ synonyms:
     - "assessment date"
     - "visit date"
     - "measurement date"
-    - "reading date"
 
   # Encounter synonyms
   encounter_type:
@@ -312,22 +351,25 @@ synonyms:
     - "visit category"
     - "purpose"
 
-  # Patient identifiers
-  patient_id:
-    - "patient"
-    - "patient identifier"
-    - "patient number"
-
 # =============================================================================
-# Default Filters - Always Applied Unless Explicitly Overridden
+# Default Filters - Applied automatically to queries
 # =============================================================================
 default_filters:
-  patient_tracker:
-    - "is_deleted = false"
-    - "is_active = true"
-
-  wdf_bp_assessment_data:
-    - "is_latest = 'true'"  # Default to latest readings only
+  patient_tracker_gold:
+    filter: "is_deleted = false"
+    description: "Exclude soft-deleted patients"
+  
+  patient_gold:
+    filter: "res_deleted_at IS NULL"
+    description: "Exclude deleted FHIR patient resources"
+  
+  bp_log_gold:
+    filter: "is_src_deleted IS DISTINCT FROM 'true'"
+    description: "Exclude deleted BP log entries (is_src_deleted is VARCHAR not boolean)"
+  
+  bp_log_latest_gold:
+    filter: ""
+    description: "Table is pre-filtered to contain only the latest BP reading per patient - no additional is_latest filter needed"
 
 # =============================================================================
 # Healthcare Metric Templates
@@ -337,83 +379,89 @@ metric_templates:
   hypertension_rate:
     expression: "COUNT(DISTINCT CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
     description: "Percentage of patients with hypertensive BP readings"
-    tables: ["wdf_bp_assessment_data"]
+    tables: ["bp_log_latest_gold"]
 
   bp_control_rate:
     expression: "COUNT(DISTINCT CASE WHEN avg_systolic < 140 AND avg_diastolic < 90 THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
     description: "Percentage of patients with controlled blood pressure"
-    tables: ["wdf_bp_assessment_data"]
+    tables: ["bp_log_latest_gold"]
 
   stage2_hypertension_rate:
     expression: "COUNT(DISTINCT CASE WHEN avg_systolic >= 160 OR avg_diastolic >= 100 THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
     description: "Percentage of patients with Stage 2 or higher hypertension"
-    tables: ["wdf_bp_assessment_data"]
+    tables: ["bp_log_latest_gold"]
 
   # CVD Risk Metrics
   high_risk_rate:
     expression: "COUNT(DISTINCT CASE WHEN cvd_risk_level = 'High risk' THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
     description: "Percentage of patients classified as high CVD risk"
-    tables: ["wdf_bp_assessment_data"]
+    tables: ["bp_log_latest_gold"]
 
   average_cvd_risk:
     expression: "AVG(cvd_risk_score)"
     description: "Average CVD risk score across patients"
-    tables: ["wdf_bp_assessment_data"]
+    tables: ["bp_log_latest_gold"]
 
   # BMI/Obesity Metrics
   obesity_rate:
     expression: "COUNT(DISTINCT CASE WHEN bmi_category IN ('Obese', 'Extremely Obese') THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
     description: "Percentage of patients classified as obese"
-    tables: ["wdf_bp_assessment_data"]
+    tables: ["bp_log_latest_gold"]
 
   average_bmi:
     expression: "AVG(bmi)"
     description: "Average BMI across patients"
-    tables: ["wdf_bp_assessment_data"]
+    tables: ["bp_log_latest_gold"]
 
   # Program Metrics
   screening_rate:
-    expression: "COUNT(DISTINCT CASE WHEN is_screening = true THEN id END) * 100.0 / NULLIF(COUNT(DISTINCT id), 0)"
+    expression: "COUNT(DISTINCT CASE WHEN is_screening = true THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
     description: "Percentage of patients who completed screening"
-    tables: ["patient_tracker"]
+    tables: ["patient_tracker_gold"]
 
   enrollment_rate:
-    expression: "COUNT(DISTINCT CASE WHEN is_enrolled = true THEN id END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_screening = true THEN id END), 0)"
+    expression: "COUNT(DISTINCT CASE WHEN is_enrolled = true THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_screening = true THEN patient_id END), 0)"
     description: "Percentage of screened patients who enrolled"
-    tables: ["patient_tracker"]
+    tables: ["patient_tracker_gold"]
 
   diagnosis_rate:
-    expression: "COUNT(DISTINCT CASE WHEN is_confirmed_diagnosis = true THEN id END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_enrolled = true THEN id END), 0)"
+    expression: "COUNT(DISTINCT CASE WHEN is_confirmed_diagnosis = true THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_enrolled = true THEN patient_id END), 0)"
     description: "Percentage of enrolled patients with confirmed diagnosis"
-    tables: ["patient_tracker"]
+    tables: ["patient_tracker_gold"]
 
 # =============================================================================
 # Table Descriptions - Healthcare Context
 # =============================================================================
 table_descriptions:
-  wdf_bp_assessment_data: "Blood pressure assessment records containing patient BP readings (3 measurements averaged), BMI, CVD risk levels, and clinical encounter information. Primary table for hypertension analytics."
+  bp_log_latest_gold: "Blood pressure assessment records containing patient BP readings (3 measurements averaged), BMI, CVD risk levels, and clinical encounter information. Primary table for hypertension analytics."
   
-  patient_tracker: "Patient registry tracking enrollment status, screening completion, diagnosis confirmation, and program participation in the NCD/hypertension management program."
+  bp_log_gold: "Historical blood pressure measurements for longitudinal analysis and trend tracking."
   
-  patient_visit: "Clinical visit records documenting patient encounters at health facilities."
+  patient_tracker_gold: "Patient registry tracking enrollment status, screening completion, diagnosis confirmation, and program participation in the NCD/hypertension management program."
   
-  patient_diagnosis: "Confirmed medical diagnoses for patients including ICD codes and diagnosis dates."
+  patient_gold: "Core patient demographics from FHIR Patient resource. Uses res_id as identifier (no patient_id column)."
   
-  patient_lab_test: "Laboratory test orders and requests for patients."
+  patient_visit_gold: "Clinical visit records documenting patient encounters at health facilities."
   
-  patient_lab_test_result: "Laboratory test results including values and reference ranges."
+  patient_diagnosis_gold: "Confirmed medical diagnoses for patients including ICD codes and diagnosis dates."
   
-  patient_treatment_plan: "Treatment plans and medication regimens assigned to patients."
+  patient_labtest_gold: "Laboratory test orders and requests for patients."
   
-  site: "Health facilities and clinics where patient services are delivered."
+  patient_labtest_result_gold: "Laboratory test results including values and reference ranges."
   
-  organization: "Healthcare organizations and implementing partners managing facilities."
+  condition_gold: "FHIR Condition resources - diagnoses, problems, and health concerns."
+  
+  encounter_gold: "FHIR Encounter resources - clinical encounters and visits."
+  
+  appointment_gold: "FHIR Appointment resources - scheduled visits and appointments."
+  
+  organization_gold: "Healthcare organizations and implementing partners managing facilities."
 
 # =============================================================================
 # Column Semantics - Healthcare Data Dictionary
 # =============================================================================
 column_semantics:
-  wdf_bp_assessment_data:
+  bp_log_latest_gold:
     res_id: "Unique identifier for this BP assessment record"
     encounter_id: "Links to the clinical encounter/visit"
     ymd: "Date of BP assessment (YYYY-MM-DD)"
@@ -435,15 +483,13 @@ column_semantics:
     is_before_htn_diagnosis: "Boolean flag - TRUE means reading was before hypertension diagnosis"
     encounter_type: "Service delivery point (Facility-based/Community Outreach)"
     assessment_category: "Purpose of visit (Screening/Follow-up/Referral)"
-    facility_id: "Health facility unique identifier"
-    facility_name: "Name of the health facility"
-    county: "County/province geographic location"
-    subcounty: "Sub-county/district geographic location"
-    program_name: "NCD program name"
+    organization_id: "Health facility unique identifier"
+    height: "Patient height measurement"
+    weight: "Patient weight measurement"
+    bp_taken_on: "Timestamp when BP was measured"
 
-  patient_tracker:
-    id: "Unique patient identifier"
-    is_active: "Whether patient is currently active in program"
+  patient_tracker_gold:
+    patient_id: "Unique patient identifier"
     is_deleted: "Soft-delete flag - exclude from queries"
     is_screening: "Whether patient completed initial screening"
     is_enrolled: "Whether patient is enrolled in NCD program"
@@ -453,15 +499,20 @@ column_semantics:
     cvd_risk_level: "Most recent CVD risk classification"
     created_at: "Date patient was registered"
     last_visit_date: "Date of most recent clinical visit"
+    site_id: "Site/facility identifier (FK to site_gold)"
+    country_id: "Country identifier"
 
 # =============================================================================
 # Validation Rules - Healthcare Data Governance
 # =============================================================================
 validation_rules:
   required_filters:
-    - "Queries on patient_tracker must include is_deleted = false"
-    - "Patient-level queries should filter to is_active = true unless analyzing dropouts"
-    - "Use is_latest = 'true' for current patient status, remove for trend analysis"
+    - "Queries on patient_tracker_gold must include is_deleted = false"
+    - "Use is_latest = true for current patient status, remove for trend analysis"
+  
+  column_type_warnings:
+    - "bp_log_gold.is_src_deleted is VARCHAR not boolean - use IS DISTINCT FROM 'true' or COALESCE(..., 'false') != 'true'"
+    - "patient_gold has NO patient_id column - use res_id instead"
   
   clinical_thresholds:
     - "Hypertension: systolic >= 140 OR diastolic >= 90"
@@ -481,16 +532,207 @@ validation_rules:
 query_patterns:
   bp_trend_over_time:
     description: "Track blood pressure trends over time periods"
-    pattern: "SELECT DATE_TRUNC('month', ymd) as month, AVG(avg_systolic) as avg_systolic, AVG(avg_diastolic) as avg_diastolic FROM wdf_bp_assessment_data GROUP BY 1 ORDER BY 1"
+    pattern: "SELECT DATE_TRUNC('month', ymd) as month, AVG(avg_systolic) as avg_systolic, AVG(avg_diastolic) as avg_diastolic FROM bp_log_latest_gold GROUP BY 1 ORDER BY 1"
 
   hypertension_by_facility:
     description: "Compare hypertension rates across facilities"
-    pattern: "SELECT facility_name, COUNT(DISTINCT CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN patient_id END) * 100.0 / COUNT(DISTINCT patient_id) as htn_rate FROM wdf_bp_assessment_data GROUP BY facility_name"
+    pattern: "SELECT organization_id, COUNT(DISTINCT CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN patient_id END) * 100.0 / COUNT(DISTINCT patient_id) as htn_rate FROM bp_log_latest_gold GROUP BY organization_id"
 
   patient_risk_distribution:
     description: "Distribution of patients by CVD risk level"
-    pattern: "SELECT cvd_risk_level, COUNT(DISTINCT patient_id) as patient_count FROM wdf_bp_assessment_data WHERE is_latest = 'true' GROUP BY cvd_risk_level"
+    pattern: "SELECT cvd_risk_level, COUNT(DISTINCT patient_id) as patient_count FROM bp_log_latest_gold GROUP BY cvd_risk_level"
 
   bmi_category_breakdown:
     description: "Patient distribution by BMI category"
-    pattern: "SELECT bmi_category, COUNT(DISTINCT patient_id) as count FROM wdf_bp_assessment_data WHERE is_latest = 'true' GROUP BY bmi_category"
+    pattern: "SELECT bmi_category, COUNT(DISTINCT patient_id) as count FROM bp_log_latest_gold GROUP BY bmi_category"
+
+# =============================================================================
+# M&E Join Patterns - Facility Hierarchy & Program Assignments
+# =============================================================================
+# These patterns are used by M&E teams to enrich clinical data with
+# geographic hierarchy and program information for reporting dashboards.
+# =============================================================================
+me_join_patterns:
+  # ===========================================================================
+  # Facility Hierarchy CTE Pattern
+  # ===========================================================================
+  # Builds the complete facility hierarchy: Country → District/County → Chiefdom/Subcounty
+  # Key join: health_facility_admin_gold.fhir_id → clinical_tables.organization_id
+  # IMPORTANT: CAST fhir_id to BIGINT for integer comparison with organization_id
+  # ===========================================================================
+  facility_hierarchy:
+    description: "CTE to build facility hierarchy from admin tables"
+    tables:
+      - health_facility_admin_gold
+      - country_admin_gold
+      - district_admin_gold
+      - chiefdom_admin_gold
+    join_keys:
+      health_facility_to_country: "hf.country_id = co.id"
+      health_facility_to_district: "hf.district_id = dis.id"
+      health_facility_to_chiefdom: "hf.chiefdom_id = chif.id"
+    output_columns:
+      - "hf.id AS facility_id"
+      - "hf.name AS facility_name"
+      - "CAST(hf.fhir_id AS BIGINT) AS organization_id"
+      - "co.name AS country"
+      - "dis.name AS county_name"
+      - "chif.name AS subcounty_name"
+    filter: "hf.is_deleted = FALSE"
+    pattern: |
+      WITH facilities AS (
+          SELECT
+              hf.id AS facility_id,
+              hf.name AS facility_name,
+              CAST(hf.fhir_id AS BIGINT) AS organization_id,
+              co.id AS country_id,
+              co.name AS country,
+              dis.id AS county_id,
+              dis.name AS county_name,
+              chif.id AS subcounty_id,
+              chif.name AS subcounty_name
+          FROM health_facility_admin_gold hf
+          LEFT JOIN country_admin_gold co ON hf.country_id = co.id
+          LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
+          LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
+          WHERE hf.is_deleted = FALSE
+      )
+
+  # ===========================================================================
+  # Program Assignment CTE Pattern
+  # ===========================================================================
+  # Maps facilities to their assigned programs
+  # Key join: health_facility_program_admin_gold → program_admin_gold
+  # ===========================================================================
+  facility_programs:
+    description: "CTE to get program assignments for facilities"
+    tables:
+      - health_facility_program_admin_gold
+      - program_admin_gold
+    join_keys:
+      program_to_facility: "pg.id = hfp.program_id"
+    output_columns:
+      - "hfp.health_facility_id AS facility_id"
+      - "COALESCE(MAX(pg.name), 'Unassigned') AS program_name"
+    pattern: |
+      facility_programs AS (
+          SELECT
+              hfp.health_facility_id AS facility_id,
+              COALESCE(MAX(pg.name), 'Unassigned') AS program_name
+          FROM health_facility_program_admin_gold hfp
+          LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id
+          GROUP BY hfp.health_facility_id
+      )
+
+  # ===========================================================================
+  # Clinical Data to Facility Join Pattern
+  # ===========================================================================
+  # How to join clinical tables (bp_log_gold, etc.) to facility hierarchy
+  # ===========================================================================
+  clinical_to_facility:
+    description: "Join clinical data to facility hierarchy"
+    join_key: "f.organization_id = bl.organization_id"
+    note: "organization_id in clinical tables links to CAST(fhir_id AS BIGINT) in health_facility_admin_gold"
+
+  # ===========================================================================
+  # Glucose Log M&E Pattern
+  # ===========================================================================
+  # Same facility/program CTEs, different date field (bg_taken_on)
+  # ===========================================================================
+  glucose_log_me_pattern:
+    description: "Complete M&E enrichment pattern for glucose log data"
+    tables:
+      - glucose_log_latest_gold
+      - health_facility_admin_gold
+      - country_admin_gold
+      - district_admin_gold
+      - chiefdom_admin_gold
+      - health_facility_program_admin_gold
+      - program_admin_gold
+    date_field: "bg_taken_on"
+    date_format_pattern: "date_format(TRY_CAST(gl.bg_taken_on AS DATE), '%Y-%m-%d')"
+    ymd_pattern: "CAST(date_format(TRY_CAST(gl.bg_taken_on AS DATE), '%Y%m%d') AS INTEGER) AS ymd"
+    key_columns:
+      - "gl.glucose_type"
+      - "gl.glucose_value"
+      - "gl.glucose_unit"
+      - "gl.hba1c"
+      - "gl.hba1c_unit"
+      - "gl.last_meal_time"
+      - "gl.is_latest"
+      - "gl.encounter_type"
+    pattern: |
+      WITH facilities AS (
+          SELECT hf.id AS facility_id, hf.name AS facility_name,
+                 CAST(hf.fhir_id AS BIGINT) AS organization_id,
+                 co.id AS country_id, co.name AS country,
+                 dis.id AS county_id, dis.name AS county_name,
+                 chif.id AS subcounty_id, chif.name AS subcounty_name
+          FROM health_facility_admin_gold hf
+          LEFT JOIN country_admin_gold co ON hf.country_id = co.id
+          LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
+          LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
+          WHERE hf.is_deleted = FALSE
+      ),
+      facility_programs AS (
+          SELECT hfp.health_facility_id AS facility_id,
+                 COALESCE(MAX(pg.name), 'Unassigned') AS program_name
+          FROM health_facility_program_admin_gold hfp
+          LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id
+          GROUP BY hfp.health_facility_id
+      )
+      SELECT gl.*, f.facility_name, f.country, f.county_name, f.subcounty_name,
+             COALESCE(fp.program_name, 'Unassigned') AS program_name
+      FROM glucose_log_latest_gold gl
+      LEFT JOIN facilities f ON f.organization_id = gl.organization_id
+      LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id
+      WHERE TRY_CAST(gl.bg_taken_on AS DATE) >= DATE '2024-10-01'
+        AND TRY_CAST(gl.bg_taken_on AS DATE) <= CURRENT_DATE
+
+  # ===========================================================================
+  # Complete M&E Query Pattern
+  # ===========================================================================
+  full_me_pattern:
+    description: "Complete M&E enrichment pattern for BP data"
+    usage: "Use when M&E team needs full facility hierarchy with program assignments"
+    pattern: |
+      WITH facilities AS (
+          SELECT hf.id AS facility_id, hf.name AS facility_name,
+                 CAST(hf.fhir_id AS BIGINT) AS organization_id,
+                 co.name AS country, dis.name AS county_name, chif.name AS subcounty_name
+          FROM health_facility_admin_gold hf
+          LEFT JOIN country_admin_gold co ON hf.country_id = co.id
+          LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
+          LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
+          WHERE hf.is_deleted = FALSE
+      ),
+      facility_programs AS (
+          SELECT hfp.health_facility_id AS facility_id,
+                 COALESCE(MAX(pg.name), 'Unassigned') AS program_name
+          FROM health_facility_program_admin_gold hfp
+          LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id
+          GROUP BY hfp.health_facility_id
+      )
+      SELECT bl.*, f.facility_name, f.country, f.county_name, f.subcounty_name,
+             COALESCE(fp.program_name, 'Unassigned') AS program_name
+      FROM bp_log_gold bl
+      LEFT JOIN facilities f ON f.organization_id = bl.organization_id
+      LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id
+
+# =============================================================================
+# Geographic Hierarchy Terminology
+# =============================================================================
+geographic_hierarchy:
+  country_admin_gold:
+    role: "Top-level geographic division (Country)"
+    synonyms: ["country", "nation"]
+  
+  district_admin_gold:
+    role: "Second-level geographic division (District/County)"
+    synonyms: ["district", "county", "region"]
+    note: "In some contexts called 'county' - check local terminology"
+  
+  chiefdom_admin_gold:
+    role: "Third-level geographic division (Chiefdom/Subcounty)"
+    synonyms: ["chiefdom", "subcounty", "sub-county", "ward"]
+    note: "Smallest administrative unit above village level"

@@ -94,7 +94,7 @@ def clear_prompt_cache():
 # Convenience functions for commonly used prompts
 def get_sql_generator_prompt() -> str:
     """Get the SQL generator prompt."""
-    return load_prompt("sql_generator", fallback="You are a SQL expert. Generate a PostgreSQL query.")
+    return load_prompt("sql_generator", fallback="You are a Senior Healthcare Data Analyst specializing in FHIR databases. Generate analytical SQL queries for patient data, clinical measurements, and NCD management.")
 
 
 def get_intent_router_prompt() -> str:
@@ -172,3 +172,17 @@ Rules:
 3. Return ONLY the corrected SQL, no explanations
 4. If the error cannot be fixed, return the original query with a comment explaining why
 """)
+
+
+def get_fhir_rules_prompt() -> str:
+    """Get the FHIR identifier rules prompt for healthcare schemas."""
+    return load_prompt("fhir_rules", fallback="Follow FHIR data model conventions for patient identifiers.")
+
+
+def get_me_reporting_prompt() -> str:
+    """Get the M&E (Monitoring & Evaluation) reporting patterns prompt.
+    
+    Contains facility hierarchy CTEs, program assignments, and geographic
+    breakdown patterns for healthcare M&E dashboards.
+    """
+    return load_prompt("me_reporting", fallback="")

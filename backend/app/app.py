@@ -6,6 +6,7 @@ routers, and lifecycle handlers.
 """
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -41,6 +42,105 @@ logger = get_logger(__name__)
 
 
 # ============================================
+# Embedding Model Pre-warming
+# ============================================
+
+async def prewarm_embedding_models():
+    """
+    Pre-warm embedding models used by active agents.
+    
+    Only pre-warms LOCAL models (HuggingFace/sentence-transformers) since
+    API models (OpenAI, Azure) don't have cold-start issues.
+    
+    This saves 5-10s on the first query by loading the model into memory
+    and GPU at startup time instead of during the first request.
+    """
+    # Check if pre-warming is enabled (default: True in production)
+    if os.getenv("PREWARM_EMBEDDINGS", "true").lower() != "true":
+        logger.info("Embedding model pre-warming disabled via PREWARM_EMBEDDINGS=false")
+        return
+    
+    try:
+        from sqlalchemy import select, distinct
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+        from app.modules.agents.models import AgentConfigModel
+        from app.modules.ai_models.models import AIModel
+        
+        # Connect to DB to find active embedding models
+        db_url = f"postgresql+asyncpg://{settings.postgres_user}:{settings.postgres_password}@{settings.postgres_host}:{settings.postgres_port}/{settings.postgres_db}"
+        engine = create_async_engine(db_url, echo=False)
+        
+        async with AsyncSession(engine) as session:
+            # Find distinct embedding model IDs used by agents
+            stmt = (
+                select(distinct(AgentConfigModel.embedding_model_id))
+                .where(AgentConfigModel.embedding_model_id.isnot(None))
+            )
+            result = await session.execute(stmt)
+            model_ids = [row[0] for row in result.fetchall()]
+            
+            if not model_ids:
+                logger.info("No embedding models configured for any agent, skipping pre-warm")
+                await engine.dispose()
+                return
+            
+            # Get model names for these IDs
+            stmt = select(AIModel).where(AIModel.id.in_(model_ids))
+            result = await session.execute(stmt)
+            models = result.scalars().all()
+        
+        await engine.dispose()
+        
+        # Filter to local models only (HuggingFace, sentence-transformers, BGE)
+        local_models = []
+        for m in models:
+            model_name = m.model_name.lower() if m.model_name else ""
+            provider = m.provider.lower() if m.provider else ""
+            
+            # Check if it's a local model (not API-based)
+            if any(p in provider for p in ("huggingface", "sentence", "local")) or \
+               any(pattern in model_name for pattern in ("bge-", "bge_", "e5-", "gte-", "all-minilm", "sentence-")):
+                # Build full model name with provider prefix
+                full_name = f"{m.provider}/{m.model_name}" if m.provider else m.model_name
+                local_models.append(full_name)
+        
+        if not local_models:
+            logger.info("No local embedding models to pre-warm (all are API-based)")
+            return
+        
+        # Pre-warm each local model
+        from app.modules.embeddings.service import _get_embedding_provider
+        
+        for model_name in local_models:
+            try:
+                logger.info(f"🔥 Pre-warming embedding model: {model_name}")
+                start = time.perf_counter()
+                
+                # This loads the model into memory/GPU and caches it
+                embed_fn = await _get_embedding_provider(model_name)
+                
+                # Warm up with a test embedding to ensure GPU kernels are compiled
+                if callable(embed_fn):
+                    import asyncio
+                    if asyncio.iscoroutinefunction(embed_fn):
+                        await embed_fn(["test warmup"])
+                    else:
+                        loop = asyncio.get_event_loop()
+                        await loop.run_in_executor(None, embed_fn, ["test warmup"])
+                
+                duration = time.perf_counter() - start
+                logger.info(f"✅ Pre-warmed {model_name} in {duration:.2f}s")
+                
+            except Exception as e:
+                logger.warning(f"Failed to pre-warm {model_name}: {e}")
+        
+        logger.info(f"Embedding pre-warming complete: {len(local_models)} models loaded")
+        
+    except Exception as e:
+        logger.warning(f"Embedding pre-warming failed (non-fatal): {e}")
+
+
+# ============================================
 # Application Lifespan
 # ============================================
 
@@ -53,7 +153,7 @@ async def lifespan(app: FastAPI):
     - Startup: Initialize database, tracing, etc.
     - Shutdown: Close connections, cleanup resources
     """
-    logger.info("Starting application", version=settings.version)
+    logger.info("Starting Data Insights Copilot application", version=settings.version)
     
     # Initialize database
     try:
@@ -78,6 +178,13 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Tracing configured for development")
     
+    # Pre-warm embedding models for faster first query
+    # This runs in background to not block startup
+    try:
+        await prewarm_embedding_models()
+    except Exception as e:
+        logger.warning(f"Embedding pre-warming failed (non-fatal): {e}")
+    
     logger.info("Application startup complete")
     
     yield  # Application is running
@@ -101,7 +208,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.project_name,
     version=settings.version,
-    description=f"{settings.project_name} - Healthcare data insights with RAG",
+    description=f"{settings.project_name} - Healthcare data insights copilot API",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
@@ -319,6 +426,7 @@ app.include_router(users_router, prefix=f"{settings.api_v1_prefix}/users", tags=
 # Observability & Audit
 from app.modules.audit.routes import router as audit_router
 from app.modules.observability.analytics_routes import router as analytics_router
+from app.modules.observability.routes import router as observability_router
 
 # Agents and Configs
 from app.modules.agents.routes import router as agents_router
@@ -332,6 +440,7 @@ from app.modules.ai_models.routes import router as ai_registry_router
 
 app.include_router(audit_router, prefix=f"{settings.api_v1_prefix}", tags=["Audit"])
 app.include_router(analytics_router, prefix=f"{settings.api_v1_prefix}", tags=["Analytics"])
+app.include_router(observability_router, prefix=f"{settings.api_v1_prefix}", tags=["Observability"])
 # Note: agents_router already has /agents, /config prefixes and tags internally
 app.include_router(agents_router, prefix=f"{settings.api_v1_prefix}")
 # Note: data_sources_router already has /data-sources prefix and tags internally

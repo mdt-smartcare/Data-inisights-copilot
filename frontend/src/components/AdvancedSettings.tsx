@@ -1068,6 +1068,50 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                                     </div>
                                 </div>
                             </div>
+
+                            {/* Skip Result Synthesis Toggle */}
+                            <div className="mt-6 pt-4 border-t border-gray-200">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">Raw Results Mode</label>
+                                        <p className="text-xs text-gray-500 mt-0.5">Skip LLM interpretation, return raw SQL query results directly</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        aria-label="Toggle raw results mode"
+                                        onClick={() => {
+                                            if (readOnly) return;
+                                            const newSettings = {
+                                                ...localSettings,
+                                                retriever: {
+                                                    ...localSettings.retriever,
+                                                    skipResultSynthesis: !localSettings.retriever.skipResultSynthesis
+                                                }
+                                            };
+                                            setLocalSettings(newSettings);
+                                            isInternalUpdate.current = true;
+                                            onChange(newSettings);
+                                        }}
+                                        disabled={readOnly}
+                                        className={`relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 ${
+                                            localSettings.retriever.skipResultSynthesis ? 'bg-emerald-600' : 'bg-gray-200'
+                                        } ${readOnly ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    >
+                                        <span
+                                            className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                                localSettings.retriever.skipResultSynthesis ? 'translate-x-4' : 'translate-x-0'
+                                            }`}
+                                        />
+                                    </button>
+                                </div>
+                                {localSettings.retriever.skipResultSynthesis && (
+                                    <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-md">
+                                        <p className="text-xs text-amber-700">
+                                            <strong>Raw mode enabled:</strong> SQL results will be returned as-is without AI interpretation. This saves tokens and reduces costs, but you won't get natural language summaries or insights.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>

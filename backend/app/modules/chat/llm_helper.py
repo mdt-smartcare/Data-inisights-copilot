@@ -15,7 +15,7 @@ Usage:
     llm = await llm_helper.get_llm(temperature=0.7)  # creative
 """
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from langchain_core.language_models import BaseChatModel
 
@@ -29,9 +29,12 @@ class LLMHelper:
     """
     Simple LLM helper — fetches config from DB on first use, provides LLMs on demand.
     
+    Caches LLM instances by (temperature, phi_protection) to avoid repeated provider creation.
+    
     Usage:
         llm_helper = LLMHelper(db, agent_id)
-        llm = await llm_helper.get_llm(temperature=0.0)
+        llm = await llm_helper.get_llm(temperature=0.0)  # For SQL generation (no PHI)
+        llm = await llm_helper.get_llm(temperature=0.7, phi_protection=True)  # For synthesis (with PHI)
     """
     
     def __init__(self, db_session, agent_id: Optional[int] = None):
@@ -45,19 +48,31 @@ class LLMHelper:
         self._api_base_url: Optional[str] = None
         self._local_path: Optional[str] = None
         self._is_local: bool = False
+        # Cache LLM instances by (temperature, phi_protection) to avoid repeated creation
+        self._llm_cache: Dict[Tuple[float, bool], BaseChatModel] = {}
     
-    async def get_llm(self, temperature: float = 0.0) -> BaseChatModel:
+    async def get_llm(self, temperature: float = 0.0, phi_protection: bool = False) -> BaseChatModel:
         """
-        Get LLM with specified temperature.
+        Get LLM with specified temperature (cached to avoid repeated creation).
         
         Args:
             temperature: 0.0 = deterministic, 0.7 = creative (default: 0.0)
+            phi_protection: Whether to wrap LLM with PHI redaction (default: False)
+                           Set to True ONLY for synthesis calls that include patient data.
+                           Do NOT use for SQL generation (numeric IDs would be redacted).
         """
-        logger.info(f"LLMHelper initialized: {self._initialized}")
         if not self._initialized:
+            logger.info("LLMHelper initializing config...")
             await self._fetch_config()
             self._initialized = True
-        logger.info(f"LLMHelper initialized Completed: {self._initialized}")
+            logger.info("LLMHelper config initialized")
+        
+        # Cache key includes phi_protection flag
+        cache_key = (temperature, phi_protection)
+        if cache_key in self._llm_cache:
+            logger.debug(f"Using cached LLM for temp={temperature}, phi={phi_protection}")
+            return self._llm_cache[cache_key]
+        
         from app.core.llm import create_llm_provider
         
         provider_config: Dict[str, Any] = {
@@ -72,10 +87,20 @@ class LLMHelper:
         if self._provider_name == "huggingface" and self._local_path:
             provider_config["local_path"] = self._local_path
         
-        logger.info(f"Creating LLM: {self._provider_name}/{self._model}, temp={temperature}")
+        logger.info(f"Creating LLM: {self._provider_name}/{self._model}, temp={temperature}, phi_protection={phi_protection}")
         
         provider = create_llm_provider(self._provider_name, provider_config)
-        return provider.get_langchain_llm()
+        llm = provider.get_langchain_llm()
+        
+        # Only wrap with PHI protection for synthesis calls (where patient data is sent)
+        # Do NOT wrap for SQL generation (numeric IDs would be incorrectly redacted)
+        if phi_protection:
+            from app.core.llm.base import wrap_llm_with_phi_protection
+            llm = wrap_llm_with_phi_protection(llm)
+        
+        # Cache for reuse
+        self._llm_cache[cache_key] = llm
+        return llm
     
     async def _fetch_config(self):
         """Fetch LLM config from DB or fallback to env."""

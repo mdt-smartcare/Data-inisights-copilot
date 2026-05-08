@@ -49,6 +49,13 @@ export default function ChatPage() {
   // RAG availability state
   const [ragAvailable, setRagAvailable] = useState(false);
   const [agenticHybridAvailable, setAgenticHybridAvailable] = useState(false);
+  
+  // Streaming mode - returns answer immediately, comparisons stream in background
+  const [useStreaming, setUseStreaming] = useState(true);
+  // Track if we're currently streaming a response
+  const [isStreamingResponse, setIsStreamingResponse] = useState(false);
+  // Current streaming message being built
+  const streamingMessageRef = useRef<Message | null>(null);
 
   useEffect(() => {
     // Load agents on mount
@@ -253,7 +260,7 @@ export default function ChatPage() {
     },
   });
 
-  const handleSendMessage = (content: string, queryMode: QueryMode = 'auto') => {
+  const handleSendMessage = async (content: string, queryMode: QueryMode = 'auto') => {
     // Create new AbortController for this request
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
@@ -267,6 +274,106 @@ export default function ChatPage() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
+    
+    // Use streaming mode for faster response
+    if (useStreaming) {
+      // Create placeholder message for streaming updates
+      const placeholderMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: '',
+        timestamp: new Date(),
+        isStreaming: true,
+      };
+      streamingMessageRef.current = placeholderMessage;
+      setMessages((prev) => [...prev, placeholderMessage]);
+      setIsStreamingResponse(true);
+      
+      try {
+        await chatService.sendMessageStream(
+          {
+            query: content,
+            session_id: sessionId,
+            query_mode: queryMode,
+            agent_id: selectedAgentId,
+            signal: abortController.signal,
+          },
+          (eventType, data) => {
+            if (!streamingMessageRef.current) return;
+            
+            const updatedMessage = { ...streamingMessageRef.current };
+            
+            switch (eventType) {
+              case 'progress':
+                updatedMessage.streamProgress = {
+                  step: (data as { step?: string }).step || '',
+                  message: (data as { message?: string }).message || '',
+                  percent: (data as { percent?: number }).percent || 0,
+                };
+                break;
+              case 'answer':
+                updatedMessage.content = (data as { answer?: string }).answer || '';
+                updatedMessage.isStreaming = false;
+                updatedMessage.streamProgress = undefined; // Clear progress
+                // Signal that cross-validation and suggestions are now loading
+                updatedMessage.isLoadingComparison = true;
+                updatedMessage.isLoadingSuggestions = true;
+                break;
+              case 'chart':
+                updatedMessage.chartData = data as Message['chartData'];
+                break;
+              case 'reasoning':
+                // reasoning steps - could display these
+                break;
+              case 'suggestions':
+                updatedMessage.suggestedQuestions = (data as { questions?: string[] }).questions;
+                updatedMessage.isLoadingSuggestions = false;
+                break;
+              case 'comparison':
+                updatedMessage.comparisonInsights = (data as { insights?: string }).insights;
+                updatedMessage.isLoadingComparison = false;
+                break;
+              case 'complete':
+                updatedMessage.isStreaming = false;
+                updatedMessage.streamProgress = undefined;
+                updatedMessage.isLoadingComparison = false;
+                updatedMessage.isLoadingSuggestions = false;
+                streamingMessageRef.current = null;
+                break;
+              case 'error':
+                updatedMessage.content = (data as { message?: string }).message || 'An error occurred';
+                updatedMessage.isStreaming = false;
+                updatedMessage.streamProgress = undefined;
+                streamingMessageRef.current = null;
+                break;
+            }
+            
+            streamingMessageRef.current = updatedMessage;
+            setMessages((prev) => 
+              prev.map((m) => m.id === updatedMessage.id ? updatedMessage : m)
+            );
+          }
+        );
+      } catch (error: unknown) {
+        if ((error as Error).name === 'AbortError') {
+          console.log('Stream request cancelled');
+          return;
+        }
+        console.error('Stream error:', error);
+        setMessages((prev) => prev.map((m) => 
+          m.id === streamingMessageRef.current?.id 
+            ? { ...m, content: 'Sorry, I encountered an error. Please try again.', isStreaming: false }
+            : m
+        ));
+      } finally {
+        setIsStreamingResponse(false);
+        abortControllerRef.current = null;
+        streamingMessageRef.current = null;
+      }
+      return;
+    }
+    
+    // Non-streaming mode (original behavior)
     chatMutation.mutate({
       query: content,
       session_id: sessionId,
@@ -292,6 +399,22 @@ export default function ChatPage() {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
+    
+    // Update the streaming message to show it was stopped
+    if (streamingMessageRef.current) {
+      const stoppedMessage = { 
+        ...streamingMessageRef.current, 
+        isStreaming: false,
+        streamProgress: undefined,
+        content: streamingMessageRef.current.content || 'Generation stopped by user.'
+      };
+      setMessages((prev) => 
+        prev.map((m) => m.id === stoppedMessage.id ? stoppedMessage : m)
+      );
+      streamingMessageRef.current = null;
+    }
+    
+    setIsStreamingResponse(false);
   };
 
   const handleFeedback = (messageId: string, rating: 'positive' | 'negative') => {
@@ -482,8 +605,8 @@ export default function ChatPage() {
           <ChatInput
             onSendMessage={handleSendMessage}
             onCancel={handleStopGeneration}
-            isDisabled={!canChat || chatMutation.isPending}
-            isCancellable={chatMutation.isPending}
+            isDisabled={!canChat || chatMutation.isPending || isStreamingResponse}
+            isCancellable={chatMutation.isPending || isStreamingResponse}
             placeholder={canChat ? "Type your message..." : "Read-only access"}
             maxLength={2000}
             showModeSelector={false}

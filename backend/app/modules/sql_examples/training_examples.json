@@ -104,6 +104,55 @@
       "category": "aggregation",
       "tags": ["count", "glucose", "filter"],
       "description": "Count patients with elevated glucose"
+    },
+    {
+      "question": "Show BP data with facility hierarchy (country, county, subcounty) and program name",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, co.id AS country_id, co.name AS country, dis.id AS county_id, dis.name AS county_name, chif.id AS subcounty_id, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN country_admin_gold co ON hf.country_id = co.id LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT bl.*, f.facility_name, f.country, f.county_name, f.subcounty_name, COALESCE(fp.program_name, 'Unassigned') AS program_name FROM bp_log_gold bl LEFT JOIN facilities f ON f.organization_id = bl.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id",
+      "category": "m_and_e_reporting",
+      "tags": ["facility_hierarchy", "cte", "joins", "program", "m&e"],
+      "description": "M&E pattern: Enrich BP data with full facility hierarchy (country → district/county → chiefdom/subcounty) and program assignments using CTEs"
+    },
+    {
+      "question": "Get latest BP readings with facility details from October 2024 onwards",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, co.name AS country, dis.name AS county_name, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN country_admin_gold co ON hf.country_id = co.id LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE) SELECT bl.patient_id, bl.avg_systolic, bl.avg_diastolic, bl.bp_taken_on, bl.cvd_risk_level, f.facility_name, f.country, f.county_name, f.subcounty_name FROM bp_log_gold bl LEFT JOIN facilities f ON f.organization_id = bl.organization_id WHERE TRY_CAST(bl.bp_taken_on AS DATE) >= DATE '2024-10-01' AND TRY_CAST(bl.bp_taken_on AS DATE) <= CURRENT_DATE",
+      "category": "m_and_e_reporting",
+      "tags": ["facility_hierarchy", "date_filter", "cte", "m&e"],
+      "description": "M&E pattern: Latest BP readings with facility details, date-filtered"
+    },
+    {
+      "question": "Count patients by program and county",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT f.county_name, COALESCE(fp.program_name, 'Unassigned') AS program_name, COUNT(DISTINCT pt.patient_id) AS patient_count FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE pt.is_deleted = FALSE GROUP BY f.county_name, fp.program_name ORDER BY patient_count DESC",
+      "category": "m_and_e_reporting",
+      "tags": ["aggregation", "program", "county", "cte", "m&e"],
+      "description": "M&E pattern: Patient counts aggregated by program and geographic region"
+    },
+    {
+      "question": "Show screening volumes by facility and month",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id FROM health_facility_admin_gold hf WHERE hf.is_deleted = FALSE) SELECT f.facility_name, DATE_TRUNC('month', sl.bp_taken_on) AS month, COUNT(DISTINCT sl.patient_id) AS patients_screened, COUNT(*) AS total_screenings FROM screening_log_gold sl LEFT JOIN facilities f ON f.organization_id = sl.organization_id WHERE sl.bp_taken_on IS NOT NULL GROUP BY f.facility_name, DATE_TRUNC('month', sl.bp_taken_on) ORDER BY month DESC, patients_screened DESC",
+      "category": "m_and_e_reporting",
+      "tags": ["screening", "facility", "monthly", "trend", "m&e"],
+      "description": "M&E pattern: Monthly screening volumes by facility"
+    },
+    {
+      "question": "Show glucose log data with facility hierarchy and program name",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, co.id AS country_id, co.name AS country, dis.id AS county_id, dis.name AS county_name, chif.id AS subcounty_id, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN country_admin_gold co ON hf.country_id = co.id LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT gl.patient_id, gl.glucose_type, gl.glucose_value, gl.glucose_unit, gl.hba1c, gl.bg_taken_on, f.facility_name, f.country, f.county_name, f.subcounty_name, COALESCE(fp.program_name, 'Unassigned') AS program_name FROM glucose_log_latest_gold gl LEFT JOIN facilities f ON f.organization_id = gl.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id",
+      "category": "m_and_e_reporting",
+      "tags": ["glucose", "facility_hierarchy", "cte", "program", "m&e"],
+      "description": "M&E pattern: Enrich glucose log data with full facility hierarchy and program assignments using CTEs"
+    },
+    {
+      "question": "Get glucose readings with facility details from October 2024 onwards",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, co.name AS country, dis.name AS county_name, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN country_admin_gold co ON hf.country_id = co.id LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT gl.patient_id, gl.glucose_type, gl.glucose_value, gl.hba1c, TRY_CAST(gl.bg_taken_on AS DATE) AS bg_taken_on, f.facility_name, f.country, f.county_name, f.subcounty_name, COALESCE(fp.program_name, 'Unassigned') AS program_name FROM glucose_log_latest_gold gl LEFT JOIN facilities f ON f.organization_id = gl.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE TRY_CAST(gl.bg_taken_on AS DATE) >= DATE '2024-10-01' AND TRY_CAST(gl.bg_taken_on AS DATE) <= CURRENT_DATE",
+      "category": "m_and_e_reporting",
+      "tags": ["glucose", "facility_hierarchy", "date_filter", "cte", "m&e"],
+      "description": "M&E pattern: Glucose readings with facility details, date-filtered"
+    },
+    {
+      "question": "Count glucose readings by program and county",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT f.county_name, COALESCE(fp.program_name, 'Unassigned') AS program_name, COUNT(DISTINCT gl.patient_id) AS patient_count, COUNT(*) AS reading_count FROM glucose_log_latest_gold gl LEFT JOIN facilities f ON f.organization_id = gl.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id GROUP BY f.county_name, fp.program_name ORDER BY patient_count DESC",
+      "category": "m_and_e_reporting",
+      "tags": ["glucose", "aggregation", "program", "county", "cte", "m&e"],
+      "description": "M&E pattern: Glucose reading counts aggregated by program and geographic region"
     }
   ]
 }

@@ -1,7 +1,8 @@
 ---
 description: "Continuous Learning & Feedback Loops"
-version: 1.0.0
-last_updated: 2026-03-31
+version: 1.3.1
+last_updated: 2026-05-08
+
 ---
 
 # Continuous Learning & Feedback (FeedbackLoop.md)

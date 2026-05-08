@@ -1,5 +1,6 @@
 import { apiClient } from './api';
-import { API_ENDPOINTS } from '../config';
+import { API_ENDPOINTS, API_BASE_URL } from '../config';
+import { oidcService } from './oidcService';
 import type { ChatRequest, ChatResponse } from '../types';
 import type { FeedbackRequest, FeedbackResponse } from '../types/feedback';
 
@@ -148,10 +149,11 @@ export const chatService = {
     const { signal, ...requestData } = request;
 
     // Pass everything except signal, including agent_id
+    // Use longer timeout for chat (3 min) - complex SQL queries can take time
     const response = await apiClient.post<{ success: boolean; data: ChatResponse; message: string }>(
       API_ENDPOINTS.CHAT,
       requestData,
-      { signal }  // Pass signal to axios config
+      { signal, timeout: 180 * 1000 }  // 3 minutes for complex queries
     );
     // Backend wraps response in { success, data, message } - extract inner data
     return response.data.data;
@@ -189,5 +191,72 @@ export const chatService = {
       feedback
     );
     return response.data;
+  },
+
+  /**
+   * Send a chat message using Server-Sent Events (SSE) streaming.
+   * Returns answer immediately, then streams comparison insights in background.
+   * 
+   * @param request - Chat request with query and optional agent_id
+   * @param onEvent - Callback for each SSE event
+   * @returns Promise that resolves when stream completes
+   */
+  sendMessageStream: async (
+    request: ChatRequest,
+    onEvent: (eventType: string, data: Record<string, unknown>) => void
+  ): Promise<void> => {
+    const { signal, ...requestData } = request;
+    
+    // Get access token from OIDC service (same as apiClient)
+    const token = await oidcService.getAccessToken();
+    
+    const url = `${API_BASE_URL}/${API_ENDPOINTS.CHAT_STREAM}`;
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(requestData),
+      signal,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Stream request failed: ${response.status} - ${errorText}`);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      
+      // Parse SSE events from buffer
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+      let currentEvent = '';
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith('data: ')) {
+          const dataStr = line.slice(6);
+          try {
+            const data = JSON.parse(dataStr);
+            onEvent(currentEvent || 'message', data);
+          } catch {
+            console.warn('Failed to parse SSE data:', dataStr);
+          }
+        }
+      }
+    }
   },
 };

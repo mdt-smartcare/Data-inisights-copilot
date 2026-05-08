@@ -3,14 +3,17 @@ Chat API routes.
 
 Provides:
 - POST /chat - Process a chat query
+- POST /chat/stream - Process a chat query with SSE streaming
 - POST /chat/feedback - Submit feedback for a chat response
 - GET /chat/status - Get chat service status
 """
+import json
 import uuid
-from typing import Annotated
+from typing import Annotated, AsyncGenerator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth.permissions import get_current_user
@@ -72,6 +75,63 @@ async def chat(
     )
     
     return BaseResponse.ok(data=response)
+
+
+@router.post("/stream")
+async def chat_stream(
+    chat_request: ChatRequest,
+    fastapi_request: Request,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: ChatService = Depends(get_chat_service),
+) -> StreamingResponse:
+    """
+    Process a chat query with Server-Sent Events (SSE) streaming.
+    
+    Returns the answer immediately, then streams comparison insights in background.
+    
+    SSE Event Types:
+    - answer: Main answer (sent first, includes answer, intent, session_id)
+    - chart: Chart visualization data
+    - reasoning: Reasoning steps
+    - comparison: Comparison insights (sent async after main response)
+    - suggestions: Follow-up question suggestions
+    - complete: Stream complete signal with timing breakdown
+    - error: Error event
+    
+    Args:
+        chat_request: Chat request with query and optional agent_id
+        
+    Returns:
+        SSE stream of events
+    """
+    logger.info(
+        "Streaming chat request received",
+        user_id=str(current_user.id),
+        agent_id=str(chat_request.agent_id) if chat_request.agent_id else None,
+        query_length=len(chat_request.query),
+    )
+    
+    async def event_generator() -> AsyncGenerator[str, None]:
+        """Generate SSE events from the streaming query processor."""
+        async for event in service.process_query_stream(
+            request=chat_request,
+            user_id=current_user.id,
+            fastapi_request=fastapi_request,
+        ):
+            # Format as SSE: event: <type>\ndata: <json>\n\n
+            event_type = event.get("event", "message")
+            data = json.dumps(event.get("data", {}))
+            yield f"event: {event_type}\ndata: {data}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
 
 
 @router.post("/feedback", response_model=BaseResponse[FeedbackResponse])

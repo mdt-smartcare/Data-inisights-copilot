@@ -143,7 +143,7 @@ class QueryPlanner:
             
         except Exception as e:
             logger.warning(f"Query planning failed: {e}. Generating minimal plan.")
-            return self._fallback_plan(question, schema_link_result)
+            return self._fallback_plan(question, schema_link_result, schema_context)
     
     def _parse_categorical_values(self, schema_context: str) -> dict:
         """Parse the schema context to extract valid categorical values for columns."""
@@ -216,15 +216,94 @@ class QueryPlanner:
     def _fallback_plan(
         self,
         question: str,
-        link_result: Optional[SchemaLinkResult] = None
+        link_result: Optional[SchemaLinkResult] = None,
+        schema_context: Optional[str] = None
     ) -> QueryPlan:
-        """Generate a minimal plan when LLM planning fails."""
+        """
+        Generate a minimal plan when LLM planning fails.
+        
+        Improved fallback that:
+        1. Uses entities from schema link result
+        2. Extracts basic filters from schema link result
+        3. Infers metrics from question keywords
+        4. Includes join paths if available
+        """
         entities = []
+        filters = []
+        metrics = []
+        select_columns = []
+        join_strategy = []
+        
         if link_result:
-            entities = link_result.tables
+            entities = link_result.tables or []
+            
+            # Include any default filters
+            if link_result.default_filters:
+                filters.extend(link_result.default_filters)
+            
+            # Include pre-computed join paths
+            if link_result.join_paths:
+                for jp in link_result.join_paths:
+                    for step in jp.steps:
+                        join_strategy.append(JoinSpec(
+                            left_table=step.from_table,
+                            left_column=step.from_column,
+                            right_table=step.to_table,
+                            right_column=step.to_column,
+                            join_type=step.join_type
+                        ))
+            
+            # Include matched columns
+            if link_result.columns:
+                for table, cols in link_result.columns.items():
+                    select_columns.extend([f"{table}.{c}" for c in cols])
+        
+        # Infer metrics from question keywords
+        question_lower = question.lower()
+        
+        if any(kw in question_lower for kw in ["count", "how many", "number of", "total"]):
+            # Likely needs COUNT
+            if entities:
+                # Assume first entity is the main one to count
+                metrics.append(Metric(
+                    column="*",
+                    function="COUNT",
+                    alias="count"
+                ))
+        
+        if any(kw in question_lower for kw in ["average", "avg", "mean"]):
+            metrics.append(Metric(
+                column="value",  # Generic placeholder
+                function="AVG",
+                alias="average"
+            ))
+        
+        if any(kw in question_lower for kw in ["sum", "total amount"]):
+            metrics.append(Metric(
+                column="value",
+                function="SUM",
+                alias="total"
+            ))
+        
+        # If no entities found from schema link, try to extract from schema_context
+        if not entities and schema_context:
+            # Parse table names from schema context
+            import re
+            table_matches = re.findall(r'^-\s*([a-zA-Z_][a-zA-Z0-9_]*):', schema_context, re.MULTILINE)
+            if table_matches:
+                entities = table_matches[:3]  # Take up to 3 tables
+        
+        logger.info(
+            f"Fallback plan created: {len(entities)} entities, "
+            f"{len(filters)} filters, {len(metrics)} metrics"
+        )
         
         return QueryPlan(
             entities=entities,
+            metrics=metrics,
+            filters=filters,
+            select_columns=select_columns,
+            join_strategy=join_strategy,
             reasoning=f"Fallback plan for: {question[:100]}"
         )
     

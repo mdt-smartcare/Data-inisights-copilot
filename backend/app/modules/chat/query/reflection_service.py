@@ -5,7 +5,7 @@ Validates generated SQL queries against schema rules, best practices,
 and security constraints. Provides feedback for self-correction.
 """
 import re
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
@@ -167,6 +167,24 @@ class ReflectionService:
                     issues=issues
                 )
             
+            # Validate columns exist in their respective tables
+            column_issues = self._validate_columns(sql_query, tables)
+            if column_issues:
+                return CritiqueResponse(
+                    is_valid=False,
+                    reasoning=f"Column validation failed: {'; '.join(column_issues)}",
+                    issues=column_issues
+                )
+            
+            # Validate type comparisons (e.g., VARCHAR != boolean)
+            type_issues = self._validate_type_comparisons(sql_query, tables)
+            if type_issues:
+                return CritiqueResponse(
+                    is_valid=False,
+                    reasoning=f"Type mismatch: {'; '.join(type_issues)}",
+                    issues=type_issues
+                )
+            
             # Validate joins if multiple tables
             join_issues = self._validate_joins(sql_query, tables)
             if join_issues:
@@ -272,7 +290,10 @@ class ReflectionService:
     
     def _extract_tables_from_sql(self, sql_query: str) -> List[str]:
         """Extract all table names from SQL query, excluding CTE aliases."""
-        sql_lower = sql_query.lower()
+        # First, remove SQL function expressions that contain 'FROM' internally
+        # to avoid false positives like EXTRACT(year FROM column_name)
+        sql_cleaned = self._remove_function_from_expressions(sql_query)
+        sql_lower = sql_cleaned.lower()
         
         # 1. Identify CTE names (aliases defined in WITH clause)
         # Pattern: WITH cte_name AS (
@@ -287,6 +308,31 @@ class ReflectionService:
         real_tables = [t for t in all_tables if t not in ctes]
         
         return list(set(real_tables))
+    
+    def _remove_function_from_expressions(self, sql: str) -> str:
+        """
+        Remove SQL function expressions that use 'FROM' internally.
+        
+        These functions use 'FROM' as part of their syntax, not for table references:
+        - EXTRACT(unit FROM expression)
+        - SUBSTRING(str FROM pos [FOR len])
+        - OVERLAY(str PLACING new FROM pos)
+        """
+        result = sql
+        
+        # Pattern for EXTRACT(unit FROM expression)
+        extract_pattern = r'\bEXTRACT\s*\(\s*(?:YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|DOW|DOY|WEEK|QUARTER|EPOCH)\s+FROM\s+[^)]+\)'
+        result = re.sub(extract_pattern, '__EXTRACT_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        # Pattern for SUBSTRING(str FROM pos [FOR len])
+        substring_from_pattern = r'\bSUBSTRING\s*\([^)]+\s+FROM\s+[^)]+\)'
+        result = re.sub(substring_from_pattern, '__SUBSTRING_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        # Pattern for OVERLAY(str PLACING new FROM pos)
+        overlay_pattern = r'\bOVERLAY\s*\([^)]+\s+PLACING\s+[^)]+\s+FROM\s+[^)]+\)'
+        result = re.sub(overlay_pattern, '__OVERLAY_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        return result
     
     def _is_safe_select_query(self, sql_query: str) -> bool:
         """Check if query is a safe SELECT statement."""
@@ -306,6 +352,172 @@ class ReflectionService:
         
         return True
     
+    def _validate_columns(self, sql_query: str, tables: List[str]) -> List[str]:
+        """
+        Validate that referenced columns exist in their respective tables.
+        
+        Extracts column references like 'table.column' or alias.column from:
+        - SELECT clause
+        - WHERE clause
+        - JOIN ON conditions
+        - GROUP BY / ORDER BY
+        
+        Returns list of issues (empty if all columns valid).
+        """
+        if not self.schema_graph:
+            return []
+        
+        issues = []
+        sql_lower = sql_query.lower()
+        
+        # Build alias → table mapping from query
+        alias_map = self._extract_table_aliases(sql_query)
+        
+        # Pattern to match table.column or alias.column references
+        # Handles: bp.patient_id, pt.is_active, table_name.column_name
+        column_ref_pattern = r'\b([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\b'
+        
+        references = re.findall(column_ref_pattern, sql_lower)
+        
+        checked = set()  # Avoid duplicate checks
+        for alias_or_table, column in references:
+            key = (alias_or_table, column)
+            if key in checked:
+                continue
+            checked.add(key)
+            
+            # Skip function calls like date_trunc('month', ...)
+            if column in ('month', 'year', 'day', 'hour', 'minute', 'second', 'week', 'quarter'):
+                continue
+            
+            # Resolve alias to actual table name
+            table_name = alias_map.get(alias_or_table, alias_or_table)
+            
+            # Check if table exists
+            if not self.schema_graph.has_table(table_name):
+                # Might be a CTE or subquery alias - skip
+                continue
+            
+            # Check if column exists
+            if not self.schema_graph.has_column(table_name, column):
+                # Suggest similar columns
+                available_cols = self.schema_graph.get_column_names(table_name)
+                similar = self._find_similar(column, available_cols)
+                
+                if similar:
+                    issues.append(
+                        f"Column '{column}' does not exist in table '{table_name}'. "
+                        f"Did you mean: {', '.join(similar[:3])}?"
+                    )
+                else:
+                    issues.append(
+                        f"Column '{column}' does not exist in table '{table_name}'"
+                    )
+        
+        return issues
+    
+    def _validate_type_comparisons(self, sql_query: str, tables: List[str]) -> List[str]:
+        """
+        Validate type compatibility in WHERE/JOIN conditions.
+        
+        Catches errors like: VARCHAR_column != true (boolean literal on string column)
+        
+        Returns list of issues (empty if types are compatible).
+        """
+        if not self.schema_graph:
+            return []
+        
+        issues = []
+        sql_lower = sql_query.lower()
+        
+        # Build alias → table mapping
+        alias_map = self._extract_table_aliases(sql_query)
+        
+        # Pattern for boolean comparisons: column = true/false or column != true/false
+        # Also handles: column = 'true' (string literal) which is fine
+        bool_compare_pattern = r'([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*)\s*(!?=|<>)\s*(true|false)\b(?![\'"])'
+        
+        matches = re.findall(bool_compare_pattern, sql_lower)
+        
+        for alias_or_table, column, operator, bool_value in matches:
+            table_name = alias_map.get(alias_or_table, alias_or_table)
+            
+            if not self.schema_graph.has_table(table_name):
+                continue
+            
+            col_type = self.schema_graph.get_column_type(table_name, column)
+            if col_type is None:
+                continue
+            
+            col_type_lower = col_type.lower()
+            
+            # Check if column type is NOT boolean but compared to boolean literal
+            boolean_types = ('boolean', 'bool', 'bit')
+            string_types = ('varchar', 'character varying', 'text', 'char')
+            
+            if any(t in col_type_lower for t in string_types):
+                issues.append(
+                    f"Type mismatch: '{table_name}.{column}' is {col_type} but compared to boolean '{bool_value}'. "
+                    f"Use: {alias_or_table}.{column} IN ('true', '1', 'yes') or COALESCE({alias_or_table}.{column}, 'false') != 'true'"
+                )
+        
+        return issues
+    
+    def _extract_table_aliases(self, sql_query: str) -> Dict[str, str]:
+        """
+        Extract table alias mappings from SQL query.
+        
+        Parses patterns like:
+        - FROM table_name alias
+        - FROM table_name AS alias
+        - JOIN table_name alias ON ...
+        
+        Returns: {'alias': 'table_name', ...}
+        """
+        alias_map = {}
+        sql_lower = sql_query.lower()
+        
+        # Pattern: table_name AS alias or table_name alias (without AS)
+        # Handles: FROM bp_log_gold bp, JOIN patient_tracker_gold pt ON ...
+        pattern = r'(?:from|join)\s+([a-z_][a-z0-9_]*)\s+(?:as\s+)?([a-z_][a-z0-9_]*)(?:\s|$|on)'
+        
+        matches = re.findall(pattern, sql_lower)
+        for table, alias in matches:
+            if alias not in ('on', 'where', 'group', 'order', 'having', 'limit', 'inner', 'left', 'right', 'outer', 'cross', 'join'):
+                alias_map[alias] = table
+                # Also map table name to itself for unaliased references
+                alias_map[table] = table
+        
+        return alias_map
+    
+    def _find_similar(self, target: str, candidates: List[str], max_results: int = 3) -> List[str]:
+        """Find similar column names using simple Levenshtein-ish heuristics."""
+        if not candidates:
+            return []
+        
+        # Score by prefix match, substring match, and length similarity
+        scored = []
+        for c in candidates:
+            score = 0
+            # Exact prefix match
+            if c.startswith(target[:3]) or target.startswith(c[:3]):
+                score += 3
+            # Contains the target or vice versa
+            if target in c or c in target:
+                score += 2
+            # Similar length
+            if abs(len(c) - len(target)) <= 2:
+                score += 1
+            # Common suffix (e.g., _id, _date)
+            if c.endswith(target[-3:]) or target.endswith(c[-3:]):
+                score += 1
+            
+            if score > 0:
+                scored.append((score, c))
+        
+        scored.sort(reverse=True, key=lambda x: x[0])
+        return [c for _, c in scored[:max_results]]
+
     def _validate_joins(self, sql_query: str, tables: List[str]) -> List[str]:
         """
         Validate JOIN conditions against SchemaGraph FK relationships.

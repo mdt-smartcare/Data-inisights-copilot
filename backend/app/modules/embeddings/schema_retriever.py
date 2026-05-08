@@ -48,6 +48,33 @@ SCHEMA_COLLECTION_PREFIX = "schema_config_"
 DEFAULT_TOP_K_TABLES = 5  # Number of most relevant tables to retrieve (recommended: 3-5)
 DEFAULT_MAX_DEPENDENCIES = 3  # Maximum FK dependency tables to add
 
+# =============================================================================
+# Priority Tables - Keyword-to-Table Mapping
+# =============================================================================
+# When queries contain certain keywords, always include these tables to ensure
+# cross-table JOIN capability. This fixes cases where semantic search alone
+# doesn't retrieve tables with needed columns (like 'age' in patient_tracker_gold).
+#
+# Format: {keyword_pattern: [list_of_priority_tables]}
+# Patterns are matched case-insensitively against the query
+PRIORITY_TABLE_KEYWORDS = {
+    # Age-related queries need patient_tracker_gold (the only table with 'age' column)
+    "age": ["patient_tracker_gold"],
+    "age group": ["patient_tracker_gold"],
+    "age distribution": ["patient_tracker_gold"],
+    "patient age": ["patient_tracker_gold"],
+    "by age": ["patient_tracker_gold"],
+    "older": ["patient_tracker_gold"],
+    "younger": ["patient_tracker_gold"],
+    "elderly": ["patient_tracker_gold"],
+    # Gender queries 
+    "by gender": ["patient_tracker_gold"],
+    "male female": ["patient_tracker_gold"],
+    # Patient demographics
+    "demographics": ["patient_tracker_gold"],
+    "patient demographics": ["patient_tracker_gold"],
+}
+
 
 @dataclass
 class RetrievedTable:
@@ -288,13 +315,25 @@ class SchemaRetriever:
     
     async def _embed_query(self, query: str) -> List[float]:
         """Generate embedding for query."""
-        embed_fn = await self._get_embed_fn()
+        import time as perf_time
         
+        get_fn_start = perf_time.perf_counter()
+        embed_fn = await self._get_embed_fn()
+        get_fn_time = perf_time.perf_counter() - get_fn_start
+        
+        embed_start = perf_time.perf_counter()
         if asyncio.iscoroutinefunction(embed_fn):
             embeddings = await embed_fn([query])
         else:
             loop = asyncio.get_event_loop()
             embeddings = await loop.run_in_executor(None, embed_fn, [query])
+        embed_time = perf_time.perf_counter() - embed_start
+        
+        logger.info(
+            f"⏱ EMBED_QUERY: get_fn={get_fn_time:.2f}s | encode={embed_time:.2f}s",
+            get_fn_ms=int(get_fn_time * 1000),
+            encode_ms=int(embed_time * 1000),
+        )
         
         return embeddings[0]
     
@@ -377,21 +416,45 @@ class SchemaRetriever:
         Returns:
             List of RetrievedTable with DDL and FK metadata
         """
+        import time as perf_time
+        method_start = perf_time.perf_counter()
+        
         # Ensure we have a valid vector store (with fallback logic)
+        ensure_start = perf_time.perf_counter()
         await self._ensure_vector_store()
+        ensure_time = perf_time.perf_counter() - ensure_start
         
         # Check if collection exists
+        check_start = perf_time.perf_counter()
         if not await self.vector_store.collection_exists():
             logger.warning(f"Schema collection not found: {self.collection_name}")
             return []
+        check_time = perf_time.perf_counter() - check_start
         
         # Generate query embedding
+        embed_start = perf_time.perf_counter()
         query_embedding = await self._embed_query(query)
+        embed_time = perf_time.perf_counter() - embed_start
         
         # Search vector store
+        search_start = perf_time.perf_counter()
         results = await self.vector_store.search(
             query_embedding=query_embedding,
             top_k=top_k + 1,  # +1 to account for potential _relationships doc
+        )
+        search_time = perf_time.perf_counter() - search_start
+        
+        # Log timing breakdown
+        total_time = perf_time.perf_counter() - method_start
+        logger.info(
+            f"⏱️ RETRIEVE_TABLES: total={total_time:.2f}s | "
+            f"ensure_store={ensure_time:.2f}s | collection_check={check_time:.2f}s | "
+            f"embed_query={embed_time:.2f}s | vector_search={search_time:.2f}s",
+            ensure_store_ms=int(ensure_time * 1000),
+            collection_check_ms=int(check_time * 1000),
+            embed_query_ms=int(embed_time * 1000),
+            vector_search_ms=int(search_time * 1000),
+            total_ms=int(total_time * 1000),
         )
         
         tables = []
@@ -624,6 +687,75 @@ class SchemaRetriever:
             logger.error(f"Failed to fetch table {table_name}: {e}")
             return "", []
     
+    def _get_priority_tables_for_query(self, query: str) -> Set[str]:
+        """
+        Check if query requires any priority tables based on keyword matching.
+        
+        This ensures tables with critical columns (like patient_tracker_gold with 'age')
+        are included even when semantic search doesn't rank them highly.
+        
+        Args:
+            query: User's natural language query
+        
+        Returns:
+            Set of priority table names that should be included
+        """
+        query_lower = query.lower()
+        priority_tables: Set[str] = set()
+        
+        for keyword, tables in PRIORITY_TABLE_KEYWORDS.items():
+            if keyword.lower() in query_lower:
+                priority_tables.update(tables)
+                logger.debug(f"Priority table match: '{keyword}' -> {tables}")
+        
+        if priority_tables:
+            logger.info(f"Priority tables detected for query: {priority_tables}")
+        
+        return priority_tables
+    
+    async def _inject_priority_tables(
+        self, 
+        primary_tables: List[RetrievedTable], 
+        priority_table_names: Set[str]
+    ) -> List[RetrievedTable]:
+        """
+        Inject priority tables that are not already in the primary tables list.
+        
+        Args:
+            primary_tables: Tables retrieved via semantic search
+            priority_table_names: Set of priority table names to ensure are included
+        
+        Returns:
+            Updated list with priority tables injected
+        """
+        existing_names = {t.table_name for t in primary_tables}
+        tables_to_add = priority_table_names - existing_names
+        
+        if not tables_to_add:
+            return primary_tables
+        
+        logger.info(f"Injecting {len(tables_to_add)} priority tables: {tables_to_add}")
+        
+        injected_tables = []
+        for table_name in tables_to_add:
+            ddl, foreign_keys = await self._fetch_table_by_name(table_name)
+            if ddl:
+                table = RetrievedTable(
+                    table_name=table_name,
+                    ddl=ddl,
+                    foreign_keys=foreign_keys,
+                    score=0.9,  # High score since it's a priority table
+                    is_primary=True,  # Treat as primary for context
+                    is_dependency=False,
+                )
+                injected_tables.append(table)
+                self._ddl_cache[table_name] = ddl
+                self._fk_cache[table_name] = foreign_keys
+            else:
+                logger.warning(f"Could not fetch priority table: {table_name}")
+        
+        return primary_tables + injected_tables
+    
     async def retrieve_with_dependencies(
         self,
         query: str,
@@ -636,9 +768,10 @@ class SchemaRetriever:
         
         This is the main entry point for the Phase 4 retrieval chain:
         1. Semantic search for top K relevant tables
-        2. Parse foreign_keys from strict metadata
-        3. Forcefully retrieve linked schemas
-        4. Return organized SchemaContext
+        2. Inject priority tables based on query keywords
+        3. Parse foreign_keys from strict metadata
+        4. Forcefully retrieve linked schemas
+        5. Return organized SchemaContext
         
         Args:
             query: User's natural language query
@@ -653,6 +786,13 @@ class SchemaRetriever:
         
         # Step 1: Semantic search for primary tables
         primary_tables = await self.retrieve_tables(query, top_k=top_k)
+        
+        # Step 1.5: Inject priority tables based on query keywords
+        # This ensures tables like patient_tracker_gold (with 'age' column) are included
+        # when queries mention age-related terms
+        priority_table_names = self._get_priority_tables_for_query(query)
+        if priority_table_names:
+            primary_tables = await self._inject_priority_tables(primary_tables, priority_table_names)
         
         # Step 2: Resolve FK dependencies
         dependency_tables = await self.resolve_fk_dependencies(

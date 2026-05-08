@@ -1,7 +1,8 @@
 ---
 description: "Core Agent & Orchestration Contract"
 version: 1.1.0
-last_updated: 2026-03-31
+last_updated: 2026-05-08
+
 ---
 
 # Core Agent & Orchestration (Agent.md)

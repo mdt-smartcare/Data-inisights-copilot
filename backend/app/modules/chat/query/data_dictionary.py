@@ -77,6 +77,8 @@ class DataDictionary:
         self._column_semantics: Dict[str, Dict[str, str]] = {}  # table → {column → description}
         self._table_descriptions: Dict[str, str] = {}  # table → description
         self._business_glossary: List[str] = []  # free-form domain jargon/terms
+        self._fhir_identifier_rules: Dict[str, Any] = {}  # FHIR identifier patterns
+        self._validation_rules: Dict[str, Any] = {}  # validation rules including column type warnings
         
         if config_dict:
             self._load_from_dict(config_dict)
@@ -126,6 +128,8 @@ class DataDictionary:
         self._column_semantics = config.get("column_semantics", {})
         self._table_descriptions = config.get("table_descriptions", {})
         self._business_glossary = config.get("business_glossary", [])
+        self._fhir_identifier_rules = config.get("fhir_identifier_rules", {})
+        self._validation_rules = config.get("validation_rules", {})
         
         # Build synonym index (lowercase for case-insensitive matching)
         raw_synonyms = config.get("synonyms", {})
@@ -314,6 +318,37 @@ class DataDictionary:
             parts.append("\nBUSINESS GLOSSARY (domain-specific terminology):")
             for term in self._business_glossary:
                 parts.append(f"  - {term}")
+        
+        # FHIR Identifier Rules (CRITICAL for healthcare schemas)
+        if self._fhir_identifier_rules:
+            parts.append("\nCRITICAL: FHIR IDENTIFIER RULES (must follow exactly):")
+            
+            # Patient count tables
+            patient_count_tables = self._fhir_identifier_rules.get("patient_count_tables", {})
+            if patient_count_tables:
+                parts.append("  When counting patients, use these exact patterns:")
+                for table_name, config in patient_count_tables.items():
+                    identifier = config.get("identifier", "unknown")
+                    desc = config.get("description", "")
+                    parts.append(f"    - {table_name}: COUNT(DISTINCT {identifier})")
+                    if desc:
+                        parts.append(f"      ({desc})")
+            
+            # Clinical tables with patient_id
+            clinical_tables = self._fhir_identifier_rules.get("clinical_tables_with_patient_id", [])
+            if clinical_tables:
+                parts.append(f"  Tables that have patient_id column: {', '.join(clinical_tables[:10])}")
+            
+            # Add explicit warning about patient_gold
+            if "patient_gold" in patient_count_tables:
+                parts.append("  WARNING: patient_gold does NOT have patient_id column - use res_id instead!")
+        
+        # Column type warnings (critical for avoiding type errors)
+        column_type_warnings = self._validation_rules.get("column_type_warnings", [])
+        if column_type_warnings:
+            parts.append("\nCRITICAL: COLUMN TYPE WARNINGS (follow exactly to avoid type errors):")
+            for warning in column_type_warnings:
+                parts.append(f"  - {warning}")
         
         return "\n".join(parts) if parts else ""
     

@@ -185,7 +185,8 @@ async def rewrite_query_with_context(
     query: str,
     session_id: Optional[str],
     llm_helper=None,
-    use_llm: bool = True
+    use_llm: bool = True,
+    llm_config: dict = None
 ) -> str:
     """
     Rewrite a query to include conversation context.
@@ -198,6 +199,7 @@ async def rewrite_query_with_context(
         session_id: Session ID for conversation history
         llm_helper: LLMHelper instance for getting LLM
         use_llm: Whether to use LLM for rewriting
+        llm_config: Optional LangChain config dict with callbacks for tracing
         
     Returns:
         Rewritten query (or original if no context needed)
@@ -250,7 +252,7 @@ Only respond with the rewritten query, nothing else."""),
         llm = await llm_helper.get_llm(temperature=0.0)
         
         chain = prompt | llm
-        result = await chain.ainvoke({"context": context, "query": query})
+        result = await chain.ainvoke({"context": context, "query": query}, config=llm_config)
         
         rewritten = result.content.strip()
         if rewritten and rewritten != query:
