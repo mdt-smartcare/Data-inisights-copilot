@@ -260,13 +260,17 @@ class TracingContext:
             self._spans.clear()
             
             # End the main trace span
+            # SDK v3: update() first with output, then end()
             if hasattr(self._trace, 'end'):
-                end_kwargs = {}
-                if output is not None:
-                    end_kwargs["output"] = output
-                if level != "DEFAULT":
-                    end_kwargs["level"] = level
-                self._trace.end(**end_kwargs)
+                if output is not None or level != "DEFAULT":
+                    update_kwargs = {}
+                    if output is not None:
+                        update_kwargs["output"] = output
+                    if level != "DEFAULT":
+                        update_kwargs["level"] = level
+                    if hasattr(self._trace, 'update'):
+                        self._trace.update(**update_kwargs)
+                self._trace.end()
             
             # Flush to ensure data is sent
             self.flush()
@@ -432,15 +436,21 @@ class TracingContext:
         gen = self._spans.pop(name, None)
         if gen:
             try:
-                end_kwargs = {"output": output}
+                # SDK v3: update() first with output/usage, then end()
+                update_kwargs = {}
+                if output is not None:
+                    update_kwargs["output"] = output
                 if model:
-                    end_kwargs["model"] = model
+                    update_kwargs["model"] = model
                 if usage:
-                    end_kwargs["usage"] = usage
+                    update_kwargs["usage"] = usage
                 if metadata:
-                    end_kwargs["metadata"] = metadata
+                    update_kwargs["metadata"] = metadata
                 
-                gen.end(**end_kwargs)
+                if update_kwargs:
+                    gen.update(**update_kwargs)
+                
+                gen.end()
             except Exception as e:
                 logger.warning(f"Failed to end generation {name}: {e}")
     

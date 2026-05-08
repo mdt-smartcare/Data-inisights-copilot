@@ -2164,13 +2164,20 @@ class SQLServiceFactory:
             except Exception as e:
                 logger.debug(f"Could not determine embedding model: {e}")
             
-            return await self.create_from_data_source(
+            sql_service = await self.create_from_data_source(
                 config.data_source_id,
                 enable_few_shot=enable_few_shot,
                 config_id=config.id,  # Pass config ID for semantic schema retrieval
                 agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples
                 embedding_model=embedding_model,  # Pass agent's embedding model
             )
+            
+            # Set the agent's system prompt for SQL generation context
+            if sql_service and config.system_prompt:
+                sql_service.set_agent_system_prompt(config.system_prompt)
+                logger.debug(f"Agent system prompt set on SQLService (length={len(config.system_prompt)})")
+            
+            return sql_service
             
         except Exception as e:
             logger.error(f"Failed to create SQL service from agent config: {e}", exc_info=True)

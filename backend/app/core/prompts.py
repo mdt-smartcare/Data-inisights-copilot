@@ -94,7 +94,7 @@ def clear_prompt_cache():
 # Convenience functions for commonly used prompts
 def get_sql_generator_prompt() -> str:
     """Get the SQL generator prompt."""
-    return load_prompt("sql_generator", fallback="You are a SQL expert. Generate a PostgreSQL query.")
+    return load_prompt("sql_generator", fallback="You are a Senior Healthcare Data Analyst specializing in FHIR databases. Generate analytical SQL queries for patient data, clinical measurements, and NCD management.")
 
 
 def get_intent_router_prompt() -> str:
