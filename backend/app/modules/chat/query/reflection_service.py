@@ -290,7 +290,10 @@ class ReflectionService:
     
     def _extract_tables_from_sql(self, sql_query: str) -> List[str]:
         """Extract all table names from SQL query, excluding CTE aliases."""
-        sql_lower = sql_query.lower()
+        # First, remove SQL function expressions that contain 'FROM' internally
+        # to avoid false positives like EXTRACT(year FROM column_name)
+        sql_cleaned = self._remove_function_from_expressions(sql_query)
+        sql_lower = sql_cleaned.lower()
         
         # 1. Identify CTE names (aliases defined in WITH clause)
         # Pattern: WITH cte_name AS (
@@ -305,6 +308,31 @@ class ReflectionService:
         real_tables = [t for t in all_tables if t not in ctes]
         
         return list(set(real_tables))
+    
+    def _remove_function_from_expressions(self, sql: str) -> str:
+        """
+        Remove SQL function expressions that use 'FROM' internally.
+        
+        These functions use 'FROM' as part of their syntax, not for table references:
+        - EXTRACT(unit FROM expression)
+        - SUBSTRING(str FROM pos [FOR len])
+        - OVERLAY(str PLACING new FROM pos)
+        """
+        result = sql
+        
+        # Pattern for EXTRACT(unit FROM expression)
+        extract_pattern = r'\bEXTRACT\s*\(\s*(?:YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|DOW|DOY|WEEK|QUARTER|EPOCH)\s+FROM\s+[^)]+\)'
+        result = re.sub(extract_pattern, '__EXTRACT_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        # Pattern for SUBSTRING(str FROM pos [FOR len])
+        substring_from_pattern = r'\bSUBSTRING\s*\([^)]+\s+FROM\s+[^)]+\)'
+        result = re.sub(substring_from_pattern, '__SUBSTRING_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        # Pattern for OVERLAY(str PLACING new FROM pos)
+        overlay_pattern = r'\bOVERLAY\s*\([^)]+\s+PLACING\s+[^)]+\s+FROM\s+[^)]+\)'
+        result = re.sub(overlay_pattern, '__OVERLAY_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        return result
     
     def _is_safe_select_query(self, sql_query: str) -> bool:
         """Check if query is a safe SELECT statement."""
