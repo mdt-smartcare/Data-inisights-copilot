@@ -70,6 +70,8 @@ export interface Message {
   comparisonInsights?: string;         // Optional comparison insights for cross-validation
   isStreaming?: boolean;               // True while response is being streamed
   streamProgress?: StreamProgress;     // Current progress during streaming
+  isLoadingComparison?: boolean;       // True while cross-validation is being generated
+  isLoadingSuggestions?: boolean;      // True while follow-up suggestions are being generated
 }
 
 /**

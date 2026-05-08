@@ -210,6 +210,24 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
             </div>
           )}
 
+          {/* Loading indicator for cross-validation insights */}
+          {!message.comparisonInsights && message.isLoadingComparison && (
+            <div className="my-3 p-3 bg-indigo-50/30 rounded-lg border border-indigo-100/50 animate-pulse">
+              <div className="flex items-center gap-2">
+                <div className="flex space-x-1">
+                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-1.5 h-1.5 bg-indigo-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                </div>
+                <span className="text-xs font-medium text-indigo-600">Generating cross-validation insights...</span>
+              </div>
+              <div className="mt-2 space-y-2">
+                <div className="h-3 bg-indigo-100/60 rounded w-3/4"></div>
+                <div className="h-3 bg-indigo-100/60 rounded w-1/2"></div>
+              </div>
+            </div>
+          )}
+
           {/* Render suggested questions */}
           {message.suggestedQuestions && message.suggestedQuestions.length > 0 && (
             <div className="my-3">
@@ -224,6 +242,24 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
                     <span className="text-gray-700 group-hover:text-blue-700">{question}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Loading indicator for follow-up suggestions */}
+          {(!message.suggestedQuestions || message.suggestedQuestions.length === 0) && message.isLoadingSuggestions && (
+            <div className="my-3">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex space-x-1">
+                  <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                  <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                </div>
+                <span className="text-xs font-medium text-blue-600">Generating follow-up suggestions...</span>
+              </div>
+              <div className="space-y-1.5">
+                <div className="h-8 bg-gray-100 rounded-md animate-pulse w-full"></div>
+                <div className="h-8 bg-gray-100 rounded-md animate-pulse w-5/6"></div>
               </div>
             </div>
           )}

@@ -315,6 +315,9 @@ export default function ChatPage() {
                 updatedMessage.content = (data as { answer?: string }).answer || '';
                 updatedMessage.isStreaming = false;
                 updatedMessage.streamProgress = undefined; // Clear progress
+                // Signal that cross-validation and suggestions are now loading
+                updatedMessage.isLoadingComparison = true;
+                updatedMessage.isLoadingSuggestions = true;
                 break;
               case 'chart':
                 updatedMessage.chartData = data as Message['chartData'];
@@ -324,13 +327,17 @@ export default function ChatPage() {
                 break;
               case 'suggestions':
                 updatedMessage.suggestedQuestions = (data as { questions?: string[] }).questions;
+                updatedMessage.isLoadingSuggestions = false;
                 break;
               case 'comparison':
                 updatedMessage.comparisonInsights = (data as { insights?: string }).insights;
+                updatedMessage.isLoadingComparison = false;
                 break;
               case 'complete':
                 updatedMessage.isStreaming = false;
                 updatedMessage.streamProgress = undefined;
+                updatedMessage.isLoadingComparison = false;
+                updatedMessage.isLoadingSuggestions = false;
                 streamingMessageRef.current = null;
                 break;
               case 'error':
