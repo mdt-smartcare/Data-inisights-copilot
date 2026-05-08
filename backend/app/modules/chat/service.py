@@ -1117,6 +1117,113 @@ class ChatService:
         
         return answer, sources, reasoning_steps, emb_info
     
+    # PHI column names that should have their values redacted
+    PHI_COLUMNS = {
+        'first_name', 'last_name', 'middle_name', 'name', 'patient_name', 'full_name',
+        'birth_date', 'birthdate', 'dob', 'date_of_birth',
+        'phone_number', 'phone', 'mobile', 'contact_number', 'telephone',
+        'email', 'email_address',
+        'address', 'street_address', 'home_address',
+        'ssn', 'social_security_number', 'national_id', 'identity_value',
+        'mrn', 'medical_record_number',
+    }
+    
+    def _redact_tabular_phi(self, sql_result: str) -> str:
+        """
+        Redact PHI values from tabular SQL results based on column names.
+        
+        This catches names and other PHI that pattern-based redaction misses.
+        """
+        lines = sql_result.strip().split('\n')
+        if len(lines) < 2:
+            return sql_result
+        
+        # Parse header to find PHI columns
+        header = lines[0]
+        columns = [col.strip().lower() for col in header.split('|')]
+        
+        # Find indices of PHI columns
+        phi_indices = []
+        for i, col in enumerate(columns):
+            if col in self.PHI_COLUMNS:
+                phi_indices.append(i)
+        
+        if not phi_indices:
+            return sql_result
+        
+        # Redact values in PHI columns (skip header and separator lines)
+        redacted_lines = [lines[0]]  # Keep header
+        phi_counter = {}
+        
+        for line in lines[1:]:
+            # Skip separator lines (e.g., "------|------")
+            if line.strip().startswith('-') or '---' in line:
+                redacted_lines.append(line)
+                continue
+            
+            parts = line.split('|')
+            for i in phi_indices:
+                if i < len(parts):
+                    original_value = parts[i].strip()
+                    if original_value and original_value.lower() not in ('none', 'null', ''):
+                        # Get column name for placeholder
+                        col_name = columns[i].upper()
+                        if col_name not in phi_counter:
+                            phi_counter[col_name] = 0
+                        phi_counter[col_name] += 1
+                        placeholder = f"[{col_name}_{phi_counter[col_name]:03d}]"
+                        parts[i] = f" {placeholder} "
+            
+            redacted_lines.append('|'.join(parts))
+        
+        if phi_counter:
+            total_redacted = sum(phi_counter.values())
+            logger.info(f"Column-based PHI redacted: {total_redacted} values from columns {list(phi_counter.keys())}")
+        
+        return '\n'.join(redacted_lines)
+    
+    def _format_raw_sql_results(self, sql_result: str) -> str:
+        """
+        Format raw SQL results for display without LLM interpretation.
+        
+        Returns the SQL results in a clean, readable format with:
+        - Row count summary
+        - Tabular data preserved
+        - No AI interpretation or analysis
+        - PHI redacted for HIPAA compliance
+        """
+        if not sql_result or sql_result.strip() == "":
+            return "No results returned from query."
+        
+        # Check for error messages
+        if "Failed to execute query" in sql_result or "Error:" in sql_result:
+            return sql_result
+        
+        # Apply column-based PHI redaction first (catches names in known columns)
+        sql_result = self._redact_tabular_phi(sql_result)
+        
+        # Apply pattern-based PHI redaction (catches SSN, dates, phones in any column)
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(sql_result)
+            sql_result = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"Pattern-based PHI redacted from raw SQL results: {redaction_result.phi_count} items")
+        
+        # Count rows (subtract header row if present)
+        lines = sql_result.strip().split('\n')
+        row_count = len(lines) - 1 if len(lines) > 1 else 0
+        
+        # Format with a header indicating raw results mode
+        formatted = "**Raw Query Results**\n\n"
+        formatted += f"*{row_count} row(s) returned*\n\n"
+        formatted += "```\n"
+        formatted += sql_result
+        formatted += "\n```"
+        
+        return formatted
+    
     async def _synthesize_sql_response_with_chart(
         self,
         query: str,
@@ -1126,6 +1233,19 @@ class ChatService:
         tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a natural language response from SQL results with chart generation."""
+        # Check if synthesis should be skipped (raw results mode)
+        skip_synthesis = self._settings.skip_result_synthesis
+        if agent_config:
+            # Agent-level config overrides global setting (check rag_config)
+            rag_config = agent_config.get("rag_config", {})
+            if isinstance(rag_config, str):
+                rag_config = json.loads(rag_config) if rag_config else {}
+            skip_synthesis = rag_config.get("skip_result_synthesis", rag_config.get("skipResultSynthesis", skip_synthesis))
+        
+        if skip_synthesis:
+            logger.info("Skipping LLM synthesis - returning raw SQL results")
+            return self._format_raw_sql_results(sql_result)
+        
         from openai import AsyncOpenAI
         
         base_prompt = get_data_analyst_prompt()
@@ -1173,6 +1293,16 @@ class ChatService:
                 input={"query": query, "results_preview": sql_result_for_llm[:500]},
             )
         
+        # Apply PHI redaction to SQL results before sending to LLM
+        # This protects patient names, DOBs, and other HIPAA identifiers
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(sql_result_for_llm)
+            sql_result_for_llm = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"PHI redacted from synthesis input: {redaction_result.phi_count} items")
+        
         try:
             response = await client.chat.completions.create(
                 model="gpt-4o",
@@ -1216,6 +1346,19 @@ class ChatService:
         tracing_ctx: Optional["TracingContext"] = None,
     ) -> str:
         """Synthesize a natural language response from SQL results (without chart)."""
+        # Check if synthesis should be skipped (raw results mode)
+        skip_synthesis = self._settings.skip_result_synthesis
+        if agent_config:
+            # Agent-level config overrides global setting (check rag_config)
+            rag_config = agent_config.get("rag_config", {})
+            if isinstance(rag_config, str):
+                rag_config = json.loads(rag_config) if rag_config else {}
+            skip_synthesis = rag_config.get("skip_result_synthesis", rag_config.get("skipResultSynthesis", skip_synthesis))
+        
+        if skip_synthesis:
+            logger.info("Skipping LLM synthesis - returning raw SQL results")
+            return self._format_raw_sql_results(sql_result)
+        
         from openai import AsyncOpenAI
         
         system_prompt = get_data_analyst_prompt()
@@ -1247,6 +1390,15 @@ class ChatService:
                 model="gpt-4o",
                 input={"query": query, "results_preview": sql_result[:500]},
             )
+        
+        # Apply PHI redaction to SQL results before sending to LLM
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(sql_result)
+            sql_result = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"PHI redacted from synthesis input: {redaction_result.phi_count} items")
         
         try:
             response = await client.chat.completions.create(
@@ -1312,6 +1464,15 @@ class ChatService:
                 model="gpt-4o",
                 input={"query": query, "sources_count": len(sources)},
             )
+        
+        # Apply PHI redaction to RAG context before sending to LLM
+        from app.core.utils.phi_redactor import get_phi_redactor
+        phi_redactor = get_phi_redactor()
+        if phi_redactor.enabled:
+            redaction_result = phi_redactor.redact(context)
+            context = redaction_result.redacted_text
+            if redaction_result.has_phi:
+                logger.info(f"PHI redacted from RAG context: {redaction_result.phi_count} items")
         
         try:
             response = await client.chat.completions.create(

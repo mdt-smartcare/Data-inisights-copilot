@@ -76,6 +76,17 @@ When asked "how many patients", "total patients", "patient count", etc.:
     - For latest BP per patient: Use `bp_log_gold` with `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY bp_taken_on DESC) = 1`
     - WRONG: `SELECT * FROM bp_log_latest_gold` (empty table!)
     - CORRECT: `SELECT * FROM bp_log_gold WHERE avg_systolic IS NOT NULL`
+17. **CRITICAL: AMBIGUOUS ID LOOKUPS** - When a user provides a bare numeric ID without specifying the column:
+    - Check if the ID could match multiple columns: `patient_id`, `related_person_id`, `res_id`, `ref_patient_track_id`, etc.
+    - `patient_tracker_gold` has BOTH `patient_id` AND `related_person_id` columns - they are DIFFERENT!
+    - If user says "patient 123" or "patient_id 123" → use `patient_id = 123`
+    - If user says "related person 123" or "caregiver 123" → use `related_person_id = 123`
+    - If ambiguous, generate a UNION or OR query to check both:
+      ```sql
+      SELECT * FROM patient_tracker_gold 
+      WHERE (patient_id = 123 OR related_person_id = 123) AND is_deleted = false
+      ```
+    - Common ID columns in `patient_tracker_gold`: `patient_id`, `related_person_id`, `ref_patient_track_id`, `site_id`, `village_id`
 
 ## Table Selection Strategy
 
@@ -148,3 +159,79 @@ SQL: select date_trunc('month', cast(created_at as timestamp)) as month, avg(cvd
 
 Question: Show me the top 10 counties by patient count
 SQL: select county_name, count(distinct patient_id) as patient_count from patient_tracker_gold where is_deleted = false group by county_name order by patient_count desc limit 10
+
+Question: Give me details of ID 3305997 (ambiguous - could be patient_id or related_person_id)
+SQL: select * from patient_tracker_gold where (patient_id = 3305997 or related_person_id = 3305997) and is_deleted = false
+
+Question: Show me the patient with related_person_id 3305997
+SQL: select * from patient_tracker_gold where related_person_id = 3305997 and is_deleted = false
+
+Question: Get all patients linked to caregiver 3305997
+SQL: select * from patient_tracker_gold where related_person_id = 3305997 and is_deleted = false
+
+## M&E Reporting Patterns (Facility Hierarchy + Program)
+
+For M&E (Monitoring & Evaluation) queries asking about data "by facility", "by county", "by subcounty", "by program", or requiring geographic breakdowns, use the **facility hierarchy CTEs**.
+
+### Facility Hierarchy CTE
+
+Builds Country → District/County → Chiefdom/Subcounty hierarchy:
+
+```sql
+WITH facilities AS (
+    SELECT
+        hf.id AS facility_id,
+        hf.name AS facility_name,
+        CAST(hf.fhir_id AS BIGINT) AS organization_id,  -- CRITICAL: Cast for join
+        co.name AS country,
+        dis.name AS county_name,
+        chif.name AS subcounty_name
+    FROM health_facility_admin_gold hf
+    LEFT JOIN country_admin_gold co ON hf.country_id = co.id
+    LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
+    LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
+    WHERE hf.is_deleted = FALSE
+),
+facility_programs AS (
+    SELECT
+        hfp.health_facility_id AS facility_id,
+        COALESCE(MAX(pg.name), 'Unassigned') AS program_name
+    FROM health_facility_program_admin_gold hfp
+    LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id
+    GROUP BY hfp.health_facility_id
+)
+```
+
+### Joining Clinical Data to Facility Hierarchy
+
+```sql
+-- For bp_log_gold, glucose_log_latest_gold, screening_log_gold:
+SELECT bl.*, f.facility_name, f.county_name, f.subcounty_name,
+       COALESCE(fp.program_name, 'Unassigned') AS program_name
+FROM bp_log_gold bl
+LEFT JOIN facilities f ON f.organization_id = bl.organization_id
+LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id
+
+-- For patient_tracker_gold (uses site_id):
+FROM patient_tracker_gold pt
+LEFT JOIN facilities f ON f.organization_id = pt.site_id
+```
+
+### Key M&E Rules
+
+1. **CAST fhir_id**: `CAST(hf.fhir_id AS BIGINT)` is required (fhir_id is VARCHAR, organization_id is BIGINT)
+2. **Date formatting**: Use `date_format(TRY_CAST(date_col AS DATE), '%Y-%m-%d')` for Spark-compatible dates
+3. **YMD integer**: `CAST(date_format(TRY_CAST(date_col AS DATE), '%Y%m%d') AS INTEGER) AS ymd`
+4. **Soft delete filters**: Always apply `hf.is_deleted = FALSE` on admin tables
+5. **Program fallback**: Use `COALESCE(fp.program_name, 'Unassigned')` for facilities without programs
+
+### M&E Examples
+
+Question: Show BP data with facility hierarchy and program
+SQL: WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, co.name AS country, dis.name AS county_name, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN country_admin_gold co ON hf.country_id = co.id LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT bl.patient_id, bl.avg_systolic, bl.avg_diastolic, bl.bp_taken_on, f.facility_name, f.county_name, f.subcounty_name, COALESCE(fp.program_name, 'Unassigned') AS program_name FROM bp_log_gold bl LEFT JOIN facilities f ON f.organization_id = bl.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id
+
+Question: Count patients by program and county
+SQL: WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT f.county_name, COALESCE(fp.program_name, 'Unassigned') AS program_name, COUNT(DISTINCT pt.patient_id) AS patient_count FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE pt.is_deleted = FALSE GROUP BY f.county_name, fp.program_name ORDER BY patient_count DESC
+
+Question: Get glucose readings with facility details from October 2024 onwards
+SQL: WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE) SELECT gl.patient_id, gl.glucose_type, gl.glucose_value, gl.hba1c, TRY_CAST(gl.bg_taken_on AS DATE) AS bg_taken_on, f.facility_name, f.county_name, f.subcounty_name FROM glucose_log_latest_gold gl LEFT JOIN facilities f ON f.organization_id = gl.organization_id WHERE TRY_CAST(gl.bg_taken_on AS DATE) >= DATE '2024-10-01' AND TRY_CAST(gl.bg_taken_on AS DATE) <= CURRENT_DATE

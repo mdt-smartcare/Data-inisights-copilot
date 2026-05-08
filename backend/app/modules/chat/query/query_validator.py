@@ -195,9 +195,9 @@ class QueryValidator:
         """Extract table names from SQL query."""
         tables = set()
         
-        # Normalize SQL for parsing
-        sql_normalized = sql.upper()
-        sql_lower = sql.lower()
+        # First, remove SQL function expressions that contain 'FROM' internally
+        # to avoid false positives like EXTRACT(year FROM column_name)
+        sql_cleaned = self._remove_function_from_expressions(sql)
         
         # Pattern for FROM and JOIN clauses
         # Matches: FROM table_name, JOIN table_name, LEFT JOIN table_name, etc.
@@ -209,7 +209,7 @@ class QueryValidator:
         ]
         
         for pattern in patterns:
-            matches = re.findall(pattern, sql, re.IGNORECASE)
+            matches = re.findall(pattern, sql_cleaned, re.IGNORECASE)
             for match in matches:
                 # Exclude SQL keywords
                 if match.upper() not in {'SELECT', 'WHERE', 'AND', 'OR', 'ON', 
@@ -218,6 +218,41 @@ class QueryValidator:
                     tables.add(match)
         
         return list(tables)
+    
+    def _remove_function_from_expressions(self, sql: str) -> str:
+        """
+        Remove SQL function expressions that use 'FROM' internally.
+        
+        These functions use 'FROM' as part of their syntax, not for table references:
+        - EXTRACT(unit FROM expression)     e.g., EXTRACT(year FROM date_col)
+        - SUBSTRING(str FROM pos [FOR len]) e.g., SUBSTRING(name FROM 1 FOR 5)
+        - POSITION(substr IN string)        uses IN, not FROM - no change needed
+        - OVERLAY(str PLACING new FROM pos) e.g., OVERLAY(text PLACING 'x' FROM 1)
+        - DATE_PART('unit', expression)     doesn't use FROM - no change needed
+        
+        Args:
+            sql: Original SQL query
+            
+        Returns:
+            SQL with function expressions replaced by placeholders
+        """
+        result = sql
+        
+        # Pattern for EXTRACT(unit FROM expression)
+        # Handles nested parentheses by matching balanced parens
+        extract_pattern = r'\bEXTRACT\s*\(\s*(?:YEAR|MONTH|DAY|HOUR|MINUTE|SECOND|DOW|DOY|WEEK|QUARTER|EPOCH)\s+FROM\s+[^)]+\)'
+        result = re.sub(extract_pattern, '__EXTRACT_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        # Pattern for SUBSTRING(str FROM pos [FOR len])
+        # Matches both: SUBSTRING(col FROM 1) and SUBSTRING(col FROM 1 FOR 5)
+        substring_from_pattern = r'\bSUBSTRING\s*\([^)]+\s+FROM\s+[^)]+\)'
+        result = re.sub(substring_from_pattern, '__SUBSTRING_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        # Pattern for OVERLAY(str PLACING new FROM pos)
+        overlay_pattern = r'\bOVERLAY\s*\([^)]+\s+PLACING\s+[^)]+\s+FROM\s+[^)]+\)'
+        result = re.sub(overlay_pattern, '__OVERLAY_PLACEHOLDER__', result, flags=re.IGNORECASE)
+        
+        return result
     
     def _extract_columns_from_sql(self, sql: str) -> List[Tuple[str, str]]:
         """

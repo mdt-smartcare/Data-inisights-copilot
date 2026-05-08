@@ -545,3 +545,194 @@ query_patterns:
   bmi_category_breakdown:
     description: "Patient distribution by BMI category"
     pattern: "SELECT bmi_category, COUNT(DISTINCT patient_id) as count FROM bp_log_latest_gold GROUP BY bmi_category"
+
+# =============================================================================
+# M&E Join Patterns - Facility Hierarchy & Program Assignments
+# =============================================================================
+# These patterns are used by M&E teams to enrich clinical data with
+# geographic hierarchy and program information for reporting dashboards.
+# =============================================================================
+me_join_patterns:
+  # ===========================================================================
+  # Facility Hierarchy CTE Pattern
+  # ===========================================================================
+  # Builds the complete facility hierarchy: Country → District/County → Chiefdom/Subcounty
+  # Key join: health_facility_admin_gold.fhir_id → clinical_tables.organization_id
+  # IMPORTANT: CAST fhir_id to BIGINT for integer comparison with organization_id
+  # ===========================================================================
+  facility_hierarchy:
+    description: "CTE to build facility hierarchy from admin tables"
+    tables:
+      - health_facility_admin_gold
+      - country_admin_gold
+      - district_admin_gold
+      - chiefdom_admin_gold
+    join_keys:
+      health_facility_to_country: "hf.country_id = co.id"
+      health_facility_to_district: "hf.district_id = dis.id"
+      health_facility_to_chiefdom: "hf.chiefdom_id = chif.id"
+    output_columns:
+      - "hf.id AS facility_id"
+      - "hf.name AS facility_name"
+      - "CAST(hf.fhir_id AS BIGINT) AS organization_id"
+      - "co.name AS country"
+      - "dis.name AS county_name"
+      - "chif.name AS subcounty_name"
+    filter: "hf.is_deleted = FALSE"
+    pattern: |
+      WITH facilities AS (
+          SELECT
+              hf.id AS facility_id,
+              hf.name AS facility_name,
+              CAST(hf.fhir_id AS BIGINT) AS organization_id,
+              co.id AS country_id,
+              co.name AS country,
+              dis.id AS county_id,
+              dis.name AS county_name,
+              chif.id AS subcounty_id,
+              chif.name AS subcounty_name
+          FROM health_facility_admin_gold hf
+          LEFT JOIN country_admin_gold co ON hf.country_id = co.id
+          LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
+          LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
+          WHERE hf.is_deleted = FALSE
+      )
+
+  # ===========================================================================
+  # Program Assignment CTE Pattern
+  # ===========================================================================
+  # Maps facilities to their assigned programs
+  # Key join: health_facility_program_admin_gold → program_admin_gold
+  # ===========================================================================
+  facility_programs:
+    description: "CTE to get program assignments for facilities"
+    tables:
+      - health_facility_program_admin_gold
+      - program_admin_gold
+    join_keys:
+      program_to_facility: "pg.id = hfp.program_id"
+    output_columns:
+      - "hfp.health_facility_id AS facility_id"
+      - "COALESCE(MAX(pg.name), 'Unassigned') AS program_name"
+    pattern: |
+      facility_programs AS (
+          SELECT
+              hfp.health_facility_id AS facility_id,
+              COALESCE(MAX(pg.name), 'Unassigned') AS program_name
+          FROM health_facility_program_admin_gold hfp
+          LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id
+          GROUP BY hfp.health_facility_id
+      )
+
+  # ===========================================================================
+  # Clinical Data to Facility Join Pattern
+  # ===========================================================================
+  # How to join clinical tables (bp_log_gold, etc.) to facility hierarchy
+  # ===========================================================================
+  clinical_to_facility:
+    description: "Join clinical data to facility hierarchy"
+    join_key: "f.organization_id = bl.organization_id"
+    note: "organization_id in clinical tables links to CAST(fhir_id AS BIGINT) in health_facility_admin_gold"
+
+  # ===========================================================================
+  # Glucose Log M&E Pattern
+  # ===========================================================================
+  # Same facility/program CTEs, different date field (bg_taken_on)
+  # ===========================================================================
+  glucose_log_me_pattern:
+    description: "Complete M&E enrichment pattern for glucose log data"
+    tables:
+      - glucose_log_latest_gold
+      - health_facility_admin_gold
+      - country_admin_gold
+      - district_admin_gold
+      - chiefdom_admin_gold
+      - health_facility_program_admin_gold
+      - program_admin_gold
+    date_field: "bg_taken_on"
+    date_format_pattern: "date_format(TRY_CAST(gl.bg_taken_on AS DATE), '%Y-%m-%d')"
+    ymd_pattern: "CAST(date_format(TRY_CAST(gl.bg_taken_on AS DATE), '%Y%m%d') AS INTEGER) AS ymd"
+    key_columns:
+      - "gl.glucose_type"
+      - "gl.glucose_value"
+      - "gl.glucose_unit"
+      - "gl.hba1c"
+      - "gl.hba1c_unit"
+      - "gl.last_meal_time"
+      - "gl.is_latest"
+      - "gl.encounter_type"
+    pattern: |
+      WITH facilities AS (
+          SELECT hf.id AS facility_id, hf.name AS facility_name,
+                 CAST(hf.fhir_id AS BIGINT) AS organization_id,
+                 co.id AS country_id, co.name AS country,
+                 dis.id AS county_id, dis.name AS county_name,
+                 chif.id AS subcounty_id, chif.name AS subcounty_name
+          FROM health_facility_admin_gold hf
+          LEFT JOIN country_admin_gold co ON hf.country_id = co.id
+          LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
+          LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
+          WHERE hf.is_deleted = FALSE
+      ),
+      facility_programs AS (
+          SELECT hfp.health_facility_id AS facility_id,
+                 COALESCE(MAX(pg.name), 'Unassigned') AS program_name
+          FROM health_facility_program_admin_gold hfp
+          LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id
+          GROUP BY hfp.health_facility_id
+      )
+      SELECT gl.*, f.facility_name, f.country, f.county_name, f.subcounty_name,
+             COALESCE(fp.program_name, 'Unassigned') AS program_name
+      FROM glucose_log_latest_gold gl
+      LEFT JOIN facilities f ON f.organization_id = gl.organization_id
+      LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id
+      WHERE TRY_CAST(gl.bg_taken_on AS DATE) >= DATE '2024-10-01'
+        AND TRY_CAST(gl.bg_taken_on AS DATE) <= CURRENT_DATE
+
+  # ===========================================================================
+  # Complete M&E Query Pattern
+  # ===========================================================================
+  full_me_pattern:
+    description: "Complete M&E enrichment pattern for BP data"
+    usage: "Use when M&E team needs full facility hierarchy with program assignments"
+    pattern: |
+      WITH facilities AS (
+          SELECT hf.id AS facility_id, hf.name AS facility_name,
+                 CAST(hf.fhir_id AS BIGINT) AS organization_id,
+                 co.name AS country, dis.name AS county_name, chif.name AS subcounty_name
+          FROM health_facility_admin_gold hf
+          LEFT JOIN country_admin_gold co ON hf.country_id = co.id
+          LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
+          LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
+          WHERE hf.is_deleted = FALSE
+      ),
+      facility_programs AS (
+          SELECT hfp.health_facility_id AS facility_id,
+                 COALESCE(MAX(pg.name), 'Unassigned') AS program_name
+          FROM health_facility_program_admin_gold hfp
+          LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id
+          GROUP BY hfp.health_facility_id
+      )
+      SELECT bl.*, f.facility_name, f.country, f.county_name, f.subcounty_name,
+             COALESCE(fp.program_name, 'Unassigned') AS program_name
+      FROM bp_log_gold bl
+      LEFT JOIN facilities f ON f.organization_id = bl.organization_id
+      LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id
+
+# =============================================================================
+# Geographic Hierarchy Terminology
+# =============================================================================
+geographic_hierarchy:
+  country_admin_gold:
+    role: "Top-level geographic division (Country)"
+    synonyms: ["country", "nation"]
+  
+  district_admin_gold:
+    role: "Second-level geographic division (District/County)"
+    synonyms: ["district", "county", "region"]
+    note: "In some contexts called 'county' - check local terminology"
+  
+  chiefdom_admin_gold:
+    role: "Third-level geographic division (Chiefdom/Subcounty)"
+    synonyms: ["chiefdom", "subcounty", "sub-county", "ward"]
+    note: "Smallest administrative unit above village level"
