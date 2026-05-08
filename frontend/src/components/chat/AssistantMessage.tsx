@@ -18,6 +18,10 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
   const [feedback, setFeedback] = useState<'positive' | 'negative' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Show loading indicator for streaming messages with no content yet
+  const isWaitingForContent = message.isStreaming && !message.content;
+  const progress = message.streamProgress;
+
   const handleFeedback = async (rating: 'positive' | 'negative') => {
     if (isSubmitting || feedback !== null) return;
 
@@ -63,6 +67,30 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
         </div>
 
         <div className="pl-7">
+          {isWaitingForContent ? (
+            <div className="space-y-2">
+              {/* Progress bar */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${progress?.percent || 5}%` }}
+                  />
+                </div>
+                <span className="text-xs text-gray-400 font-mono w-8">{progress?.percent || 5}%</span>
+              </div>
+              
+              {/* Step indicator */}
+              <div className="flex items-center gap-2 text-gray-600">
+                <div className="flex space-x-1">
+                  <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse"></div>
+                  <div className="w-1.5 h-1.5 bg-purple-400 rounded-full animate-pulse" style={{ animationDelay: '150ms' }}></div>
+                  <div className="w-1.5 h-1.5 bg-purple-300 rounded-full animate-pulse" style={{ animationDelay: '300ms' }}></div>
+                </div>
+                <span className="text-sm">{progress?.message || 'Analyzing your query...'}</span>
+              </div>
+            </div>
+          ) : (
           <div className="prose prose-sm max-w-none text-gray-900">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
@@ -116,6 +144,7 @@ export default function AssistantMessage({ message, onSuggestedQuestionClick, on
               {message.content}
             </ReactMarkdown>
           </div>
+          )}
 
           {/* Render chart if present */}
           {message.chartData && <ChartRenderer chartData={message.chartData} />}
