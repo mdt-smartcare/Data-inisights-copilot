@@ -113,11 +113,13 @@ class TracingContext:
         """Start the trace and set as current context for child observations."""
         if self._langfuse:
             try:
-                # SDK v3: Create a root span first
-                start_span_fn = getattr(self._langfuse, 'start_span', None)
-                if start_span_fn:
-                    # Create the root span
-                    self._trace = start_span_fn(
+                # SDK v3: Use start_as_current_observation to set trace context
+                # This ensures CallbackHandler and child spans are nested under this trace
+                start_as_current_fn = getattr(self._langfuse, 'start_as_current_observation', None)
+                if start_as_current_fn:
+                    # Create root observation as current context
+                    self._trace_context = start_as_current_fn(
+                        as_type="span",
                         name=self.name,
                         input={"query_preview": self.metadata.get("query_preview")},
                         metadata={
@@ -127,9 +129,10 @@ class TracingContext:
                             "trace_id": self.trace_id,
                         },
                     )
+                    # Enter the context manager to set current observation
+                    self._trace = self._trace_context.__enter__()
                     
                     # Update trace metadata for proper session/user tracking
-                    # This ensures all traces with same session_id are grouped
                     if hasattr(self._trace, 'update_trace'):
                         self._trace.update_trace(
                             session_id=self.session_id,
@@ -138,21 +141,34 @@ class TracingContext:
                             input={"query": self.metadata.get("query_preview")},
                         )
                     
-                    logger.debug(f"Started trace (v3): {self.trace_id}, session: {self.session_id}")
+                    logger.debug(f"Started trace (v3 current context): {self.trace_id}, session: {self.session_id}")
                 else:
-                    # Fallback: SDK v2 uses .trace()
-                    trace_fn = getattr(self._langfuse, 'trace', None)
-                    if trace_fn:
-                        self._trace = trace_fn(
-                            id=self.trace_id,
+                    # Fallback: SDK v3 without start_as_current_observation or SDK v2
+                    start_span_fn = getattr(self._langfuse, 'start_span', None)
+                    if start_span_fn:
+                        self._trace = start_span_fn(
                             name=self.name,
-                            user_id=self.user_id,
-                            session_id=self.session_id,
-                            metadata=self.metadata,
+                            input={"query_preview": self.metadata.get("query_preview")},
+                            metadata={
+                                **self.metadata,
+                                "user_id": self.user_id,
+                                "session_id": self.session_id,
+                                "trace_id": self.trace_id,
+                            },
                         )
-                        logger.debug(f"Started trace (v2): {self.trace_id}")
+                        logger.debug(f"Started trace (v3 span): {self.trace_id}")
                     else:
-                        logger.debug("No compatible Langfuse trace method found")
+                        # SDK v2 fallback
+                        trace_fn = getattr(self._langfuse, 'trace', None)
+                        if trace_fn:
+                            self._trace = trace_fn(
+                                id=self.trace_id,
+                                name=self.name,
+                                user_id=self.user_id,
+                                session_id=self.session_id,
+                                metadata=self.metadata,
+                            )
+                            logger.debug(f"Started trace (v2): {self.trace_id}")
             except Exception as e:
                 logger.warning(f"Failed to start trace: {e}")
         
@@ -166,6 +182,9 @@ class TracingContext:
         generation) may still be adding observations. Call end_trace() explicitly
         after all async operations complete, or let the trace end naturally via
         the Langfuse callback handler.
+        
+        However, we DO need to exit the context manager to clean up thread-local state.
+        The observations and CallbackHandler will still be linked to our trace.
         """
         if self._trace:
             try:
@@ -181,6 +200,14 @@ class TracingContext:
                 self._langfuse.flush()
             except Exception as e:
                 logger.warning(f"Failed to end trace: {e}")
+        
+        # Exit the context manager if we used start_as_current_observation
+        # This cleans up thread-local state but observations remain linked to trace
+        if self._trace_context:
+            try:
+                self._trace_context.__exit__(exc_type, exc_val, exc_tb)
+            except Exception as e:
+                logger.debug(f"Error exiting trace context: {e}")
         
         return False  # Don't suppress exceptions
     
@@ -420,6 +447,10 @@ class TracingContext:
         
         Returns callback handler that sends LangChain events to Langfuse.
         This automatically captures LLM calls, tokens, and costs.
+        
+        In SDK v3, when created within start_as_current_observation context,
+        the handler automatically inherits the trace context, nesting all
+        LangChain observations under our parent trace.
         """
         if not self._langfuse:
             return None
@@ -428,14 +459,14 @@ class TracingContext:
             return self._callback_handler
         
         try:
-            # SDK v3: use langfuse.langchain.CallbackHandler
             from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
             
-            # Create handler - it will use env vars for auth
-            # update_trace=True allows updating existing trace metadata
-            self._callback_handler = LangfuseCallbackHandler(update_trace=True)
+            # SDK v3: Simply create the handler
+            # Since we're inside start_as_current_observation context (set in __enter__),
+            # the handler will automatically inherit the current trace context
+            self._callback_handler = LangfuseCallbackHandler()
             
-            logger.debug(f"Created LangChain callback handler")
+            logger.debug("Created LangChain callback handler (inherits trace context)")
             return self._callback_handler
             
         except ImportError:
