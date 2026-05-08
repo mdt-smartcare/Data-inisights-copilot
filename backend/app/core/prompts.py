@@ -177,3 +177,12 @@ Rules:
 def get_fhir_rules_prompt() -> str:
     """Get the FHIR identifier rules prompt for healthcare schemas."""
     return load_prompt("fhir_rules", fallback="Follow FHIR data model conventions for patient identifiers.")
+
+
+def get_me_reporting_prompt() -> str:
+    """Get the M&E (Monitoring & Evaluation) reporting patterns prompt.
+    
+    Contains facility hierarchy CTEs, program assignments, and geographic
+    breakdown patterns for healthcare M&E dashboards.
+    """
+    return load_prompt("me_reporting", fallback="")
