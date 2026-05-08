@@ -48,6 +48,20 @@ interface UsageStats {
     };
 }
 
+interface ChildObservation {
+    id: string;
+    name: string;
+    type: string;  // "GENERATION", "SPAN", "CHAIN", etc.
+    model: string;
+    input_preview: string;
+    output_preview: string;
+    input_tokens: number;
+    output_tokens: number;
+    cost: number;
+    latency_ms: number;
+    level: string;
+}
+
 interface RecentTrace {
     id: string;
     trace_id: string;
@@ -63,6 +77,10 @@ interface RecentTrace {
     status: string;
     user_id?: string;
     session_id?: string;
+    // Hierarchical children for detailed breakdown
+    children?: ChildObservation[];
+    total_input_tokens?: number;
+    total_output_tokens?: number;
 }
 
 const ObservabilityPanel: React.FC = () => {
@@ -410,9 +428,12 @@ const ObservabilityPanel: React.FC = () => {
     );
 };
 
-// Expandable Trace Card Component
+// Expandable Trace Card Component with Hierarchical Children
 const TraceCard = ({ trace }: { trace: RecentTrace }) => {
     const [expanded, setExpanded] = useState(false);
+    
+    const hasChildren = trace.children && trace.children.length > 0;
+    const totalTokens = (trace.total_input_tokens || trace.input_tokens || 0) + (trace.total_output_tokens || trace.output_tokens || 0);
     
     return (
         <div className="border border-gray-200 rounded-lg overflow-hidden">
@@ -439,6 +460,11 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                     <span className="text-xs text-gray-500">
                         {(trace.latency || 0).toFixed(2)}s
                     </span>
+                    {hasChildren && (
+                        <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                            {trace.children!.length} steps
+                        </span>
+                    )}
                     <svg 
                         className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} 
                         fill="none" 
@@ -479,8 +505,57 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                         </div>
                     </div>
                     
+                    {/* Hierarchical Step Breakdown */}
+                    {hasChildren && (
+                        <div>
+                            <div className="flex items-center gap-2 mb-3">
+                                <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                                </svg>
+                                <span className="text-xs font-medium text-gray-500 uppercase">Step-by-Step Breakdown</span>
+                            </div>
+                            <div className="space-y-2">
+                                {trace.children!.map((child, idx) => (
+                                    <ChildObservationCard key={child.id || idx} child={child} index={idx + 1} />
+                                ))}
+                            </div>
+                            
+                            {/* Aggregated Totals */}
+                            <div className="mt-4 pt-3 border-t border-gray-200">
+                                <div className="flex items-center justify-between bg-purple-50 rounded-lg px-4 py-3">
+                                    <span className="text-sm font-medium text-purple-800">Total</span>
+                                    <div className="flex items-center gap-6 text-sm">
+                                        <div className="text-gray-600">
+                                            <span className="font-medium">{totalTokens.toLocaleString()}</span>
+                                            <span className="text-gray-400 ml-1">tokens</span>
+                                        </div>
+                                        <div className="text-green-600 font-semibold">
+                                            ${(trace.total_cost || 0).toFixed(4)}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                    
                     {/* Metadata Row */}
                     <div className="flex flex-wrap gap-4 pt-2 border-t border-gray-100 text-xs text-gray-500">
+                        {trace.trace_id && (
+                            <div className="flex items-center gap-1">
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                                </svg>
+                                <span className="font-mono">{trace.trace_id.slice(0, 8)}...</span>
+                            </div>
+                        )}
+                        {trace.session_id && (
+                            <div className="flex items-center gap-1">
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                </svg>
+                                <span>Session: {trace.session_id.slice(0, 8)}...</span>
+                            </div>
+                        )}
                         {trace.user_id && (
                             <div className="flex items-center gap-1">
                                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -502,11 +577,100 @@ const TraceCard = ({ trace }: { trace: RecentTrace }) => {
                             <span>Cost: ${(trace.total_cost || 0).toFixed(4)}</span>
                         </div>
                         <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
-                            trace.status === 'success' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                            trace.status === 'completed' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                         }`}>
-                            {trace.status || 'success'}
+                            {trace.status || 'completed'}
                         </span>
                     </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Child Observation Card for step-by-step breakdown
+const ChildObservationCard = ({ child, index }: { child: ChildObservation; index: number }) => {
+    const [showDetails, setShowDetails] = useState(false);
+    
+    const getTypeColor = (type: string) => {
+        switch (type) {
+            case 'GENERATION': return 'bg-purple-100 text-purple-700 border-purple-200';
+            case 'CHAIN': return 'bg-blue-100 text-blue-700 border-blue-200';
+            case 'SPAN': return 'bg-gray-100 text-gray-700 border-gray-200';
+            case 'TOOL': return 'bg-orange-100 text-orange-700 border-orange-200';
+            default: return 'bg-gray-100 text-gray-600 border-gray-200';
+        }
+    };
+    
+    const totalTokens = child.input_tokens + child.output_tokens;
+    const hasCost = child.cost > 0;
+    const hasTokens = totalTokens > 0;
+    
+    return (
+        <div className={`border rounded-lg overflow-hidden ${getTypeColor(child.type)}`}>
+            <button
+                onClick={() => setShowDetails(!showDetails)}
+                className="w-full px-3 py-2 flex items-center justify-between text-left hover:bg-opacity-50 transition-colors"
+            >
+                <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-gray-400 w-5">{index}.</span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${getTypeColor(child.type)}`}>
+                        {child.type}
+                    </span>
+                    <span className="text-sm font-medium truncate max-w-xs" title={child.name}>
+                        {child.name}
+                    </span>
+                    {child.model !== 'unknown' && (
+                        <span className="text-xs text-gray-500 font-mono">
+                            ({child.model})
+                        </span>
+                    )}
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                    {hasTokens && (
+                        <span className="text-gray-600">
+                            {child.input_tokens.toLocaleString()} → {child.output_tokens.toLocaleString()} tokens
+                        </span>
+                    )}
+                    {hasCost && (
+                        <span className="text-green-600 font-medium">
+                            ${child.cost.toFixed(4)}
+                        </span>
+                    )}
+                    {child.latency_ms > 0 && (
+                        <span className="text-gray-400">
+                            {child.latency_ms.toFixed(0)}ms
+                        </span>
+                    )}
+                    <svg 
+                        className={`w-3 h-3 text-gray-400 transition-transform ${showDetails ? 'rotate-180' : ''}`} 
+                        fill="none" 
+                        stroke="currentColor" 
+                        viewBox="0 0 24 24"
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                </div>
+            </button>
+            
+            {showDetails && (
+                <div className="px-3 py-2 border-t bg-white space-y-2">
+                    {child.input_preview && (
+                        <div>
+                            <span className="text-xs text-gray-500">Input:</span>
+                            <p className="text-xs text-gray-700 mt-1 bg-gray-50 p-2 rounded max-h-20 overflow-y-auto">
+                                {child.input_preview}
+                            </p>
+                        </div>
+                    )}
+                    {child.output_preview && (
+                        <div>
+                            <span className="text-xs text-gray-500">Output:</span>
+                            <p className="text-xs text-gray-700 mt-1 bg-gray-50 p-2 rounded max-h-20 overflow-y-auto">
+                                {child.output_preview}
+                            </p>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

@@ -171,9 +171,21 @@ class IntentClassifier:
         # Ambiguous - return None to trigger LLM classification
         return None
     
-    async def _llm_classify(self, query: str, llm_helper, schema_context: str = "") -> IntentClassification:
+    async def _llm_classify(
+        self, 
+        query: str, 
+        llm_helper, 
+        schema_context: str = "",
+        llm_config: dict = None
+    ) -> IntentClassification:
         """
         LLM-based classification for ambiguous queries.
+        
+        Args:
+            query: The query to classify
+            llm_helper: LLM helper instance
+            schema_context: Database schema context
+            llm_config: Optional LangChain config dict with callbacks for tracing
         """
         from langchain_core.prompts import ChatPromptTemplate
         
@@ -189,10 +201,10 @@ class IntentClassifier:
             llm = await llm_helper.get_llm(temperature=0.0)
             structured_llm = llm.with_structured_output(IntentClassification)
             chain = prompt | structured_llm
-            result = await chain.ainvoke({
-                "query": query,
-                "schema": schema_context or "No schema provided"
-            })
+            result = await chain.ainvoke(
+                {"query": query, "schema": schema_context or "No schema provided"},
+                config=llm_config
+            )
             return result
         except Exception as e:
             logger.error(f"LLM classification failed: {e}")
@@ -208,7 +220,8 @@ class IntentClassifier:
         query: str, 
         llm_helper,
         schema_context: str = "",
-        use_llm: bool = True
+        use_llm: bool = True,
+        llm_config: dict = None
     ) -> IntentClassification:
         """
         Classify a query into SQL, Vector, or Hybrid intent.
@@ -218,6 +231,7 @@ class IntentClassifier:
             llm_helper: LLMHelper instance for getting LLM
             schema_context: Optional database schema for better classification
             use_llm: Whether to use LLM for ambiguous cases (default True)
+            llm_config: Optional LangChain config dict with callbacks for tracing
             
         Returns:
             IntentClassification with intent, confidence, and optional SQL filter
@@ -247,7 +261,7 @@ class IntentClassifier:
         
         # If uncertain and LLM enabled, use LLM
         if result is None and use_llm:
-            result = await self._llm_classify(query, llm_helper, schema_context)
+            result = await self._llm_classify(query, llm_helper, schema_context, llm_config)
         elif result is None:
             # No LLM, default to fallback
             result = IntentClassification(

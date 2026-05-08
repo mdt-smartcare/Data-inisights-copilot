@@ -29,19 +29,22 @@ def get_langfuse_client():
     settings = get_settings()
     
     if not settings.langfuse_enabled:
-        logger.info("Langfuse tracing disabled (no API keys configured)")
+        logger.info("Langfuse tracing disabled (ENABLE_LANGFUSE=false or missing API keys)")
         return None
     
     try:
         from langfuse import Langfuse
         
+        # Prefer base_url over host for consistency
+        host_url = settings.langfuse_base_url or settings.langfuse_host
+        
         _langfuse_client = Langfuse(
             public_key=settings.langfuse_public_key,
             secret_key=settings.langfuse_secret_key,
-            host=settings.langfuse_host,
+            host=host_url,
         )
         
-        logger.info("Langfuse client initialized", host=settings.langfuse_host)
+        logger.info("Langfuse client initialized", host=host_url)
         return _langfuse_client
         
     except ImportError:
@@ -70,6 +73,10 @@ class TracingContext:
             ctx.add_span("embedding", input=query)
             # ... do work
             ctx.update_span("embedding", output=results)
+            
+            # LLM calls with get_llm_config() will be linked to this trace
+            config = ctx.get_llm_config()
+            result = await llm.ainvoke(prompt, config=config)
     """
     
     def __init__(
@@ -98,26 +105,54 @@ class TracingContext:
         
         self._langfuse = get_langfuse_client()
         self._trace = None
+        self._trace_context = None  # For SDK v3
         self._spans: Dict[str, Any] = {}
         self._callback_handler = None
     
     def __enter__(self):
-        """Start the trace."""
+        """Start the trace and set as current context for child observations."""
         if self._langfuse:
             try:
-                # Handle SDK version differences (v2 uses .trace(), v3+ uses different patterns)
-                trace_fn = getattr(self._langfuse, 'trace', None)
-                if trace_fn:
-                    self._trace = trace_fn(
-                        id=self.trace_id,
+                # SDK v3: Create a root span first
+                start_span_fn = getattr(self._langfuse, 'start_span', None)
+                if start_span_fn:
+                    # Create the root span
+                    self._trace = start_span_fn(
                         name=self.name,
-                        user_id=self.user_id,
-                        session_id=self.session_id,
-                        metadata=self.metadata,
+                        input={"query_preview": self.metadata.get("query_preview")},
+                        metadata={
+                            **self.metadata,
+                            "user_id": self.user_id,
+                            "session_id": self.session_id,
+                            "trace_id": self.trace_id,
+                        },
                     )
-                    logger.debug(f"Started trace: {self.trace_id}")
+                    
+                    # Update trace metadata for proper session/user tracking
+                    # This ensures all traces with same session_id are grouped
+                    if hasattr(self._trace, 'update_trace'):
+                        self._trace.update_trace(
+                            session_id=self.session_id,
+                            user_id=self.user_id,
+                            name=self.name,
+                            input={"query": self.metadata.get("query_preview")},
+                        )
+                    
+                    logger.debug(f"Started trace (v3): {self.trace_id}, session: {self.session_id}")
                 else:
-                    logger.debug("Langfuse.trace method not found (possibly SDK v3+)")
+                    # Fallback: SDK v2 uses .trace()
+                    trace_fn = getattr(self._langfuse, 'trace', None)
+                    if trace_fn:
+                        self._trace = trace_fn(
+                            id=self.trace_id,
+                            name=self.name,
+                            user_id=self.user_id,
+                            session_id=self.session_id,
+                            metadata=self.metadata,
+                        )
+                        logger.debug(f"Started trace (v2): {self.trace_id}")
+                    else:
+                        logger.debug("No compatible Langfuse trace method found")
             except Exception as e:
                 logger.warning(f"Failed to start trace: {e}")
         
@@ -128,10 +163,22 @@ class TracingContext:
         if self._trace:
             try:
                 if exc_type:
-                    self._trace.update(
-                        output={"error": str(exc_val)},
-                        level="ERROR",
-                    )
+                    # Update with error info
+                    if hasattr(self._trace, 'update'):
+                        self._trace.update(
+                            output={"error": str(exc_val)},
+                            level="ERROR",
+                        )
+                    elif hasattr(self._trace, 'end'):
+                        self._trace.end(
+                            output={"error": str(exc_val)},
+                            level="ERROR",
+                        )
+                else:
+                    # End the span normally (v3)
+                    if hasattr(self._trace, 'end'):
+                        self._trace.end()
+                
                 self._langfuse.flush()
             except Exception as e:
                 logger.warning(f"Failed to end trace: {e}")
@@ -159,12 +206,24 @@ class TracingContext:
             return None
         
         try:
-            span = self._trace.span(
-                name=name,
-                input=input,
-                metadata=metadata,
-            )
-            span_id = span.id if hasattr(span, 'id') else name
+            # SDK v3: use parent span's start_span() method
+            if hasattr(self._trace, 'start_span'):
+                span = self._trace.start_span(
+                    name=name,
+                    input=input,
+                    metadata=metadata,
+                )
+            elif hasattr(self._trace, 'span'):
+                # SDK v2 fallback
+                span = self._trace.span(
+                    name=name,
+                    input=input,
+                    metadata=metadata,
+                )
+            else:
+                return None
+                
+            span_id = getattr(span, 'id', name)
             self._spans[name] = span
             return span_id
         except Exception as e:
@@ -207,34 +266,148 @@ class TracingContext:
             except Exception:
                 pass
     
+    def add_generation(
+        self,
+        name: str,
+        model: str,
+        input: Any = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        Add an LLM generation to the current trace.
+        
+        Use this for LLM API calls to capture model, tokens, and cost.
+        
+        Args:
+            name: Generation name (e.g., "sql_generation", "intent_classification")
+            model: Model name (e.g., "gpt-4o", "gpt-4o-mini")
+            input: Input prompt/messages
+            metadata: Additional metadata
+            
+        Returns:
+            Generation ID or None if tracing disabled
+        """
+        if not self._trace:
+            return None
+        
+        try:
+            # SDK v3: use start_generation for LLM calls
+            if hasattr(self._trace, 'start_generation'):
+                gen = self._trace.start_generation(
+                    name=name,
+                    model=model,
+                    input=input,
+                    metadata=metadata,
+                )
+            elif hasattr(self._trace, 'generation'):
+                # SDK v2 fallback
+                gen = self._trace.generation(
+                    name=name,
+                    model=model,
+                    input=input,
+                    metadata=metadata,
+                )
+            else:
+                # Fall back to span
+                return self.add_span(name, input=input, metadata=metadata)
+            
+            gen_id = getattr(gen, 'id', name)
+            self._spans[name] = gen
+            return gen_id
+        except Exception as e:
+            logger.warning(f"Failed to add generation {name}: {e}")
+            return None
+    
+    def end_generation(
+        self,
+        name: str,
+        output: Any = None,
+        model: Optional[str] = None,
+        usage: Optional[Dict[str, int]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        End an LLM generation with output and usage info.
+        
+        Args:
+            name: Generation name
+            output: LLM output/completion
+            model: Model name (if different from start)
+            usage: Token usage dict with 'input', 'output', 'total' keys
+            metadata: Additional metadata
+        """
+        gen = self._spans.pop(name, None)
+        if gen:
+            try:
+                end_kwargs = {"output": output}
+                if model:
+                    end_kwargs["model"] = model
+                if usage:
+                    end_kwargs["usage"] = usage
+                if metadata:
+                    end_kwargs["metadata"] = metadata
+                
+                gen.end(**end_kwargs)
+            except Exception as e:
+                logger.warning(f"Failed to end generation {name}: {e}")
+    
     def get_langchain_callback(self):
         """
         Get a LangChain callback handler for this trace.
         
         Returns callback handler that sends LangChain events to Langfuse.
+        This automatically captures LLM calls, tokens, and costs.
         """
-        if not self._langfuse or not self._trace:
+        if not self._langfuse:
             return None
         
         if self._callback_handler:
             return self._callback_handler
         
         try:
-            from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
+            # SDK v3: use langfuse.langchain.CallbackHandler
+            from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
             
-            self._callback_handler = LangfuseCallbackHandler(
-                trace_id=self.trace_id,
-                user_id=self.user_id,
-                session_id=self.session_id,
-            )
+            # Create handler - it will use env vars for auth
+            # update_trace=True allows updating existing trace metadata
+            self._callback_handler = LangfuseCallbackHandler(update_trace=True)
+            
+            logger.debug(f"Created LangChain callback handler")
             return self._callback_handler
             
         except ImportError:
-            logger.debug("langfuse.callback not available")
+            logger.debug("langfuse.langchain not available")
             return None
         except Exception as e:
             logger.warning(f"Failed to create callback handler: {e}")
             return None
+    
+    def get_llm_config(self) -> Optional[Dict[str, Any]]:
+        """
+        Get LangChain config dict with Langfuse callbacks and metadata.
+        
+        Use this when calling LLM.ainvoke() to capture token usage and costs,
+        and link the LLM call to the current session/user.
+        
+            config = tracing_ctx.get_llm_config()
+            result = await llm.ainvoke(prompt, config=config)
+        
+        Returns:
+            Config dict with callbacks and metadata, or None if tracing disabled
+        """
+        callback = self.get_langchain_callback()
+        if callback:
+            # Include metadata for session/user linking
+            # Langfuse SDK reads langfuse_session_id and langfuse_user_id from metadata
+            return {
+                "callbacks": [callback],
+                "metadata": {
+                    "langfuse_session_id": self.session_id,
+                    "langfuse_user_id": self.user_id,
+                    "trace_id": self.trace_id,
+                }
+            }
+        return None
     
     def flush(self):
         """Flush traces to Langfuse."""

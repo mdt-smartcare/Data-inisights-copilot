@@ -168,10 +168,12 @@ class ChatService:
                 tracing_ctx.add_span("intent_classification", input=rewritten_query)
                 
                 schema_context = sql_service.cached_schema if sql_service else ""
+                llm_config = tracing_ctx.get_llm_config()
                 classification = await self._intent_classifier.classify(
                     rewritten_query,
                     llm_helper=llm_helper,
-                    schema_context=schema_context
+                    schema_context=schema_context,
+                    llm_config=llm_config
                 )
                 
                 tracing_ctx.update_span(
@@ -271,13 +273,20 @@ class ChatService:
                 # Get conversation history for context-aware followups
                 conversation_history = self._memory.get_context(session_id, max_messages=5)
                 
+                # Get LLM config for tracing - follow-ups will be linked to parent trace
+                llm_config = tracing_ctx.get_llm_config()
+                
+                # Add span for follow-up generation tracking
+                tracing_ctx.add_span("followup_generation", input={"query": query[:100]})
+                
                 followup_task = asyncio.create_task(
                     generate_followups_background(
                         query, 
                         answer,
                         llm_helper=llm_helper,
                         conversation_history=conversation_history,
-                        timeout=2.0
+                        timeout=2.0,
+                        llm_config=llm_config,
                     )
                 )
                 
@@ -288,10 +297,13 @@ class ChatService:
                 suggested_questions = []
                 try:
                     suggested_questions = await asyncio.wait_for(followup_task, timeout=2.0)
+                    tracing_ctx.update_span("followup_generation", output={"questions": suggested_questions})
                 except asyncio.TimeoutError:
                     logger.debug("Follow-up generation timed out")
+                    tracing_ctx.update_span("followup_generation", output={"error": "timeout"})
                 except Exception as e:
                     logger.debug(f"Follow-up generation failed: {e}")
+                    tracing_ctx.update_span("followup_generation", output={"error": str(e)})
                 
                 # Build response
                 duration = time.time() - start_time
@@ -369,8 +381,13 @@ class ChatService:
         tracing_ctx.add_span("sql_query", input=query)
         
         try:
-            # Execute natural language SQL query
-            result = await sql_service.query_async(query, llm_helper=llm_helper)
+            # Execute natural language SQL query with tracing
+            llm_config = tracing_ctx.get_llm_config()
+            result = await sql_service.query_async(
+                query, 
+                llm_helper=llm_helper,
+                llm_config=llm_config
+            )
             
             reasoning_steps.append(ReasoningStep(
                 tool="sql_query",
@@ -438,7 +455,9 @@ class ChatService:
         """
         
         try:
-            response = await llm.ainvoke(prompt)
+            # Pass tracing callback to capture token usage
+            llm_config = tracing_ctx.get_llm_config()
+            response = await llm.ainvoke(prompt, config=llm_config)
             # Split by lines and remove leading numbering (e.g., "1. ")
             questions = [re.sub(r'^\d+[\.\)]\s*', '', q.strip()) for q in response.content.splitlines() if q.strip()]
 
@@ -451,11 +470,18 @@ class ChatService:
                 output="Generated dashboard queries:\n" + "\n".join(questions),
             ))
             
+            # Get LLM config for tracing
+            sub_llm_config = tracing_ctx.get_llm_config()
+            
             # Helper for parallel sub-query processing (SQL + Synthesis)
             async def process_subquery(idx, sub_q):
                 try:
                     # 1. Execute SQL directly asynchronously (avoids event loop mismatch)
-                    sql_result = await sql_service.query_async(sub_q, llm_helper=llm_helper)
+                    sql_result = await sql_service.query_async(
+                        sub_q, 
+                        llm_helper=llm_helper,
+                        llm_config=sub_llm_config
+                    )
                     
                     # 2. Skip synthesis if query failed or returned no data
                     if not sql_result or sql_result.startswith("Failed") or "No results found" in sql_result:

@@ -319,6 +319,7 @@ app.include_router(users_router, prefix=f"{settings.api_v1_prefix}/users", tags=
 # Observability & Audit
 from app.modules.audit.routes import router as audit_router
 from app.modules.observability.analytics_routes import router as analytics_router
+from app.modules.observability.routes import router as observability_router
 
 # Agents and Configs
 from app.modules.agents.routes import router as agents_router
@@ -332,6 +333,7 @@ from app.modules.ai_models.routes import router as ai_registry_router
 
 app.include_router(audit_router, prefix=f"{settings.api_v1_prefix}", tags=["Audit"])
 app.include_router(analytics_router, prefix=f"{settings.api_v1_prefix}", tags=["Analytics"])
+app.include_router(observability_router, prefix=f"{settings.api_v1_prefix}", tags=["Observability"])
 # Note: agents_router already has /agents, /config prefixes and tags internally
 app.include_router(agents_router, prefix=f"{settings.api_v1_prefix}")
 # Note: data_sources_router already has /data-sources prefix and tags internally

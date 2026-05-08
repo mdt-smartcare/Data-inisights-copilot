@@ -184,6 +184,10 @@ class Settings(BaseSettings):
     # ============================================
     # Observability Configuration
     # ============================================
+    enable_langfuse: bool = Field(
+        default=False,
+        description="Enable/disable Langfuse tracing"
+    )
     langfuse_public_key: Optional[str] = Field(
         default=None,
         description="Langfuse public key for LLM observability"
@@ -196,11 +200,15 @@ class Settings(BaseSettings):
         default="https://cloud.langfuse.com",
         description="Langfuse host URL"
     )
+    langfuse_base_url: str = Field(
+        default="https://cloud.langfuse.com",
+        description="Langfuse base URL for API calls"
+    )
     
     @property
     def langfuse_enabled(self) -> bool:
         """Check if Langfuse observability is enabled."""
-        return bool(self.langfuse_public_key and self.langfuse_secret_key)
+        return self.enable_langfuse and bool(self.langfuse_public_key and self.langfuse_secret_key)
     
     # ============================================
     # File Storage Configuration

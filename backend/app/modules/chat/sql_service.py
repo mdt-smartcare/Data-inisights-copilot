@@ -1120,6 +1120,7 @@ class SQLService:
         natural_language_query: str,
         llm_helper=None,
         max_retries: int = 3,
+        llm_config: dict = None,
     ) -> str:
         """
         Execute a natural language query using LLM to generate SQL (async version).
@@ -1138,6 +1139,7 @@ class SQLService:
             natural_language_query: User's question in natural language
             llm_helper: LLMHelper instance for getting LLM
             max_retries: Maximum number of retry attempts (default 3)
+            llm_config: Optional LangChain config dict with callbacks for tracing
             
         Returns:
             Formatted response string with query results
@@ -1549,11 +1551,11 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     ])
                     chain = prompt | llm
                 
-                # Generate SQL using LLM
-                response = chain.invoke({
-                    "schema": schema,
-                    "question": natural_language_query
-                })
+                # Generate SQL using LLM (with optional tracing callback)
+                response = chain.invoke(
+                    {"schema": schema, "question": natural_language_query},
+                    config=llm_config
+                )
                 
                 # =========================================================
                 # PARSE STRUCTURED OUTPUT (if enabled)
