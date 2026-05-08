@@ -76,6 +76,17 @@ When asked "how many patients", "total patients", "patient count", etc.:
     - For latest BP per patient: Use `bp_log_gold` with `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY bp_taken_on DESC) = 1`
     - WRONG: `SELECT * FROM bp_log_latest_gold` (empty table!)
     - CORRECT: `SELECT * FROM bp_log_gold WHERE avg_systolic IS NOT NULL`
+17. **CRITICAL: AMBIGUOUS ID LOOKUPS** - When a user provides a bare numeric ID without specifying the column:
+    - Check if the ID could match multiple columns: `patient_id`, `related_person_id`, `res_id`, `ref_patient_track_id`, etc.
+    - `patient_tracker_gold` has BOTH `patient_id` AND `related_person_id` columns - they are DIFFERENT!
+    - If user says "patient 123" or "patient_id 123" → use `patient_id = 123`
+    - If user says "related person 123" or "caregiver 123" → use `related_person_id = 123`
+    - If ambiguous, generate a UNION or OR query to check both:
+      ```sql
+      SELECT * FROM patient_tracker_gold 
+      WHERE (patient_id = 123 OR related_person_id = 123) AND is_deleted = false
+      ```
+    - Common ID columns in `patient_tracker_gold`: `patient_id`, `related_person_id`, `ref_patient_track_id`, `site_id`, `village_id`
 
 ## Table Selection Strategy
 
@@ -148,3 +159,12 @@ SQL: select date_trunc('month', cast(created_at as timestamp)) as month, avg(cvd
 
 Question: Show me the top 10 counties by patient count
 SQL: select county_name, count(distinct patient_id) as patient_count from patient_tracker_gold where is_deleted = false group by county_name order by patient_count desc limit 10
+
+Question: Give me details of ID 3305997 (ambiguous - could be patient_id or related_person_id)
+SQL: select * from patient_tracker_gold where (patient_id = 3305997 or related_person_id = 3305997) and is_deleted = false
+
+Question: Show me the patient with related_person_id 3305997
+SQL: select * from patient_tracker_gold where related_person_id = 3305997 and is_deleted = false
+
+Question: Get all patients linked to caregiver 3305997
+SQL: select * from patient_tracker_gold where related_person_id = 3305997 and is_deleted = false

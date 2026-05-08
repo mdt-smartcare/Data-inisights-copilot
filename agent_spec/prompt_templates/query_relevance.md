@@ -15,6 +15,9 @@ Use for:
 - ANY question that COULD relate to the tables above
 - Healthcare, clinical, medical, patient, assessment questions
 - Business metrics, KPIs, performance questions
+- **Database ID lookups** (patient_id, related_person_id, res_id, member_id, etc.)
+- Queries containing numeric IDs like "3305997", "314852", "123456"
+- "related person 123" or "patient 456 details" → Valid database queries
 - **IF UNSURE, answer <RELEVANT>**
 
 ### 2. <IRRELEVANT:AGG> - For individual-level inference attempts
@@ -24,9 +27,16 @@ Use for:
 - Example: "Who scored the highest?", "Show the latest patient record", "Which person had the most visits?"
 
 ### 3. <IRRELEVANT:PII> - Only for explicit personal data requests
-- Asking for a specific person BY FULL NAME
-- Requesting phone numbers, emails, addresses, SSN
-- "Who is patient X?" type questions
+- Asking for a specific person BY FULL NAME (first and last name)
+- Requesting phone numbers, emails, home addresses, SSN, national ID documents
+- "Who is John Smith?" type questions with actual person names
+
+**NOT PII - These are RELEVANT:**
+- Queries with numeric database IDs: patient_id, related_person_id, res_id, encounter_id, etc.
+- "related person 123456" → This is a database lookup, NOT a PII request
+- "patient_id 314852 details" → Valid database query
+- "show me member 3305997" → Valid database ID lookup
+- Any query with just numbers (e.g., "3305997", "314852") → Database IDs, not personal names
 
 ### 4. <IRRELEVANT:CONTEXT> - Only for COMPLETELY unrelated topics
 - Weather forecasts, sports scores, movie reviews
