@@ -89,6 +89,7 @@ class DataSourceRepository:
         self,
         query: Optional[str] = None,
         source_type: Optional[str] = None,
+        processing_status: Optional[str] = None,
         created_by: Optional[UUID] = None,
         skip: int = 0,
         limit: int = 50,
@@ -108,6 +109,9 @@ class DataSourceRepository:
         
         if source_type:
             filters.append(DataSourceModel.source_type == source_type)
+        
+        if processing_status:
+            filters.append(DataSourceModel.processing_status == processing_status)
         
         if created_by:
             filters.append(DataSourceModel.created_by == created_by)

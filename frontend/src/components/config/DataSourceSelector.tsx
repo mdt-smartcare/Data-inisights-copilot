@@ -32,7 +32,8 @@ const DataSourceSelector: React.FC<DataSourceSelectorProps> = ({
         setLoading(true);
         setError(null);
         try {
-            const response = await getDataSources();
+            // Only fetch completed/ready data sources for agent configuration
+            const response = await getDataSources({ status: 'completed' });
             setDataSources(response.data_sources || []);
         } catch (err) {
             console.error('Failed to load data sources:', err);

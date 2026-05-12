@@ -106,6 +106,7 @@ async def create_database_source(
 async def list_data_sources(
     query: Optional[str] = Query(None, description="Search in title/description"),
     source_type: Optional[str] = Query(None, pattern="^(database|file)$"),
+    status: Optional[str] = Query(None, pattern="^(pending|processing|completed|failed)$", description="Filter by processing status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
@@ -115,6 +116,7 @@ async def list_data_sources(
     result = await service.list_sources(
         query=query,
         source_type=source_type,
+        processing_status=status,
         skip=skip,
         limit=limit,
     )

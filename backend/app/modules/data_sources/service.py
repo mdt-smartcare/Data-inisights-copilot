@@ -430,6 +430,7 @@ class DataSourceService:
         self,
         query: Optional[str] = None,
         source_type: Optional[str] = None,
+        processing_status: Optional[str] = None,
         created_by: Optional[UUID] = None,
         skip: int = 0,
         limit: int = 50,
@@ -438,6 +439,7 @@ class DataSourceService:
         sources, total = await self.repo.search(
             query=query,
             source_type=source_type,
+            processing_status=processing_status,
             created_by=created_by,
             skip=skip,
             limit=limit,

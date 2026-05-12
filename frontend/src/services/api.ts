@@ -1408,6 +1408,7 @@ export interface DataSourceUploadResponse {
 export const getDataSources = async (params?: {
   query?: string;
   source_type?: 'database' | 'file';
+  status?: 'pending' | 'processing' | 'completed' | 'failed';
   skip?: number;
   limit?: number;
 }): Promise<DataSourceListResponse> => {
