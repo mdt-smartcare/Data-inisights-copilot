@@ -131,7 +131,8 @@ export default function DataSourcesPage() {
       resetForm();
       loadDataSources();
     } catch (err: any) {
-      setFormError(err.response?.data?.detail || 'Failed to create data source');
+      // Backend returns error in 'message' field (via http_exception_handler)
+      setFormError(err.response?.data?.message || 'Failed to create data source');
     } finally {
       setFormLoading(false);
     }
@@ -184,7 +185,8 @@ export default function DataSourcesPage() {
         });
       }
     } catch (err: any) {
-      setFormError(err.response?.data?.detail || 'Upload failed');
+      // Backend returns error in 'message' field (via http_exception_handler)
+      setFormError(err.response?.data?.message || 'Upload failed');
       setUploadProgress(null);
     } finally {
       setFormLoading(false);
@@ -291,13 +293,14 @@ export default function DataSourcesPage() {
       loadDataSources();
     } catch (err: any) {
       const status = err.response?.status;
-      const detail = err.response?.data?.detail;
+      // Backend returns error in 'message' field (via http_exception_handler)
+      const errorMsg = err.response?.data?.message || err.response?.data?.detail;
 
       if (status === 409) {
         // Data source is in use by an active agent configuration
-        setFormError(detail || 'This data source is currently in use by an active agent configuration and cannot be modified.');
+        setFormError(errorMsg || 'This data source is currently in use by an active agent configuration and cannot be modified.');
       } else {
-        setFormError(detail || 'Failed to update data source');
+        setFormError(errorMsg || 'Failed to update data source');
       }
     } finally {
       setFormLoading(false);
