@@ -30,6 +30,7 @@ export interface AdvancedSettings {
         hybridWeights: [number, number];
         rerankEnabled: boolean;
         rerankerModel: string;  // model_id string like "huggingface/BAAI/bge-reranker-v2-m3"
+        skipResultSynthesis?: boolean;  // Skip LLM interpretation, return raw SQL results
     };
     // AI Registry model IDs (foreign keys to ai_models.id) - sent at request top level
     embeddingModelId?: number;

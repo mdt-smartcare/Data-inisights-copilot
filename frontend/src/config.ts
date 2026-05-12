@@ -5,6 +5,7 @@ export const API_VERSION_PATH = 'api/v1';
 // API Endpoints
 export const API_ENDPOINTS = {
   CHAT: `${API_VERSION_PATH}/chat`,
+  CHAT_STREAM: `${API_VERSION_PATH}/chat/stream`,
   FEEDBACK: `${API_VERSION_PATH}/chat/feedback`,
   HEALTH: `${API_VERSION_PATH}/health`,
   AUTH: {

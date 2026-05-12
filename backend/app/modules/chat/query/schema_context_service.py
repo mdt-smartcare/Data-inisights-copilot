@@ -25,6 +25,7 @@ from collections import OrderedDict
 from app.core.utils.logging import get_logger
 from app.core.utils.device import get_best_device
 from app.core.settings import get_settings
+from app.modules.agents.schema_cache_manager import schema_cache_manager
 
 logger = get_logger(__name__)
 settings = get_settings()
@@ -33,6 +34,35 @@ settings = get_settings()
 _SCHEMA_CONTEXT_CACHE: OrderedDict[str, Tuple[str, float]] = OrderedDict()
 _SCHEMA_CACHE_MAX = 256
 _SCHEMA_CACHE_TTL = 300  # 5 minutes
+
+
+def _invalidate_schema_context_cache(source_id: Optional[str]) -> None:
+    """
+    Callback for schema cache manager to invalidate schema context caches.
+    
+    Args:
+        source_id: If provided, invalidate caches related to this source.
+                   If None, invalidate all caches.
+    """
+    global _SCHEMA_CONTEXT_CACHE
+    
+    if source_id is None:
+        # Clear all caches
+        _SCHEMA_CONTEXT_CACHE.clear()
+        logger.info("Cleared all schema context caches")
+    else:
+        # Clear caches that might contain this source
+        # Since keys are collection:schema_hash:query_hash, we can't target specific sources
+        # So we clear all for safety when a source changes
+        _SCHEMA_CONTEXT_CACHE.clear()
+        logger.info(f"Cleared schema context caches (source {source_id} changed)")
+
+
+# Register with global cache manager
+schema_cache_manager.register_invalidation_callback(
+    _invalidate_schema_context_cache,
+    name="schema_context_service._SCHEMA_CONTEXT_CACHE"
+)
 
 
 class SchemaContextService:

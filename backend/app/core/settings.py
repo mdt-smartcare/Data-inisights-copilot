@@ -184,6 +184,10 @@ class Settings(BaseSettings):
     # ============================================
     # Observability Configuration
     # ============================================
+    enable_langfuse: bool = Field(
+        default=False,
+        description="Enable/disable Langfuse tracing"
+    )
     langfuse_public_key: Optional[str] = Field(
         default=None,
         description="Langfuse public key for LLM observability"
@@ -196,11 +200,15 @@ class Settings(BaseSettings):
         default="https://cloud.langfuse.com",
         description="Langfuse host URL"
     )
+    langfuse_base_url: str = Field(
+        default="https://cloud.langfuse.com",
+        description="Langfuse base URL for API calls"
+    )
     
     @property
     def langfuse_enabled(self) -> bool:
         """Check if Langfuse observability is enabled."""
-        return bool(self.langfuse_public_key and self.langfuse_secret_key)
+        return self.enable_langfuse and bool(self.langfuse_public_key and self.langfuse_secret_key)
     
     # ============================================
     # File Storage Configuration
@@ -234,6 +242,29 @@ class Settings(BaseSettings):
         ge=5,
         le=60,
         description="Max seconds to wait for progress changes in long-polling endpoints"
+    )
+    
+    # Result Synthesis Configuration
+    # ============================================
+    skip_result_synthesis: bool = Field(
+        default=False,
+        description="Skip LLM interpretation and return raw SQL results directly"
+    )
+    
+    # ============================================
+    # PHI (Protected Health Information) Redaction
+    # ============================================
+    phi_redaction_enabled: bool = Field(
+        default=True,
+        description="Enable PHI redaction before sending data to external LLM APIs"
+    )
+    phi_redaction_log_activity: bool = Field(
+        default=True,
+        description="Log PHI redaction activity (counts only, not content)"
+    )
+    phi_restore_in_response: bool = Field(
+        default=False,
+        description="Restore PHI placeholders in LLM responses (use with caution)"
     )
     
     def __init__(self, **kwargs):

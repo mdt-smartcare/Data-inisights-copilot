@@ -178,8 +178,18 @@ class SchemaLinker:
     # =========================================================================
     
     def _match_tables_direct(self, question_lower: str) -> Set[str]:
-        """Match tables by direct name occurrence in question text."""
+        """
+        Match tables by direct name occurrence in question text.
+        
+        Strategies:
+        1. Exact table name match
+        2. Partial word matching (e.g., "patient" → "patient_tracker")
+        3. Fuzzy matching for typos (e.g., "patient_trackr" → "patient_tracker")
+        """
+        from .fuzzy_matcher import FuzzyMatcher
+        
         matched = set()
+        fuzzy_matcher = FuzzyMatcher(threshold=0.8)  # Higher threshold for tables
         
         for table_name in self.schema_graph.table_names:
             tl = table_name.lower()
@@ -203,6 +213,27 @@ class SchemaLinker:
         if "patient_tracker" in matched and "patient" in matched:
             if "patient_tracker" in self.schema_graph.table_names:
                 matched.discard("patient")
+        
+        # Strategy 3: Fuzzy matching for potential table references
+        # Extract potential table references from question (words with underscores or _gold suffix)
+        import re
+        potential_refs = re.findall(r'\b([a-z_]+(?:_gold|_log|_tracker)?)\b', question_lower)
+        
+        for ref in potential_refs:
+            if len(ref) > 4 and ref not in matched:
+                # Try fuzzy matching
+                fuzzy_matches = fuzzy_matcher.match_table_name(
+                    ref,
+                    self.schema_graph.table_names,
+                    threshold=0.75
+                )
+                if fuzzy_matches:
+                    best_match, score = fuzzy_matches[0]
+                    if score >= 0.75 and best_match not in matched:
+                        logger.debug(f"Fuzzy matched '{ref}' → '{best_match}' (score={score:.2f})")
+                        matched.add(best_match)
+        
+        return matched
         
         return matched
     

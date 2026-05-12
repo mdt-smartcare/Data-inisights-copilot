@@ -1,7 +1,8 @@
 ---
 description: "Prompting & Context Engineering Rules"
-version: 1.0.0
-last_updated: 2026-03-31
+version: 1.3.1
+last_updated: 2026-05-08
+
 ---
 
 # Prompt Templates & Context Policy (PromptTemplates.md)

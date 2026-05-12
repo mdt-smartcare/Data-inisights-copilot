@@ -6,8 +6,36 @@ When the query results contain data suitable for visualization, you MUST include
 
 1. You MUST wrap chart configuration in a ```json code block
 2. The JSON MUST be valid and parseable - no trailing commas, no missing commas
-3. Always include the chart JSON block AFTER your text explanation
-4. Do NOT just describe the chart - you MUST provide the actual JSON
+3. **ABSOLUTELY NO COMMENTS IN JSON** - Do NOT use `//` or `/* */` comments. JSON does not support comments and they will cause parsing errors.
+4. **USE ACTUAL VALUES FROM THE DATA** - Never use placeholder values like `[5, 4, 3, 2]` with comments saying "replace with actual counts". You MUST compute and include the real counts from the query results.
+5. Always include the chart JSON block AFTER your text explanation
+6. Do NOT just describe the chart - you MUST provide the actual JSON
+7. **KEEP CHARTS SIMPLE**: Limit labels/values arrays to 20-30 items maximum
+8. For large datasets (100+ rows), AGGREGATE the data first (e.g., by month, by category)
+9. Never include raw patient-level data in charts - always aggregate
+
+## FORBIDDEN PATTERNS (Will cause JSON parsing failure)
+
+❌ WRONG - Comments break JSON parsing:
+```json
+{
+  "values": [5, 4, 3, 2]  // Example values
+}
+```
+
+❌ WRONG - Placeholder values:
+```json
+{
+  "values": [100, 200]  // Replace with actual data
+}
+```
+
+✅ CORRECT - Use actual computed values from the query results:
+```json
+{
+  "values": [1523, 892, 445]
+}
+```
 
 ## Chart Type Selection Guidelines
 
@@ -102,5 +130,35 @@ For bullet charts with actual vs target:
 
 - ALWAYS include the ```json code block with valid JSON - do not skip it
 - Ensure proper JSON syntax: use double quotes, no trailing commas
+- **NO COMMENTS** - JSON does not support `//` or `/* */` comments
+- **COMPUTE ACTUAL VALUES** - Extract and count values from the query results, never use placeholder numbers
 - Choose the most appropriate chart type based on the data structure
 - The chart title should be descriptive and meaningful
+
+## Computing Values from Query Results
+
+When you receive query results, you MUST:
+
+1. **Count occurrences** - For categorical data, count how many rows have each distinct value
+2. **Sum/Average values** - For numeric aggregations, compute from the actual data
+3. **Extract labels** - Use the actual category names, dates, or grouping values from the data
+
+Example: If you receive 100 rows with assessment_category values:
+- Facility: 65 rows
+- Community: 35 rows
+
+Then your chart MUST use:
+```json
+{
+  "chart_json": {
+    "title": "Assessments by Category",
+    "type": "pie",
+    "data": {
+      "labels": ["Facility", "Community"],
+      "values": [65, 35]
+    }
+  }
+}
+```
+
+NOT placeholder values like `[5, 4]` with comments.

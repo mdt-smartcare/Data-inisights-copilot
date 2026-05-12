@@ -68,6 +68,19 @@ export interface Message {
   queryMode?: QueryMode;               // Query mode used for this message
   agenticHybridResult?: AgenticHybridResult; // Optional agentic hybrid workflow result
   comparisonInsights?: string;         // Optional comparison insights for cross-validation
+  isStreaming?: boolean;               // True while response is being streamed
+  streamProgress?: StreamProgress;     // Current progress during streaming
+  isLoadingComparison?: boolean;       // True while cross-validation is being generated
+  isLoadingSuggestions?: boolean;      // True while follow-up suggestions are being generated
+}
+
+/**
+ * Progress info during streaming
+ */
+export interface StreamProgress {
+  step: string;                        // Current step identifier
+  message: string;                     // Human-readable progress message
+  percent: number;                     // Progress percentage (0-100)
 }
 
 /**
@@ -103,6 +116,7 @@ export interface ChatRequest {
   session_id?: string;        // Optional session ID for conversation tracking
   agent_id?: string;          // Optional target agent ID (UUID)
   config_id?: number;         // Optional config version ID for sandbox testing
+  query_mode?: QueryMode;     // Optional query execution mode
   signal?: AbortSignal;       // Optional signal for request cancellation
 }
 

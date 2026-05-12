@@ -33,7 +33,7 @@ class FollowupService:
         llm_helper,
         conversation_history: Optional[str] = None,
         max_questions: int = 3,
-        callbacks: Optional[List] = None,
+        llm_config: Optional[dict] = None,
     ) -> List[str]:
         """
         Generate follow-up questions.
@@ -44,7 +44,7 @@ class FollowupService:
             llm_helper: LLMHelper instance for getting LLM
             conversation_history: Optional previous conversation context
             max_questions: Maximum number of follow-ups to generate
-            callbacks: Optional LangChain callbacks for tracing
+            llm_config: Optional LangChain config with callbacks/metadata for tracing
             
         Returns:
             List of follow-up question strings
@@ -80,7 +80,7 @@ Suggest {max_questions} follow-up questions:""")
                     "history_section": history_section,
                     "max_questions": max_questions,
                 },
-                config={"callbacks": callbacks} if callbacks else None,
+                config=llm_config,  # Pass full config dict with callbacks and metadata
             )
             
             # Parse questions from response
@@ -149,6 +149,7 @@ async def generate_followups_background(
     llm_helper,
     conversation_history: Optional[str] = None,
     timeout: float = 2.0,
+    llm_config: Optional[dict] = None,
 ) -> List[str]:
     """
     Generate follow-up questions with timeout.
@@ -162,6 +163,7 @@ async def generate_followups_background(
         llm_helper: LLMHelper instance for getting LLM
         conversation_history: Optional previous conversation context
         timeout: Maximum time to wait (seconds)
+        llm_config: Optional LangChain config with callbacks for tracing
         
     Returns:
         List of follow-up questions, or empty list if timeout/error
@@ -175,6 +177,7 @@ async def generate_followups_background(
                 system_response,
                 llm_helper=llm_helper,
                 conversation_history=conversation_history,
+                llm_config=llm_config,
             ),
             timeout=timeout,
         )

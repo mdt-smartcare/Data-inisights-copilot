@@ -47,7 +47,7 @@ const AgentDetailsCard: React.FC<AgentDetailsCardProps> = ({
         try {
             await updateAgent(agent.id, {
                 name: editName.trim(),
-                description: editDescription.trim() || undefined
+                description: editDescription.trim() || ""
             });
             showSuccess('Agent Updated', 'Agent details have been updated successfully.');
             setIsEditing(false);

@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session as get_db
 from app.core.auth.permissions import (
-    get_current_user, require_editor, require_admin, can_manage_agents, can_manage_users
+    get_current_user, require_admin, can_manage_agents, can_manage_users
 )
 from app.core.utils.exceptions import AppException
 from app.core.utils.logging import get_logger
@@ -96,7 +96,7 @@ async def verify_agent_access(
 @agents_router.post("", response_model=BaseResponse[AgentResponse], status_code=status.HTTP_201_CREATED)
 async def create_agent(
     data: AgentCreate,
-    current_user: User = Depends(require_editor),
+    current_user: User = Depends(require_admin),
     service: AgentService = Depends(get_agent_service),
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[AgentResponse]:
@@ -197,8 +197,8 @@ async def update_agent(
     current_user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
 ) -> BaseResponse[AgentResponse]:
-    """Update agent. Requires editor access."""
-    await verify_agent_access(agent_id, current_user, service, min_role="editor")
+    """Update agent. Requires admin access."""
+    await verify_agent_access(agent_id, current_user, service, min_role="admin")
     
     try:
         agent = await service.update_agent(agent_id, data)
@@ -390,14 +390,14 @@ async def get_agent_users(
     ua_service: UserAgentService = Depends(get_user_agent_service),
 ) -> BaseResponse[UserAgentListResponse]:
     """
-    Get users with access to agent. Requires editor access.
+    Get users with access to agent. Requires admin access.
     
     **Query Parameters:**
     - page: Page number (1-indexed, default: 1)
     - size: Items per page (default: 10, max: 100)
     - q: Optional search query (searches username, email, full_name)
     """
-    await verify_agent_access(agent_id, current_user, service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, service, min_role="admin")
     result = await ua_service.get_agent_users(
         agent_id, 
         page=page, 
@@ -666,7 +666,7 @@ async def update_embedding_status(
     if not config:
         raise HTTPException(status_code=404, detail="Configuration not found")
     
-    await verify_agent_access(config.agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(config.agent_id, current_user, agent_service, min_role="admin")
     
     await service.update_embedding_status(
         config_id=config_id,
@@ -703,7 +703,7 @@ async def delete_draft(
     agent_service: AgentService = Depends(get_agent_service),
 ) -> None:
     """Delete/discard the draft configuration for an agent."""
-    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     draft = await service.get_draft(agent_id)
     if not draft:
@@ -734,7 +734,7 @@ async def upsert_data_source_step(
     If version_id provided in body, updates that version.
     If not provided, creates a new draft version.
     """
-    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     try:
         config = await service.upsert_data_source_step(
@@ -764,7 +764,7 @@ async def upsert_schema_selection_step(
     For files, the table name is the DuckDB table name.
     For databases, can have multiple tables.
     """
-    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     try:
         config = await service.upsert_schema_selection_step(
@@ -789,7 +789,7 @@ async def upsert_data_dictionary_step(
     Step: data-dictionary.
     Add data dictionary/context for an existing version.
     """
-    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     try:
         config = await service.upsert_data_dictionary_step(version_id, data.data_dictionary)
@@ -812,7 +812,7 @@ async def upsert_settings_step(
     Step: settings.
     Configure embedding, chunking, RAG, LLM for an existing version.
     """
-    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     try:
         # Determine which sections are being updated
@@ -871,7 +871,7 @@ async def upsert_prompt_step(
     Step: prompt.
     Configure system prompt and example questions for an existing version.
     """
-    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     try:
         config = await service.upsert_prompt_step(version_id, data.system_prompt, data.example_questions)
@@ -893,7 +893,7 @@ async def generate_prompt(
     Generate a system prompt based on saved config data (data dictionary, settings).
     This reads from the database and uses LLM to generate a production-ready prompt.
     """
-    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
     
     try:
         result = await service.generate_prompt(version_id)
@@ -1006,6 +1006,84 @@ async def clone_config_as_draft(
         if not draft:
             raise HTTPException(status_code=404, detail="Configuration not found")
         return BaseResponse.ok(data=draft)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+# ==========================================
+# Schema Cache Management
+# ==========================================
+
+@config_router.post("/cache/invalidate", response_model=BaseResponse[dict])
+async def invalidate_schema_cache(
+    source_id: Optional[UUID] = Query(None, description="Specific data source to invalidate, or all if not provided"),
+    current_user: User = Depends(require_admin),
+    audit: AuditLogger = Depends(get_audit_logger),
+) -> BaseResponse[dict]:
+    """
+    Invalidate schema caches to force refresh on next query.
+    
+    Use when:
+    - Database schema has been modified (new tables, columns)
+    - Data dictionary has been updated
+    - Experiencing stale schema issues in SQL generation
+    
+    Requires admin role.
+    """
+    from app.modules.agents.schema_cache_manager import schema_cache_manager
+    
+    if source_id:
+        callbacks_invoked = schema_cache_manager.invalidate_source(str(source_id))
+        message = f"Invalidated schema caches for source {source_id}"
+    else:
+        callbacks_invoked = schema_cache_manager.invalidate_all()
+        message = "Invalidated all schema caches"
+    
+    # Audit log
+    await audit.log(
+        action=AuditAction.CONFIG_SETTINGS_UPDATED,
+        actor=current_user,
+        resource_type="schema_cache",
+        resource_id=str(source_id) if source_id else "all",
+        resource_name="Schema Cache",
+        details={
+            "action": "invalidate",
+            "source_id": str(source_id) if source_id else None,
+            "callbacks_invoked": callbacks_invoked,
+        },
+    )
+    
+    logger.info(f"{message} ({callbacks_invoked} cache callbacks invoked) by user {current_user.email}")
+    
+    return BaseResponse.ok(data={
+        "message": message,
+        "callbacks_invoked": callbacks_invoked,
+    })
+
+
+@config_router.post("/{agent_id}/version/{version_id}/validate-dictionary", response_model=BaseResponse[dict])
+async def validate_data_dictionary(
+    agent_id: UUID,
+    version_id: int,
+    current_user: User = Depends(get_current_user),
+    service: AgentConfigService = Depends(get_config_service),
+    agent_service: AgentService = Depends(get_agent_service),
+) -> BaseResponse[dict]:
+    """
+    Validate the data dictionary against the actual database schema.
+    
+    Returns validation errors and warnings for:
+    - Tables referenced in data dictionary that don't exist in the database
+    - Columns referenced that don't exist in their tables
+    - Incorrect FHIR identifier patterns (e.g., using patient_id on patient_gold)
+    
+    Use this before generating prompts to catch schema-dictionary drift.
+    """
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="editor")
+    
+    try:
+        validation_result = await service.validate_data_dictionary(version_id)
+        return BaseResponse.ok(data=validation_result)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)
 

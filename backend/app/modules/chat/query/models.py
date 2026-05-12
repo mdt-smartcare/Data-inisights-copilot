@@ -7,7 +7,7 @@ natural language questions and SQL generation.
 The QueryPlan is the output of Stage 1 (QueryPlanner) and input to Stage 2 (SQL Generator).
 """
 from enum import Enum
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Union
 from pydantic import BaseModel, Field
 
 
@@ -106,7 +106,7 @@ class Filter(BaseModel):
     """A filter/WHERE condition."""
     column: str = Field(..., description="Column to filter on")
     operator: ComparisonOperator = Field(..., description="Comparison operator")
-    value: Any = Field(..., description="Value(s) to compare against")
+    value: Union[str, int, float, bool, List[str], List[int], List[float], None] = Field(..., description="Value(s) to compare against")
     table: Optional[str] = Field(None, description="Table containing the column")
     is_default: bool = Field(False, description="Whether this is a default filter (e.g., is_deleted = false)")
 

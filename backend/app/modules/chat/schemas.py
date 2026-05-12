@@ -196,3 +196,26 @@ class FeedbackResponse(BaseModel):
     status: str = Field(default="success", description="Submission status")
     message: str = Field(..., description="Response message")
     feedback_id: Optional[str] = Field(default=None, description="Unique feedback ID")
+
+
+# ==========================================
+# SSE Streaming Schemas
+# ==========================================
+
+class StreamEventType(str):
+    """SSE event types for streaming chat responses."""
+    PROGRESS = "progress"       # Progress updates (step, message, percent)
+    ANSWER = "answer"           # Main answer (sent first)
+    CHART = "chart"             # Chart data
+    REASONING = "reasoning"     # Reasoning steps
+    COMPARISON = "comparison"   # Comparison insights (sent async)
+    SUGGESTIONS = "suggestions" # Follow-up suggestions
+    COMPLETE = "complete"       # Stream complete signal
+    ERROR = "error"             # Error event
+
+
+class StreamEvent(BaseModel):
+    """SSE event payload for streaming responses."""
+    event: str = Field(..., description="Event type")
+    data: Dict[str, Any] = Field(..., description="Event data payload")
+    trace_id: Optional[str] = Field(default=None, description="Trace ID for correlation")

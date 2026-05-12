@@ -14,11 +14,36 @@ from app.modules.chat.schemas import ChartData
 logger = get_logger(__name__)
 
 
+def _strip_json_comments(json_str: str) -> str:
+    """
+    Remove JavaScript-style comments from JSON string.
+    
+    Handles:
+    - Line comments: // comment
+    - Block comments: /* comment */
+    
+    Args:
+        json_str: JSON string potentially containing comments
+        
+    Returns:
+        JSON string with comments removed
+    """
+    # Remove line comments (// ...) - but not URLs (http://, https://)
+    # Match // that's not part of a URL scheme
+    result = re.sub(r'(?<!:)\s*//[^\n]*', '', json_str)
+    
+    # Remove block comments (/* ... */)
+    result = re.sub(r'/\*.*?\*/', '', result, flags=re.DOTALL)
+    
+    return result
+
+
 def _sanitize_json_string(json_str: str) -> str:
     """
     Sanitize a JSON string to fix common LLM formatting errors.
     
     Fixes:
+    - JavaScript-style comments (// and /* */)
     - Trailing commas before closing brackets/braces
     - Missing commas between elements
     - Single quotes instead of double quotes
@@ -32,21 +57,16 @@ def _sanitize_json_string(json_str: str) -> str:
     # Remove any leading/trailing whitespace
     sanitized = json_str.strip()
     
+    # FIRST: Strip JavaScript-style comments before any other processing
+    sanitized = _strip_json_comments(sanitized)
+    
     # Fix trailing commas before closing brackets/braces
     # e.g., [1, 2, 3,] -> [1, 2, 3]
     sanitized = re.sub(r',\s*([}\]])', r'\1', sanitized)
     
-    # Fix missing commas between array elements (number followed by number/string/object)
-    sanitized = re.sub(r'(\d)\s+(\d)', r'\1, \2', sanitized)
-    sanitized = re.sub(r'"\s+(?=")', '", ', sanitized)
-    sanitized = re.sub(r'(\d)\s+(?=")', r'\1, ', sanitized)
-    sanitized = re.sub(r'"\s+(\d)', r'", \1', sanitized)
-    
-    # Fix missing commas between object properties
-    sanitized = re.sub(r'(\"[^"]*\")\s*:\s*([^,}\]]+)\s+(?=\")', r'\1: \2, ', sanitized)
-    
-    # Fix missing comma after closing brace/bracket followed by opening quote
-    sanitized = re.sub(r'([}\]])\s+(?=")', r'\1, ', sanitized)
+    # NOTE: Removed aggressive "Fix missing commas" heuristics that were causing
+    # false positives (inserting commas where they shouldn't be, e.g., after colons)
+    # The comment stripping and trailing comma fix are sufficient for most cases.
     
     # Replace single quotes with double quotes (simple cases only)
     if "'" in sanitized and '"' not in sanitized:
@@ -114,7 +134,60 @@ def _try_parse_json(json_str: str) -> Optional[Dict[str, Any]]:
     except (ValueError, SyntaxError):
         pass
     
+    # Strategy 5: Fix truncated JSON by closing unclosed brackets/braces
+    try:
+        fixed = _fix_truncated_json(json_str)
+        if fixed:
+            return json.loads(fixed)
+    except json.JSONDecodeError:
+        pass
+    
     return None
+
+
+def _fix_truncated_json(json_str: str) -> Optional[str]:
+    """
+    Attempt to fix truncated JSON by closing unclosed brackets/braces.
+    
+    This is useful when LLM output gets cut off mid-JSON due to token limits.
+    """
+    # Count open vs close brackets
+    open_braces = json_str.count('{')
+    close_braces = json_str.count('}')
+    open_brackets = json_str.count('[')
+    close_brackets = json_str.count(']')
+    
+    # If balanced, not truncated
+    if open_braces == close_braces and open_brackets == close_brackets:
+        return None
+    
+    # Attempt to fix: find the chart_json structure and truncate values array
+    fixed = json_str.strip()
+    
+    # Remove trailing partial content (incomplete strings, numbers)
+    # Find the last complete value (ends with }, ], number, or quoted string)
+    import re
+    # Remove trailing incomplete data after last complete element
+    fixed = re.sub(r',\s*[\d"\']*$', '', fixed)  # Remove trailing partial value
+    fixed = re.sub(r',\s*$', '', fixed)  # Remove trailing comma
+    
+    # Close unclosed brackets/braces
+    missing_brackets = open_brackets - close_brackets
+    missing_braces = open_braces - close_braces
+    
+    # Add closing brackets/braces in reverse order they would appear
+    if missing_brackets > 0:
+        fixed += ']' * missing_brackets
+    if missing_braces > 0:
+        fixed += '}' * missing_braces
+    
+    # Validate it's now parseable
+    try:
+        json.loads(fixed)
+        logger.info(f"Fixed truncated JSON by closing {missing_braces} braces and {missing_brackets} brackets")
+        return fixed
+    except json.JSONDecodeError:
+        return None
 
 
 def parse_chart_data(response: str) -> Tuple[Optional[ChartData], str]:
@@ -161,8 +234,14 @@ def parse_chart_data(response: str) -> Tuple[Optional[ChartData], str]:
             except Exception as e:
                 logger.warning(f"Failed to create ChartData: {e}")
         else:
+            # Log at INFO level to help debug common issues
             logger.warning(f"Failed to parse chart JSON after all retry strategies")
-            logger.debug(f"JSON string was: {json_str[:500]}...")
+            # Check if JSON appears truncated
+            if json_str.count('{') != json_str.count('}'):
+                logger.warning(f"JSON appears truncated: {json_str.count('{')} open braces vs {json_str.count('}')} close braces")
+            if json_str.count('[') != json_str.count(']'):
+                logger.warning(f"JSON appears truncated: {json_str.count('[')} open brackets vs {json_str.count(']')} close brackets")
+            logger.info(f"JSON string was: {json_str[:800]}...")
     
     # Clean the response by removing JSON blocks
     cleaned_response = clean_response_text(response)

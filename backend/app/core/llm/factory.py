@@ -64,7 +64,7 @@ def create_llm_provider(
         
     Example:
         >>> from app.core.llm import create_llm_provider
-        >>> provider = create_llm_provider("openai", {"model": "gpt-4", "temperature": 0.7})
+        >>> provider = create_llm_provider("openai", {"model": "gpt-4", "temperature": 0.0})
         >>> response = await provider.chat([HumanMessage(content="Hello")])
     """
     _ensure_registry()

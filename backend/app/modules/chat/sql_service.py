@@ -10,9 +10,14 @@ Features:
 - Direct SQL execution
 - Result formatting for LLM consumption
 - Query relevance checking to filter irrelevant queries early
+- Thread-safe connection pooling with tenant isolation
+- Query complexity estimation and warnings
+- LLM rate limiting
+- Query audit trail
 """
 import asyncio
 import re
+import time
 from typing import Optional, Dict, Any, List, Tuple
 from uuid import UUID
 
@@ -35,6 +40,48 @@ from app.modules.chat.query.data_dictionary import (
     get_data_dictionary,
     DataDictionary,
 )
+from app.modules.chat.query.query_validator import QueryValidator, get_query_validator
+from app.modules.chat.query.feedback_loop import FeedbackLoop, get_feedback_loop
+from app.core.cache_manager import check_and_refresh_caches
+
+# New imports for enhanced functionality
+from app.core.thread_safe_cache import (
+    get_engine_cache,
+    get_result_cache,
+    get_rate_limiter,
+)
+from app.modules.chat.query.complexity_estimator import (
+    QueryComplexityEstimator,
+    get_complexity_estimator,
+    ComplexityLevel,
+)
+from app.modules.chat.query.audit_trail import (
+    QueryAuditTrail,
+    get_audit_trail,
+)
+from app.modules.chat.query.schema_linker import SchemaLinker
+from app.modules.chat.query.query_planner import QueryPlanner
+from app.modules.chat.query.token_budget import TokenBudgetManager, get_token_budget_manager
+from app.modules.chat.query.schema_graph import SchemaGraph
+
+# New imports for NL2SQL enhancements (per article recommendations)
+from app.modules.chat.query.semantic_cache import (
+    SemanticQueryCache,
+    get_semantic_cache,
+    SemanticCacheResult,
+)
+from app.modules.chat.query.structured_output import (
+    StructuredOutputParser,
+    get_structured_parser,
+    get_structured_output_instructions,
+)
+from app.modules.chat.query.multi_candidate import (
+    MultiCandidateGenerator,
+)
+from app.modules.chat.query.index_hints import (
+    IndexMetadataExtractor,
+    enrich_schema_with_index_hints,
+)
 
 logger = get_logger(__name__)
 
@@ -47,11 +94,10 @@ _relevance_stats = {
     "passed": 0,
 }
 
-# Cache for database engines (connection pooling)
+# DEPRECATED: These global caches are now replaced by ThreadSafeEngineCache
+# Kept for backward compatibility with any external code that might access them
+# Use get_engine_cache() instead for new code
 _ENGINE_CACHE: Dict[str, Engine] = {}
-
-# Global cache for discovered table names (keyed by normalized db_url)
-# This prevents re-querying the database for table discovery on every request
 _TABLE_NAMES_CACHE: Dict[str, List[str]] = {}
 
 # Query type classification keywords
@@ -115,6 +161,7 @@ class SQLService:
         enable_few_shot: bool = True,
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
+        embedding_model: Optional[str] = None,
     ):
         """
         Initialize SQL service with a database URL.
@@ -126,6 +173,7 @@ class SQLService:
             enable_few_shot: Enable few-shot example retrieval (default True)
             config_id: Optional agent config ID for semantic schema retrieval
             agent_id: Optional agent ID for per-agent SQL examples and data dictionary
+            embedding_model: Optional embedding model name (e.g., "huggingface/BAAI/bge-base-en-v1.5")
         """
         self._db_url = db_url
         self._schema = schema
@@ -137,6 +185,7 @@ class SQLService:
         self._enable_few_shot = enable_few_shot
         self._config_id = config_id  # For semantic schema retrieval
         self._agent_id = agent_id  # For per-agent SQL examples and data dictionary
+        self._embedding_model = embedding_model or "huggingface/BAAI/bge-base-en-v1.5"  # Default embedding model
         
         # Initialize query relevance checker
         self._enable_relevance_check = getattr(self._settings, 'enable_query_relevance_check', True)
@@ -168,15 +217,152 @@ class SQLService:
             logger.warning(f"Failed to initialize data dictionary: {e}")
             self._data_dictionary = None
         
-        # Initialize reflection service for SQL validation
+        # ReflectionService is lazily initialized with SchemaGraph during query processing
+        # (see _generate_sql_internal where SchemaGraph is built)
         self._reflection_service = None
+        
+        # Initialize query validator for proactive schema validation
+        self._query_validator: Optional[QueryValidator] = None
+        
+        # Initialize feedback loop for tracking failures and corrections
+        self._feedback_loop: Optional[FeedbackLoop] = None
         try:
-            from app.modules.chat.query.reflection_service import ReflectionService
-            self._reflection_service = ReflectionService()
-            logger.info("ReflectionService initialized for SQL validation")
+            self._feedback_loop = get_feedback_loop(agent_id=agent_id)
+            logger.info("FeedbackLoop initialized for query tracking", agent_id=agent_id)
         except Exception as e:
-            logger.warning(f"Failed to initialize ReflectionService: {e}")
-            self._reflection_service = None
+            logger.warning(f"Failed to initialize FeedbackLoop: {e}")
+            self._feedback_loop = None
+        
+        # Initialize query complexity estimator
+        self._complexity_estimator: Optional[QueryComplexityEstimator] = None
+        try:
+            self._complexity_estimator = get_complexity_estimator()
+            logger.info("QueryComplexityEstimator initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize complexity estimator: {e}")
+            self._complexity_estimator = None
+        
+        # Initialize query audit trail
+        self._audit_trail: Optional[QueryAuditTrail] = None
+        try:
+            self._audit_trail = get_audit_trail(agent_id=agent_id)
+            logger.info("QueryAuditTrail initialized", agent_id=agent_id)
+        except Exception as e:
+            logger.warning(f"Failed to initialize audit trail: {e}")
+            self._audit_trail = None
+        
+        # Get thread-safe caches
+        self._engine_cache = get_engine_cache()
+        self._result_cache = get_result_cache()
+        self._rate_limiter = get_rate_limiter()
+        
+        # Tenant ID for isolation (can be set later)
+        self._tenant_id: Optional[str] = None
+        
+        # Agent's custom system prompt (for SQL generation context)
+        self._agent_system_prompt: Optional[str] = None
+        
+        # Initialize schema graph for join path resolution (lazy loaded)
+        self._schema_graph: Optional[SchemaGraph] = None
+        
+        # Initialize schema linker for fuzzy table/column matching
+        self._schema_linker: Optional[SchemaLinker] = None
+        
+        # Initialize query planner for structured query decomposition
+        self._query_planner: Optional[QueryPlanner] = None
+        
+        # Initialize token budget manager for context size management
+        self._token_budget_manager: Optional[TokenBudgetManager] = None
+        try:
+            self._token_budget_manager = get_token_budget_manager(max_tokens=8000)
+            logger.info("TokenBudgetManager initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize TokenBudgetManager: {e}")
+            self._token_budget_manager = None
+        
+        # =========================================================================
+        # NL2SQL ENHANCEMENTS (per article recommendations)
+        # =========================================================================
+        
+        # Semantic query cache - reuse SQL for semantically similar questions
+        self._semantic_cache: Optional[SemanticQueryCache] = None
+        self._enable_semantic_cache = getattr(self._settings, 'enable_semantic_query_cache', True)
+        if self._enable_semantic_cache:
+            try:
+                self._semantic_cache = get_semantic_cache(
+                    similarity_threshold=0.92,
+                    max_size=1000,
+                    ttl_seconds=3600
+                )
+                logger.info("SemanticQueryCache initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize SemanticQueryCache: {e}")
+                self._semantic_cache = None
+        
+        # Structured output parser - parse <thinking>/<query> format
+        self._structured_parser: Optional[StructuredOutputParser] = None
+        self._enable_structured_output = getattr(self._settings, 'enable_structured_output', True)
+        if self._enable_structured_output:
+            try:
+                self._structured_parser = get_structured_parser()
+                logger.info("StructuredOutputParser initialized")
+            except Exception as e:
+                logger.warning(f"Failed to initialize StructuredOutputParser: {e}")
+                self._structured_parser = None
+        
+        # Multi-candidate generator - generate N candidates and rank
+        self._multi_candidate_generator: Optional[MultiCandidateGenerator] = None
+        self._enable_multi_candidate = getattr(self._settings, 'enable_multi_candidate', False)
+        self._multi_candidate_count = getattr(self._settings, 'multi_candidate_count', 3)
+        
+        # Index metadata extractor - enrich schema with index hints
+        self._index_extractor: Optional[IndexMetadataExtractor] = None
+        self._enable_index_hints = getattr(self._settings, 'enable_index_hints', True)
+    
+    def set_tenant_id(self, tenant_id: str) -> None:
+        """
+        Set tenant ID for multi-tenant isolation.
+        
+        Args:
+            tenant_id: Tenant identifier
+        """
+        self._tenant_id = tenant_id
+        logger.debug("Tenant ID set for SQL service", tenant_id=tenant_id)
+    
+    def set_agent_system_prompt(self, system_prompt: str) -> None:
+        """
+        Set the agent's custom system prompt for SQL generation.
+        
+        This allows FHIR rules and domain-specific instructions from the agent
+        to be included in SQL generation prompts.
+        
+        Args:
+            system_prompt: The agent's system prompt containing domain rules
+        """
+        self._agent_system_prompt = system_prompt
+        logger.debug("Agent system prompt set for SQL generation", 
+                    prompt_length=len(system_prompt) if system_prompt else 0)
+    
+    def _initialize_query_validator(self) -> None:
+        """Initialize the query validator with the database engine."""
+        if self._query_validator is not None:
+            return
+            
+        try:
+            engine = self._get_engine()
+            fhir_rules = {}
+            if self._data_dictionary:
+                fhir_rules = self._data_dictionary._fhir_identifier_rules
+            
+            self._query_validator = get_query_validator(
+                engine=engine,
+                schema_name=self._schema or "public",
+                fhir_rules=fhir_rules
+            )
+            logger.info("QueryValidator initialized for proactive validation")
+        except Exception as e:
+            logger.warning(f"Failed to initialize QueryValidator: {e}")
+            self._query_validator = None
     
     def _classify_query_type(self, question: str) -> str:
         """
@@ -354,61 +540,270 @@ class SQLService:
         
         return "\n".join(formatted_parts)
     
+    async def generate_multi_candidate_sql(
+        self,
+        question: str,
+        schema_context: str,
+        system_prompt: str,
+        llm_helper,
+        num_candidates: int = 3,
+        run_self_check: bool = True
+    ) -> Tuple[Optional[str], Optional[str], List[Dict]]:
+        """
+        Generate multiple SQL candidates and return the best one.
+        
+        This is useful for complex queries where generating multiple
+        candidates and ranking them can improve accuracy.
+        
+        Args:
+            question: Natural language question
+            schema_context: Database schema
+            system_prompt: System prompt with rules
+            llm_helper: LLMHelper instance
+            num_candidates: Number of candidates to generate (default 3)
+            run_self_check: Whether to run LLM self-check on candidates
+            
+        Returns:
+            Tuple of (best_sql, thinking, all_candidates_info)
+        """
+        if not self._enable_multi_candidate:
+            logger.debug("Multi-candidate generation disabled")
+            return None, None, []
+        
+        try:
+            from app.modules.chat.query.multi_candidate import (
+                MultiCandidateGenerator,
+                create_schema_validator,
+                create_self_check_fn
+            )
+            
+            llm = await llm_helper.get_llm(temperature=0.0)
+            
+            # Create schema validator if we have query_validator
+            schema_validator = None
+            if self._query_validator:
+                schema_validator = create_schema_validator(self._query_validator)
+            
+            # Create self-check function (optional)
+            self_check_fn = None
+            if run_self_check:
+                self_check_fn = await create_self_check_fn(llm)
+            
+            # Initialize generator
+            generator = MultiCandidateGenerator(
+                llm=llm,
+                parser=self._structured_parser,
+                schema_validator=schema_validator,
+                self_check_fn=self_check_fn
+            )
+            
+            # Generate and rank candidates
+            result = await generator.generate(
+                question=question,
+                schema_context=schema_context,
+                system_prompt=system_prompt,
+                num_candidates=num_candidates,
+                run_self_check=run_self_check
+            )
+            
+            if result.success and result.best_candidate:
+                logger.info(
+                    f"Multi-candidate generation: best of {result.generation_count} "
+                    f"(confidence={result.best_candidate.confidence:.2f})"
+                )
+                
+                candidates_info = [
+                    {
+                        "sql": c.sql[:100] + "..." if len(c.sql) > 100 else c.sql,
+                        "confidence": c.confidence,
+                        "status": c.status.value
+                    }
+                    for c in result.all_candidates
+                ]
+                
+                return (
+                    result.best_candidate.sql,
+                    result.best_candidate.thinking,
+                    candidates_info
+                )
+            else:
+                logger.warning("Multi-candidate generation failed to produce valid SQL")
+                return None, None, []
+                
+        except Exception as e:
+            logger.warning(f"Multi-candidate generation failed: {e}")
+            return None, None, []
+    
+    def _extract_tables_from_schema_context(self, schema_context: str) -> List[str]:
+        """
+        Extract table names from schema context string.
+        
+        Used for logging query plan - which tables were selected for the query.
+        
+        Args:
+            schema_context: Schema context string
+            
+        Returns:
+            List of table names found in the schema context
+        """
+        tables = []
+        
+        # Pattern: "- table_name:" at start of line
+        for line in schema_context.split("\n"):
+            line = line.strip()
+            if line.startswith("- ") and ":" in line:
+                # Extract table name between "- " and ":"
+                table_part = line[2:line.index(":")]
+                if table_part and not table_part.startswith(" "):
+                    tables.append(table_part.strip())
+        
+        return tables
+    
+    def _extract_sql_relevant_rules(self, system_prompt: str) -> str:
+        """
+        Extract SQL-relevant rules from agent's system prompt.
+        
+        Now designed for deterministic template-based prompts with clear section headers.
+        Extracts entire sections that are relevant to SQL generation.
+        
+        Args:
+            system_prompt: The agent's full system prompt
+            
+        Returns:
+            Extracted rules relevant to SQL generation
+        """
+        if not system_prompt:
+            return ""
+        
+        relevant_sections = []
+        
+        # Priority sections to extract (these headers match the deterministic template)
+        priority_headers = [
+            "# FHIR IDENTIFIER RULES",
+            "# SQL GENERATION RULES", 
+            "# DATA QUALITY & VALIDATION",
+        ]
+        
+        # Extract sections by header
+        for header in priority_headers:
+            if header in system_prompt:
+                # Find the section start
+                start_idx = system_prompt.find(header)
+                # Find the next major section (starts with "# " or "---")
+                remaining = system_prompt[start_idx + len(header):]
+                
+                # Look for next section delimiter
+                next_section = len(remaining)
+                for delimiter in ["\n# ", "\n---\n"]:
+                    pos = remaining.find(delimiter)
+                    if pos != -1 and pos < next_section:
+                        next_section = pos
+                
+                section_content = remaining[:next_section].strip()
+                
+                # Limit individual section length
+                if len(section_content) > 1500:
+                    section_content = section_content[:1500] + "..."
+                
+                if section_content:
+                    relevant_sections.append(f"{header}\n{section_content}")
+        
+        # Fallback: If no priority sections found, use keyword-based extraction
+        if not relevant_sections:
+            sql_keywords = [
+                "patient_id", "res_id", "fhir", "identifier",
+                "sql", "query", "table", "column",
+                "count", "distinct", "join", "where",
+                "do not use", "always use", "never use",
+                "critical", "important", "mandatory"
+            ]
+            
+            sections = system_prompt.split("\n\n")
+            
+            for section in sections:
+                section_lower = section.lower()
+                relevance_score = sum(1 for kw in sql_keywords if kw in section_lower)
+                
+                if relevance_score >= 2:
+                    if len(section) <= 500:
+                        relevant_sections.append(section.strip())
+                    else:
+                        relevant_sections.append(section[:500].strip() + "...")
+        
+        # Combine and limit total output
+        combined = "\n\n".join(relevant_sections[:5])
+        return combined[:4000] if combined else ""
+    
+    def _classify_error_type(self, error_message: str) -> str:
+        """
+        Classify an error message into a category.
+        
+        Used for feedback loop tracking and analysis.
+        
+        Args:
+            error_message: The error message string
+            
+        Returns:
+            Error type category string
+        """
+        error_lower = error_message.lower()
+        
+        if "column" in error_lower and ("does not exist" in error_lower or "not found" in error_lower):
+            return "column_not_found"
+        elif "table" in error_lower and ("does not exist" in error_lower or "not found" in error_lower):
+            return "table_not_found"
+        elif "patient_id" in error_lower and "patient_gold" in error_lower:
+            return "fhir_patient_gold_violation"
+        elif "fhir" in error_lower:
+            return "fhir_violation"
+        elif "syntax" in error_lower:
+            return "syntax_error"
+        elif "timeout" in error_lower:
+            return "timeout"
+        elif "permission" in error_lower or "denied" in error_lower:
+            return "permission_denied"
+        elif "ambiguous" in error_lower:
+            return "ambiguous_column"
+        else:
+            return "other"
+    
     def _is_duckdb(self) -> bool:
         """Check if the database is DuckDB."""
         return self._db_url.startswith("duckdb://")
     
     def _get_engine(self) -> Engine:
-        """Get or create a database engine with connection pooling."""
+        """
+        Get or create a database engine with thread-safe connection pooling.
+        
+        Uses ThreadSafeEngineCache for:
+        - Thread safety
+        - Tenant isolation
+        - Connection health checks
+        """
         if self._engine is not None:
             return self._engine
         
-        # Normalize the database URL (handle postgres:// -> postgresql://)
-        db_url = self._db_url
-        if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
-            logger.debug(f"Normalized database URL from postgres:// to postgresql://")
-        
-        # Check cache
-        if db_url in _ENGINE_CACHE:
-            self._engine = _ENGINE_CACHE[db_url]
-            return self._engine
-        
-        # Create new engine
+        # Use thread-safe cache with tenant isolation
         try:
-            # Handle DuckDB specially
-            if db_url.startswith("duckdb://"):
-                # DuckDB uses different connection parameters
-                file_path = self._db_url.replace("duckdb://", "")
-                self._engine = create_engine(
-                    f"duckdb:///{file_path}",
-                    connect_args={"read_only": True},
-                )
-                
-                # Load ICU extension for DuckDB to handle non-UTC timestamps
+            self._engine = self._engine_cache.get_or_create(
+                db_url=self._db_url,
+                tenant_id=self._tenant_id
+            )
+            
+            # Load ICU extension for DuckDB
+            if self._is_duckdb():
                 try:
                     with self._engine.connect() as conn:
                         conn.execute(text("INSTALL icu; LOAD icu;"))
                         conn.commit()
-                    logger.info("Loaded ICU extension for DuckDB")
+                    logger.debug("Loaded ICU extension for DuckDB")
                 except Exception as e:
-                    logger.warning(f"Failed to load DuckDB ICU extension: {e}")
-            else:
-                # PostgreSQL, MySQL, etc.
-                self._engine = create_engine(
-                    db_url,
-                    pool_size=5,
-                    max_overflow=10,
-                    pool_timeout=30,
-                    pool_recycle=3600,
-                )
+                    logger.debug(f"ICU extension not loaded (may already be loaded): {e}")
             
-            _ENGINE_CACHE[db_url] = self._engine
-            logger.info("Database engine created", db_url=db_url[:50] + "...")
             return self._engine
             
         except Exception as e:
-            logger.error(f"Failed to create database engine: {e}")
+            logger.error(f"Failed to get database engine: {e}")
             raise
     
     def _get_cache_key(self) -> str:
@@ -634,6 +1029,20 @@ class SQLService:
         # DuckDB handles standard ISO strings correctly in CAST(col AS TIMESTAMP)
         # No automatic SUBSTRING injection needed - it breaks DATE columns.
         
+        # CRITICAL FIX: Remove is_latest = true from queries on *_latest_gold tables
+        # These tables are PRE-FILTERED at ETL level and the is_latest column may be NULL
+        # Adding is_latest = true causes 0 rows to be returned
+        import re
+        sql_lower = sql.lower()
+        if ('bp_log_latest_gold' in sql_lower or 'glucose_log_latest_gold' in sql_lower):
+            # Remove is_latest = true (with various whitespace patterns)
+            original_sql = sql
+            sql = re.sub(r'\s+and\s+is_latest\s*=\s*true', '', sql, flags=re.IGNORECASE)
+            sql = re.sub(r'where\s+is_latest\s*=\s*true\s+and\s+', 'where ', sql, flags=re.IGNORECASE)
+            sql = re.sub(r'where\s+is_latest\s*=\s*true\s*$', '', sql, flags=re.IGNORECASE)
+            if sql != original_sql:
+                logger.info(f"Removed is_latest filter from *_latest_gold query (pre-filtered table)")
+        
         engine = self._get_engine()
         
         # Do NOT add automatic LIMIT - data analysts need full results
@@ -706,6 +1115,7 @@ class SQLService:
         natural_language_query: str,
         llm_helper=None,
         max_retries: int = 3,
+        llm_config: dict = None,
     ) -> str:
         """
         Execute a natural language query using LLM to generate SQL (async version).
@@ -715,10 +1125,16 @@ class SQLService:
         Implements retry logic: if SQL execution fails, the error is appended to the
         prompt and the LLM is asked to fix the query (up to max_retries attempts).
         
+        Features:
+        - Rate limiting to prevent API quota exhaustion
+        - Query complexity estimation with warnings
+        - Query audit trail for debugging and compliance
+        
         Args:
             natural_language_query: User's question in natural language
             llm_helper: LLMHelper instance for getting LLM
             max_retries: Maximum number of retry attempts (default 3)
+            llm_config: Optional LangChain config dict with callbacks for tracing
             
         Returns:
             Formatted response string with query results
@@ -727,19 +1143,118 @@ class SQLService:
             IrrelevantQueryException: If query is not relevant to the database
         """
         from langchain_core.prompts import ChatPromptTemplate
+        import time as perf_time
         
-        # Check query relevance first (if enabled)
-        if self._enable_relevance_check and self._relevance_checker and llm_helper:
+        start_time = time.time()
+        pipeline_start = perf_time.perf_counter()
+        generated_sql = ""
+        tables_used = []
+        
+        # ============================================================
+        # TIMING INSTRUMENTATION: Track each phase duration
+        # ============================================================
+        phase_timings = {
+            "rate_limiting": 0.0,
+            "relevance_check": 0.0,
+            "schema_retrieval": 0.0,
+            "schema_linking": 0.0,
+            "query_planning": 0.0,
+            "few_shot_retrieval": 0.0,
+            "prompt_building": 0.0,
+            "semantic_cache_lookup": 0.0,
+            "llm_init": 0.0,  # LLM cold-start time
+            "llm_sql_generation": 0.0,
+            "schema_validation": 0.0,
+            "reflection_gate": 0.0,
+            "sql_execution": 0.0,
+            "semantic_cache_store": 0.0,
+        }
+        
+        def _log_phase_summary():
+            """Log timing summary at end of method."""
+            total = perf_time.perf_counter() - pipeline_start
+            sorted_phases = sorted(phase_timings.items(), key=lambda x: x[1], reverse=True)
+            top_phases = [(k, v, v/total*100 if total > 0 else 0) for k, v in sorted_phases[:5] if v > 0.01]
+            
+            summary_parts = [f"{k}={v:.2f}s({pct:.1f}%)" for k, v, pct in top_phases]
+            logger.info(
+                f"⏱️ SQL_PIPELINE_TIMING: total={total:.2f}s | " + " | ".join(summary_parts),
+                total_ms=int(total * 1000),
+                **{f"{k}_ms": int(v * 1000) for k, v in phase_timings.items() if v > 0.001}
+            )
+        
+        # Rate limiting check
+        phase_start = perf_time.perf_counter()
+        try:
+            if not await self._rate_limiter.acquire_async(
+                tenant_id=self._tenant_id or "default",
+                tokens=1.0,
+                timeout=30.0
+            ):
+                logger.warning("Rate limit exceeded", tenant_id=self._tenant_id)
+                return "Rate limit exceeded. Please wait a moment before retrying."
+            else:
+                logger.info("Rate limit check passed", tenant_id=self._tenant_id or "default")
+        except Exception as e:
+            logger.debug(f"Rate limiting skipped: {e}")
+        phase_timings["rate_limiting"] = perf_time.perf_counter() - phase_start
+        
+        # Check and refresh caches if config files changed
+        try:
+            changed_files = check_and_refresh_caches()
+            if changed_files:
+                logger.info(f"Caches refreshed due to config changes: {len(changed_files)} files")
+        except Exception as e:
+            logger.debug(f"Cache refresh check skipped: {e}")
+        
+        # =========================================================================
+        # PARALLEL EXECUTION: relevance_check + schema_retrieval (independent ops)
+        # This saves ~2-7s by running both concurrently instead of sequentially
+        # =========================================================================
+        parallel_start = perf_time.perf_counter()
+        
+        # Define async tasks for parallel execution
+        async def _do_relevance_check():
+            """Check query relevance (LLM call)."""
+            if not (self._enable_relevance_check and self._relevance_checker and llm_helper):
+                return True, "RELEVANT"  # Skip if not enabled
+            
             table_names = self._discover_tables()
             table_descriptions = self._get_table_descriptions()
-            is_relevant, classification = await self._relevance_checker.check(
+            return await self._relevance_checker.check(
                 question=natural_language_query,
                 table_names=table_names,
                 llm_helper=llm_helper,
                 table_descriptions=table_descriptions
             )
-            
-            # Update statistics (without logging query content for privacy)
+        
+        async def _do_schema_retrieval():
+            """Retrieve semantic schema context (embedding + vector search)."""
+            return await self.get_semantic_schema_context(
+                query=natural_language_query,
+                top_k=5,
+            )
+        
+        # Run both in parallel
+        relevance_task = asyncio.create_task(_do_relevance_check())
+        schema_task = asyncio.create_task(_do_schema_retrieval())
+        
+        # Wait for both to complete
+        (is_relevant, classification), schema = await asyncio.gather(
+            relevance_task, schema_task
+        )
+        
+        parallel_duration = perf_time.perf_counter() - parallel_start
+        logger.info(
+            f"⏱️ PARALLEL_OPS: relevance_check + schema_retrieval completed in {parallel_duration:.2f}s (parallel)",
+            parallel_ms=int(parallel_duration * 1000),
+        )
+        
+        # Process relevance check result (may raise exception)
+        phase_timings["relevance_check"] = parallel_duration  # Approximate - ran in parallel
+        phase_timings["schema_retrieval"] = parallel_duration  # Approximate - ran in parallel
+        
+        if self._enable_relevance_check and self._relevance_checker:
             _relevance_stats["total_checked"] += 1
             
             if not is_relevant:
@@ -784,13 +1299,140 @@ class SQLService:
                     _relevance_stats["passed"]
                 )
         
-        # Use semantic schema retrieval based on the query (not blind loading)
-        schema = await self.get_semantic_schema_context(
-            query=natural_language_query,
-            top_k=5,  # Retrieve top 5 most relevant tables
+        # Log query plan: which tables were selected
+        selected_tables = self._extract_tables_from_schema_context(schema)
+        logger.info(
+            "Query plan: tables selected for schema context",
+            tables=selected_tables,
+            question=natural_language_query[:80]
         )
         
+        # =========================================================================
+        # ENHANCED PIPELINE: SchemaLinker → QueryPlanner → TokenBudget
+        # =========================================================================
+        
+        # 1. SCHEMA LINKER: Fuzzy match table/column names
+        phase_start = perf_time.perf_counter()
+        schema_link_result = None
+        try:
+            # Lazy-initialize schema linker
+            if self._schema_linker is None and self._schema_graph is None:
+                # Build schema graph from database introspection
+                engine = self._get_engine()
+                self._schema_graph = SchemaGraph(engine=engine, schema_name="public")
+                logger.info("SchemaGraph initialized via introspection", table_count=len(self._schema_graph._tables))
+                
+                self._schema_linker = SchemaLinker(
+                    schema_graph=self._schema_graph,
+                    data_dictionary=self._data_dictionary
+                )
+                logger.info("SchemaLinker initialized for fuzzy matching")
+                
+                # Initialize ReflectionService with SchemaGraph for column/type validation
+                if self._reflection_service is None:
+                    from app.modules.chat.query.reflection_service import ReflectionService
+                    self._reflection_service = ReflectionService(schema_graph=self._schema_graph)
+                    logger.info("ReflectionService initialized with SchemaGraph for column validation")
+            
+            if self._schema_linker:
+                schema_link_result = self._schema_linker.link(
+                    question=natural_language_query,
+                    max_tables=6
+                )
+                if schema_link_result and schema_link_result.tables:
+                    logger.info(
+                        "SchemaLinker matched entities",
+                        matched_tables=schema_link_result.tables,
+                        columns_count=sum(len(v) for v in (schema_link_result.columns or {}).values()),
+                        default_filters_count=len(schema_link_result.default_filters or []),
+                        confidence=getattr(schema_link_result, 'confidence', 0.0)
+                    )
+        except Exception as e:
+            logger.warning(f"Schema linking failed (continuing without): {e}")
+            schema_link_result = None
+        phase_timings["schema_linking"] = perf_time.perf_counter() - phase_start
+        
+        # 2. QUERY PLANNER: Generate structured query plan
+        phase_start = perf_time.perf_counter()
+        query_plan = None
+        query_plan_context = ""
+        if llm_helper:
+            try:
+                # Lazy-initialize query planner
+                if self._query_planner is None:
+                    planner_llm = await llm_helper.get_llm(temperature=0.0)
+                    self._query_planner = QueryPlanner(
+                        llm=planner_llm,
+                        schema_graph=self._schema_graph
+                    )
+                    logger.info("QueryPlanner initialized for structured planning")
+                
+                query_plan = self._query_planner.plan(
+                    question=natural_language_query,
+                    schema_context=schema,
+                    data_dictionary_context=self._get_data_dictionary_context(),
+                    schema_link_result=schema_link_result
+                )
+                
+                if query_plan:
+                    query_plan_context = self._query_planner.plan_to_prompt_context(query_plan)
+                    logger.info(
+                        "QueryPlanner generated plan",
+                        entities=query_plan.entities,
+                        metrics_count=len(query_plan.metrics),
+                        filters_count=len(query_plan.filters),
+                        join_count=len(query_plan.join_strategy),
+                        reasoning=query_plan.reasoning[:100] if query_plan.reasoning else "N/A"
+                    )
+            except Exception as e:
+                logger.warning(f"Query planning failed (continuing without): {e}")
+                query_plan = None
+                query_plan_context = ""
+        phase_timings["query_planning"] = perf_time.perf_counter() - phase_start
+        
+        # 3. TOKEN BUDGET: Ensure schema fits within limits
+        if self._token_budget_manager:
+            try:
+                schema_tokens = self._token_budget_manager.estimate_tokens(schema)
+                max_schema_tokens = 6000  # Reserve for prompt, plan, few-shot
+                
+                if schema_tokens > max_schema_tokens:
+                    # Build priority map from query plan
+                    table_priorities = {}
+                    if query_plan and query_plan.entities:
+                        for i, table in enumerate(query_plan.entities):
+                            table_priorities[table] = 1.0 - (i * 0.1)  # First table highest priority
+                    
+                    # Truncate schema to fit budget
+                    tables_ddl = {}
+                    for table in selected_tables:
+                        # Extract DDL for each table from schema
+                        table_pattern = rf"^-\s*{re.escape(table)}:.*$"
+                        match = re.search(table_pattern, schema, re.MULTILINE)
+                        if match:
+                            tables_ddl[table] = match.group(0)
+                    
+                    truncated_schema, included_tables = self._token_budget_manager.fit_schema_to_budget(
+                        tables_ddl=tables_ddl,
+                        table_priorities=table_priorities,
+                        additional_context=query_plan_context
+                    )
+                    
+                    logger.info(
+                        "TokenBudget trimmed schema context",
+                        original_tokens=schema_tokens,
+                        max_tokens=max_schema_tokens,
+                        included_tables=len(included_tables),
+                        excluded_tables=len(selected_tables) - len(included_tables)
+                    )
+                    schema = truncated_schema
+                else:
+                    logger.debug(f"Schema within token budget: {schema_tokens} tokens")
+            except Exception as e:
+                logger.warning(f"Token budget management failed (continuing with full schema): {e}")
+        
         # Get few-shot examples
+        phase_start = perf_time.perf_counter()
         few_shot_examples = []
         few_shot_section = ""
         if self._enable_few_shot and self._sql_examples_store:
@@ -799,8 +1441,28 @@ class SQLService:
                 top_k=3,
                 min_score=0.5
             )
+            
+            # Validate few-shot examples against current schema
+            if self._query_validator and few_shot_examples:
+                valid_examples, invalid_examples = self._query_validator.validate_few_shot_examples(
+                    few_shot_examples
+                )
+                if invalid_examples:
+                    logger.warning(
+                        f"Filtered {len(invalid_examples)} stale few-shot examples",
+                        invalid_count=len(invalid_examples)
+                    )
+                few_shot_examples = valid_examples
+            
             few_shot_section = self._format_few_shot_examples(few_shot_examples)
             logger.info(f"Using {len(few_shot_examples)} few-shot examples for SQL generation")
+        
+        # Get negative examples from feedback loop (common mistakes to avoid)
+        negative_examples_section = ""
+        if self._feedback_loop:
+            negative_examples_section = self._feedback_loop.format_negative_examples_for_prompt(
+                max_examples=2
+            )
         
         # Build the enhanced prompt with DuckDB rules, data dictionary, and few-shot examples
         base_prompt = get_sql_generator_prompt()
@@ -812,28 +1474,132 @@ class SQLService:
         data_dict_context = self._get_data_dictionary_context()
         
         system_prompt_parts = [base_prompt]
+        
+        # Include agent's custom system prompt (FHIR rules, domain-specific instructions)
+        if self._agent_system_prompt:
+            # Extract relevant sections from agent's system prompt
+            agent_rules = self._extract_sql_relevant_rules(self._agent_system_prompt)
+            if agent_rules:
+                system_prompt_parts.append(f"AGENT-SPECIFIC RULES:\n{agent_rules}")
+                logger.debug("Included agent-specific rules in SQL generation prompt")
+        
         if db_rules:
             system_prompt_parts.append(db_rules)
         if data_dict_context:
             system_prompt_parts.append(data_dict_context)
+        # Include structured query plan from QueryPlanner
+        if query_plan_context:
+            system_prompt_parts.append(query_plan_context)
+            logger.info("Included QueryPlanner structured plan in prompt")
+        if negative_examples_section:
+            system_prompt_parts.append(negative_examples_section)
         if few_shot_section:
             system_prompt_parts.append(few_shot_section)
         system_prompt_parts.append("Database Schema:\n{schema}")
         
         full_system_prompt = "\n\n".join(system_prompt_parts)
+        phase_timings["few_shot_retrieval"] = perf_time.perf_counter() - phase_start
+        
+        # =========================================================================
+        # NL2SQL ENHANCEMENTS
+        # =========================================================================
+        
+        # 1. SEMANTIC QUERY CACHE: Check if similar query was already processed
+        phase_start = perf_time.perf_counter()
+        schema_hash = SemanticQueryCache.compute_schema_hash(schema) if self._semantic_cache else ""
+        cache_result: Optional[SemanticCacheResult] = None
+        
+        if self._semantic_cache and self._enable_semantic_cache:
+            try:
+                # Lazily initialize embedding function from embeddings service
+                if self._semantic_cache._embed_fn is None:
+                    from app.modules.embeddings.service import _get_embedding_provider
+                    # Get the embed function using agent's configured embedding model
+                    embed_fn = await _get_embedding_provider(self._embedding_model)
+                    # Wrap to take single text and return single embedding
+                    self._semantic_cache.set_embed_fn(lambda text: embed_fn([text])[0])
+                    logger.debug(f"Semantic cache using embedding model: {self._embedding_model}")
+                
+                cache_result = self._semantic_cache.get(
+                    nl_query=natural_language_query,
+                    current_schema_hash=schema_hash
+                )
+                
+                if cache_result.hit:
+                    logger.info(
+                        f"Semantic cache HIT: similarity={cache_result.similarity:.3f}, "
+                        f"skipping LLM call",
+                        original_query=cache_result.original_query[:50] if cache_result.original_query else ""
+                    )
+                    # Execute the cached SQL directly
+                    sql = cache_result.sql
+                    phase_timings["semantic_cache_lookup"] = perf_time.perf_counter() - phase_start
+                    
+                    exec_start = perf_time.perf_counter()
+                    results, count = self.execute_query(sql)
+                    phase_timings["sql_execution"] = perf_time.perf_counter() - exec_start
+                    execution_time = time.time() - start_time
+                    
+                    # Record in audit trail
+                    if self._audit_trail:
+                        self._audit_trail.record(
+                            question=natural_language_query,
+                            generated_sql=sql,
+                            execution_time_ms=int(execution_time * 1000),
+                            status="success_cached",
+                            row_count=count,
+                            tenant_id=self._tenant_id
+                        )
+                    
+                    _log_phase_summary()
+                    return self._format_results(results, count)
+            except Exception as e:
+                logger.warning(f"Semantic cache lookup failed: {e}")
+                cache_result = None
+        phase_timings["semantic_cache_lookup"] = perf_time.perf_counter() - phase_start
+        
+        # 2. INDEX HINTS: Enrich schema with index metadata
+        if self._enable_index_hints and selected_tables:
+            try:
+                engine = self._get_engine()
+                schema = enrich_schema_with_index_hints(
+                    schema_context=schema,
+                    engine=engine,
+                    table_names=selected_tables,
+                    schema_name=self._schema or "public"
+                )
+                logger.debug("Schema enriched with index hints")
+            except Exception as e:
+                logger.debug(f"Index hints enrichment skipped: {e}")
+        
+        # 3. STRUCTURED OUTPUT: Add <thinking>/<query> format instructions
+        if self._enable_structured_output and self._structured_parser:
+            structured_instructions = get_structured_output_instructions()
+            full_system_prompt = f"{full_system_prompt}\n\n{structured_instructions}"
+            logger.debug("Added structured output instructions to prompt")
         
         # Get LLM from helper (temp=0 for deterministic SQL generation)
         if not llm_helper:
             logger.error("No llm_helper provided for SQL generation")
             return "Failed to initialize LLM: no llm_helper provided"
         
+        # Time LLM initialization (potential cold-start bottleneck)
+        llm_init_start = perf_time.perf_counter()
         llm = await llm_helper.get_llm(temperature=0.0)
+        llm_init_time = perf_time.perf_counter() - llm_init_start
+        phase_timings["llm_init"] = llm_init_time
+        if llm_init_time > 1.0:
+            logger.warning(f"⚠️ LLM initialization took {llm_init_time:.2f}s (cold start?)")
+        
+        # Initialize query validator if not done yet
+        self._initialize_query_validator()
         
         # =========================================================================
         # RETRY LOOP: Generate SQL, execute, retry on error with error feedback
         # =========================================================================
         previous_error: Optional[str] = None
         last_sql: Optional[str] = None
+        thinking_log: Optional[str] = None  # Store thinking for observability
         
         for attempt in range(max_retries):
             try:
@@ -866,25 +1632,136 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     ])
                     chain = prompt | llm
                 
-                # Generate SQL using LLM
-                response = chain.invoke({
-                    "schema": schema,
-                    "question": natural_language_query
-                })
+                # Generate SQL using LLM (with optional tracing callback)
+                llm_gen_start = perf_time.perf_counter()
+                response = chain.invoke(
+                    {"schema": schema, "question": natural_language_query},
+                    config=llm_config
+                )
+                phase_timings["llm_sql_generation"] += perf_time.perf_counter() - llm_gen_start
                 
-                # Extract SQL from response (remove markdown code blocks if present)
-                sql = response.content.strip()
-                sql = re.sub(r'^```sql\s*', '', sql)
-                sql = re.sub(r'^```\s*', '', sql)
-                sql = re.sub(r'\s*```$', '', sql)
-                sql = sql.strip()
+                # =========================================================
+                # PARSE STRUCTURED OUTPUT (if enabled)
+                # =========================================================
+                if self._enable_structured_output and self._structured_parser:
+                    parsed_output = self._structured_parser.parse(response.content)
+                    sql = parsed_output.query
+                    thinking_log = parsed_output.thinking
+                    
+                    if parsed_output.parse_success:
+                        logger.info(
+                            "Structured output parsed successfully",
+                            thinking_length=len(thinking_log),
+                            sql_length=len(sql)
+                        )
+                        if thinking_log:
+                            logger.debug(f"LLM reasoning: {thinking_log[:200]}...")
+                    else:
+                        logger.debug("Fallback SQL extraction used (no structured tags)")
+                else:
+                    # Legacy: Extract SQL from response (remove markdown code blocks if present)
+                    sql = response.content.strip()
+                    sql = re.sub(r'^```sql\s*', '', sql)
+                    sql = re.sub(r'^```\s*', '', sql)
+                    sql = re.sub(r'\s*```$', '', sql)
+                    sql = sql.strip()
+                
                 last_sql = sql
+                generated_sql = sql  # Track for audit
                 
                 logger.info("LLM generated SQL", attempt=attempt + 1, generated_sql=sql, question=natural_language_query[:100])
                 
                 # =========================================================
+                # QUERY COMPLEXITY ESTIMATION
+                # =========================================================
+                timeout_seconds = 30  # default
+                if self._complexity_estimator:
+                    try:
+                        complexity = self._complexity_estimator.analyze(sql)
+                        tables_used = complexity.query_plan.get("tables_selected", []) if hasattr(complexity, "query_plan") else []
+                        
+                        # Adjust timeout based on complexity
+                        timeout_seconds = complexity.timeout_recommendation
+                        
+                        # Log complexity analysis for all queries
+                        logger.info(
+                            "Query complexity analyzed",
+                            complexity_level=complexity.complexity_level.value,
+                            join_count=complexity.join_count,
+                            timeout_recommendation=timeout_seconds,
+                            is_complex=complexity.is_complex
+                        )
+                        
+                        if complexity.is_complex:
+                            logger.warning(
+                                f"Complex query detected: {complexity.complexity_level.value}",
+                                estimated_rows=complexity.estimated_rows,
+                                join_count=complexity.join_count,
+                                suggestions=complexity.suggestions
+                            )
+                            # Include warning in response if query is very complex
+                            if complexity.complexity_level == ComplexityLevel.VERY_HIGH:
+                                logger.warning(f"Very high complexity query: {complexity.warning_message}")
+                    except Exception as e:
+                        logger.debug(f"Complexity estimation skipped: {e}")
+                
+                # =========================================================
+                # PROACTIVE SCHEMA VALIDATION: Check tables/columns exist
+                # =========================================================
+                validation_start = perf_time.perf_counter()
+                if self._query_validator:
+                    validation = self._query_validator.validate_sql(sql, schema)
+                    phase_timings["schema_validation"] += perf_time.perf_counter() - validation_start
+                    
+                    # Log query plan for debugging
+                    if validation.query_plan:
+                        logger.info(
+                            "Query plan explanation",
+                            tables=validation.query_plan.get("tables_selected", []),
+                            join_pattern=validation.query_plan.get("join_pattern"),
+                            aggregations=validation.query_plan.get("aggregations", []),
+                            filters=validation.query_plan.get("filters", [])[:3]  # Limit for logging
+                        )
+                    
+                    if not validation.is_valid:
+                        logger.warning(
+                            f"Schema validation failed (attempt {attempt + 1}): {validation.error_message}",
+                            invalid_tables=validation.invalid_tables,
+                            invalid_columns=validation.invalid_columns,
+                            fhir_violations=validation.fhir_violations
+                        )
+                        
+                        # Build detailed error message for retry
+                        error_parts = []
+                        if validation.invalid_tables:
+                            error_parts.append(f"Non-existent tables: {', '.join(validation.invalid_tables)}")
+                        if validation.invalid_columns:
+                            cols = [f"{t}.{c}" for t, c in validation.invalid_columns]
+                            error_parts.append(f"Non-existent columns: {', '.join(cols)}")
+                        if validation.fhir_violations:
+                            error_parts.append(f"FHIR violations: {'; '.join(validation.fhir_violations)}")
+                        if validation.suggested_corrections:
+                            error_parts.append(f"Suggestions: {'; '.join(validation.suggested_corrections[:3])}")
+                        
+                        previous_error = "SCHEMA VALIDATION FAILED: " + " | ".join(error_parts)
+                        
+                        # Record failure in feedback loop
+                        if self._feedback_loop:
+                            self._feedback_loop.record_failure(
+                                question=natural_language_query,
+                                failed_sql=sql,
+                                error_message=previous_error,
+                                tables_attempted=validation.query_plan.get("tables_selected") if validation.query_plan else None
+                            )
+                        
+                        continue  # Skip to next retry
+                    else:
+                        logger.debug(f"Schema validation passed (attempt {attempt + 1})")
+                
+                # =========================================================
                 # REFLECTION GATE: Validate SQL before execution
                 # =========================================================
+                reflection_start = perf_time.perf_counter()
                 if self._reflection_service:
                     try:
                         critique = self._reflection_service.critique(
@@ -892,6 +1769,7 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                             sql_query=sql,
                             schema_context=schema,
                         )
+                        phase_timings["reflection_gate"] += perf_time.perf_counter() - reflection_start
                         if not critique.is_valid:
                             logger.warning(
                                 f"Reflection rejected SQL (attempt {attempt + 1}): {critique.issues}"
@@ -912,13 +1790,57 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                         else:
                             logger.info(f"Reflection validated SQL (attempt {attempt + 1})")
                     except Exception as e:
+                        phase_timings["reflection_gate"] += perf_time.perf_counter() - reflection_start
                         logger.warning(f"Reflection service error, proceeding without validation: {e}")
                 
                 # Execute the generated SQL using read-only session
+                exec_start = perf_time.perf_counter()
                 results, count = self.execute_query(sql)
+                phase_timings["sql_execution"] += perf_time.perf_counter() - exec_start
                 
                 # Success! Format and return results
                 logger.info(f"Query succeeded on attempt {attempt + 1}")
+                
+                # Record correction in feedback loop if this was a retry
+                if attempt > 0 and self._feedback_loop and previous_error:
+                    self._feedback_loop.record_correction(
+                        question=natural_language_query,
+                        failed_sql=last_sql or "",
+                        corrected_sql=sql,
+                        correction_reason=f"Fixed after error: {previous_error[:100]}",
+                        error_type=self._classify_error_type(previous_error)
+                    )
+                
+                # Record success in audit trail
+                execution_time = time.time() - start_time
+                if self._audit_trail:
+                    self._audit_trail.record(
+                        question=natural_language_query,
+                        generated_sql=generated_sql,
+                        execution_time_ms=int(execution_time * 1000),
+                        status="success",
+                        row_count=count,
+                        tables_used=tables_used,
+                        tenant_id=self._tenant_id
+                    )
+                
+                # =========================================================
+                # SEMANTIC CACHE: Store successful query for future reuse
+                # =========================================================
+                cache_store_start = perf_time.perf_counter()
+                if self._semantic_cache and self._enable_semantic_cache and schema_hash:
+                    try:
+                        self._semantic_cache.put(
+                            nl_query=natural_language_query,
+                            generated_sql=sql,
+                            schema_hash=schema_hash
+                        )
+                        logger.debug("Cached query in semantic cache")
+                    except Exception as e:
+                        logger.debug(f"Failed to cache query: {e}")
+                phase_timings["semantic_cache_store"] = perf_time.perf_counter() - cache_store_start
+                
+                _log_phase_summary()
                 return self._format_results(results, count)
                 
             except Exception as e:
@@ -929,17 +1851,40 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     f"SQL execution failed on attempt {attempt + 1}/{max_retries}: {error_str[:200]}"
                 )
                 
+                # Record failure in feedback loop
+                if self._feedback_loop and last_sql:
+                    self._feedback_loop.record_failure(
+                        question=natural_language_query,
+                        failed_sql=last_sql,
+                        error_message=error_str[:500]
+                    )
+                
                 # If this was the last attempt, return error
                 if attempt == max_retries - 1:
+                    # Record failure in audit trail
+                    execution_time = time.time() - start_time
+                    if self._audit_trail:
+                        self._audit_trail.record(
+                            question=natural_language_query,
+                            generated_sql=generated_sql,
+                            execution_time_ms=int(execution_time * 1000),
+                            status="error",
+                            error_message=error_str[:500],
+                            tables_used=tables_used,
+                            tenant_id=self._tenant_id
+                        )
+                    
                     logger.error(
                         f"All {max_retries} attempts failed. Last error: {error_str}"
                     )
+                    _log_phase_summary()
                     return f"Failed to execute query after {max_retries} attempts. Last error: {error_str}"
                 
                 # Otherwise, continue to next iteration with error feedback
                 continue
         
         # Should not reach here, but just in case
+        _log_phase_summary()
         return f"Failed to execute query: Unknown error after {max_retries} attempts"
     
     def query(self, natural_language_query: str) -> str:
@@ -1154,16 +2099,18 @@ class SQLServiceForCSV(SQLService):
 class SQLServiceFactory:
     """Factory for creating SQLService instances from data sources."""
     
-    def __init__(self, config_repo, data_source_repo):
+    def __init__(self, config_repo, data_source_repo, ai_model_repo=None):
         """
         Initialize factory with repository dependencies.
         
         Args:
             config_repo: AgentConfigRepository instance
             data_source_repo: DataSourceRepository instance
+            ai_model_repo: Optional AIModelRepository for embedding model lookup
         """
         self.config_repo = config_repo
         self.data_source_repo = data_source_repo
+        self.ai_model_repo = ai_model_repo
     
     async def __call__(
         self,
@@ -1179,6 +2126,8 @@ class SQLServiceFactory:
         enable_few_shot: bool = True,
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        **kwargs,
     ) -> Optional[SQLService]:
         """
         Create a SQLService for the given data source.
@@ -1188,6 +2137,7 @@ class SQLServiceFactory:
             enable_few_shot: Enable few-shot example retrieval
             config_id: Optional agent config ID for semantic schema retrieval
             agent_id: Optional agent ID for per-agent SQL examples and data dictionary
+            embedding_model: Optional embedding model name for semantic cache
             
         Returns:
             SQLService instance or None if not found
@@ -1217,6 +2167,7 @@ class SQLServiceFactory:
                     enable_few_shot=enable_few_shot,
                     config_id=config_id,
                     agent_id=agent_id,
+                    embedding_model=embedding_model,
                 )
                 
             elif data_source.source_type == "file":
@@ -1231,6 +2182,7 @@ class SQLServiceFactory:
                         enable_few_shot=enable_few_shot,
                         config_id=config_id,
                         agent_id=agent_id,
+                        embedding_model=embedding_model,
                     )
                 
                 # Fallback: Create DuckDB service that reads CSV directly
@@ -1282,12 +2234,45 @@ class SQLServiceFactory:
                 logger.warning(f"Agent config has no data_source_id")
                 return None
             
-            return await self.create_from_data_source(
+            # Look up the embedding model name for this agent
+            embedding_model = None
+            try:
+                # First, try to get from AI model registry if we have the repo
+                if self.ai_model_repo and config.embedding_model_id:
+                    ai_model = await self.ai_model_repo.get_by_id(config.embedding_model_id)
+                    if ai_model:
+                        embedding_model = ai_model.model_id
+                        logger.debug(f"Using agent's embedding model: {embedding_model}")
+                
+                # Fallback: check embedding_config JSON for model name
+                if not embedding_model and config.embedding_config:
+                    import json
+                    try:
+                        embed_cfg = config.embedding_config
+                        if isinstance(embed_cfg, str):
+                            embed_cfg = json.loads(embed_cfg)
+                        if isinstance(embed_cfg, dict) and embed_cfg.get("model"):
+                            embedding_model = embed_cfg["model"]
+                            logger.debug(f"Using embedding model from config: {embedding_model}")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            except Exception as e:
+                logger.debug(f"Could not determine embedding model: {e}")
+            
+            sql_service = await self.create_from_data_source(
                 config.data_source_id,
                 enable_few_shot=enable_few_shot,
                 config_id=config.id,  # Pass config ID for semantic schema retrieval
                 agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples
+                embedding_model=embedding_model,  # Pass agent's embedding model
             )
+            
+            # Set the agent's system prompt for SQL generation context
+            if sql_service and config.system_prompt:
+                sql_service.set_agent_system_prompt(config.system_prompt)
+                logger.debug(f"Agent system prompt set on SQLService (length={len(config.system_prompt)})")
+            
+            return sql_service
             
         except Exception as e:
             logger.error(f"Failed to create SQL service from agent config: {e}", exc_info=True)

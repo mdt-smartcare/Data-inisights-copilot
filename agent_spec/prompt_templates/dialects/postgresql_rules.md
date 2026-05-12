@@ -35,6 +35,14 @@ Follow these rules when generating PostgreSQL queries:
 - All non-aggregated columns must appear in GROUP BY
 - Use `HAVING` to filter on aggregate results
 
+### ROUND Function (CRITICAL)
+- PostgreSQL's `ROUND(value, decimals)` only works with NUMERIC type, NOT double precision
+- Always cast to `::numeric` before rounding:
+  - WRONG: `ROUND(AVG(column), 2)`
+  - CORRECT: `ROUND(AVG(column)::numeric, 2)`
+  - CORRECT: `ROUND(CAST(value AS numeric), 2)`
+- This applies to any floating-point aggregation result (AVG, SUM of decimals, etc.)
+
 ### Best Practices
 - Use explicit JOIN syntax (INNER JOIN, LEFT JOIN) - never comma joins
 - Include appropriate WHERE clauses for filtering
