@@ -224,7 +224,16 @@ class Settings(BaseSettings):
     enable_query_relevance_check: bool = Field(
         default=True,
         description="Enable pre-filtering of queries for relevance before SQL generation"
-
+    )
+    
+    # ============================================
+    # Long-Polling Configuration
+    # ============================================
+    long_polling_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=60,
+        description="Max seconds to wait for progress changes in long-polling endpoints"
     )
     
     def __init__(self, **kwargs):

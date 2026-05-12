@@ -1312,6 +1312,16 @@ export const encodeDbUrl = (dbUrl: string): string => {
   return btoa(dbUrl);
 };
 
+/**
+ * Processing progress for file data sources
+ */
+export interface ProcessingProgress {
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  progress: number;
+  error?: string;
+  row_count?: number;
+}
+
 export interface DataSource {
   id: string;
   title: string;
@@ -1327,6 +1337,10 @@ export interface DataSource {
   duckdb_table_name?: string;
   columns_json?: string;
   row_count?: number;
+  // Processing status (for file sources)
+  processing_status?: 'pending' | 'processing' | 'completed' | 'failed';
+  processing_progress?: number;
+  processing_error?: string;
   // Metadata
   created_by?: string;
   created_at: string;
@@ -1408,6 +1422,29 @@ export const getDataSources = async (params?: {
 export const getDataSource = async (id: string): Promise<DataSource> => {
   const response = await apiClient.get(`/api/v1/data-sources/${id}`);
   // Response wrapped: { success, message, data: DataSource }
+  return response.data?.data || response.data;
+};
+
+/**
+ * Long-polling endpoint for processing progress.
+ * Waits up to `timeout` seconds for status/progress to change from known values.
+ */
+export const getProcessingProgress = async (
+  id: string,
+  knownStatus?: string,
+  knownProgress?: number,
+  timeout: number = 30,
+  signal?: AbortSignal
+): Promise<ProcessingProgress> => {
+  const params = new URLSearchParams();
+  if (knownStatus) params.append('known_status', knownStatus);
+  if (knownProgress !== undefined) params.append('known_progress', knownProgress.toString());
+  params.append('timeout', timeout.toString());
+  
+  const response = await apiClient.get(`/api/v1/data-sources/${id}/progress?${params.toString()}`, {
+    timeout: (timeout + 5) * 1000, // Add 5 seconds buffer for network
+    signal, // Pass abort signal to cancel request
+  });
   return response.data?.data || response.data;
 };
 

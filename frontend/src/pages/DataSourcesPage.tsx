@@ -12,6 +12,7 @@ import { ChatHeader } from '../components/chat';
 import { useToast } from '../components/Toast';
 import { APP_CONFIG } from '../config';
 import ConfirmationModal from '../components/ConfirmationModal';
+import ProcessingProgressModal from '../components/ProcessingProgressModal';
 import {
   getDataSources,
   createDatabaseSource,
@@ -76,6 +77,12 @@ export default function DataSourcesPage() {
 
   // Edit state
   const [editingSource, setEditingSource] = useState<DataSource | null>(null);
+
+  // Progress modal state - only needs id and title
+  const [progressModal, setProgressModal] = useState<{ show: boolean; source: { id: string; title: string } | null }>({
+    show: false,
+    source: null,
+  });
 
   // ============================================
   // Data Loading
@@ -155,18 +162,27 @@ export default function DataSourcesPage() {
       setFormError(null);
       setUploadProgress('Uploading...');
 
-      await uploadDataSourceFile(
+      const result = await uploadDataSourceFile(
         selectedFile,
         formState.title || undefined,
         formState.description || undefined
       );
 
-      setUploadProgress('Processing complete!');
-      setTimeout(() => {
-        setModalType(null);
-        resetForm();
-        loadDataSources();
-      }, 1000);
+      // Close modal and refresh list immediately to show the pending source
+      setModalType(null);
+      resetForm();
+      await loadDataSources();
+
+      // Show progress modal if we got a data_source_id
+      if (result.data_source_id) {
+        setProgressModal({
+          show: true,
+          source: {
+            id: result.data_source_id,
+            title: result.file_name || formState.title || selectedFile.name,
+          },
+        });
+      }
     } catch (err: any) {
       setFormError(err.response?.data?.detail || 'Upload failed');
       setUploadProgress(null);
@@ -313,6 +329,9 @@ export default function DataSourcesPage() {
     setModalType(type);
   };
 
+  // Check if editing source is in use by active configs (has dependent agents)
+  const isEditingInUse = editingSource && editingSource.dependent_agents && editingSource.dependent_agents.length > 0;
+
   const getSourceTypeIcon = (type: string) => {
     if (type === 'database') {
       return (
@@ -439,6 +458,9 @@ export default function DataSourcesPage() {
                       Type
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Details
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -447,21 +469,23 @@ export default function DataSourcesPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Used By
                     </th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 bg-gray-50">
                       Actions
                     </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
                   {dataSources.map((source) => (
-                    <tr key={source.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          {getSourceTypeIcon(source.source_type)}
-                          <div className="ml-3">
-                            <div className="text-sm font-medium text-gray-900">{source.title}</div>
+                    <tr key={source.id} className="hover:bg-gray-50 group">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center" style={{ maxWidth: '500px' }}>
+                          <div className="flex-shrink-0">
+                            {getSourceTypeIcon(source.source_type)}
+                          </div>
+                          <div className="ml-3 overflow-hidden">
+                            <div className="text-sm font-medium text-gray-900 truncate">{source.title}</div>
                             {source.description && (
-                              <div className="text-sm text-gray-500 truncate max-w-xs">
+                              <div className="text-sm text-gray-500 truncate">
                                 {source.description}
                               </div>
                             )}
@@ -475,6 +499,47 @@ export default function DataSourcesPage() {
                           }`}>
                           {source.source_type === 'database' ? source.db_engine_type || 'Database' : source.file_type?.toUpperCase() || 'File'}
                         </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {/* Processing Status */}
+                        {source.source_type === 'file' && source.processing_status && source.processing_status !== 'completed' ? (
+                          <button
+                            onClick={() => setProgressModal({ show: true, source: { id: source.id, title: source.title } })}
+                            className="inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
+                          >
+                            {source.processing_status === 'pending' && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 cursor-pointer">
+                                <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                Pending
+                              </span>
+                            )}
+                            {source.processing_status === 'processing' && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 cursor-pointer">
+                                <svg className="w-3 h-3 mr-1 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                Processing
+                              </span>
+                            )}
+                            {source.processing_status === 'failed' && (
+                              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 cursor-pointer">
+                                <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                Failed
+                              </span>
+                            )}
+                          </button>
+                        ) : (
+                          <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <svg className="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            Ready
+                          </span>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         {source.source_type === 'database' ? (
@@ -514,7 +579,7 @@ export default function DataSourcesPage() {
                           <span className="text-sm text-gray-400 italic">Not in use</span>
                         )}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium sticky right-0 bg-white group-hover:bg-gray-50">
                         <button
                           onClick={() => handleEditClick(source)}
                           className="text-blue-600 hover:text-blue-900 mr-4"
@@ -562,6 +627,12 @@ export default function DataSourcesPage() {
                 </div>
               )}
 
+              {isEditingInUse && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+                  <strong>Note:</strong> This data source is used by active agent(s). Only name and description can be edited.
+                </div>
+              )}
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -596,7 +667,8 @@ export default function DataSourcesPage() {
                   <select
                     value={formState.db_engine_type}
                     onChange={(e) => setFormState(prev => ({ ...prev, db_engine_type: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    disabled={!!isEditingInUse}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${isEditingInUse ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                   >
                     <option value="postgresql">PostgreSQL</option>
                     <option value="mysql">MySQL</option>
@@ -604,6 +676,11 @@ export default function DataSourcesPage() {
                     <option value="mssql">SQL Server</option>
                     <option value="oracle">Oracle</option>
                   </select>
+                  {isEditingInUse && (
+                    <p className="mt-1 text-xs text-amber-600">
+                      Cannot change while in use by active agent(s)
+                    </p>
+                  )}
                 </div>
 
                 <div>
@@ -614,12 +691,19 @@ export default function DataSourcesPage() {
                     type="text"
                     value={formState.db_url}
                     onChange={(e) => setFormState(prev => ({ ...prev, db_url: e.target.value }))}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                    disabled={!!isEditingInUse}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm ${isEditingInUse ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                     placeholder="postgresql://user:password@host:5432/database"
                   />
-                  <p className="mt-1 text-xs text-gray-500">
-                    Format: engine://user:password@host:port/database
-                  </p>
+                  {isEditingInUse ? (
+                    <p className="mt-1 text-xs text-amber-600">
+                      Cannot change while in use by active agent(s)
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Format: engine://user:password@host:port/database
+                    </p>
+                  )}
                 </div>
 
                 <div className="flex gap-3 pt-4">
@@ -631,7 +715,7 @@ export default function DataSourcesPage() {
                   </button>
                   <button
                     onClick={editingSource ? handleUpdateDataSource : handleCreateDatabase}
-                    disabled={formLoading || !formState.title || !formState.db_url}
+                    disabled={formLoading || !formState.title || (!editingSource && !formState.db_url)}
                     className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {formLoading ? (editingSource ? 'Saving...' : 'Creating...') : (editingSource ? 'Save Changes' : 'Create')}
@@ -665,6 +749,12 @@ export default function DataSourcesPage() {
               {formError && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                   {formError}
+                </div>
+              )}
+
+              {isEditingInUse && (
+                <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-800 text-sm">
+                  <strong>Note:</strong> This data source is used by active agent(s). Only name and description can be edited.
                 </div>
               )}
 
@@ -808,6 +898,20 @@ export default function DataSourcesPage() {
         confirmText="Delete"
         type="danger"
       />
+
+      {/* Processing Progress Modal */}
+      {progressModal.source && (
+        <ProcessingProgressModal
+          isOpen={progressModal.show}
+          onClose={() => setProgressModal({ show: false, source: null })}
+          dataSourceId={progressModal.source.id}
+          dataSourceTitle={progressModal.source.title}
+          onComplete={() => {
+            loadDataSources();
+            setProgressModal({ show: false, source: null });
+          }}
+        />
+      )}
     </div>
   );
 }

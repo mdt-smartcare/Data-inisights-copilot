@@ -8,12 +8,13 @@ Provides endpoints for:
 - SQL query execution
 - Connection testing
 """
-from typing import Optional, List
+import logging
+from typing import Optional, List, Dict
 from uuid import UUID
 
 from fastapi import (
     APIRouter, Depends, HTTPException, Query, status,
-    File, UploadFile, BackgroundTasks,
+    File, UploadFile,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,7 @@ from app.core.models.common import BaseResponse
 from app.modules.audit.helpers import AuditLogger, get_audit_logger
 from app.modules.audit.schemas import AuditAction
 from app.modules.users.schemas import User
+from app.core.settings import get_settings
 from app.modules.data_sources.service import DataSourceService
 from app.modules.data_sources.utils import decode_db_url
 from app.modules.data_sources.schemas import (
@@ -36,6 +38,8 @@ from app.modules.data_sources.schemas import (
     TableSchemaResponse, TableSchemaColumn,
     DataSourceSchemaResponse, DataSourcePreviewResponse,
 )
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/data-sources", tags=["data-sources"])
@@ -130,6 +134,37 @@ async def get_data_source(
     return BaseResponse.ok(data=source)
 
 
+@router.get("/{source_id}/progress", summary="Long-polling progress endpoint")
+async def get_processing_progress(
+    source_id: UUID,
+    known_status: Optional[str] = Query(None, description="Client's current known status"),
+    known_progress: Optional[int] = Query(None, description="Client's current known progress"),
+    current_user: User = Depends(get_current_user),
+    service: DataSourceService = Depends(get_data_source_service),
+):
+    """
+    Long-polling endpoint for processing progress.
+    
+    Waits for status/progress to change from known values (timeout from config).
+    Returns immediately if status differs from known_status or progress differs from known_progress.
+    
+    Use this instead of interval polling for efficient real-time updates.
+    """
+    settings = get_settings()
+    
+    progress_data = await service.get_processing_progress(
+        source_id=source_id,
+        known_status=known_status,
+        known_progress=known_progress,
+        timeout_seconds=settings.long_polling_timeout_seconds,
+    )
+    
+    if progress_data is None:
+        raise HTTPException(status_code=404, detail="Data source not found")
+    
+    return BaseResponse.ok(data=progress_data)
+
+
 @router.get("/{source_id}/schema", response_model=BaseResponse[DataSourceSchemaResponse])
 async def get_data_source_schema(
     source_id: UUID,
@@ -205,17 +240,30 @@ async def update_data_source(
     service: DataSourceService = Depends(get_data_source_service),
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[DataSourceResponse]:
-    """Update a data source. Only allowed if not used by any active config."""
+    """
+    Update a data source.
     
-    # Check if data source is used by active configs
-    is_in_use = await service.is_used_by_active_config(source_id)
-    if is_in_use:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot update data source while it is used by an active configuration. Deactivate the configuration first."
-        )
+    Title and description can always be updated.
+    Other fields (db_url, db_engine_type, file paths, etc.) can only be updated
+    if the data source is not used by any active configuration.
+    """
+    update_data = data.model_dump(exclude_unset=True)
     
-    source = await service.update_source(source_id, data.model_dump(exclude_unset=True))
+    # Fields that are safe to update even when in use
+    safe_fields = {"title", "description"}
+    requested_fields = set(update_data.keys())
+    critical_fields = requested_fields - safe_fields
+    
+    # Only check active config constraint if updating critical fields
+    if critical_fields:
+        is_in_use = await service.is_used_by_active_config(source_id)
+        if is_in_use:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Cannot update critical fields ({', '.join(critical_fields)}) while data source is used by an active configuration. Deactivate the configuration first, or only update title/description."
+            )
+    
+    source = await service.update_source(source_id, update_data)
     if not source:
         raise HTTPException(status_code=404, detail="Data source not found")
     
@@ -227,7 +275,7 @@ async def update_data_source(
         resource_id=str(source_id),
         resource_name=source.title,
         details={
-            "fields_changed": list(data.model_dump(exclude_unset=True).keys()),
+            "fields_changed": list(update_data.keys()),
             "updated_by": current_user.username
         },
     )
@@ -313,16 +361,13 @@ async def test_database_connection(
 # File Ingestion Endpoints
 # ==========================================
 
-SUPPORTED_EXTENSIONS = {'.csv', '.xlsx', '.pdf', '.json'}
-SQL_SUPPORTED_EXTENSIONS = {'.csv', '.xlsx'}
+SUPPORTED_EXTENSIONS = {'.csv', '.xlsx'}
 MAX_PREVIEW_DOCS = 50
 MAX_CONTENT_LENGTH = 500
-LARGE_FILE_THRESHOLD = 10 * 1024 * 1024  # 10MB
 
 
 @router.post("/upload", response_model=BaseResponse[IngestionResponse], status_code=status.HTTP_201_CREATED)
 async def upload_file(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     title: Optional[str] = Query(None, description="Optional title for the data source"),
     description: Optional[str] = Query(None, description="Optional description"),
@@ -331,16 +376,15 @@ async def upload_file(
     audit: AuditLogger = Depends(get_audit_logger),
 ) -> BaseResponse[IngestionResponse]:
     """
-    Upload a file and process it for SQL queries and RAG.
+    Upload a CSV or Excel file for SQL queries.
     
-    Supports: .csv, .xlsx, .pdf, .json
+    Supported formats: .csv, .xlsx
     
-    For CSV/Excel files:
     - Creates DuckDB table for SQL queries
-    - Small files (<10MB): Processed immediately
-    - Large files (≥10MB): Background processing
+    - Uses background processing for fast response
+    - Column info extracted immediately for display
     
-    Returns document previews for RAG indexing.
+    Returns data source info with columns detected.
     """
     import os
     import tempfile
@@ -358,17 +402,9 @@ async def upload_file(
             detail=f"Unsupported file type '{ext}'. Supported: {', '.join(SUPPORTED_EXTENSIONS)}",
         )
     
-    # Create temp directory
+    # Create temp directory and stream file to disk
     tmp_dir = tempfile.mkdtemp(prefix="ingestion_")
     tmp_path = os.path.join(tmp_dir, file.filename)
-    
-    table_name = None
-    columns = None
-    column_details = None
-    row_count = None
-    processing_mode = None
-    message = None
-    data_source_id = None
     
     try:
         # Stream file to disk
@@ -380,130 +416,46 @@ async def upload_file(
         
         file_type = ext.lstrip('.')
         
-        # Process file
-        if ext in SQL_SUPPORTED_EXTENSIONS:
-            if file_size >= LARGE_FILE_THRESHOLD:
-                processing_mode = "background"
-                from app.modules.data_sources.utils import (
-                    normalize_table_name,
-                    extract_file_columns_fast,
-                    get_file_row_count_estimate,
-                    get_user_data_dir,
-                )
-                
-                table_name = normalize_table_name(file.filename)
-                row_count = get_file_row_count_estimate(tmp_path, file_type)
-                
-                # Extract columns BEFORE background processing so frontend can display them
-                columns, column_details = extract_file_columns_fast(tmp_path, file_type)
-                
-                # Copy to permanent location for background processing
-                permanent_source = get_user_data_dir(str(current_user.id)) / f"_source_{file.filename}"
-                shutil.copy(tmp_path, permanent_source)
-                
-                # Schedule background processing
-                from app.modules.data_sources.utils import process_file_for_duckdb
-                background_tasks.add_task(
-                    process_file_for_duckdb,
-                    user_id=str(current_user.id),
-                    table_name=table_name,
-                    source_path=str(permanent_source),
-                    file_type=file_type,
-                    original_filename=file.filename,
-                )
-                
-                message = f"Large file ({file_size / (1024*1024):.1f} MB). Processing in background. {len(columns)} columns detected."
-                
-                # Create data source record with duckdb_file_path (relative path for portability)
-                import json
-                from app.modules.data_sources.utils import get_relative_duckdb_path
-                duckdb_path = get_relative_duckdb_path(str(current_user.id))
-                
-                ds = await service.create_file_source(
-                    title=title or file.filename,
-                    original_file_path=str(permanent_source),
-                    file_type=file_type,
-                    description=description,
-                    duckdb_file_path=duckdb_path,
-                    duckdb_table_name=table_name,
-                    columns_json=json.dumps(columns) if columns else None,
-                    row_count=row_count,
-                    created_by=current_user.id,
-                )
-                data_source_id = ds.id
-            else:
-                processing_mode = "sync"
-                result = await service.ingest_file(
-                    file_path=tmp_path,
-                    original_filename=file.filename,
-                    file_type=file_type,
-                    user_id=str(current_user.id),
-                    title=title,
-                    description=description,
-                    process_sync=True,
-                )
-                
-                if result["status"] == "error":
-                    message = result.get("error")
-                else:
-                    table_name = result.get("table_name")
-                    columns = result.get("columns")
-                    column_details = result.get("column_details")
-                    row_count = result.get("row_count")
-                    data_source_id = UUID(result["data_source_id"]) if result.get("data_source_id") else None
-        else:
-            # Non-SQL files (PDF, JSON) - copy to permanent location
-            from app.modules.data_sources.utils import get_user_data_dir
-            permanent_path = get_user_data_dir(str(current_user.id)) / f"_source_{file.filename}"
-            shutil.copy(tmp_path, permanent_path)
-            
-            ds = await service.create_file_source(
-                title=title or file.filename,
-                original_file_path=str(permanent_path),
-                file_type=file_type,
-                description=description,
-                created_by=current_user.id,
-            )
-            data_source_id = ds.id
-            processing_mode = "sync"
-        
-        # Extract document previews for RAG
-        documents: List[ExtractedDocument] = []
-        total = 0
-        
-        # TODO: Integrate with document extractor for RAG previews
-        # For now, return empty documents - RAG integration to be added
+        # Delegate to service layer for all business logic
+        result = await service.ingest_uploaded_file(
+            temp_file_path=tmp_path,
+            original_filename=file.filename,
+            file_type=file_type,
+            file_size=file_size,
+            title=title,
+            description=description,
+            created_by=current_user.id,
+        )
         
         # Audit log: datasource.created (for file uploads)
-        if data_source_id:
-            await audit.log(
-                action=AuditAction.DATASOURCE_CREATED,
-                actor=current_user,
-                resource_type="datasource",
-                resource_id=str(data_source_id),
-                resource_name=title or file.filename,
-                details={
-                    "type": "file",
-                    "file_type": file_type,
-                    "file_name": file.filename,
-                    "processing_mode": processing_mode,
-                    "created_by": current_user.username
-                },
-            )
+        await audit.log(
+            action=AuditAction.DATASOURCE_CREATED,
+            actor=current_user,
+            resource_type="datasource",
+            resource_id=str(result["data_source_id"]),
+            resource_name=title or file.filename,
+            details={
+                "type": "file",
+                "file_type": file_type,
+                "file_name": file.filename,
+                "processing_mode": "background",
+                "created_by": current_user.username,
+            },
+        )
         
         return BaseResponse.ok(data=IngestionResponse(
             status="success",
             file_name=file.filename,
             file_type=file_type,
-            total_documents=total,
-            documents=documents,
-            table_name=table_name,
-            columns=columns,
-            column_details=column_details,
-            row_count=row_count,
-            processing_mode=processing_mode,
-            message=message,
-            data_source_id=data_source_id,
+            total_documents=0,  # Not used for CSV/Excel
+            documents=[],
+            table_name=result["table_name"],
+            columns=result["columns"],
+            column_details=result["column_details"],
+            row_count=result["row_count"],
+            processing_mode="background",
+            message=result["message"],
+            data_source_id=result["data_source_id"],
         ))
         
     except HTTPException:

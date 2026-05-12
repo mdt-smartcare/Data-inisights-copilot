@@ -20,6 +20,7 @@ backend/embedding_test_output.txt
 /models
 /backend/venv
 copilot_env
+/backend/examples
 
 # Local output and settings
 .vscode/

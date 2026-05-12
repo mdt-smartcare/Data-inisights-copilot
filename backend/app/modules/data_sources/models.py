@@ -46,6 +46,15 @@ class DataSourceModel(Base):
     columns_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
     row_count: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
     
+    # Processing status (for file sources with background DuckDB processing)
+    processing_status: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, default="completed"
+    )  # pending, processing, completed, failed
+    processing_progress: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True, default=0
+    )  # 0-100 percent
+    processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
     created_by: Mapped[Optional[str]] = mapped_column(
         PGUUID(as_uuid=True), 
         ForeignKey("users.id"), 
