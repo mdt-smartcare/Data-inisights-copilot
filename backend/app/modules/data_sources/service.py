@@ -72,6 +72,11 @@ class DataSourceService:
         created_by: Optional[UUID] = None,
     ) -> DataSourceResponse:
         """Create a database connection data source."""
+        # Check for duplicate title
+        existing = await self.repo.get_by_title(title)
+        if existing:
+            raise ValueError(f"A data source with title '{title}' already exists")
+        
         data = {
             "title": title,
             "description": description,
@@ -96,6 +101,11 @@ class DataSourceService:
         processing_status: str = "completed",
     ) -> DataSourceResponse:
         """Create a file-based data source."""
+        # Check for duplicate title
+        existing = await self.repo.get_by_title(title)
+        if existing:
+            raise ValueError(f"A data source with title '{title}' already exists")
+        
         data = {
             "title": title,
             "description": description,

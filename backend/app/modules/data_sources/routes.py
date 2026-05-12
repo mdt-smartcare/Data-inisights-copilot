@@ -73,13 +73,16 @@ async def create_database_source(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
     
-    source = await service.create_database_source(
-        title=data.title,
-        db_url=db_url,
-        db_engine_type=data.db_engine_type,
-        description=data.description,
-        created_by=current_user.id,
-    )
+    try:
+        source = await service.create_database_source(
+            title=data.title,
+            db_url=db_url,
+            db_engine_type=data.db_engine_type,
+            description=data.description,
+            created_by=current_user.id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     
     # Audit log: datasource.created
     await audit.log(
@@ -462,6 +465,9 @@ async def upload_file(
         
     except HTTPException:
         raise
+    except ValueError as e:
+        # Duplicate title error
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(exc)}")
     finally:

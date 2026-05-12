@@ -24,13 +24,17 @@ class DataSourceModel(Base):
     source_type = 'file': Uses file fields (original_file_path, duckdb_*, columns_json)
     """
     __tablename__ = "data_sources"
+    __table_args__ = (
+        # Ensure unique titles
+        {"extend_existing": True},
+    )
     
     id: Mapped[str] = mapped_column(
         PGUUID(as_uuid=True), 
         primary_key=True, 
         server_default=text("gen_random_uuid()")
     )
-    title: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False, index=True, unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_type: Mapped[str] = mapped_column(String, nullable=False)  # 'database' or 'file'
     
