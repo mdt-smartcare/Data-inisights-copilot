@@ -24,13 +24,17 @@ class DataSourceModel(Base):
     source_type = 'file': Uses file fields (original_file_path, duckdb_*, columns_json)
     """
     __tablename__ = "data_sources"
+    __table_args__ = (
+        # Ensure unique titles
+        {"extend_existing": True},
+    )
     
     id: Mapped[str] = mapped_column(
         PGUUID(as_uuid=True), 
         primary_key=True, 
         server_default=text("gen_random_uuid()")
     )
-    title: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String, nullable=False, index=True, unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source_type: Mapped[str] = mapped_column(String, nullable=False)  # 'database' or 'file'
     
@@ -45,6 +49,15 @@ class DataSourceModel(Base):
     duckdb_table_name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     columns_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
     row_count: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    
+    # Processing status (for file sources with background DuckDB processing)
+    processing_status: Mapped[Optional[str]] = mapped_column(
+        String, nullable=True, default="completed"
+    )  # pending, processing, completed, failed
+    processing_progress: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True, default=0
+    )  # 0-100 percent
+    processing_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     created_by: Mapped[Optional[str]] = mapped_column(
         PGUUID(as_uuid=True), 

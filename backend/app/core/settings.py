@@ -235,6 +235,15 @@ class Settings(BaseSettings):
     )
     
     # ============================================
+    # Long-Polling Configuration
+    # ============================================
+    long_polling_timeout_seconds: int = Field(
+        default=30,
+        ge=5,
+        le=60,
+        description="Max seconds to wait for progress changes in long-polling endpoints"
+    )
+    
     # Result Synthesis Configuration
     # ============================================
     skip_result_synthesis: bool = Field(

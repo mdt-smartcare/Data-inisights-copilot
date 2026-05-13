@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.core.models.auth import Role, TokenData
 from app.modules.users.schemas import User  # Use module User schema (matches repository)
 from app.core.utils.logging import get_logger
+from app.core.utils.exceptions import UserInactiveError, AppException
 
 logger = get_logger(__name__)
 
@@ -245,10 +246,7 @@ async def get_current_user(
             if user:
                 # Check if active
                 if not user.is_active:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="User account is inactive"
-                    )
+                    raise UserInactiveError()
                 
                 # Sync super_admin role from Keycloak
                 keycloak_role = map_keycloak_role(claims.roles)
@@ -360,6 +358,9 @@ async def get_current_user(
                 return user
                 
         except HTTPException:
+            raise
+        except AppException:
+            # Re-raise AppException (UserInactiveError, etc.) to be handled by exception handlers
             raise
         except Exception as e:
             logger.error(f"OIDC token validation error: {e}")

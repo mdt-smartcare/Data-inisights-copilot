@@ -1,6 +1,7 @@
 """
 Repository for data source data access operations.
 """
+import logging
 from typing import List, Optional, Tuple, Dict, Any
 from uuid import UUID
 
@@ -8,6 +9,8 @@ from sqlalchemy import and_, or_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.data_sources.models import DataSourceModel
+
+logger = logging.getLogger(__name__)
 
 
 class DataSourceRepository:
@@ -86,6 +89,7 @@ class DataSourceRepository:
         self,
         query: Optional[str] = None,
         source_type: Optional[str] = None,
+        processing_status: Optional[str] = None,
         created_by: Optional[UUID] = None,
         skip: int = 0,
         limit: int = 50,
@@ -105,6 +109,9 @@ class DataSourceRepository:
         
         if source_type:
             filters.append(DataSourceModel.source_type == source_type)
+        
+        if processing_status:
+            filters.append(DataSourceModel.processing_status == processing_status)
         
         if created_by:
             filters.append(DataSourceModel.created_by == created_by)
@@ -160,3 +167,49 @@ class DataSourceRepository:
     ) -> Tuple[List[DataSourceModel], int]:
         """Get data sources by type."""
         return await self.search(source_type=source_type, skip=skip, limit=limit)
+    
+    async def update_processing_status(
+        self,
+        data_source_id: UUID,
+        status: str,
+        progress: int = None,
+        error: str = None,
+        row_count: int = None,
+    ) -> bool:
+        """
+        Update data source processing status.
+        
+        Args:
+            data_source_id: UUID of the data source
+            status: Processing status ('pending', 'processing', 'completed', 'failed')
+            progress: Progress percentage (0-100)
+            error: Error message if status is 'failed'
+            row_count: Final row count if status is 'completed'
+        
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        try:
+            source = await self.db.get(DataSourceModel, data_source_id)
+            if not source:
+                logger.warning(f"Data source not found: {data_source_id}")
+                return False
+            
+            source.processing_status = status
+            
+            if status == "completed":
+                source.processing_progress = 100
+                source.processing_error = None
+                if row_count is not None:
+                    source.row_count = row_count
+            elif status == "failed":
+                if error:
+                    source.processing_error = error
+            elif progress is not None:
+                source.processing_progress = progress
+            
+            await self.db.flush()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update processing status: {e}")
+            return False

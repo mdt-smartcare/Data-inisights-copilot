@@ -78,6 +78,10 @@ class DataSourceService:
             "duckdb_table_name": source.duckdb_table_name,
             "columns_json": source.columns_json,
             "row_count": source.row_count,
+            # Processing status for file sources
+            "processing_status": source.processing_status or "completed",
+            "processing_progress": source.processing_progress or 0,
+            "processing_error": source.processing_error,
             "created_by": source.created_by,
             "created_at": source.created_at,
             "updated_at": source.updated_at,
@@ -101,6 +105,11 @@ class DataSourceService:
         created_by: Optional[UUID] = None,
     ) -> DataSourceResponse:
         """Create a database connection data source."""
+        # Check for duplicate title
+        existing = await self.repo.get_by_title(title)
+        if existing:
+            raise ValueError(f"A data source with title '{title}' already exists")
+        
         data = {
             "title": title,
             "description": description,
@@ -122,8 +131,14 @@ class DataSourceService:
         columns_json: Optional[str] = None,
         row_count: Optional[int] = None,
         created_by: Optional[UUID] = None,
+        processing_status: str = "completed",
     ) -> DataSourceResponse:
         """Create a file-based data source."""
+        # Check for duplicate title
+        existing = await self.repo.get_by_title(title)
+        if existing:
+            raise ValueError(f"A data source with title '{title}' already exists")
+        
         data = {
             "title": title,
             "description": description,
@@ -134,10 +149,235 @@ class DataSourceService:
             "duckdb_table_name": duckdb_table_name,
             "columns_json": columns_json,
             "row_count": row_count,
+            "processing_status": processing_status,
         }
         source = await self.repo.create(data, created_by)
+        # Commit immediately so the record is visible before background tasks run
+        await self.db.commit()
+        await self.db.refresh(source)
         return self._model_to_response(source)
     
+    async def ingest_uploaded_file(
+        self,
+        temp_file_path: str,
+        original_filename: str,
+        file_type: str,
+        file_size: int,
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        created_by: Optional[UUID] = None,
+    ) -> Dict[str, Any]:
+        """
+        Ingest an uploaded file: create data source, copy to storage, start processing.
+        
+        This is the main business logic for file uploads, extracted from the route layer.
+        
+        Args:
+            temp_file_path: Path to the temporary uploaded file
+            original_filename: Original name of the uploaded file
+            file_type: File type without dot (csv, xlsx)
+            file_size: Size of the file in bytes
+            title: Optional title for the data source
+            description: Optional description
+            created_by: UUID of the user uploading
+            
+        Returns:
+            Dict with data_source_id, table_name, columns, column_details, row_count, message
+        """
+        import json
+        import shutil
+        import threading
+        import logging
+        
+        from app.modules.data_sources.utils import (
+            normalize_table_name,
+            extract_file_metadata_fast,
+            get_datasource_source_path,
+            get_relative_datasource_duckdb_path,
+            process_file_for_duckdb_sync,
+        )
+        
+        logger = logging.getLogger(__name__)
+        
+        # Extract columns AND row count in one pass (single file load)
+        metadata = extract_file_metadata_fast(temp_file_path, file_type)
+        columns = metadata["columns"]
+        column_details = metadata["column_details"]
+        row_count = metadata["row_count"]
+        table_name = normalize_table_name(original_filename)
+        
+        # Create data source record FIRST to get the ID for folder naming
+        ds = await self.create_file_source(
+            title=title or original_filename,
+            original_file_path="",  # Will be set after we know the ID
+            file_type=file_type,
+            description=description,
+            duckdb_file_path="",  # Will be set after we know the ID
+            duckdb_table_name="data",  # Always 'data' (one table per data source)
+            columns_json=json.dumps(columns) if columns else None,
+            row_count=row_count,
+            created_by=created_by,
+            processing_status="pending",
+        )
+        data_source_id = ds.id
+        
+        # Copy file to data source's permanent folder
+        permanent_source = get_datasource_source_path(str(data_source_id), original_filename)
+        shutil.copy(temp_file_path, permanent_source)
+        
+        # Update data source with actual paths
+        duckdb_path = get_relative_datasource_duckdb_path(str(data_source_id))
+        await self.update_source(
+            source_id=data_source_id,
+            data={
+                "original_file_path": str(permanent_source),
+                "duckdb_file_path": duckdb_path,
+            },
+        )
+        
+        # Schedule background processing in a separate thread
+        # (threading.Thread runs completely independently of the async event loop)
+        def run_background_task():
+            try:
+                process_file_for_duckdb_sync(
+                    data_source_id=str(data_source_id),
+                    source_path=str(permanent_source),
+                    file_type=file_type,
+                    original_filename=original_filename,
+                    estimated_rows=row_count,
+                )
+            except Exception as e:
+                logger.error(f"Background task failed: {e}", exc_info=True)
+        
+        thread = threading.Thread(target=run_background_task, daemon=True)
+        thread.start()
+        logger.info(f"Background thread started for {original_filename}")
+        
+        message = f"File uploaded ({file_size / (1024*1024):.2f} MB). Processing in background. {len(columns)} columns detected."
+        
+        return {
+            "data_source_id": data_source_id,
+            "table_name": table_name,
+            "columns": columns,
+            "column_details": column_details,
+            "row_count": row_count,
+            "message": message,
+        }
+
+    async def update_processing_status(
+        self,
+        data_source_id: UUID,
+        status: str,
+        progress: int = None,
+        error: str = None,
+        row_count: int = None,
+    ) -> bool:
+        """
+        Update data source processing status.
+        
+        Used by background tasks to report file processing progress.
+        
+        Args:
+            data_source_id: UUID of the data source
+            status: Processing status ('pending', 'processing', 'completed', 'failed')
+            progress: Progress percentage (0-100)
+            error: Error message if status is 'failed'
+            row_count: Final row count if status is 'completed'
+        
+        Returns:
+            True if update succeeded, False otherwise
+        """
+        success = await self.repo.update_processing_status(
+            data_source_id=data_source_id,
+            status=status,
+            progress=progress,
+            error=error,
+            row_count=row_count,
+        )
+        if success:
+            await self.db.commit()
+        return success
+    
+    async def get_processing_progress(
+        self,
+        source_id: UUID,
+        known_status: Optional[str] = None,
+        known_progress: Optional[int] = None,
+        timeout_seconds: int = 30,
+        poll_interval: float = 0.5,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Long-polling method to get processing progress.
+        
+        Waits for status/progress to change from known values, or until timeout.
+        Returns immediately if status differs from known_status or progress differs 
+        from known_progress, or if processing reached a terminal state.
+        
+        Args:
+            source_id: UUID of the data source
+            known_status: Client's current known status (for change detection)
+            known_progress: Client's current known progress (for change detection)
+            timeout_seconds: Maximum time to wait for changes
+            poll_interval: Time between database checks (seconds)
+            
+        Returns:
+            Dict with status, progress, error, row_count, or None if not found
+        """
+        from app.core.database.connection import get_database
+        
+        db = get_database()
+        start_time = time.monotonic()
+        
+        async def get_progress_fresh() -> Optional[Dict[str, Any]]:
+            """Get progress with a fresh session to see committed changes."""
+            async with db.session() as session:
+                result = await session.execute(
+                    text("""
+                        SELECT processing_status, processing_progress, processing_error, row_count
+                        FROM data_sources
+                        WHERE id = CAST(:id AS UUID)
+                    """),
+                    {"id": str(source_id)}
+                )
+                row = result.first()
+                if not row:
+                    return None
+                return {
+                    "status": row[0],
+                    "progress": row[1] or 0,
+                    "error": row[2],
+                    "row_count": row[3],
+                }
+        
+        while (time.monotonic() - start_time) < timeout_seconds:
+            progress_data = await get_progress_fresh()
+            if not progress_data:
+                return None  # Data source not found
+            
+            current_status = progress_data["status"] or "completed"
+            current_progress = progress_data["progress"] or 0
+            
+            # Return immediately if:
+            # - Status changed from known value
+            # - Progress changed from known value
+            # - Processing reached terminal state (no point waiting further)
+            status_changed = known_status is None or current_status != known_status
+            progress_changed = known_progress is None or current_progress != known_progress
+            is_terminal = current_status in ("completed", "failed")
+            
+            if status_changed or progress_changed or is_terminal:
+                return progress_data
+            
+            await asyncio.sleep(poll_interval)
+        
+        # Timeout - return current status (fresh read)
+        return await get_progress_fresh() or {
+            "status": "pending",
+            "progress": 0,
+            "error": None,
+            "row_count": None,
+        }
+
     async def get_source(self, source_id: UUID) -> Optional[DataSourceResponse]:
         """Get data source by ID."""
         source = await self.repo.get_by_id(source_id)
@@ -201,17 +441,9 @@ class DataSourceService:
         
         # Clean up files for file data sources
         if source.source_type == "file":
-            # Delete DuckDB table (and associated CSV) if exists
-            if source.duckdb_table_name and source.created_by:
-                from app.modules.data_sources.utils import delete_duckdb_table
-                delete_duckdb_table(str(source.created_by), source.duckdb_table_name)
-            
-            # Delete original uploaded file if exists
-            if source.original_file_path and os.path.exists(source.original_file_path):
-                try:
-                    os.remove(source.original_file_path)
-                except Exception:
-                    pass  # Best effort cleanup
+            # Delete all files for this data source (DuckDB, CSV, original file)
+            from app.modules.data_sources.utils import delete_datasource_files
+            delete_datasource_files(str(source_id))
         
         # Delete the database record
         deleted = await self.repo.delete(source_id)
@@ -241,6 +473,7 @@ class DataSourceService:
         self,
         query: Optional[str] = None,
         source_type: Optional[str] = None,
+        processing_status: Optional[str] = None,
         created_by: Optional[UUID] = None,
         skip: int = 0,
         limit: int = 50,
@@ -249,6 +482,7 @@ class DataSourceService:
         sources, total = await self.repo.search(
             query=query,
             source_type=source_type,
+            processing_status=processing_status,
             created_by=created_by,
             skip=skip,
             limit=limit,
@@ -740,123 +974,19 @@ class DataSourceService:
         }
 
     # ==========================================
-    # File Ingestion Methods
+    # SQL Execution Methods
     # ==========================================
-    
-    async def ingest_file(
-        self,
-        file_path: str,
-        original_filename: str,
-        file_type: str,
-        user_id: str,
-        title: Optional[str] = None,
-        description: Optional[str] = None,
-        process_sync: bool = True,
-    ) -> Dict[str, Any]:
-        """
-        Ingest a file and create corresponding data source.
-        
-        For CSV/Excel: Creates DuckDB table for SQL queries
-        For all: Returns document previews for RAG
-        
-        Args:
-            file_path: Path to the uploaded file
-            original_filename: Original name of uploaded file
-            file_type: File extension (csv, xlsx, pdf, json)
-            user_id: ID of the user uploading
-            title: Optional title (defaults to filename)
-            description: Optional description
-            process_sync: If True, process immediately. If False, return immediately.
-            
-        Returns:
-            Dict with processing results and data_source_id
-        """
-        from app.modules.data_sources.utils import (
-            normalize_table_name,
-            process_file_for_duckdb,
-            get_file_row_count_estimate,
-        )
-        
-        table_name = None
-        columns = None
-        column_details = None
-        row_count = None
-        duckdb_file_path = None
-        csv_path = None
-        
-        # Process for SQL support (CSV and Excel)
-        sql_supported = {'csv', 'xlsx'}
-        
-        if file_type.lower() in sql_supported:
-            table_name = normalize_table_name(original_filename)
-            
-            if process_sync:
-                try:
-                    result = process_file_for_duckdb(
-                        user_id=user_id,
-                        table_name=table_name,
-                        source_path=file_path,
-                        file_type=file_type.lower(),
-                        original_filename=original_filename,
-                    )
-                    columns = result["columns"]
-                    row_count = result["row_count"]
-                    csv_path = result["csv_path"]
-                    duckdb_file_path = result["duckdb_path"]
-                    
-                    # Get column types
-                    from app.modules.data_sources.utils import get_table_schema
-                    schema_info = get_table_schema(user_id, table_name)
-                    if schema_info:
-                        column_details = [
-                            {"name": col["column_name"], "type": col["data_type"]}
-                            for col in schema_info
-                        ]
-                except Exception as e:
-                    return {
-                        "status": "error",
-                        "error": f"SQL processing failed: {str(e)}",
-                        "data_source_id": None,
-                    }
-            else:
-                row_count = get_file_row_count_estimate(file_path, file_type.lower())
-        
-        # Create data source record
-        import json
-        from uuid import UUID
-        
-        data_source = await self.create_file_source(
-            title=title or original_filename,
-            original_file_path=file_path,
-            file_type=file_type.lower(),
-            description=description,
-            duckdb_file_path=duckdb_file_path,
-            duckdb_table_name=table_name,
-            columns_json=json.dumps(columns) if columns else None,
-            row_count=row_count,
-            created_by=UUID(user_id) if user_id else None,
-        )
-        
-        return {
-            "status": "success",
-            "data_source_id": str(data_source.id),
-            "table_name": table_name,
-            "columns": columns,
-            "column_details": column_details,
-            "row_count": row_count,
-            "csv_path": csv_path,
-            "duckdb_path": duckdb_file_path,
-        }
     
     async def execute_sql(
         self,
-        user_id: str,
+        data_source_id: str,
         query: str,
         max_rows: int = 10000,
     ) -> Dict[str, Any]:
         """
-        Execute SQL query against user's uploaded files via DuckDB.
+        Execute SQL query against a data source via DuckDB.
         
+        Note: The table is always named 'data' in each data source's DuckDB.
         Only SELECT queries are allowed for security.
         """
         from app.modules.data_sources.utils import execute_duckdb_query
@@ -875,12 +1005,27 @@ class DataSourceService:
                 "error": "Only SELECT queries are allowed for security.",
             }
         
-        result = execute_duckdb_query(user_id, query, max_rows)
+        result = execute_duckdb_query(data_source_id, query, max_rows)
         result["query"] = query
         return result
     
+    async def get_datasource_metadata(self, data_source_id: str) -> Optional[Dict[str, Any]]:
+        """Get metadata for a data source's DuckDB."""
+        from app.modules.data_sources.utils import get_datasource_metadata
+        return get_datasource_metadata(data_source_id)
+    
+    async def get_datasource_schema(self, data_source_id: str) -> Optional[Dict[str, Any]]:
+        """Get schema for a data source."""
+        from app.modules.data_sources.utils import get_datasource_schema
+        
+        schema = get_datasource_schema(data_source_id)
+        if schema:
+            return {"data_source_id": data_source_id, "schema": schema}
+        return None
+
+    # Legacy methods (deprecated - for backward compatibility)
     async def get_sql_tables(self, user_id: str) -> Dict[str, Any]:
-        """List all SQL tables available for a user."""
+        """DEPRECATED: Use data source list endpoint instead."""
         from app.modules.data_sources.utils import list_duckdb_tables
         
         tables = list_duckdb_tables(user_id)
@@ -891,7 +1036,7 @@ class DataSourceService:
         user_id: str,
         table_name: str,
     ) -> Optional[Dict[str, Any]]:
-        """Get schema for a specific table."""
+        """DEPRECATED: Use get_datasource_schema instead."""
         from app.modules.data_sources.utils import get_table_schema
         
         schema = get_table_schema(user_id, table_name)
@@ -904,11 +1049,11 @@ class DataSourceService:
         user_id: str,
         table_name: str,
     ) -> bool:
-        """Delete a SQL table and its data."""
+        """DEPRECATED: Use delete_source instead (deletes entire data source)."""
         from app.modules.data_sources.utils import delete_duckdb_table
         return delete_duckdb_table(user_id, table_name)
     
     async def delete_all_sql_tables(self, user_id: str) -> bool:
-        """Delete all SQL tables for a user."""
+        """DEPRECATED: Delete data sources individually instead."""
         from app.modules.data_sources.utils import delete_all_user_tables
         return delete_all_user_tables(user_id)
