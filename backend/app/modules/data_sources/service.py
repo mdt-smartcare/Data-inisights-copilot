@@ -558,8 +558,9 @@ class DataSourceService:
             # Use asyncio.to_thread to run the blocking SQLAlchemy reflection code
             schema_info = await asyncio.to_thread(self._reflect_schema_sync, source)
             
-            # Cache the result
-            self._schema_cache[source_id] = (time.time(), schema_info)
+            # Only cache successful results (don't cache errors like timeouts)
+            if "error" not in schema_info:
+                self._schema_cache[source_id] = (time.time(), schema_info)
             return schema_info
             
         # Handle file sources
