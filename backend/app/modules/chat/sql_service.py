@@ -28,7 +28,7 @@ from app.core.utils.logging import get_logger
 from app.core.settings import get_settings
 from app.core.prompts import get_sql_generator_prompt, get_duckdb_sql_rules_prompt
 from app.core.encryption import decrypt_value
-from app.core.utils.exceptions import IrrelevantQueryException
+from app.core.utils.exceptions import IrrelevantQueryException, DatabaseConnectionError
 from app.modules.sql_examples.store import get_sql_examples_store, SQLExamplesStore
 from app.modules.chat.query.query_relevance_checker import (
     get_query_relevance_checker,
@@ -783,11 +783,17 @@ class SQLService:
         if self._engine is not None:
             return self._engine
         
-        # Use thread-safe cache with tenant isolation
+        # Use thread-safe cache with tenant isolation and fast-fail timeout
         try:
+            # Add connect_timeout for PostgreSQL to fail fast when database is unavailable
+            engine_kwargs = {}
+            if not self._is_duckdb():
+                engine_kwargs["connect_args"] = {"connect_timeout": 3}
+            
             self._engine = self._engine_cache.get_or_create(
                 db_url=self._db_url,
-                tenant_id=self._tenant_id
+                tenant_id=self._tenant_id,
+                **engine_kwargs
             )
             
             # Load ICU extension for DuckDB
@@ -884,8 +890,10 @@ class SQLService:
             return self._table_names
             
         except Exception as e:
-            logger.error(f"Failed to discover tables: {e}")
-            return []
+            logger.error(f"Database connection failed: {e}")
+            raise DatabaseConnectionError(
+                f"Cannot connect to database. Please ensure the database is running and accessible."
+            ) from e
     
     def get_schema_context(self, max_tables: int = 10) -> str:
         """
@@ -897,6 +905,7 @@ class SQLService:
         if self._cached_schema:
             return self._cached_schema
         
+        # This will raise DatabaseConnectionError if database is unavailable
         tables = self._discover_tables()[:max_tables]
         engine = self._get_engine()
         

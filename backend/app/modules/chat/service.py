@@ -702,6 +702,9 @@ class ChatService:
                 
         except RequestCancelled:
             yield {"event": StreamEventType.ERROR, "data": {"message": "Request cancelled"}, "trace_id": trace_id}
+        except AppException as e:
+            logger.error(f"Stream query failed: {e.message}", exc_info=True)
+            yield {"event": StreamEventType.ERROR, "data": {"message": e.message, "error_code": e.error_code}, "trace_id": trace_id}
         except Exception as e:
             logger.error(f"Stream query failed: {e}", exc_info=True)
             yield {"event": StreamEventType.ERROR, "data": {"message": str(e)}, "trace_id": trace_id}
