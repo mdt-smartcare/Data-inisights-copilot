@@ -1028,7 +1028,8 @@ class ChatService:
             tracing_ctx.add_span("sql_filter", input=classification.sql_filter)
             
             try:
-                filter_result = sql_service.run(classification.sql_filter)
+                # Use asyncio.to_thread to prevent blocking the event loop
+                filter_result = await asyncio.to_thread(sql_service.run, classification.sql_filter)
                 
                 # Parse IDs from result
                 import ast

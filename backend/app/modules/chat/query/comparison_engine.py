@@ -6,6 +6,7 @@ with SQL queries, executes them, and synthesizes cross-validated insights.
 
 Inspired by Data Literacy 2.0's `generate_comparison_questions_new` pipeline.
 """
+import asyncio
 import json
 import re
 from typing import Optional, List, Dict, Any
@@ -84,7 +85,8 @@ async def generate_comparison_insights(
             HumanMessage(content="Generate comparison questions now.")
         ]
         
-        response = llm.invoke(messages)
+        # Use asyncio.to_thread to prevent blocking the event loop during LLM call
+        response = await asyncio.to_thread(llm.invoke, messages)
         raw_output = response.content.strip()
         
         # Step 2: Parse the JSON response 
@@ -110,7 +112,10 @@ async def generate_comparison_insights(
             
             try:
                 # Use longer timeout for comparison queries (45s) - they can be complex
-                results, count = sql_service.execute_query(sql, timeout_seconds=45)
+                # Use asyncio.to_thread to prevent blocking the event loop during SQL execution
+                results, count = await asyncio.to_thread(
+                    sql_service.execute_query, sql, timeout_seconds=45
+                )
                 formatted = sql_service._format_results(results, count)
                 comparison_results.append({
                     "question": q,

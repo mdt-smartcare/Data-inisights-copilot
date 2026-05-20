@@ -94,15 +94,13 @@ async def prewarm_embedding_models():
         # Filter to local models only (HuggingFace, sentence-transformers, BGE)
         local_models = []
         for m in models:
-            model_name = m.model_name.lower() if m.model_name else ""
-            provider = m.provider.lower() if m.provider else ""
+            model_id = m.model_id.lower() if m.model_id else ""
+            provider = m.provider_name.lower() if m.provider_name else ""
+            deployment_type = m.deployment_type.lower() if m.deployment_type else ""
             
             # Check if it's a local model (not API-based)
-            if any(p in provider for p in ("huggingface", "sentence", "local")) or \
-               any(pattern in model_name for pattern in ("bge-", "bge_", "e5-", "gte-", "all-minilm", "sentence-")):
-                # Build full model name with provider prefix
-                full_name = f"{m.provider}/{m.model_name}" if m.provider else m.model_name
-                local_models.append(full_name)
+            if deployment_type == "local":
+                local_models.append(m.model_id)
         
         if not local_models:
             logger.info("No local embedding models to pre-warm (all are API-based)")
@@ -240,9 +238,12 @@ if not settings.debug:
 # Request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log incoming requests with context."""
+    """Log incoming requests with context and timing."""
     # Generate request ID
     request_id = request.headers.get("X-Request-ID", str(id(request)))
+    
+    # Record start time
+    start_time = time.perf_counter()
     
     # Bind context for this request
     bind_context(
@@ -253,7 +254,7 @@ async def log_requests(request: Request, call_next):
     
     # Log request immediately when received (before processing)
     logger.info(
-        "Request received",
+        "⬇️ Request received",
         method=request.method,
         path=request.url.path
     )
@@ -264,21 +265,45 @@ async def log_requests(request: Request, call_next):
     try:
         response = await call_next(request)
         
-        logger.info(
-            "Request completed",
-            status_code=response.status_code
-        )
+        # Calculate request duration
+        duration_ms = (time.perf_counter() - start_time) * 1000
         
-        # Add request ID to response headers
+        # Log completion with duration and severity based on time
+        if duration_ms > 10000:  # > 10 seconds
+            logger.error(
+                "⬆️ Request completed VERY SLOW",
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2),
+                duration_s=round(duration_ms / 1000, 2)
+            )
+        elif duration_ms > 5000:  # > 5 seconds
+            logger.warning(
+                "⬆️ Request completed SLOW",
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2),
+                duration_s=round(duration_ms / 1000, 2)
+            )
+        else:
+            logger.info(
+                "⬆️ Request completed",
+                status_code=response.status_code,
+                duration_ms=round(duration_ms, 2)
+            )
+        
+        # Add request ID and timing to response headers
         response.headers["X-Request-ID"] = request_id
+        response.headers["X-Response-Time"] = f"{duration_ms:.2f}ms"
         
         return response
     except Exception as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        
         # Log any unhandled exceptions that would otherwise crash silently
         logger.error(
-            "Request crashed",
+            "❌ Request crashed",
             error=str(e),
-            error_type=type(e).__name__
+            error_type=type(e).__name__,
+            duration_ms=round(duration_ms, 2)
         )
         sys.stdout.flush()
         raise

@@ -1376,7 +1376,9 @@ class SQLService:
                     )
                     logger.info("QueryPlanner initialized for structured planning")
                 
-                query_plan = self._query_planner.plan(
+                # Wrap synchronous LLM call in executor to prevent blocking event loop
+                query_plan = await asyncio.to_thread(
+                    self._query_planner.plan,
                     question=natural_language_query,
                     schema_context=schema,
                     data_dictionary_context=self._get_data_dictionary_context(),
@@ -1529,7 +1531,9 @@ class SQLService:
                     self._semantic_cache.set_embed_fn(lambda text: embed_fn([text])[0])
                     logger.debug(f"Semantic cache using embedding model: {self._embedding_model}")
                 
-                cache_result = self._semantic_cache.get(
+                # Use asyncio.to_thread to prevent blocking the event loop during embedding
+                cache_result = await asyncio.to_thread(
+                    self._semantic_cache.get,
                     nl_query=natural_language_query,
                     current_schema_hash=schema_hash
                 )
@@ -1545,7 +1549,8 @@ class SQLService:
                     phase_timings["semantic_cache_lookup"] = perf_time.perf_counter() - phase_start
                     
                     exec_start = perf_time.perf_counter()
-                    results, count = self.execute_query(sql)
+                    # Use asyncio.to_thread to prevent blocking the event loop
+                    results, count = await asyncio.to_thread(self.execute_query, sql)
                     phase_timings["sql_execution"] = perf_time.perf_counter() - exec_start
                     execution_time = time.time() - start_time
                     
@@ -1642,10 +1647,13 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     chain = prompt | llm
                 
                 # Generate SQL using LLM (with optional tracing callback)
+                # Wrap synchronous LLM call in executor to prevent blocking event loop
                 llm_gen_start = perf_time.perf_counter()
-                response = chain.invoke(
-                    {"schema": schema, "question": natural_language_query},
-                    config=llm_config
+                response = await asyncio.to_thread(
+                    lambda: chain.invoke(
+                        {"schema": schema, "question": natural_language_query},
+                        config=llm_config
+                    )
                 )
                 phase_timings["llm_sql_generation"] += perf_time.perf_counter() - llm_gen_start
                 
@@ -1804,7 +1812,8 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 
                 # Execute the generated SQL using read-only session
                 exec_start = perf_time.perf_counter()
-                results, count = self.execute_query(sql)
+                # Use asyncio.to_thread to prevent blocking the event loop
+                results, count = await asyncio.to_thread(self.execute_query, sql)
                 phase_timings["sql_execution"] += perf_time.perf_counter() - exec_start
                 
                 # Success! Format and return results
@@ -1839,7 +1848,9 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 cache_store_start = perf_time.perf_counter()
                 if self._semantic_cache and self._enable_semantic_cache and schema_hash:
                     try:
-                        self._semantic_cache.put(
+                        # Use asyncio.to_thread to prevent blocking the event loop during embedding
+                        await asyncio.to_thread(
+                            self._semantic_cache.put,
                             nl_query=natural_language_query,
                             generated_sql=sql,
                             schema_hash=schema_hash

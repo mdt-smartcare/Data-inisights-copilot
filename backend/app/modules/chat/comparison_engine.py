@@ -121,7 +121,11 @@ async def generate_comparison_insights(
             
             try:
                 # Shorter per-query timeout to fit within budget
-                results, count = sql_service.execute_query(sql, timeout_seconds=PER_QUERY_TIMEOUT)
+                # Use asyncio.to_thread to prevent blocking the event loop
+                import asyncio
+                results, count = await asyncio.to_thread(
+                    sql_service.execute_query, sql, timeout_seconds=PER_QUERY_TIMEOUT
+                )
                 formatted = sql_service._format_results(results, count)
                 comparison_results.append({
                     "question": q,
