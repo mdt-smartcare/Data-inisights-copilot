@@ -112,7 +112,11 @@ export default function DataSourcesPage() {
   // ============================================
 
   const handleCreateDatabase = async () => {
-    if (!formState.title || !formState.db_url || !formState.db_engine_type) {
+    const title = formState.title.trim();
+    const description = formState.description.trim();
+    const db_url = formState.db_url.trim();
+
+    if (!title || !db_url || !formState.db_engine_type) {
       setFormError('Please fill in all required fields');
       return;
     }
@@ -121,10 +125,10 @@ export default function DataSourcesPage() {
       setFormLoading(true);
       setFormError(null);
       await createDatabaseSource({
-        title: formState.title,
-        description: formState.description || undefined,
+        title,
+        description: description || undefined,
         source_type: 'database',
-        db_url: formState.db_url,
+        db_url,
         db_engine_type: formState.db_engine_type,
       });
       setModalType(null);
@@ -163,10 +167,13 @@ export default function DataSourcesPage() {
       setFormError(null);
       setUploadProgress('Uploading...');
 
+      const title = formState.title.trim();
+      const description = formState.description.trim();
+
       const result = await uploadDataSourceFile(
         selectedFile,
-        formState.title || undefined,
-        formState.description || undefined
+        title || undefined,
+        description || undefined
       );
 
       // Close modal and refresh list immediately to show the pending source
@@ -241,9 +248,9 @@ export default function DataSourcesPage() {
     setFormState({
       title: source.title,
       description: source.description || '',
-      // Don't pre-fill db_url - it's no longer returned for security
-      // User must re-enter if they want to change it
-      db_url: '',
+      // Show the masked URL (e.g., postgresql://user:****@host:5432/db)
+      // User can see what's configured; if they change it, the new URL will be used
+      db_url: source.db_url || '',
       db_engine_type: source.db_engine_type || 'postgresql',
     });
     setFormError(null);
@@ -253,7 +260,12 @@ export default function DataSourcesPage() {
 
   const handleUpdateDataSource = async () => {
     if (!editingSource) return;
-    if (!formState.title.trim()) {
+
+    const title = formState.title.trim();
+    const description = formState.description.trim();
+    const db_url = formState.db_url.trim();
+
+    if (!title) {
       setFormError('Name is required');
       return;
     }
@@ -264,17 +276,18 @@ export default function DataSourcesPage() {
 
       const updateData: { title?: string; description?: string; db_url?: string; db_engine_type?: string } = {};
 
-      // Only send changed fields
-      if (formState.title !== editingSource.title) {
-        updateData.title = formState.title;
+      // Only send changed fields (compare trimmed values)
+      if (title !== editingSource.title) {
+        updateData.title = title;
       }
-      if (formState.description !== (editingSource.description || '')) {
-        updateData.description = formState.description || undefined;
+      if (description !== (editingSource.description || '')) {
+        updateData.description = description || undefined;
       }
       if (editingSource.source_type === 'database') {
-        // Only update db_url if user provided a new one
-        if (formState.db_url.trim()) {
-          updateData.db_url = formState.db_url;
+        // Only update db_url if user changed it from the original masked value
+        // The masked URL contains '****', so we check if it changed AND isn't the same masked URL
+        if (db_url && db_url !== (editingSource.db_url || '')) {
+          updateData.db_url = db_url;
         }
         if (formState.db_engine_type !== editingSource.db_engine_type) {
           updateData.db_engine_type = formState.db_engine_type;
@@ -688,7 +701,7 @@ export default function DataSourcesPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Connection URL <span className="text-red-500">*</span>
+                    Connection URL {!editingSource && <span className="text-red-500">*</span>}
                   </label>
                   <input
                     type="text"
@@ -701,6 +714,10 @@ export default function DataSourcesPage() {
                   {isEditingInUse ? (
                     <p className="mt-1 text-xs text-amber-600">
                       Cannot change while in use by active agent(s)
+                    </p>
+                  ) : editingSource ? (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Credentials are masked for security. Enter a new URL only if you want to change the connection.
                     </p>
                   ) : (
                     <p className="mt-1 text-xs text-gray-500">

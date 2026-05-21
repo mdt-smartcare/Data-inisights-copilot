@@ -463,7 +463,7 @@ class DataSourceService:
         query = (
             select(AgentConfigModel.id)
             .where(AgentConfigModel.data_source_id == source_id)
-            .where(AgentConfigModel.is_active == True)
+            .where(AgentConfigModel.is_active == 1)  # is_active is Integer (0 or 1), not Boolean
             .limit(1)
         )
         result = await self.db.execute(query)
