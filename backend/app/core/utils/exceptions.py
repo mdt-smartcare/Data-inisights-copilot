@@ -201,10 +201,12 @@ class InvalidConfigurationError(ValidationError):
 class DatabaseError(AppException):
     """Raised when a database operation fails."""
     def __init__(self, message: str = "Database operation failed", **kwargs):
+        # Set default error_code if not provided by subclass
+        if 'error_code' not in kwargs:
+            kwargs['error_code'] = "DATABASE_ERROR"
         super().__init__(
             message=message,
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            error_code="DATABASE_ERROR",
             **kwargs
         )
 

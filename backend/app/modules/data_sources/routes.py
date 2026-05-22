@@ -186,6 +186,14 @@ async def get_data_source_schema(
     """
     try:
         schema_data = await service.get_schema(source_id)
+        
+        # Check if schema retrieval failed (e.g., connection timeout)
+        if "error" in schema_data:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Failed to connect to database: {schema_data['error']}"
+            )
+        
         # Convert to response model
         tables = [
             TableSchemaResponse(

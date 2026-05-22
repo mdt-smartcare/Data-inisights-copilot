@@ -253,13 +253,13 @@ export const ConfigHistoryTab: React.FC<ConfigHistoryTabProps> = ({
                                         {getStatusBadge(config.status, config.is_active)}
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap">
-                                        <span className="text-sm text-gray-700">{config.data_source_name || '-'}</span>
+                                        <span className="text-sm text-gray-700">{config.data_source_name || 'N/A'}</span>
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap">
-                                        <span className="text-sm text-gray-700">{config.llm_model_name || '-'}</span>
+                                        <span className="text-sm text-gray-700">{config.llm_model_name || 'N/A'}</span>
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap">
-                                        <span className="text-sm text-gray-700">{config.embedding_model_name || '-'}</span>
+                                        <span className="text-sm text-gray-700">{config.embedding_model_name || 'N/A'}</span>
                                     </td>
                                     <td className="px-4 py-3 whitespace-nowrap">
                                         {getEmbeddingBadge(config.embedding_status)}
@@ -458,7 +458,7 @@ const ConfigDetailModal: React.FC<ConfigDetailModalProps> = ({ config, isLoading
                             <div className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Name</span>
-                                    <span className="font-medium text-gray-900">{config.data_source?.title || '-'}</span>
+                                    <span className="font-medium text-gray-900">{config.data_source?.title || 'N/A'}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Tables</span>
@@ -480,15 +480,15 @@ const ConfigDetailModal: React.FC<ConfigDetailModalProps> = ({ config, isLoading
                             <div className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Model</span>
-                                    <span className="font-medium text-gray-900">{String(llmConf.model || 'gpt-4o')}</span>
+                                    <span className="font-medium text-gray-900">{config.llm_model?.display_name || llmConf.model ? String(config.llm_model?.display_name || llmConf.model) : 'N/A'}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Temperature</span>
-                                    <span className="font-medium text-gray-900">{String(llmConf.temperature ?? 0)}</span>
+                                    <span className="font-medium text-gray-900">{llmConf.temperature !== undefined && llmConf.temperature !== null ? String(llmConf.temperature) : 'N/A'}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Max Tokens</span>
-                                    <span className="font-medium text-gray-900">{String(llmConf.maxTokens || llmConf.max_tokens || 4096)}</span>
+                                    <span className="font-medium text-gray-900">{llmConf.maxTokens || llmConf.max_tokens ? String(llmConf.maxTokens || llmConf.max_tokens) : 'N/A'}</span>
                                 </div>
                             </div>
                         </div>
@@ -502,16 +502,14 @@ const ConfigDetailModal: React.FC<ConfigDetailModalProps> = ({ config, isLoading
                             <div className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Model</span>
-                                    <span className="font-medium text-gray-900">{String(embConf.model || 'BAAI/bge-m3')}</span>
+                                    <span className="font-medium text-gray-900">{config.embedding_model?.display_name || embConf.model ? String(config.embedding_model?.display_name || embConf.model) : 'N/A'}</span>
                                 </div>
-                                {config.vector_collection_name && (
-                                    <div className="flex justify-between">
-                                        <span className="text-gray-500">Collection</span>
-                                        <span className="font-medium text-gray-900 truncate max-w-[150px]" title={config.vector_collection_name}>
-                                            {config.vector_collection_name}
-                                        </span>
-                                    </div>
-                                )}
+                                <div className="flex justify-between">
+                                    <span className="text-gray-500">Collection</span>
+                                    <span className="font-medium text-gray-900 truncate max-w-[150px]" title={config.vector_collection_name || 'N/A'}>
+                                        {config.vector_collection_name || 'N/A'}
+                                    </span>
+                                </div>
                             </div>
                         </div>
 
@@ -524,16 +522,18 @@ const ConfigDetailModal: React.FC<ConfigDetailModalProps> = ({ config, isLoading
                             <div className="space-y-2 text-sm">
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Top-K Initial</span>
-                                    <span className="font-medium text-gray-900">{String(ragConf.topKInitial || ragConf.top_k_initial || 50)}</span>
+                                    <span className="font-medium text-gray-900">{ragConf.topKInitial || ragConf.top_k_initial ? String(ragConf.topKInitial || ragConf.top_k_initial) : 'N/A'}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Top-K Final</span>
-                                    <span className="font-medium text-gray-900">{String(ragConf.topKFinal || ragConf.top_k_final || 10)}</span>
+                                    <span className="font-medium text-gray-900">{ragConf.topKFinal || ragConf.top_k_final ? String(ragConf.topKFinal || ragConf.top_k_final) : 'N/A'}</span>
                                 </div>
                                 <div className="flex justify-between">
                                     <span className="text-gray-500">Reranking</span>
                                     <span className="font-medium text-gray-900">
-                                        {ragConf.rerankEnabled || ragConf.rerank_enabled ? 'Enabled' : 'Disabled'}
+                                        {ragConf.rerankEnabled !== undefined || ragConf.reranking_enabled !== undefined 
+                                            ? (ragConf.rerankEnabled || ragConf.reranking_enabled ? 'Enabled' : 'Disabled')
+                                            : 'N/A'}
                                     </span>
                                 </div>
                             </div>

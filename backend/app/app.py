@@ -94,15 +94,13 @@ async def prewarm_embedding_models():
         # Filter to local models only (HuggingFace, sentence-transformers, BGE)
         local_models = []
         for m in models:
-            model_name = m.model_name.lower() if m.model_name else ""
-            provider = m.provider.lower() if m.provider else ""
+            model_id = m.model_id.lower() if m.model_id else ""
+            provider = m.provider_name.lower() if m.provider_name else ""
+            deployment_type = m.deployment_type.lower() if m.deployment_type else ""
             
             # Check if it's a local model (not API-based)
-            if any(p in provider for p in ("huggingface", "sentence", "local")) or \
-               any(pattern in model_name for pattern in ("bge-", "bge_", "e5-", "gte-", "all-minilm", "sentence-")):
-                # Build full model name with provider prefix
-                full_name = f"{m.provider}/{m.model_name}" if m.provider else m.model_name
-                local_models.append(full_name)
+            if deployment_type == "local":
+                local_models.append(m.model_id)
         
         if not local_models:
             logger.info("No local embedding models to pre-warm (all are API-based)")
@@ -237,53 +235,6 @@ if not settings.debug:
     )
 
 
-# Request logging middleware
-@app.middleware("http")
-async def log_requests(request: Request, call_next):
-    """Log incoming requests with context."""
-    # Generate request ID
-    request_id = request.headers.get("X-Request-ID", str(id(request)))
-    
-    # Bind context for this request
-    bind_context(
-        request_id=request_id,
-        method=request.method,
-        path=request.url.path
-    )
-    
-    # Log request immediately when received (before processing)
-    logger.info(
-        "Request received",
-        method=request.method,
-        path=request.url.path
-    )
-    
-    # Flush to ensure log is written immediately
-    sys.stdout.flush()
-    
-    try:
-        response = await call_next(request)
-        
-        logger.info(
-            "Request completed",
-            status_code=response.status_code
-        )
-        
-        # Add request ID to response headers
-        response.headers["X-Request-ID"] = request_id
-        
-        return response
-    except Exception as e:
-        # Log any unhandled exceptions that would otherwise crash silently
-        logger.error(
-            "Request crashed",
-            error=str(e),
-            error_type=type(e).__name__
-        )
-        sys.stdout.flush()
-        raise
-    finally:
-        clear_context()
 
 
 # ============================================

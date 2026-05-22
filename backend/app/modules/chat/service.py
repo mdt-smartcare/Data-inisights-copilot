@@ -702,6 +702,9 @@ class ChatService:
                 
         except RequestCancelled:
             yield {"event": StreamEventType.ERROR, "data": {"message": "Request cancelled"}, "trace_id": trace_id}
+        except AppException as e:
+            logger.error(f"Stream query failed: {e.message}", exc_info=True)
+            yield {"event": StreamEventType.ERROR, "data": {"message": e.message, "error_code": e.error_code}, "trace_id": trace_id}
         except Exception as e:
             logger.error(f"Stream query failed: {e}", exc_info=True)
             yield {"event": StreamEventType.ERROR, "data": {"message": str(e)}, "trace_id": trace_id}
@@ -1025,7 +1028,8 @@ class ChatService:
             tracing_ctx.add_span("sql_filter", input=classification.sql_filter)
             
             try:
-                filter_result = sql_service.run(classification.sql_filter)
+                # Use asyncio.to_thread to prevent blocking the event loop
+                filter_result = await asyncio.to_thread(sql_service.run, classification.sql_filter)
                 
                 # Parse IDs from result
                 import ast

@@ -463,7 +463,7 @@ class DataSourceService:
         query = (
             select(AgentConfigModel.id)
             .where(AgentConfigModel.data_source_id == source_id)
-            .where(AgentConfigModel.is_active == True)
+            .where(AgentConfigModel.is_active == 1)  # is_active is Integer (0 or 1), not Boolean
             .limit(1)
         )
         result = await self.db.execute(query)
@@ -558,8 +558,9 @@ class DataSourceService:
             # Use asyncio.to_thread to run the blocking SQLAlchemy reflection code
             schema_info = await asyncio.to_thread(self._reflect_schema_sync, source)
             
-            # Cache the result
-            self._schema_cache[source_id] = (time.time(), schema_info)
+            # Only cache successful results (don't cache errors like timeouts)
+            if "error" not in schema_info:
+                self._schema_cache[source_id] = (time.time(), schema_info)
             return schema_info
             
         # Handle file sources
