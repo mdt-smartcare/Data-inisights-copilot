@@ -31,12 +31,39 @@ _COLUMN_TYPO_CORRECTIONS = {
     r'\bupdated_att\b': 'updated_at',
 }
 
+# Pattern to fix birth_date calculations on patient_tracker_gold
+# patient_tracker_gold has 'age' column directly, not birth_date
+_BIRTH_DATE_AGE_PATTERN = re.compile(
+    r"EXTRACT\s*\(\s*YEAR\s+FROM\s+AGE\s*\(\s*CURRENT_DATE\s*,\s*pt\.birth_date\s*\)\s*\)",
+    re.IGNORECASE
+)
+
 
 def _fix_common_typos(sql: str) -> str:
     """Fix common LLM-generated column name typos."""
     fixed_sql = sql
     for pattern, replacement in _COLUMN_TYPO_CORRECTIONS.items():
         fixed_sql = re.sub(pattern, replacement, fixed_sql, flags=re.IGNORECASE)
+    return fixed_sql
+
+
+def _fix_birth_date_to_age(sql: str) -> str:
+    """
+    Fix LLM mistakes where it tries to calculate age from birth_date on patient_tracker_gold.
+    patient_tracker_gold has a direct 'age' column, not birth_date.
+    """
+    # Replace EXTRACT(YEAR FROM AGE(CURRENT_DATE, pt.birth_date)) with pt.age
+    fixed_sql = _BIRTH_DATE_AGE_PATTERN.sub("pt.age", sql)
+    
+    # Also fix direct references to pt.birth_date (e.g., in WHEN clauses)
+    # Replace "pt.birth_date IS NULL" with "pt.age IS NULL"
+    fixed_sql = re.sub(
+        r'\bpt\.birth_date\b',
+        'pt.age',
+        fixed_sql,
+        flags=re.IGNORECASE
+    )
+    
     return fixed_sql
 
 
@@ -107,6 +134,8 @@ async def generate_comparison_insights(
                 
             # Fix common LLM typos (e.g., ynd → ymd)
             sql = _fix_common_typos(sql)
+            # Fix birth_date → age for patient_tracker_gold
+            sql = _fix_birth_date_to_age(sql)
             
             try:
                 # Use longer timeout for comparison queries (45s) - they can be complex

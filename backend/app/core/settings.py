@@ -235,6 +235,18 @@ class Settings(BaseSettings):
     )
     
     # ============================================
+    # FastSQL Optimized Pipeline (DEFAULT: enabled)
+    # ============================================
+    enable_fast_sql: bool = Field(
+        default=True,
+        description=(
+            "Enable FastSQL optimized pipeline (default: True). "
+            "Uses template matching for common queries (~5ms), single LLM call, "
+            "pre-compiled schema, and query memory. Set to False to use legacy pipeline."
+        )
+    )
+    
+    # ============================================
     # Result Synthesis Configuration
     # ============================================
     skip_result_synthesis: bool = Field(

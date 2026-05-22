@@ -192,10 +192,13 @@ class QueryValidator:
         return result
     
     def _extract_tables_from_sql(self, sql: str) -> List[str]:
-        """Extract table names from SQL query."""
+        """Extract table names from SQL query, excluding CTE names."""
         tables = set()
         
-        # First, remove SQL function expressions that contain 'FROM' internally
+        # First, extract CTE names so we don't flag them as invalid tables
+        cte_names = self._extract_cte_names(sql)
+        
+        # Remove SQL function expressions that contain 'FROM' internally
         # to avoid false positives like EXTRACT(year FROM column_name)
         sql_cleaned = self._remove_function_from_expressions(sql)
         
@@ -215,9 +218,45 @@ class QueryValidator:
                 if match.upper() not in {'SELECT', 'WHERE', 'AND', 'OR', 'ON', 
                                           'LEFT', 'RIGHT', 'INNER', 'OUTER', 'CROSS',
                                           'GROUP', 'ORDER', 'HAVING', 'LIMIT', 'OFFSET'}:
-                    tables.add(match)
+                    # Exclude CTE names (case-insensitive comparison)
+                    if match.lower() not in cte_names:
+                        tables.add(match)
         
         return list(tables)
+    
+    def _extract_cte_names(self, sql: str) -> set:
+        """
+        Extract CTE (Common Table Expression) names from SQL query.
+        
+        CTEs are defined with: WITH cte_name AS (...), cte_name2 AS (...)
+        These are temporary result sets that are valid within the query scope,
+        so they should not be flagged as "invalid tables".
+        
+        Args:
+            sql: The SQL query to parse
+            
+        Returns:
+            Set of CTE names (lowercase for case-insensitive comparison)
+        """
+        cte_names = set()
+        
+        # Match WITH clause and extract CTE names
+        # Pattern handles: WITH cte1 AS (...), cte2 AS (...)
+        # The CTE name comes before AS (preceded by WITH or comma)
+        
+        # First check if query has WITH clause
+        if not re.search(r'\bWITH\s+', sql, re.IGNORECASE):
+            return cte_names
+        
+        # Extract the WITH clause section (everything from WITH to the main SELECT)
+        # Use a simple heuristic: find CTE names followed by AS (
+        cte_pattern = r'(?:(?:\bWITH\b|\,)\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s*\('
+        matches = re.findall(cte_pattern, sql, re.IGNORECASE)
+        
+        for match in matches:
+            cte_names.add(match.lower())
+        
+        return cte_names
     
     def _remove_function_from_expressions(self, sql: str) -> str:
         """

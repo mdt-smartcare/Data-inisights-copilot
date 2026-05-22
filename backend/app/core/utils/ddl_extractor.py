@@ -256,17 +256,18 @@ def extract_ddl_from_information_schema(
     
     Example:
         >>> ddl = extract_ddl_from_information_schema(
-        ...     "postgresql://user:pass@localhost:5432/mydb",
-        ...     "orders"
+        ...     "postgresql://user:pass@localhost:5432/fhirdb",
+        ...     "encounter"
         ... )
         >>> print(ddl)
-        CREATE TABLE "orders" (
+        CREATE TABLE "encounter" (
             "id" INTEGER NOT NULL,
-            "customer_id" INTEGER,
-            "order_date" TIMESTAMP,
-            "total_amount" NUMERIC(10,2),
+            "patient_id" INTEGER,
+            "encounter_date" TIMESTAMP,
+            "encounter_type" VARCHAR(50),
+            "status" VARCHAR(20),
             PRIMARY KEY ("id"),
-            FOREIGN KEY ("customer_id") REFERENCES "customers" ("id")
+            FOREIGN KEY ("patient_id") REFERENCES "patient_tracker" ("id")
         );
     """
     db_url = _normalize_db_url(db_url)

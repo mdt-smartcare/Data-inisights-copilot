@@ -87,6 +87,12 @@ When asked "how many patients", "total patients", "patient count", etc.:
       WHERE (patient_id = 123 OR related_person_id = 123) AND is_deleted = false
       ```
     - Common ID columns in `patient_tracker_gold`: `patient_id`, `related_person_id`, `ref_patient_track_id`, `site_id`, `village_id`
+18. **CRITICAL: VARCHAR BOOLEAN COLUMNS** - Some tables have boolean-like columns stored as VARCHAR:
+    - `bp_log_gold.is_src_deleted` is VARCHAR, NOT boolean!
+    - WRONG: `is_src_deleted = false` (type mismatch error!)
+    - CORRECT: `is_src_deleted IS DISTINCT FROM 'true'` (handles NULL and string values)
+    - ALTERNATIVE: `COALESCE(is_src_deleted, 'false') != 'true'`
+    - When in doubt, check the column type in the schema and use appropriate comparison
 
 ## Table Selection Strategy
 

@@ -67,8 +67,8 @@ SELECT COUNT(DISTINCT patient_id) FROM patient_gold  -- WILL FAIL!
 To ensure clinical data accuracy, the Code Agent MUST automatically append these filters:
 
 - **`patient_tracker_gold`**: `WHERE is_deleted = false`
-- **`patient_visit_gold`**: `WHERE is_src_deleted = false OR is_src_deleted IS NULL`
-- **`bp_log_gold`**: `WHERE is_src_deleted = false OR is_src_deleted IS NULL`
+- **`patient_visit_gold`**: `WHERE is_src_deleted IS DISTINCT FROM 'true'` (is_src_deleted is VARCHAR)
+- **`bp_log_gold`**: `WHERE is_src_deleted IS DISTINCT FROM 'true'` (is_src_deleted is VARCHAR)
 - **`patient_gold`**: `WHERE res_deleted_at IS NULL`
 
 ## 3. Reusable SQL Metric Templates
