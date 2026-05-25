@@ -182,6 +182,12 @@ SQL: SELECT site_id, COUNT(*) as patient_count FROM "patient_tracker" WHERE is_a
 Question: "Screenings completed this month"
 SQL: SELECT COUNT(*) FROM "screening" WHERE status = 'completed' AND DATE_TRUNC('month', created_at) = DATE_TRUNC('month', CURRENT_DATE)
 
+Question: "Which county has the most assessments?"
+SQL: WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE) SELECT f.county_name, COUNT(*) AS assessment_count FROM bp_log_gold bl LEFT JOIN facilities f ON f.organization_id = bl.organization_id GROUP BY f.county_name ORDER BY assessment_count DESC LIMIT 1
+
+Question: "Assessments by county as of April 2025"
+SQL: WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE) SELECT f.county_name, COUNT(*) AS assessment_count FROM bp_log_gold bl LEFT JOIN facilities f ON f.organization_id = bl.organization_id WHERE TRY_CAST(bl.bp_taken_on AS DATE) <= '2025-04-30' GROUP BY f.county_name ORDER BY assessment_count DESC
+
 Question: "Top 10 conditions by frequency"
 SQL: SELECT condition_code, condition_display, COUNT(*) as count FROM "condition" GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10'''
 
@@ -873,6 +879,17 @@ class QueryTemplateEngine:
                 r"enrollment\s+by\s+county"
             ],
             "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE) SELECT f.county_name, COUNT(DISTINCT pt.patient_id) AS enrolled_patients FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id WHERE pt.is_deleted = FALSE AND (pt.is_htn_diagnosis = TRUE OR pt.is_diabetes_diagnosis = TRUE) GROUP BY f.county_name ORDER BY enrolled_patients DESC",
+            "extract_table": False
+        },
+        "assessments_by_county": {
+            "patterns": [
+                r"(?:which\s+)?county\s+(?:has\s+)?(?:the\s+)?most\s+assessments?",
+                r"assessments?\s+by\s+county",
+                r"bp\s+assessments?\s+by\s+county",
+                r"county\s+with\s+(?:the\s+)?most\s+(?:bp\s+)?assessments?",
+                r"(?:how\s+many\s+)?assessments?\s+(?:per|in\s+each|by)\s+county"
+            ],
+            "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE) SELECT f.county_name, COUNT(*) AS assessment_count FROM bp_log_gold bl LEFT JOIN facilities f ON f.organization_id = bl.organization_id GROUP BY f.county_name ORDER BY assessment_count DESC",
             "extract_table": False
         },
         

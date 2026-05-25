@@ -185,9 +185,14 @@ class PHIRedactor:
         ]
         
         # Geographic - ZIP codes (will reduce to 3-digit)
+        # NOTE: ZIP pattern requires address context to avoid false positives on aggregate counts
         patterns[PHIType.GEOGRAPHIC] = [
-            # Full 5 or 9 digit ZIP
-            re.compile(r'\b\d{5}(?:-\d{4})?\b'),
+            # ZIP code with state abbreviation context (e.g., "CA 90210" or "California, 90210")
+            re.compile(r'\b(?:AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|DC)[,\s]+(\d{5}(?:-\d{4})?)\b', re.IGNORECASE),
+            # ZIP code after city name pattern (e.g., "Boston, 02101")
+            re.compile(r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?,\s*(\d{5}(?:-\d{4})?)\b'),
+            # ZIP code with "zip" keyword (e.g., "zip: 12345" or "zipcode 12345")
+            re.compile(r'\b(?:zip(?:code)?|postal)[\s:=]*(\d{5}(?:-\d{4})?)\b', re.IGNORECASE),
             # Street addresses (common patterns)
             re.compile(r'\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Court|Ct|Way|Circle|Cir)\b\.?', re.IGNORECASE),
         ]
