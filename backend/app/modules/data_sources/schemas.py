@@ -98,6 +98,10 @@ class DataSourceResponse(DataSourceBase):
     duckdb_table_name: Optional[str] = None
     columns_json: Optional[str] = None
     row_count: Optional[int] = None
+    # Processing status (for file sources)
+    processing_status: Optional[str] = Field(default="completed", description="pending, processing, completed, failed")
+    processing_progress: Optional[int] = Field(default=0, description="Processing progress 0-100")
+    processing_error: Optional[str] = Field(default=None, description="Error message if processing failed")
     # Metadata
     created_by: Optional[UUID] = None
     created_at: datetime

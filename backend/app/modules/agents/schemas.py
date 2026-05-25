@@ -317,12 +317,12 @@ class AgentConfigListResponse(BaseModel):
 class UserAgentGrantRequest(BaseModel):
     """Request to grant user access to an agent."""
     user_id: UUID
-    role: str = Field(default="user", description="Role: user, editor, or admin")
+    role: str = Field(default="user", description="Role: user or admin")
     
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        allowed = {"user", "editor", "admin"}
+        allowed = {"user", "admin"}
         if v not in allowed:
             raise ValueError(f"Role must be one of: {', '.join(allowed)}")
         return v
@@ -332,12 +332,12 @@ class BulkAssignAgentsRequest(BaseModel):
     """Request to bulk assign agents to a user."""
     user_id: UUID
     agent_ids: List[UUID]
-    role: str = Field(default="user", description="Role: user, editor, or admin")
+    role: str = Field(default="user", description="Role: user or admin")
     
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
-        allowed = {"user", "editor", "admin"}
+        allowed = {"user", "admin"}
         if v not in allowed:
             raise ValueError(f"Role must be one of: {', '.join(allowed)}")
         return v
@@ -393,7 +393,7 @@ class AgentForUserResponse(BaseModel):
     updated_at: datetime
     
     # User's access to this agent
-    role: str = Field(description="User's role on this agent (user, editor, admin)")
+    role: str = Field(description="User's role on this agent (user, admin)")
     granted_at: datetime
     granted_by: Optional[UUID] = None
     

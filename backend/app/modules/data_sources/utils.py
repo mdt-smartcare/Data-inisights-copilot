@@ -118,9 +118,50 @@ def get_agent_csv_path(agent_id: str, table_name: str) -> Path:
     return get_agent_data_dir(agent_id) / f"{table_name}.csv"
 
 
-# Legacy user-based functions (backward compatibility)
+# ==========================================
+# DataSource-based Path Helpers (primary)
+# ==========================================
+
+def get_datasource_dir(data_source_id: str) -> Path:
+    """
+    Get directory for a data source's files.
+    
+    Structure: data/duckdb_files/ds_{data_source_id}/
+    """
+    settings = get_settings()
+    ds_dir = settings.duckdb_path / f"ds_{data_source_id}"
+    ds_dir.mkdir(parents=True, exist_ok=True)
+    return ds_dir
+
+
+def get_datasource_duckdb_path(data_source_id: str) -> Path:
+    """Get path to a data source's DuckDB file."""
+    return get_datasource_dir(data_source_id) / "database.duckdb"
+
+
+def get_datasource_csv_path(data_source_id: str) -> Path:
+    """Get path where a data source's CSV file will be stored."""
+    return get_datasource_dir(data_source_id) / "data.csv"
+
+
+def get_datasource_source_path(data_source_id: str, original_filename: str) -> Path:
+    """Get path where the original uploaded file will be stored."""
+    return get_datasource_dir(data_source_id) / f"_source_{original_filename}"
+
+
+def get_relative_datasource_duckdb_path(data_source_id: str) -> str:
+    """
+    Get RELATIVE path for storing in database.
+    
+    Returns path relative to settings.duckdb_path, e.g.:
+    'ds_bd042320-7412-4a18-8395-e808fc24a18a/database.duckdb'
+    """
+    return f"ds_{data_source_id}/database.duckdb"
+
+
+# Legacy user-based functions (deprecated - for backward compatibility)
 def get_user_data_dir(user_id: str) -> Path:
-    """Get directory for a user's data files."""
+    """DEPRECATED: Use get_datasource_dir instead."""
     settings = get_settings()
     user_dir = settings.duckdb_path / f"user_{user_id}"
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -128,38 +169,22 @@ def get_user_data_dir(user_id: str) -> Path:
 
 
 def get_user_duckdb_path(user_id: str) -> Path:
-    """Get path to a user's DuckDB file."""
+    """DEPRECATED: Use get_datasource_duckdb_path instead."""
     return get_user_data_dir(user_id) / "database.duckdb"
-
-
-def get_user_csv_path(user_id: str, table_name: str) -> Path:
-    """Get path where a user's CSV file will be stored."""
-    return get_user_data_dir(user_id) / f"{table_name}.csv"
 
 
 # ==========================================
 # Relative Path Helpers (for portable storage)
 # ==========================================
 
-def get_relative_duckdb_path(user_id: str) -> str:
-    """
-    Get RELATIVE path for storing in database.
-    
-    Returns path relative to settings.duckdb_path, e.g.:
-    'user_bd042320-7412-4a18-8395-e808fc24a18a/database.duckdb'
-    
-    This makes the path portable across different environments.
-    """
-    return f"user_{user_id}/database.duckdb"
-
-
 def resolve_duckdb_path(relative_or_absolute_path: str) -> Path:
     """
     Resolve a duckdb_file_path to its full absolute path.
     
-    Handles both:
-    - Relative paths (new format): 'user_xxx/database.duckdb'
-    - Absolute paths (legacy): 'D:\\fhir_rag\\backend\\data\\duckdb_files\\user_xxx\\database.duckdb'
+    Handles:
+    - DataSource paths (new): 'ds_xxx/database.duckdb'
+    - User paths (legacy): 'user_xxx/database.duckdb'
+    - Absolute paths (legacy): 'D:\\...\\user_xxx\\database.duckdb'
     
     Returns the resolved absolute Path.
     """
@@ -172,9 +197,9 @@ def resolve_duckdb_path(relative_or_absolute_path: str) -> Path:
         if path.exists():
             return path
         # Absolute path doesn't exist - try to extract relative portion and resolve
-        # Look for 'user_' or 'agent_' pattern in the path
+        # Look for 'ds_', 'user_' or 'agent_' pattern in the path
         path_str = str(path)
-        for marker in ['user_', 'agent_']:
+        for marker in ['ds_', 'user_', 'agent_']:
             if marker in path_str:
                 # Extract from the marker onwards
                 idx = path_str.find(marker)
@@ -200,11 +225,21 @@ def resolve_duckdb_path(relative_or_absolute_path: str) -> Path:
 def stream_excel_to_csv(
     xlsx_path: str,
     csv_path: str,
-    chunk_log_interval: int = 100000
+    chunk_log_interval: int = 100000,
+    estimated_rows: int = None,
+    progress_tracker: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
     Stream Excel file to CSV using openpyxl read-only mode.
     Avoids loading entire Excel file into RAM.
+    
+    Args:
+        xlsx_path: Path to Excel file
+        csv_path: Output CSV path
+        chunk_log_interval: Log progress every N rows
+        estimated_rows: Estimated total rows for progress calculation
+        progress_tracker: Optional shared dict for thread-safe progress updates.
+                         Keys: 'rows_processed', 'total_rows', 'done'
     
     Returns:
         Dict with columns, row_count, elapsed_seconds
@@ -213,6 +248,12 @@ def stream_excel_to_csv(
     
     logger.info(f"Starting Excel → CSV streaming: {xlsx_path}")
     start_time = datetime.now()
+    
+    # Initialize progress tracker if provided
+    if progress_tracker is not None:
+        progress_tracker['rows_processed'] = 0
+        progress_tracker['total_rows'] = estimated_rows or 0
+        progress_tracker['done'] = False
     
     wb = load_workbook(xlsx_path, read_only=True, data_only=True)
     ws = wb.active
@@ -239,12 +280,22 @@ def stream_excel_to_csv(
                 writer.writerow(row_dict)
                 row_count += 1
                 
+                # Update shared progress tracker (thread-safe for simple dict updates)
+                if progress_tracker is not None:
+                    progress_tracker['rows_processed'] = row_count
+                
                 if row_count % chunk_log_interval == 0:
                     elapsed = (datetime.now() - start_time).total_seconds()
                     rate = row_count / elapsed if elapsed > 0 else 0
-                    logger.info(f"  Processed {row_count:,} rows ({rate:,.0f} rows/sec)")
+                    progress_pct = f" ({row_count * 100 // estimated_rows}%)" if estimated_rows else ""
+                    logger.info(f"  Processed {row_count:,} rows{progress_pct} ({rate:,.0f} rows/sec)")
     
     wb.close()
+    
+    # Mark as done
+    if progress_tracker is not None:
+        progress_tracker['rows_processed'] = row_count
+        progress_tracker['done'] = True
     
     elapsed = (datetime.now() - start_time).total_seconds()
     logger.info(f"Excel → CSV complete: {row_count:,} rows in {elapsed:.1f}s")
@@ -261,8 +312,7 @@ def stream_excel_to_csv(
 # ==========================================
 
 def register_csv_in_duckdb(
-    user_id: str,
-    table_name: str,
+    data_source_id: str,
     csv_path: str,
     original_filename: str,
     columns: List[str],
@@ -272,9 +322,11 @@ def register_csv_in_duckdb(
     Register a CSV file in DuckDB as a virtual table.
     DuckDB queries CSV directly from disk without loading into RAM.
     
+    Each data source gets its own DuckDB file with a single 'data' table.
+    
     Uses a lock to prevent concurrent connection conflicts.
     """
-    db_path = get_user_duckdb_path(user_id)
+    db_path = get_datasource_duckdb_path(data_source_id)
     
     # Use lock to prevent "different configuration" errors when multiple
     # connections try to access the same database file
@@ -285,7 +337,6 @@ def register_csv_in_duckdb(
             # Create metadata table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS _file_metadata (
-                    table_name VARCHAR PRIMARY KEY,
                     original_filename VARCHAR,
                     file_type VARCHAR,
                     csv_path VARCHAR,
@@ -295,111 +346,253 @@ def register_csv_in_duckdb(
                 )
             """)
             
-            # Remove old entry
-            conn.execute("DELETE FROM _file_metadata WHERE table_name = ?", [table_name])
-            
-            # Drop old view
-            conn.execute(f"DROP VIEW IF EXISTS {table_name}")
+            # Clear old metadata and view
+            conn.execute("DELETE FROM _file_metadata")
+            conn.execute("DROP VIEW IF EXISTS data")
             
             # Create VIEW that reads directly from CSV (virtualized)
             csv_path_escaped = str(csv_path).replace("'", "''")
             conn.execute(f"""
-                CREATE VIEW {table_name} AS 
+                CREATE VIEW data AS 
                 SELECT * FROM read_csv_auto('{csv_path_escaped}', header=true)
             """)
             
             # Store metadata
             conn.execute("""
-                INSERT INTO _file_metadata (table_name, original_filename, file_type, csv_path, row_count, columns)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, [table_name, original_filename, 'csv', str(csv_path), row_count, json.dumps(columns)])
+                INSERT INTO _file_metadata (original_filename, file_type, csv_path, row_count, columns)
+                VALUES (?, ?, ?, ?, ?)
+            """, [original_filename, 'csv', str(csv_path), row_count, json.dumps(columns)])
             
-            logger.info(f"Registered CSV as DuckDB view: {table_name} ({row_count:,} rows)")
+            logger.info(f"Registered CSV as DuckDB view for data_source {data_source_id} ({row_count:,} rows)")
         
         finally:
             conn.close()
 
 
-def process_file_for_duckdb(
-    user_id: str,
-    table_name: str,
+def process_file_for_duckdb_sync(
+    data_source_id: str,
     source_path: str,
     file_type: str,
     original_filename: str,
+    estimated_rows: int = 0,
 ) -> Dict[str, Any]:
     """
     Process a file (CSV/Excel) and register in DuckDB.
+    Purely synchronous - safe to run in threading.Thread.
     
-    Returns:
-        Dict with columns, row_count, csv_path, duckdb_path
+    Each data source gets its own folder with:
+    - database.duckdb (DuckDB with VIEW 'data')
+    - data.csv (the CSV file DuckDB reads)
+    - _source_* (original uploaded file)
     """
-    csv_path = get_user_csv_path(user_id, table_name)
+    import time
+    import psycopg2
+    from concurrent.futures import ThreadPoolExecutor
     
-    if file_type == 'xlsx':
-        result = stream_excel_to_csv(source_path, str(csv_path))
-        columns = result["columns"]
-        row_count = result["row_count"]
-    elif file_type == 'csv':
-        shutil.copy(source_path, csv_path)
-        # Get row count and columns using DuckDB
-        conn = duckdb.connect(":memory:")
-        csv_path_escaped = str(csv_path).replace("'", "''")
-        info = conn.execute(f"SELECT COUNT(*) FROM read_csv_auto('{csv_path_escaped}')").fetchone()
-        row_count = info[0]
-        cols = conn.execute(f"DESCRIBE SELECT * FROM read_csv_auto('{csv_path_escaped}')").fetchall()
-        columns = [normalize_column_name(c[0], i) for i, c in enumerate(cols)]
-        conn.close()
-    else:
-        raise ValueError(f"Unsupported file type for DuckDB: {file_type}")
+    logger.info(f"Background processing started: {original_filename}")
     
-    # Register in DuckDB
-    register_csv_in_duckdb(
-        user_id=user_id,
-        table_name=table_name,
-        csv_path=str(csv_path),
-        original_filename=original_filename,
-        columns=columns,
-        row_count=row_count,
+    # Progress phases allocation
+    PHASE_CONVERSION = 80  # Excel/CSV processing: 0-80%
+    PHASE_REGISTRATION = 20  # DuckDB registration: 80-100%
+    
+    last_reported_progress = [0]
+    last_reported_status = [None]
+    
+    def update_status(status: str, progress: int = None, error: str = None, row_count: int = None):
+        """Update processing status synchronously using psycopg2."""
+        # Always update on status change or terminal states
+        status_changed = status != last_reported_status[0]
+        is_terminal = status in ("completed", "failed")
+        
+        # Only skip if same status AND progress hasn't changed by at least 5%
+        if not status_changed and not is_terminal:
+            if progress is not None and abs(progress - last_reported_progress[0]) < 5 and progress < 100:
+                return
+        
+        last_reported_progress[0] = progress or 0
+        last_reported_status[0] = status
+        
+        logger.info(f"Updating status: data_source={data_source_id}, status={status}, progress={progress}")
+        
+        try:
+            settings = get_settings()
+            db_url = settings.postgres_uri
+            
+            conn = psycopg2.connect(db_url)
+            conn.autocommit = True
+            cur = conn.cursor()
+            
+            try:
+                if status == "completed":
+                    cur.execute("""
+                        UPDATE data_sources 
+                        SET processing_status = %s,
+                            processing_progress = 100,
+                            processing_error = NULL,
+                            row_count = COALESCE(%s, row_count)
+                        WHERE id = %s::uuid
+                    """, (status, row_count, data_source_id))
+                elif status == "failed":
+                    cur.execute("""
+                        UPDATE data_sources 
+                        SET processing_status = %s,
+                            processing_error = %s
+                        WHERE id = %s::uuid
+                    """, (status, error, data_source_id))
+                else:
+                    cur.execute("""
+                        UPDATE data_sources 
+                        SET processing_status = %s,
+                            processing_progress = COALESCE(%s, processing_progress)
+                        WHERE id = %s::uuid
+                    """, (status, progress, data_source_id))
+            finally:
+                cur.close()
+                conn.close()
+        except Exception as e:
+            logger.error(f"Failed to update status: {e}", exc_info=True)
+    
+    try:
+        csv_path = get_datasource_csv_path(data_source_id)
+        
+        if file_type == 'xlsx':
+            logger.info(f"Starting Excel processing for: {original_filename}")
+            update_status("processing", progress=0)
+            
+            # Progress tracker for thread-safe updates
+            progress_tracker: Dict[str, Any] = {
+                'rows_processed': 0,
+                'total_rows': estimated_rows,
+                'done': False,
+            }
+            
+            # Run Excel conversion in a thread pool so we can poll progress
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    stream_excel_to_csv,
+                    source_path,
+                    str(csv_path),
+                    100000,  # chunk_log_interval
+                    estimated_rows,
+                    progress_tracker,
+                )
+                
+                # Poll progress while conversion runs
+                while not progress_tracker['done']:
+                    time.sleep(0.5)  # Check every 500ms
+                    
+                    if progress_tracker['total_rows'] > 0:
+                        actual_progress = int(
+                            (progress_tracker['rows_processed'] / progress_tracker['total_rows']) 
+                            * PHASE_CONVERSION
+                        )
+                        update_status("processing", progress=actual_progress)
+                
+                # Get result (raises if there was an exception)
+                result = future.result()
+                columns = result["columns"]
+                row_count = result["row_count"]
+            
+            update_status("processing", progress=PHASE_CONVERSION)
+            
+        elif file_type == 'csv':
+            logger.info(f"Processing CSV (instant): {original_filename}")
+            update_status("processing", progress=0)
+            
+            csv_path = Path(source_path)  # Use source file directly
+            
+            # Get columns
+            conn = duckdb.connect(":memory:")
+            csv_path_escaped = str(csv_path).replace("'", "''")
+            
+            if estimated_rows > 0:
+                row_count = estimated_rows
+            else:
+                row_count = conn.execute(
+                    f"SELECT COUNT(*) FROM read_csv_auto('{csv_path_escaped}', header=true)"
+                ).fetchone()[0]
+            
+            cols = conn.execute(
+                f"DESCRIBE SELECT * FROM read_csv_auto('{csv_path_escaped}', header=true, sample_size=1000)"
+            ).fetchall()
+            columns = [normalize_column_name(c[0], i) for i, c in enumerate(cols)]
+            conn.close()
+            
+            update_status("processing", progress=PHASE_CONVERSION)
+        else:
+            raise ValueError(f"Unsupported file type for DuckDB: {file_type}")
+        
+        # DuckDB registration
+        if file_type == 'xlsx':
+            update_status("processing", progress=PHASE_CONVERSION + (PHASE_REGISTRATION // 2))
+        
+        register_csv_in_duckdb(
+            data_source_id=data_source_id,
+            csv_path=str(csv_path),
+            original_filename=original_filename,
+            columns=columns,
+            row_count=row_count,
+        )
+        
+        update_status("completed", row_count=row_count)
+        logger.info(f"Background processing completed: {original_filename}")
+        
+        return {
+            "columns": columns,
+            "row_count": row_count,
+            "csv_path": str(csv_path),
+            "duckdb_path": get_relative_datasource_duckdb_path(data_source_id),
+        }
+    
+    except Exception as e:
+        logger.error(f"Error processing file for DuckDB: {e}", exc_info=True)
+        update_status("failed", error=str(e))
+        raise
+
+
+# Keep the async version for potential future use, but it's not used currently
+async def process_file_for_duckdb(
+    data_source_id: str,
+    source_path: str,
+    file_type: str,
+    original_filename: str,
+    estimated_rows: int = 0,
+) -> Dict[str, Any]:
+    """
+    Async version - delegates to sync version via to_thread.
+    """
+    import asyncio
+    return await asyncio.to_thread(
+        process_file_for_duckdb_sync,
+        data_source_id,
+        source_path,
+        file_type,
+        original_filename,
+        estimated_rows,
     )
-    
-    return {
-        "columns": columns,
-        "row_count": row_count,
-        "csv_path": str(csv_path),
-        "duckdb_path": get_relative_duckdb_path(user_id),  # Store relative path for portability
-    }
-
-
-def get_file_row_count_estimate(file_path: str, file_type: str) -> int:
-    """Quickly estimate row count using file size heuristics."""
-    file_size = os.path.getsize(file_path)
-    
-    if file_type == 'csv':
-        return file_size // 100  # ~100 bytes per row
-    elif file_type == 'xlsx':
-        return file_size // 50   # Excel compressed
-    return 0
 
 
 def execute_duckdb_query(
-    user_id: str,
+    data_source_id: str,
     query: str,
     max_rows: int = 10000,
 ) -> Dict[str, Any]:
     """
-    Execute a SQL query against user's DuckDB.
+    Execute a SQL query against a data source's DuckDB.
+    
+    Note: The table is always named 'data' in each data source's DuckDB.
     
     Returns:
         Dict with status, columns, rows, row_count, execution_time_ms
     """
     import time
     
-    db_path = get_user_duckdb_path(user_id)
+    db_path = get_datasource_duckdb_path(data_source_id)
     
     if not db_path.exists():
         return {
             "status": "error",
-            "error": "No files uploaded. Upload a CSV or Excel file first.",
+            "error": "Data source not found or not yet processed.",
             "columns": [],
             "rows": [],
             "row_count": 0,
@@ -460,8 +653,93 @@ def execute_duckdb_query(
         }
 
 
+def get_datasource_metadata(data_source_id: str) -> Optional[Dict[str, Any]]:
+    """Get metadata for a data source's DuckDB."""
+    db_path = get_datasource_duckdb_path(data_source_id)
+    
+    if not db_path.exists():
+        return None
+    
+    try:
+        conn = duckdb.connect(str(db_path), read_only=True)
+        
+        tables_exist = conn.execute("""
+            SELECT COUNT(*) FROM information_schema.tables 
+            WHERE table_name = '_file_metadata'
+        """).fetchone()[0]
+        
+        if not tables_exist:
+            conn.close()
+            return None
+        
+        row = conn.execute("""
+            SELECT original_filename, file_type, row_count, columns, created_at
+            FROM _file_metadata
+            LIMIT 1
+        """).fetchone()
+        
+        conn.close()
+        
+        if not row:
+            return None
+            
+        return {
+            "original_filename": row[0],
+            "file_type": row[1],
+            "row_count": row[2],
+            "columns": json.loads(row[3]) if row[3] else [],
+            "created_at": str(row[4]) if row[4] else None,
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to get metadata for data_source {data_source_id}: {e}")
+        return None
+
+
+def get_datasource_schema(data_source_id: str) -> Optional[List[Dict[str, str]]]:
+    """Get schema (columns and types) for a data source."""
+    db_path = get_datasource_duckdb_path(data_source_id)
+    
+    if not db_path.exists():
+        return None
+    
+    try:
+        conn = duckdb.connect(str(db_path), read_only=True)
+        result = conn.execute("DESCRIBE SELECT * FROM data").fetchall()
+        conn.close()
+        
+        return [
+            {"column_name": row[0], "data_type": row[1]}
+            for row in result
+        ]
+    except Exception as e:
+        logger.error(f"Failed to get schema for data_source {data_source_id}: {e}")
+        return None
+
+
+def delete_datasource_files(data_source_id: str) -> bool:
+    """Delete all files for a data source (DuckDB, CSV, original file)."""
+    ds_dir = get_datasource_dir(data_source_id)
+    
+    # Don't create the directory if it doesn't exist
+    settings = get_settings()
+    actual_dir = settings.duckdb_path / f"ds_{data_source_id}"
+    
+    if not actual_dir.exists():
+        return True
+    
+    try:
+        shutil.rmtree(actual_dir, ignore_errors=True)
+        logger.info(f"Deleted all files for data_source {data_source_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to delete data_source files: {e}")
+        return False
+
+
+# Legacy functions (deprecated - for backward compatibility)
 def list_duckdb_tables(user_id: str) -> List[Dict[str, Any]]:
-    """List all tables in user's DuckDB."""
+    """DEPRECATED: Use get_datasource_metadata instead."""
     db_path = get_user_duckdb_path(user_id)
     
     if not db_path.exists():
@@ -505,7 +783,7 @@ def list_duckdb_tables(user_id: str) -> List[Dict[str, Any]]:
 
 
 def get_table_schema(user_id: str, table_name: str) -> Optional[List[Dict[str, str]]]:
-    """Get schema (columns and types) for a table."""
+    """DEPRECATED: Use get_datasource_schema instead."""
     db_path = get_user_duckdb_path(user_id)
     
     if not db_path.exists():
@@ -526,7 +804,7 @@ def get_table_schema(user_id: str, table_name: str) -> Optional[List[Dict[str, s
 
 
 def delete_duckdb_table(user_id: str, table_name: str) -> bool:
-    """Delete a table from user's DuckDB and its CSV file."""
+    """DEPRECATED: Use delete_datasource_files instead."""
     db_path = get_user_duckdb_path(user_id)
     
     if not db_path.exists():
@@ -563,7 +841,7 @@ def delete_duckdb_table(user_id: str, table_name: str) -> bool:
 
 
 def delete_all_user_tables(user_id: str) -> bool:
-    """Delete all tables and data for a user."""
+    """DEPRECATED: Use delete_datasource_files instead."""
     user_dir = get_user_data_dir(user_id)
     
     if not user_dir.exists():
@@ -582,45 +860,53 @@ def delete_all_user_tables(user_id: str) -> bool:
 # Fast Column Extraction (for large files)
 # ==========================================
 
-def extract_file_columns_fast(file_path: str, file_type: str) -> tuple:
+def extract_file_metadata_fast(file_path: str, file_type: str) -> Dict[str, Any]:
     """
-    Quickly extract column names and types from a file without loading full data.
+    Extract column names, types, and row count from a file in a single pass.
     
-    For CSV: Uses DuckDB's read_csv_auto with sample_size to infer types fast.
-    For Excel: Uses openpyxl read-only mode to read only the header row.
+    For CSV: Uses DuckDB to get columns and count in one connection.
+    For Excel: Uses openpyxl read-only mode to read header + max_row metadata.
     
     Args:
         file_path: Path to the file
         file_type: File type ('csv' or 'xlsx')
         
     Returns:
-        Tuple of (column_names: List[str], column_details: List[Dict[str, str]])
-        where column_details contains dicts with 'name' and 'type' keys.
+        Dict with:
+        - columns: List[str] - normalized column names
+        - column_details: List[Dict[str, str]] - dicts with 'name' and 'type' keys
+        - row_count: int - number of data rows (excluding header)
     """
     if file_type == 'csv':
-        return _extract_csv_columns_fast(file_path)
+        return _extract_csv_metadata_fast(file_path)
     elif file_type == 'xlsx':
-        return _extract_excel_columns_fast(file_path)
+        return _extract_excel_metadata_fast(file_path)
     else:
-        return [], []
+        return {"columns": [], "column_details": [], "row_count": 0}
 
 
-def _extract_csv_columns_fast(file_path: str) -> tuple:
-    """Extract columns from CSV using DuckDB sample (very fast for large files)."""
+def _extract_csv_metadata_fast(file_path: str) -> Dict[str, Any]:
+    """Extract columns and row count from CSV using DuckDB in one connection."""
     try:
         conn = duckdb.connect(":memory:")
         csv_path_escaped = str(file_path).replace("'", "''")
         
-        # DESCRIBE with sample_size only reads a small portion - fast even for huge files
-        result = conn.execute(
+        # Get columns with DESCRIBE (uses sample_size internally)
+        cols_result = conn.execute(
             f"DESCRIBE SELECT * FROM read_csv_auto('{csv_path_escaped}', header=true, sample_size=1000)"
         ).fetchall()
+        
+        # Get exact row count
+        row_count = conn.execute(
+            f"SELECT COUNT(*) FROM read_csv_auto('{csv_path_escaped}', header=true)"
+        ).fetchone()[0]
+        
         conn.close()
         
         columns = []
         column_details = []
         
-        for i, row in enumerate(result):
+        for i, row in enumerate(cols_result):
             original_name = row[0]
             normalized_name = normalize_column_name(original_name, i)
             col_type = str(row[1]).upper() if row[1] else 'VARCHAR'
@@ -628,16 +914,16 @@ def _extract_csv_columns_fast(file_path: str) -> tuple:
             columns.append(normalized_name)
             column_details.append({"name": normalized_name, "type": col_type})
         
-        logger.info(f"Fast-extracted {len(columns)} columns from CSV: {file_path}")
-        return columns, column_details
+        logger.info(f"CSV metadata: {len(columns)} columns, {row_count:,} rows - {file_path}")
+        return {"columns": columns, "column_details": column_details, "row_count": row_count}
         
     except Exception as e:
-        logger.error(f"Failed to extract CSV columns: {e}")
-        return [], []
+        logger.error(f"Failed to extract CSV metadata: {e}")
+        return {"columns": [], "column_details": [], "row_count": 0}
 
 
-def _extract_excel_columns_fast(file_path: str) -> tuple:
-    """Extract columns from Excel by reading only the header row."""
+def _extract_excel_metadata_fast(file_path: str) -> Dict[str, Any]:
+    """Extract columns and row count from Excel in one workbook load."""
     try:
         from openpyxl import load_workbook
         
@@ -647,6 +933,7 @@ def _extract_excel_columns_fast(file_path: str) -> tuple:
         columns = []
         column_details = []
         
+        # Get header row
         for row in ws.iter_rows(min_row=1, max_row=1, values_only=True):
             for i, cell in enumerate(row):
                 original_name = str(cell) if cell else f"col_{i}"
@@ -656,13 +943,29 @@ def _extract_excel_columns_fast(file_path: str) -> tuple:
                 column_details.append({"name": normalized_name, "type": "VARCHAR"})
             break
         
+        # Get row count from metadata (instant, no iteration needed)
+        row_count = ws.max_row - 1 if ws.max_row else 0  # Subtract header row
+        
         wb.close()
-        logger.info(f"Fast-extracted {len(columns)} columns from Excel: {file_path}")
-        return columns, column_details
+        
+        logger.info(f"Excel metadata: {len(columns)} columns, {row_count:,} rows - {file_path}")
+        return {"columns": columns, "column_details": column_details, "row_count": max(row_count, 0)}
         
     except Exception as e:
-        logger.error(f"Failed to extract Excel columns: {e}")
-        return [], []
+        logger.error(f"Failed to extract Excel metadata: {e}")
+        return {"columns": [], "column_details": [], "row_count": 0}
+
+
+# Legacy wrappers (for backward compatibility)
+def extract_file_columns_fast(file_path: str, file_type: str) -> tuple:
+    """
+    DEPRECATED: Use extract_file_metadata_fast instead.
+    
+    Returns:
+        Tuple of (column_names: List[str], column_details: List[Dict[str, str]])
+    """
+    result = extract_file_metadata_fast(file_path, file_type)
+    return result["columns"], result["column_details"]
 
 
 # ==========================================

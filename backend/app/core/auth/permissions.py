@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.core.models.auth import Role, TokenData
 from app.modules.users.schemas import User  # Use module User schema (matches repository)
 from app.core.utils.logging import get_logger
+from app.core.utils.exceptions import UserInactiveError, AppException
 
 logger = get_logger(__name__)
 
@@ -33,7 +34,6 @@ security = HTTPBearer()
 ROLE_HIERARCHY: List[str] = [
     Role.SUPER_ADMIN.value,
     Role.ADMIN.value,
-    Role.EDITOR.value,
     Role.USER.value,
 ]
 
@@ -246,10 +246,7 @@ async def get_current_user(
             if user:
                 # Check if active
                 if not user.is_active:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="User account is inactive"
-                    )
+                    raise UserInactiveError()
                 
                 # Sync super_admin role from Keycloak
                 keycloak_role = map_keycloak_role(claims.roles)
@@ -300,6 +297,26 @@ async def get_current_user(
                         },
                     )
                 
+                # Sync email and name from Keycloak token
+                update_fields = {}
+                if claims.email and claims.email != user.email:
+                    update_fields["email"] = claims.email
+                if claims.name and claims.name != user.full_name:
+                    update_fields["full_name"] = claims.name
+                
+                if update_fields:
+                    from app.modules.users.schemas import UserUpdate
+                    await user_repo.update(user.id, UserUpdate(**update_fields))
+                    # Update local user object to reflect changes
+                    if "email" in update_fields:
+                        user.email = update_fields["email"]
+                    if "full_name" in update_fields:
+                        user.full_name = update_fields["full_name"]
+                    logger.info(
+                        f"Synced user profile from Keycloak: {list(update_fields.keys())}",
+                        extra={"user_id": str(user.id)}
+                    )
+                
                 return user
             else:
                 # Create new user (JIT provisioning)
@@ -341,6 +358,9 @@ async def get_current_user(
                 return user
                 
         except HTTPException:
+            raise
+        except AppException:
+            # Re-raise AppException (UserInactiveError, etc.) to be handled by exception handlers
             raise
         except Exception as e:
             logger.error(f"OIDC token validation error: {e}")
@@ -388,7 +408,6 @@ def require_role(required_role: Role) -> Callable:
 
 # Convenience dependencies for common role checks
 require_user = require_role(Role.USER)
-require_editor = require_role(Role.EDITOR)
 require_admin = require_role(Role.ADMIN)
 require_super_admin = require_role(Role.SUPER_ADMIN)
 

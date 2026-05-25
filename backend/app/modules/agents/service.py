@@ -268,12 +268,18 @@ class UserAgentService:
         if user_role == Role.SUPER_ADMIN.value:
             return True
         
-        return await self.user_agents.has_access(user_id, agent_id, min_role)
+        # Check user-agent access and role level
+        from app.core.auth.permissions import role_at_least
+        access = await self.user_agents.get_access(user_id, agent_id)
+        if not access:
+            return False
+        
+        return role_at_least(access.role, min_role)
     
     async def get_agent_users(
-        self, 
-        agent_id: UUID, 
-        page: int = 1, 
+        self,
+        agent_id: UUID,
+        page: int = 1,
         size: int = 10,
         search: Optional[str] = None
     ) -> UserAgentListResponse:
@@ -281,7 +287,7 @@ class UserAgentService:
         skip = (page - 1) * size
         users, total = await self.user_agents.get_agent_users(
             agent_id, 
-            skip=skip, 
+            skip=skip,
             limit=size,
             search=search
         )
