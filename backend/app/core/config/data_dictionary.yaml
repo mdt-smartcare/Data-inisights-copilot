@@ -139,6 +139,67 @@ business_definitions:
     description: "Patient with BMI <18.5 kg/m² (underweight)"
 
   # =========================================================================
+  # Diabetes / Glucose Classifications (M&E Reporting)
+  # =========================================================================
+  diabetic patient:
+    table: patient_tracker_gold
+    condition: "is_diabetes_diagnosis = true AND is_deleted = false"
+    description: "Patient with confirmed diabetes diagnosis (DM)"
+
+  controlled diabetes:
+    table: glucose_log_latest_gold
+    condition: "(glucose_type = 'Fasting' AND glucose_value < 126) OR (glucose_type = 'Random' AND glucose_value < 200) OR (hba1c IS NOT NULL AND hba1c < 7)"
+    description: "Diabetic patient with controlled blood sugar (FBS<126, RBS<200, or HbA1c<7%)"
+
+  uncontrolled diabetes:
+    table: glucose_log_latest_gold
+    condition: "(glucose_type = 'Fasting' AND glucose_value >= 126) OR (glucose_type = 'Random' AND glucose_value >= 200) OR (hba1c IS NOT NULL AND hba1c >= 7)"
+    description: "Diabetic patient with uncontrolled blood sugar"
+
+  high fasting glucose:
+    table: glucose_log_latest_gold
+    condition: "glucose_type = 'Fasting' AND glucose_value >= 126"
+    description: "Fasting blood glucose ≥126 mg/dL indicating diabetes"
+
+  impaired fasting glucose:
+    table: glucose_log_latest_gold
+    condition: "glucose_type = 'Fasting' AND glucose_value >= 100 AND glucose_value < 126"
+    description: "Fasting blood glucose 100-125 mg/dL (pre-diabetes)"
+
+  # =========================================================================
+  # Program & Facility Definitions (M&E Reporting)
+  # =========================================================================
+  wdf facility:
+    table: health_facility_program_admin_gold
+    condition: "program_name ILIKE '%WDF%'"
+    description: "Health facility supported by World Diabetes Foundation program"
+    join_pattern: "Use facility hierarchy CTE with program_admin_gold"
+
+  wdf patient:
+    table: patient_tracker_gold
+    condition: "enrolled at WDF-supported facility"
+    description: "Patient enrolled at a World Diabetes Foundation supported facility"
+    join_pattern: "Requires facility_programs CTE JOIN on site_id"
+
+  # =========================================================================
+  # Enrollment Categories (M&E Reporting)
+  # =========================================================================
+  htn only patient:
+    table: patient_tracker_gold
+    condition: "is_htn_diagnosis = true AND (is_diabetes_diagnosis = false OR is_diabetes_diagnosis IS NULL) AND is_deleted = false"
+    description: "Patient enrolled with hypertension only (no diabetes)"
+
+  dm only patient:
+    table: patient_tracker_gold
+    condition: "is_diabetes_diagnosis = true AND (is_htn_diagnosis = false OR is_htn_diagnosis IS NULL) AND is_deleted = false"
+    description: "Patient enrolled with diabetes only (no hypertension)"
+
+  htn and dm patient:
+    table: patient_tracker_gold
+    condition: "is_htn_diagnosis = true AND is_diabetes_diagnosis = true AND is_deleted = false"
+    description: "Patient enrolled with both hypertension and diabetes (comorbid)"
+
+  # =========================================================================
   # Patient Tracking & Program Status
   # =========================================================================
   total patients:
@@ -427,6 +488,26 @@ metric_templates:
   diagnosis_rate:
     expression: "COUNT(DISTINCT CASE WHEN is_confirmed_diagnosis = true THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT CASE WHEN is_enrolled = true THEN patient_id END), 0)"
     description: "Percentage of enrolled patients with confirmed diagnosis"
+    tables: ["patient_tracker_gold"]
+
+  # Diabetes/Glucose Metrics (M&E)
+  dm_control_rate:
+    expression: "COUNT(DISTINCT CASE WHEN (glucose_type = 'Fasting' AND glucose_value < 126) OR (glucose_type = 'Random' AND glucose_value < 200) OR (hba1c IS NOT NULL AND hba1c < 7) THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
+    description: "Percentage of diabetic patients with controlled blood sugar"
+    tables: ["glucose_log_latest_gold"]
+
+  elevated_bp_proportion:
+    expression: "COUNT(DISTINCT CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN patient_id END) * 100.0 / NULLIF(COUNT(DISTINCT patient_id), 0)"
+    description: "Proportion of screened individuals with elevated blood pressure"
+    tables: ["bp_log_gold"]
+
+  htn_dm_enrollment_breakdown:
+    expression: |
+      HTN only: COUNT(DISTINCT CASE WHEN is_htn_diagnosis = true AND (is_diabetes_diagnosis = false OR is_diabetes_diagnosis IS NULL) THEN patient_id END)
+      DM only: COUNT(DISTINCT CASE WHEN is_diabetes_diagnosis = true AND (is_htn_diagnosis = false OR is_htn_diagnosis IS NULL) THEN patient_id END)
+      Both: COUNT(DISTINCT CASE WHEN is_htn_diagnosis = true AND is_diabetes_diagnosis = true THEN patient_id END)
+    description: "Breakdown of enrolled patients by condition type"
+    tables: ["patient_tracker_gold"]
     tables: ["patient_tracker_gold"]
 
 # =============================================================================

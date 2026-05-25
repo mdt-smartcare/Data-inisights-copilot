@@ -50,7 +50,7 @@ Always apply appropriate soft-delete filters:
 - `patient_tracker_gold`: `WHERE is_deleted = false`
 - `patient_gold`: `WHERE res_deleted_at IS NULL`
 - `*_admin_gold` tables: `WHERE is_active = 1 AND is_deleted = false` (check if columns exist)
-- Clinical tables with `is_src_deleted`: `WHERE is_src_deleted = false`
+- Clinical tables with `is_src_deleted`: `WHERE is_src_deleted IS DISTINCT FROM 'true'` (is_src_deleted is VARCHAR, not boolean)
 
 ## Latest Record Patterns
 

@@ -153,6 +153,195 @@
       "category": "m_and_e_reporting",
       "tags": ["glucose", "aggregation", "program", "county", "cte", "m&e"],
       "description": "M&E pattern: Glucose reading counts aggregated by program and geographic region"
+    },
+    {
+      "question": "How many individuals screened for blood pressure from January 2026 to date?",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS individuals_screened_bp FROM bp_log_gold WHERE TRY_CAST(bp_taken_on AS DATE) >= DATE '2026-01-01' AND TRY_CAST(bp_taken_on AS DATE) <= CURRENT_DATE AND is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_screening",
+      "tags": ["count", "screening", "blood_pressure", "date_filter", "m&e"],
+      "description": "M&E: Count distinct individuals with BP screening in date range"
+    },
+    {
+      "question": "How many individuals screened for BP who are smokers from January 2026 to date?",
+      "sql": "SELECT COUNT(DISTINCT bp.patient_id) AS smokers_screened_bp FROM bp_log_gold bp INNER JOIN patient_lifestyle_gold pl ON bp.patient_id = pl.patient_id WHERE pl.smoking_status IN ('Current smoker', 'Smoker', 'Yes') AND TRY_CAST(bp.bp_taken_on AS DATE) >= DATE '2026-01-01' AND TRY_CAST(bp.bp_taken_on AS DATE) <= CURRENT_DATE AND bp.is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_screening",
+      "tags": ["count", "screening", "blood_pressure", "smoker", "lifestyle", "m&e"],
+      "description": "M&E: Count BP-screened individuals who are smokers"
+    },
+    {
+      "question": "How many individuals screened for glucose from January 2026 to date?",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS individuals_screened_glucose FROM glucose_log_gold WHERE TRY_CAST(bg_taken_on AS DATE) >= DATE '2026-01-01' AND TRY_CAST(bg_taken_on AS DATE) <= CURRENT_DATE",
+      "category": "m_and_e_screening",
+      "tags": ["count", "screening", "glucose", "date_filter", "m&e"],
+      "description": "M&E: Count distinct individuals with glucose screening in date range"
+    },
+    {
+      "question": "How many individuals screened for blood pressure in WDF-supported facilities?",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id FROM health_facility_admin_gold hf WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, MAX(pg.name) AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT COUNT(DISTINCT bp.patient_id) AS individuals_screened_wdf FROM bp_log_gold bp LEFT JOIN facilities f ON f.organization_id = bp.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE fp.program_name ILIKE '%WDF%' AND bp.is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_screening",
+      "tags": ["count", "screening", "blood_pressure", "wdf", "program", "cte", "m&e"],
+      "description": "M&E: Count BP-screened individuals from WDF (World Diabetes Foundation) facilities"
+    },
+    {
+      "question": "How many individuals screened for blood pressure with elevated blood pressure?",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS elevated_bp_count FROM bp_log_gold WHERE (avg_systolic >= 140 OR avg_diastolic >= 90) AND is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_screening",
+      "tags": ["count", "screening", "blood_pressure", "elevated", "hypertension", "m&e"],
+      "description": "M&E: Count individuals with elevated BP (systolic>=140 OR diastolic>=90)"
+    },
+    {
+      "question": "What proportion of individuals screened for blood pressure with elevated blood pressure?",
+      "sql": "SELECT ROUND(100.0 * COUNT(DISTINCT CASE WHEN avg_systolic >= 140 OR avg_diastolic >= 90 THEN patient_id END) / NULLIF(COUNT(DISTINCT patient_id), 0), 2) AS elevated_bp_proportion FROM bp_log_gold WHERE is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_screening",
+      "tags": ["proportion", "percentage", "screening", "blood_pressure", "elevated", "m&e"],
+      "description": "M&E: Calculate proportion of screened individuals with elevated BP"
+    },
+    {
+      "question": "What is the gender contribution of individuals screened for blood pressure since 2024?",
+      "sql": "SELECT pt.gender, COUNT(DISTINCT bp.patient_id) AS individuals_screened, ROUND(100.0 * COUNT(DISTINCT bp.patient_id) / SUM(COUNT(DISTINCT bp.patient_id)) OVER(), 2) AS percentage FROM bp_log_gold bp INNER JOIN patient_tracker_gold pt ON bp.patient_id = pt.patient_id WHERE TRY_CAST(bp.bp_taken_on AS DATE) >= DATE '2024-01-01' AND pt.is_deleted = FALSE AND bp.is_src_deleted IS DISTINCT FROM 'true' GROUP BY pt.gender ORDER BY individuals_screened DESC",
+      "category": "m_and_e_demographics",
+      "tags": ["gender", "screening", "blood_pressure", "demographics", "percentage", "m&e"],
+      "description": "M&E: Gender breakdown of BP-screened individuals since 2024"
+    },
+    {
+      "question": "Develop a histogram of patients enrolled in care by 10-year age bands starting from 20 years",
+      "sql": "SELECT CASE WHEN pt.age < 20 THEN 'Under 20' WHEN pt.age BETWEEN 20 AND 29 THEN '20-29' WHEN pt.age BETWEEN 30 AND 39 THEN '30-39' WHEN pt.age BETWEEN 40 AND 49 THEN '40-49' WHEN pt.age BETWEEN 50 AND 59 THEN '50-59' WHEN pt.age BETWEEN 60 AND 69 THEN '60-69' WHEN pt.age BETWEEN 70 AND 79 THEN '70-79' ELSE '80+' END AS age_band, COUNT(DISTINCT pt.patient_id) AS enrolled_patients FROM patient_tracker_gold pt WHERE pt.is_deleted = FALSE AND (pt.is_htn_diagnosis = TRUE OR pt.is_diabetes_diagnosis = TRUE) GROUP BY 1 ORDER BY CASE WHEN pt.age < 20 THEN 1 WHEN pt.age BETWEEN 20 AND 29 THEN 2 WHEN pt.age BETWEEN 30 AND 39 THEN 3 WHEN pt.age BETWEEN 40 AND 49 THEN 4 WHEN pt.age BETWEEN 50 AND 59 THEN 5 WHEN pt.age BETWEEN 60 AND 69 THEN 6 WHEN pt.age BETWEEN 70 AND 79 THEN 7 ELSE 8 END",
+      "category": "m_and_e_demographics",
+      "tags": ["age_bands", "histogram", "enrollment", "demographics", "m&e"],
+      "description": "M&E: Patient enrollment distribution by 10-year age bands"
+    },
+    {
+      "question": "How many hypertensive patients enrolled in care are female?",
+      "sql": "SELECT COUNT(DISTINCT patient_id) AS female_htn_patients FROM patient_tracker_gold WHERE is_deleted = FALSE AND is_htn_diagnosis = TRUE AND gender = 'Female'",
+      "category": "m_and_e_demographics",
+      "tags": ["count", "hypertension", "female", "gender", "enrollment", "m&e"],
+      "description": "M&E: Count female patients enrolled with hypertension diagnosis"
+    },
+    {
+      "question": "How many patients have been enrolled in care from WDF supported facilities?",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id FROM health_facility_admin_gold hf WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, MAX(pg.name) AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT COUNT(DISTINCT pt.patient_id) AS enrolled_patients_wdf FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE pt.is_deleted = FALSE AND (pt.is_htn_diagnosis = TRUE OR pt.is_diabetes_diagnosis = TRUE) AND fp.program_name ILIKE '%WDF%'",
+      "category": "m_and_e_enrollment",
+      "tags": ["count", "enrollment", "wdf", "program", "cte", "m&e"],
+      "description": "M&E: Count patients enrolled from WDF-supported facilities"
+    },
+    {
+      "question": "How many individuals are enrolled in care with HTN, DM, and HTN and DM?",
+      "sql": "SELECT COUNT(DISTINCT CASE WHEN is_htn_diagnosis = TRUE AND (is_diabetes_diagnosis = FALSE OR is_diabetes_diagnosis IS NULL) THEN patient_id END) AS htn_only, COUNT(DISTINCT CASE WHEN is_diabetes_diagnosis = TRUE AND (is_htn_diagnosis = FALSE OR is_htn_diagnosis IS NULL) THEN patient_id END) AS dm_only, COUNT(DISTINCT CASE WHEN is_htn_diagnosis = TRUE AND is_diabetes_diagnosis = TRUE THEN patient_id END) AS htn_and_dm, COUNT(DISTINCT CASE WHEN is_htn_diagnosis = TRUE OR is_diabetes_diagnosis = TRUE THEN patient_id END) AS total_enrolled FROM patient_tracker_gold WHERE is_deleted = FALSE",
+      "category": "m_and_e_enrollment",
+      "tags": ["count", "enrollment", "htn", "dm", "diabetes", "hypertension", "m&e"],
+      "description": "M&E: Breakdown of patients enrolled by condition type (HTN only, DM only, both)"
+    },
+    {
+      "question": "How many individuals enrolled in care screened for hypertension?",
+      "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS enrolled_screened_htn FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = FALSE AND (pt.is_htn_diagnosis = TRUE OR pt.is_diabetes_diagnosis = TRUE) AND bp.is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_enrollment",
+      "tags": ["count", "enrollment", "screening", "hypertension", "m&e"],
+      "description": "M&E: Count enrolled patients who have BP screenings"
+    },
+    {
+      "question": "How many HTN patients are enrolled in the WDF program?",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id FROM health_facility_admin_gold hf WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, MAX(pg.name) AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT COUNT(DISTINCT pt.patient_id) AS htn_patients_wdf FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND fp.program_name ILIKE '%WDF%'",
+      "category": "m_and_e_enrollment",
+      "tags": ["count", "enrollment", "htn", "hypertension", "wdf", "program", "m&e"],
+      "description": "M&E: Count HTN patients enrolled in WDF program"
+    },
+    {
+      "question": "How many DM patients are enrolled in the WDF program?",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id FROM health_facility_admin_gold hf WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, MAX(pg.name) AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT COUNT(DISTINCT pt.patient_id) AS dm_patients_wdf FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE pt.is_deleted = FALSE AND pt.is_diabetes_diagnosis = TRUE AND fp.program_name ILIKE '%WDF%'",
+      "category": "m_and_e_enrollment",
+      "tags": ["count", "enrollment", "dm", "diabetes", "wdf", "program", "m&e"],
+      "description": "M&E: Count DM patients enrolled in WDF program"
+    },
+    {
+      "question": "What are the trends of patients enrolled in care in the last 3 months from WDF sites?",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id FROM health_facility_admin_gold hf WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, MAX(pg.name) AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT DATE_TRUNC('month', pt.created_at) AS enrollment_month, COUNT(DISTINCT pt.patient_id) AS newly_enrolled FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE pt.is_deleted = FALSE AND (pt.is_htn_diagnosis = TRUE OR pt.is_diabetes_diagnosis = TRUE) AND fp.program_name ILIKE '%WDF%' AND pt.created_at >= CURRENT_DATE - INTERVAL '3 months' GROUP BY DATE_TRUNC('month', pt.created_at) ORDER BY enrollment_month",
+      "category": "m_and_e_enrollment",
+      "tags": ["trend", "enrollment", "monthly", "wdf", "program", "date_trunc", "m&e"],
+      "description": "M&E: Monthly enrollment trends for last 3 months from WDF sites"
+    },
+    {
+      "question": "How many users completed any activity in the last 30 days from WDF facilities?",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id FROM health_facility_admin_gold hf WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, MAX(pg.name) AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT COUNT(DISTINCT bp.created_by) AS active_users FROM bp_log_gold bp LEFT JOIN facilities f ON f.organization_id = bp.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE fp.program_name ILIKE '%WDF%' AND TRY_CAST(bp.created_at AS DATE) >= CURRENT_DATE - INTERVAL '30 days' AND bp.is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_utilization",
+      "tags": ["count", "users", "activity", "wdf", "last_30_days", "m&e"],
+      "description": "M&E: Count unique active users in WDF facilities in last 30 days"
+    },
+    {
+      "question": "Count of users by cadre who have used the system in the last 30 days",
+      "sql": "SELECT pr.job_title AS cadre, COUNT(DISTINCT bp.created_by) AS user_count FROM bp_log_gold bp LEFT JOIN practitioner_gold pr ON bp.created_by = pr.res_id WHERE TRY_CAST(bp.created_at AS DATE) >= CURRENT_DATE - INTERVAL '30 days' AND bp.is_src_deleted IS DISTINCT FROM 'true' GROUP BY pr.job_title ORDER BY user_count DESC",
+      "category": "m_and_e_utilization",
+      "tags": ["count", "users", "cadre", "job_title", "activity", "last_30_days", "m&e"],
+      "description": "M&E: User counts grouped by cadre/job title for last 30 days"
+    },
+    {
+      "question": "How many hypertensive patients with a BP follow-up in the last 3 months?",
+      "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS htn_with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months' AND bp.is_src_deleted IS DISTINCT FROM 'true'",
+      "category": "m_and_e_followup",
+      "tags": ["count", "hypertension", "followup", "bp", "last_3_months", "m&e"],
+      "description": "M&E: Count HTN patients with BP follow-up visits in last 3 months"
+    },
+    {
+      "question": "How many diabetes patients with documented blood glucose in the last 3 months?",
+      "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_glucose FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_diabetes_diagnosis = TRUE AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
+      "category": "m_and_e_followup",
+      "tags": ["count", "diabetes", "followup", "glucose", "last_3_months", "m&e"],
+      "description": "M&E: Count DM patients with glucose readings in last 3 months"
+    },
+    {
+      "question": "How many diabetes patients with a documented HbA1c in the last 3 months?",
+      "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_hba1c FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_diabetes_diagnosis = TRUE AND gl.hba1c IS NOT NULL AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
+      "category": "m_and_e_followup",
+      "tags": ["count", "diabetes", "followup", "hba1c", "last_3_months", "m&e"],
+      "description": "M&E: Count DM patients with HbA1c measurements in last 3 months"
+    },
+    {
+      "question": "What percentage of hypertensive patients had follow-up in 3 months?",
+      "sql": "WITH htn_total AS (SELECT COUNT(DISTINCT patient_id) AS total FROM patient_tracker_gold WHERE is_deleted = FALSE AND is_htn_diagnosis = TRUE), htn_with_fu AS (SELECT COUNT(DISTINCT pt.patient_id) AS with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months' AND bp.is_src_deleted IS DISTINCT FROM 'true') SELECT htn_with_fu.with_followup AS htn_with_followup, htn_total.total AS total_htn_patients, ROUND(100.0 * htn_with_fu.with_followup / NULLIF(htn_total.total, 0), 2) AS followup_percentage FROM htn_total, htn_with_fu",
+      "category": "m_and_e_followup",
+      "tags": ["percentage", "proportion", "hypertension", "followup", "bp", "last_3_months", "m&e"],
+      "description": "M&E: Percentage of HTN patients with BP follow-up in last 3 months"
+    },
+    {
+      "question": "What is the follow-up rate for hypertensive patients?",
+      "sql": "WITH htn_total AS (SELECT COUNT(DISTINCT patient_id) AS total FROM patient_tracker_gold WHERE is_deleted = FALSE AND is_htn_diagnosis = TRUE), htn_with_fu AS (SELECT COUNT(DISTINCT pt.patient_id) AS with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months' AND bp.is_src_deleted IS DISTINCT FROM 'true') SELECT htn_with_fu.with_followup AS htn_with_followup, htn_total.total AS total_htn_patients, ROUND(100.0 * htn_with_fu.with_followup / NULLIF(htn_total.total, 0), 2) AS followup_rate FROM htn_total, htn_with_fu",
+      "category": "m_and_e_followup",
+      "tags": ["rate", "proportion", "hypertension", "followup", "bp", "m&e"],
+      "description": "M&E: HTN follow-up rate as percentage"
+    },
+    {
+      "question": "What is number and proportion of patients with controlled hypertension in the last 3 months?",
+      "sql": "WITH htn_patients AS (SELECT DISTINCT pt.patient_id FROM patient_tracker_gold pt INNER JOIN bp_log_latest_gold bl ON pt.patient_id = bl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND TRY_CAST(bl.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months') SELECT COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) AS controlled_count, COUNT(DISTINCT bl.patient_id) AS total_htn_with_reading, ROUND(100.0 * COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) / NULLIF(COUNT(DISTINCT bl.patient_id), 0), 2) AS control_rate FROM bp_log_latest_gold bl WHERE bl.patient_id IN (SELECT patient_id FROM htn_patients)",
+      "category": "m_and_e_outcomes",
+      "tags": ["count", "proportion", "hypertension", "controlled", "outcomes", "last_3_months", "m&e"],
+      "description": "M&E: HTN control rate - number and proportion with controlled BP in last 3 months"
+    },
+    {
+      "question": "How many diabetes patients with controlled blood sugar?",
+      "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS controlled_dm_patients FROM patient_tracker_gold pt INNER JOIN glucose_log_latest_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_diabetes_diagnosis = TRUE AND ((gl.glucose_type = 'Fasting' AND gl.glucose_value < 126) OR (gl.glucose_type = 'Random' AND gl.glucose_value < 200) OR (gl.hba1c IS NOT NULL AND gl.hba1c < 7))",
+      "category": "m_and_e_outcomes",
+      "tags": ["count", "diabetes", "controlled", "glucose", "outcomes", "m&e"],
+      "description": "M&E: Count DM patients with controlled blood sugar (FBS<126, RBS<200, or HbA1c<7)"
+    },
+    {
+      "question": "What proportion of diabetes patients with controlled blood glucose in the last 3 months?",
+      "sql": "WITH dm_patients_recent AS (SELECT DISTINCT pt.patient_id FROM patient_tracker_gold pt INNER JOIN glucose_log_latest_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_diabetes_diagnosis = TRUE AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months') SELECT ROUND(100.0 * COUNT(DISTINCT CASE WHEN (gl.glucose_type = 'Fasting' AND gl.glucose_value < 126) OR (gl.glucose_type = 'Random' AND gl.glucose_value < 200) OR (gl.hba1c IS NOT NULL AND gl.hba1c < 7) THEN gl.patient_id END) / NULLIF(COUNT(DISTINCT gl.patient_id), 0), 2) AS dm_control_rate FROM glucose_log_latest_gold gl WHERE gl.patient_id IN (SELECT patient_id FROM dm_patients_recent)",
+      "category": "m_and_e_outcomes",
+      "tags": ["proportion", "diabetes", "controlled", "glucose", "outcomes", "last_3_months", "m&e"],
+      "description": "M&E: DM control rate proportion in last 3 months"
+    },
+    {
+      "question": "How are enrolled patients distributed by county?",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE) SELECT f.county_name, COUNT(DISTINCT pt.patient_id) AS enrolled_patients FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id WHERE pt.is_deleted = FALSE AND (pt.is_htn_diagnosis = TRUE OR pt.is_diabetes_diagnosis = TRUE) GROUP BY f.county_name ORDER BY enrolled_patients DESC",
+      "category": "m_and_e_distribution",
+      "tags": ["distribution", "enrollment", "county", "geographic", "cte", "m&e"],
+      "description": "M&E: Patient enrollment distribution by county"
+    },
+    {
+      "question": "Show distribution of patients screened for BG from WDF counties",
+      "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, MAX(pg.name) AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT f.county_name, COUNT(DISTINCT gl.patient_id) AS patients_screened_bg FROM glucose_log_gold gl LEFT JOIN facilities f ON f.organization_id = gl.organization_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE fp.program_name ILIKE '%WDF%' GROUP BY f.county_name ORDER BY patients_screened_bg DESC",
+      "category": "m_and_e_distribution",
+      "tags": ["distribution", "screening", "glucose", "county", "wdf", "geographic", "m&e"],
+      "description": "M&E: BG screening distribution by county for WDF facilities"
     }
   ]
 }

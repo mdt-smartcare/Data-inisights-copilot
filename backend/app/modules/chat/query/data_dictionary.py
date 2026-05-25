@@ -124,7 +124,27 @@ class DataDictionary:
         """Load data dictionary from a dictionary."""
         self._business_definitions = config.get("business_definitions", {})
         self._metric_templates = config.get("metric_templates", {})
-        self._default_filters = config.get("default_filters", {})
+        
+        # Parse default_filters - handle both nested dict and list formats
+        raw_filters = config.get("default_filters", {})
+        self._default_filters = {}
+        for table, filter_config in raw_filters.items():
+            if isinstance(filter_config, dict):
+                # Nested format: {filter: "...", description: "..."}
+                filter_str = filter_config.get("filter", "")
+                if filter_str:
+                    self._default_filters[table] = [filter_str]
+                else:
+                    self._default_filters[table] = []
+            elif isinstance(filter_config, list):
+                # List format: ["filter1", "filter2"]
+                self._default_filters[table] = filter_config
+            elif isinstance(filter_config, str):
+                # Direct string format: "filter"
+                self._default_filters[table] = [filter_config] if filter_config else []
+            else:
+                self._default_filters[table] = []
+        
         self._column_semantics = config.get("column_semantics", {})
         self._table_descriptions = config.get("table_descriptions", {})
         self._business_glossary = config.get("business_glossary", [])
@@ -146,7 +166,7 @@ class DataDictionary:
             f"DataDictionary loaded from dict: {len(self._business_definitions)} definitions, "
             f"{len(self._metric_templates)} metric templates, "
             f"{len(self._synonyms)} synonyms, "
-            f"{sum(len(v) for v in self._default_filters.values())} default filters, "
+            f"{sum(len(v) for v in self._default_filters.values())} default filters for {len(self._default_filters)} tables, "
             f"{len(self._business_glossary)} glossary terms",
             agent_id=self._agent_id
         )

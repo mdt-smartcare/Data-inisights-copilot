@@ -46,7 +46,22 @@ from app.modules.chat.cancellation import RequestCancelled, check_cancelled
 from app.modules.chat.chart_parser import parse_chart_data
 from app.core.prompts import get_chart_generator_prompt, get_data_analyst_prompt, get_rag_synthesis_prompt
 
+# FastSQL optimized pipeline (optional)
+try:
+    from app.modules.chat.query.fast_sql_service import (
+        IntegratedFastSQLServiceFactory,
+        FastSQLService,
+        FastSQLResult,
+        ExecutionPath
+    )
+    FAST_SQL_AVAILABLE = True
+except ImportError as e:
+    FAST_SQL_AVAILABLE = False
+    import logging
+    logging.getLogger(__name__).warning(f"FastSQL not available: {e}")
+
 logger = get_logger(__name__)
+logger.info(f"ChatService module loaded: FAST_SQL_AVAILABLE={FAST_SQL_AVAILABLE}")
 
 
 class ChatService:
@@ -64,9 +79,17 @@ class ChatService:
     4. Add conversation to memory
     5. Generate follow-up questions (async)
     6. Generate chart visualizations (for SQL queries)
+    
+    FastSQL Mode (DEFAULT: enabled):
+    Automatically uses optimized pipeline when beneficial:
+    - Template matching for common patterns (~5ms) - ALWAYS used when deterministic
+    - Single LLM call (vs 3-4 separate calls) for complex queries
+    - Pre-compiled schema manifest
+    - Query memory for few-shot learning
+    - Falls back gracefully to standard pipeline on errors
     """
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, enable_fast_sql: bool = True):
         self.db = db
         self.agents = AgentRepository(db)
         self.configs = AgentConfigRepository(db)
@@ -77,6 +100,30 @@ class ChatService:
         self._memory = get_conversation_memory()
         self._followup_service = get_followup_service()
         self._sql_factory = SQLServiceFactory(self.configs, self.data_sources, self.ai_models)
+        
+        # FastSQL mode - enabled by default, can be disabled via settings or constructor
+        # Settings can override: ENABLE_FAST_SQL=false in .env to disable globally
+        settings_fast_sql = getattr(self._settings, 'enable_fast_sql', True)  # Default True
+        self._use_fast_sql = enable_fast_sql and settings_fast_sql and FAST_SQL_AVAILABLE
+        
+        logger.info(
+            f"ChatService init: enable_fast_sql={enable_fast_sql}, "
+            f"settings_fast_sql={settings_fast_sql}, "
+            f"FAST_SQL_AVAILABLE={FAST_SQL_AVAILABLE}, "
+            f"_use_fast_sql={self._use_fast_sql}"
+        )
+        
+        # Initialize FastSQL factory if available and enabled
+        self._fast_sql_factory = None
+        if self._use_fast_sql and FAST_SQL_AVAILABLE:
+            self._fast_sql_factory = IntegratedFastSQLServiceFactory(
+                config_repo=self.configs,
+                data_source_repo=self.data_sources,
+                ai_model_repo=self.ai_models
+            )
+            logger.info("⚡ FastSQL mode ENABLED - using optimized SQL pipeline")
+        else:
+            logger.info(f"FastSQL mode DISABLED: use_fast_sql={self._use_fast_sql}, available={FAST_SQL_AVAILABLE}")
     
     async def process_query(
         self,
@@ -731,6 +778,41 @@ class ChatService:
         
         try:
             # ============================================================
+            # FastSQL Path: Optimized single-call pipeline
+            # ============================================================
+            logger.info(
+                f"FastSQL check: use_fast_sql={self._use_fast_sql}, "
+                f"factory={self._fast_sql_factory is not None}, "
+                f"agent_config={agent_config is not None}"
+            )
+            if self._use_fast_sql and self._fast_sql_factory and agent_config:
+                agent_id = agent_config.get("agent_id")
+                logger.info(f"FastSQL: agent_id={agent_id}")
+                if agent_id:
+                    try:
+                        fast_service = await self._fast_sql_factory(agent_id)
+                        logger.info(f"FastSQL: service created={fast_service is not None}")
+                        if fast_service:
+                            logger.info(f"⚡ Using FastSQL for query: {query[:50]}...")
+                            return await self._handle_fast_sql(
+                                query, fast_service, sql_service, agent_config, 
+                                tracing_ctx, llm_helper, sql_intent_start
+                            )
+                        else:
+                            logger.warning("FastSQL factory returned None, using standard path")
+                    except Exception as e:
+                        logger.warning(f"FastSQL initialization failed: {e}, using standard path")
+                else:
+                    logger.info("FastSQL: skipped - no agent_id in agent_config")
+            else:
+                logger.info(
+                    f"FastSQL: skipped - conditions not met: "
+                    f"use_fast_sql={self._use_fast_sql}, "
+                    f"has_factory={self._fast_sql_factory is not None}, "
+                    f"has_config={agent_config is not None}"
+                )
+            
+            # ============================================================
             # PHASE 1: SQL Generation + Validation + Execution (query_async)
             # ============================================================
             phase1_start = timing_module.perf_counter()
@@ -793,6 +875,180 @@ class ChatService:
         except Exception as e:
             logger.error(f"SQL query failed: {e}")
             return f"Failed to execute database query: {str(e)}", reasoning_steps, None
+    
+    async def _handle_fast_sql(
+        self,
+        query: str,
+        fast_service: "FastSQLService",
+        sql_service: SQLService,
+        agent_config: Dict[str, Any],
+        tracing_ctx: TracingContext,
+        llm_helper,
+        start_time: float,
+    ) -> Tuple[str, List[ReasoningStep], Optional[ChartData]]:
+        """
+        Handle SQL generation using FastSQLService (optimized pipeline).
+        
+        This method uses the new optimized pipeline which:
+        - Uses template matching for common patterns (~5ms)
+        - Single LLM call for intent + relevance + SQL (~1s)
+        - CTE rewriting for deterministic transformation
+        - Query memory for few-shot learning
+        
+        Falls back to standard SQL service on errors.
+        """
+        import time as timing_module
+        
+        reasoning_steps = []
+        chart_data = None
+        
+        tracing_ctx.add_span("fast_sql_generate", input=query)
+        
+        try:
+            # Generate SQL using optimized pipeline
+            fast_start = timing_module.perf_counter()
+            fast_result = await fast_service.generate(query)
+            fast_duration = timing_module.perf_counter() - fast_start
+            
+            tracing_ctx.update_span("fast_sql_generate", output={
+                "intent": fast_result.intent,
+                "path": fast_result.execution_path.value,
+                "confidence": fast_result.confidence,
+                "time_ms": fast_result.total_time_ms
+            })
+            
+            # Log performance
+            logger.info(
+                f"⚡ FAST_SQL: path={fast_result.execution_path.value}, "
+                f"intent={fast_result.intent}, confidence={fast_result.confidence:.2f}, "
+                f"time={fast_result.total_time_ms:.0f}ms "
+                f"(template={fast_result.template_time_ms:.0f}, memory={fast_result.memory_time_ms:.0f}, "
+                f"llm={fast_result.llm_time_ms:.0f}, rewrite={fast_result.rewrite_time_ms:.0f})"
+            )
+            
+            # Handle non-SQL intents
+            if fast_result.intent != "sql":
+                # Delegate to appropriate handler
+                if fast_result.intent == "vector":
+                    logger.info(f"FastSQL routed to vector search: {query[:50]}...")
+                    return "This question requires document search. Please rephrase or ask a data question.", reasoning_steps, None
+                elif fast_result.intent == "clarification":
+                    return "Could you please clarify your question?", reasoning_steps, None
+                elif fast_result.intent == "general":
+                    return "This appears to be a general question not related to the data.", reasoning_steps, None
+            
+            # Check relevance
+            if not fast_result.is_relevant:
+                return "This question doesn't appear to be related to the available data.", reasoning_steps, None
+            
+            # Check success
+            if not fast_result.is_successful or not fast_result.sql:
+                error_msg = "; ".join(fast_result.errors) if fast_result.errors else "Could not generate SQL"
+                logger.warning(f"FastSQL generation failed: {error_msg}")
+                # Fall back to standard SQL service
+                tracing_ctx.add_span("fast_sql_fallback", input="FastSQL failed, using standard")
+                return await self._handle_sql_intent_standard(
+                    query, sql_service, agent_config, tracing_ctx, llm_helper, start_time
+                )
+            
+            # Execute the generated SQL via standard SQL service
+            tracing_ctx.add_span("sql_execute", input=fast_result.sql[:200])
+            exec_start = timing_module.perf_counter()
+            
+            # Use sync execute_query wrapped for async
+            loop = asyncio.get_event_loop()
+            results, row_count = await loop.run_in_executor(
+                None, 
+                sql_service.execute_query, 
+                fast_result.sql
+            )
+            result = sql_service._format_results(results, row_count)
+            exec_duration = timing_module.perf_counter() - exec_start
+            
+            reasoning_steps.append(ReasoningStep(
+                tool="fast_sql_query",
+                input=query,
+                output=f"[{fast_result.execution_path.value}] {fast_result.sql[:300]}..."
+            ))
+            
+            tracing_ctx.update_span("sql_execute", output=result[:500] if result else "empty")
+            
+            # Synthesize response with chart
+            schema_context = sql_service.cached_schema if sql_service else ""
+            raw_answer = await self._synthesize_sql_response_with_chart(
+                query, result, agent_config, schema_context, tracing_ctx=tracing_ctx
+            )
+            
+            chart_data, answer = parse_chart_data(raw_answer)
+            
+            if chart_data:
+                logger.info(f"Chart generated: type={chart_data.type}")
+                tracing_ctx.add_span("chart_generation", input={"type": chart_data.type})
+            
+            # Log total timing
+            total_duration = timing_module.perf_counter() - start_time
+            logger.info(
+                f"⚡ FAST_SQL_INTENT_TIMING: total={total_duration:.2f}s | "
+                f"sql_gen={fast_duration:.2f}s | exec={exec_duration:.2f}s"
+            )
+            
+            # Learn from successful execution (async, don't block)
+            if fast_result.is_successful:
+                asyncio.create_task(
+                    fast_service.provide_feedback(fast_result, "positive")
+                )
+            
+            return answer, reasoning_steps, chart_data
+            
+        except Exception as e:
+            logger.error(f"FastSQL failed, falling back: {e}")
+            tracing_ctx.add_span("fast_sql_fallback", input=f"Error: {str(e)[:100]}")
+            # Fall back to standard SQL service
+            return await self._handle_sql_intent_standard(
+                query, sql_service, agent_config, tracing_ctx, llm_helper, start_time
+            )
+    
+    async def _handle_sql_intent_standard(
+        self,
+        query: str,
+        sql_service: SQLService,
+        agent_config: Dict[str, Any],
+        tracing_ctx: TracingContext,
+        llm_helper,
+        start_time: float,
+    ) -> Tuple[str, List[ReasoningStep], Optional[ChartData]]:
+        """Standard SQL intent handling (fallback path)."""
+        import time as timing_module
+        
+        reasoning_steps = []
+        chart_data = None
+        
+        phase1_start = timing_module.perf_counter()
+        llm_config = tracing_ctx.get_llm_config()
+        result = await sql_service.query_async(
+            query, 
+            llm_helper=llm_helper,
+            llm_config=llm_config
+        )
+        phase1_duration = timing_module.perf_counter() - phase1_start
+        
+        reasoning_steps.append(ReasoningStep(
+            tool="sql_query",
+            input=query,
+            output=result[:500] if len(result) > 500 else result,
+        ))
+        
+        schema_context = sql_service.cached_schema if sql_service else ""
+        raw_answer = await self._synthesize_sql_response_with_chart(
+            query, result, agent_config, schema_context, tracing_ctx=tracing_ctx
+        )
+        
+        chart_data, answer = parse_chart_data(raw_answer)
+        
+        total_duration = timing_module.perf_counter() - start_time
+        logger.info(f"SQL_INTENT_STANDARD: total={total_duration:.2f}s, sql={phase1_duration:.2f}s")
+        
+        return answer, reasoning_steps, chart_data
             
     async def _handle_dashboard_intent(
         self,

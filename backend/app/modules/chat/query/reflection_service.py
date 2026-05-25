@@ -561,12 +561,28 @@ class ReflectionService:
             select_end = sql_lower.find('from')
             if select_end > 0:
                 select_clause = sql_lower[6:select_end].strip()
+                
+                # Split by top-level commas only (respecting parentheses)
+                top_level_parts = self._split_by_top_level_commas(select_clause)
+                
                 has_non_agg_columns = False
-                for part in select_clause.split(','):
+                for part in top_level_parts:
                     part = part.strip()
-                    if part and not any(agg in part for agg in agg_functions) and part != '*':
-                        has_non_agg_columns = True
-                        break
+                    # Remove trailing alias (AS ...)
+                    if ' as ' in part:
+                        part = part[:part.rfind(' as ')].strip()
+                    
+                    if part and part != '*':
+                        # Check if this column expression contains any aggregation
+                        if not any(agg in part for agg in agg_functions):
+                            # Additional check: skip if it looks like a function result
+                            # (e.g., round(), coalesce() wrapping aggregates)
+                            # If the part is purely an aggregate expression or wrapped aggregate, skip
+                            wrapper_functions = ['round(', 'coalesce(', 'nullif(', 'cast(', 'greatest(', 'least(']
+                            is_wrapper = any(part.startswith(f) for f in wrapper_functions)
+                            if not is_wrapper:
+                                has_non_agg_columns = True
+                                break
                 
                 if has_non_agg_columns and not has_group_by:
                     issues.append(
@@ -575,6 +591,34 @@ class ReflectionService:
                     )
         
         return issues
+    
+    def _split_by_top_level_commas(self, text: str) -> List[str]:
+        """
+        Split a string by commas, but only at the top level (not inside parentheses).
+        This handles expressions like ROUND(COUNT(*), 2) correctly.
+        """
+        parts = []
+        current = []
+        depth = 0
+        
+        for char in text:
+            if char == '(':
+                depth += 1
+                current.append(char)
+            elif char == ')':
+                depth -= 1
+                current.append(char)
+            elif char == ',' and depth == 0:
+                parts.append(''.join(current).strip())
+                current = []
+            else:
+                current.append(char)
+        
+        # Don't forget the last part
+        if current:
+            parts.append(''.join(current).strip())
+        
+        return parts
     
     def _is_simple_query(self, sql_query: str) -> bool:
         """Check if query is simple enough to skip LLM critique."""

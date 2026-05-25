@@ -44,6 +44,20 @@ ROUND(COUNT(*)::numeric / total_count::numeric * 100, 2) AS percentage
 - Ensure all queries are executable and free of syntax errors
 - Use aggregations (COUNT, SUM, AVG) — never return individual-level data
 
+## CRITICAL: patient_tracker_gold Column Rules
+- **`patient_tracker_gold` has a direct `age` column (INTEGER)** — use it directly for age grouping
+- **DO NOT use `birth_date` on `patient_tracker_gold`** — this column does NOT exist there
+- For age groups, use the `age` column directly:
+  ```sql
+  CASE
+    WHEN pt.age < 35 THEN '<35'
+    WHEN pt.age BETWEEN 35 AND 49 THEN '35-49'
+    WHEN pt.age BETWEEN 50 AND 64 THEN '50-64'
+    ELSE '65+'
+  END AS age_group
+  ```
+- `birth_date` only exists in `relatedperson_gold` and `care_giver_gold` tables
+
 ## Output Format
 
 You MUST respond with ONLY a valid JSON object in this exact format:
