@@ -39,6 +39,11 @@ jobs:
             conda activate fhir_rag_env
             pip install -r requirements.txt --quiet
             
+            # Run database migrations
+            cd backend
+            alembic upgrade head
+            cd ..
+            
             # Install frontend dependencies and build
             cd frontend
             npm install
