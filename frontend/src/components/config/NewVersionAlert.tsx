@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { type AgentConfig, activateConfig } from '../../services/api';
 import { useDismissedVersionAlert } from '../../hooks';
 import ConfirmationModal from '../ConfirmationModal';

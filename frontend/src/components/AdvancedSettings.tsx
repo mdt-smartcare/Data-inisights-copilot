@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import AIModelSelector from './AIModelSelector';
 import { useAIRegistryModels } from '../hooks/useAIRegistryModels';
-import type { AdvancedSettings } from '../contexts/SystemSettingsContext';
+import type { AdvancedSettings as AdvancedSettingsData } from '../contexts/SystemSettingsContext';
 
 // Validation limits - single source of truth for min/max constraints
 export const VALIDATION_LIMITS = {
@@ -34,8 +34,8 @@ export interface ValidationErrors {
 export type AccordionSection = 'embedding' | 'llm' | 'chunking' | 'retrieval';
 
 interface AdvancedSettingsProps {
-    settings: AdvancedSettings;
-    onChange: (settings: AdvancedSettings) => void;
+    settings: AdvancedSettingsData;
+    onChange: (settings: AdvancedSettingsData) => void;
     readOnly?: boolean;
     /** If true, only one accordion section can be open at a time. Default: true */
     singleAccordionMode?: boolean;
@@ -288,7 +288,7 @@ const AdvancedSettings: React.FC<AdvancedSettingsProps> = ({
                 return currentSettings;
             }
 
-            const newSettings: AdvancedSettings = { ...currentSettings };
+            const newSettings: AdvancedSettingsData = { ...currentSettings };
 
             if (embeddingToSelect) {
                 newSettings.embedding = {

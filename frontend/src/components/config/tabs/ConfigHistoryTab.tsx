@@ -12,7 +12,6 @@ import {
     CpuChipIcon,
     SparklesIcon,
     AdjustmentsHorizontalIcon,
-    CubeTransparentIcon,
     DocumentTextIcon,
     ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
@@ -394,7 +393,6 @@ const ConfigDetailModal: React.FC<ConfigDetailModalProps> = ({ config, isLoading
 
     const llmConf = parseConfig(config.llm_config);
     const embConf = parseConfig(config.embedding_config);
-    const chunkConf = parseConfig(config.chunking_config);
     const ragConf = parseConfig(config.rag_config);
     const dataDictionary = parseConfig(config.data_dictionary);
     const selectedCols = parseSelectedColumns(config.selected_columns);

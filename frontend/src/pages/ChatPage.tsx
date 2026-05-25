@@ -47,11 +47,11 @@ export default function ChatPage() {
   const [pendingAgentId, setPendingAgentId] = useState<string | undefined>(undefined);
 
   // RAG availability state
-  const [ragAvailable, setRagAvailable] = useState(false);
-  const [agenticHybridAvailable, setAgenticHybridAvailable] = useState(false);
+  const [_ragAvailable, setRagAvailable] = useState(false);
+  const [_agenticHybridAvailable, setAgenticHybridAvailable] = useState(false);
   
   // Streaming mode - returns answer immediately, comparisons stream in background
-  const [useStreaming, setUseStreaming] = useState(true);
+  const [useStreaming, _setUseStreaming] = useState(true);
   // Track if we're currently streaming a response
   const [isStreamingResponse, setIsStreamingResponse] = useState(false);
   // Current streaming message being built
@@ -320,7 +320,7 @@ export default function ChatPage() {
                 updatedMessage.isLoadingSuggestions = true;
                 break;
               case 'chart':
-                updatedMessage.chartData = data as Message['chartData'];
+                updatedMessage.chartData = data as unknown as Message['chartData'];
                 break;
               case 'reasoning':
                 // reasoning steps - could display these
