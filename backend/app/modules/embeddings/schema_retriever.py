@@ -67,12 +67,34 @@ PRIORITY_TABLE_KEYWORDS = {
     "older": ["patient_tracker_gold"],
     "younger": ["patient_tracker_gold"],
     "elderly": ["patient_tracker_gold"],
-    # Gender queries 
+    # Gender queries
     "by gender": ["patient_tracker_gold"],
     "male female": ["patient_tracker_gold"],
     # Patient demographics
     "demographics": ["patient_tracker_gold"],
     "patient demographics": ["patient_tracker_gold"],
+    # Enrollment / status — stakeholder-validated routing
+    "enrollment": ["patient_tracker_gold"],
+    "enrolled": ["patient_tracker_gold"],
+    "screening": ["patient_tracker_gold"],
+    "patient status": ["patient_tracker_gold"],
+    "enrollment trend": ["patient_tracker_gold"],
+    # Comorbidity / diagnosis
+    "comorbid": ["patient_tracker_gold"],
+    "diabetic": ["patient_tracker_gold"],
+    "hypertensive": ["patient_tracker_gold"],
+    "diabetes diagnosis": ["patient_tracker_gold"],
+    "hypertension diagnosis": ["patient_tracker_gold"],
+    "diagnosis": ["patient_tracker_gold"],
+    # CVD risk lives on bp_log_latest_gold but cohort filter needs patient_tracker_gold
+    "cvd risk": ["bp_log_latest_gold", "patient_tracker_gold"],
+    "risk score": ["bp_log_latest_gold", "patient_tracker_gold"],
+    "cardiovascular risk": ["bp_log_latest_gold", "patient_tracker_gold"],
+    # Blood pressure averages — bp_log_gold for history, bp_log_latest_gold for latest
+    "blood pressure": ["bp_log_latest_gold", "bp_log_gold"],
+    "systolic": ["bp_log_latest_gold", "bp_log_gold"],
+    "diastolic": ["bp_log_latest_gold", "bp_log_gold"],
+    "average bp": ["bp_log_gold", "patient_tracker_gold"],
 }
 
 
