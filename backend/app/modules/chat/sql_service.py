@@ -274,7 +274,7 @@ class SQLService:
         # Initialize token budget manager for context size management
         self._token_budget_manager: Optional[TokenBudgetManager] = None
         try:
-            self._token_budget_manager = get_token_budget_manager(max_tokens=8000)
+            self._token_budget_manager = get_token_budget_manager(max_tokens=16000)
             logger.info("TokenBudgetManager initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize TokenBudgetManager: {e}")
@@ -674,41 +674,43 @@ class SQLService:
         """
         if not system_prompt:
             return ""
-        
+
         relevant_sections = []
-        
-        # Priority sections to extract (these headers match the deterministic template)
+        system_prompt_lower = system_prompt.lower()
+
+        # Priority sections to extract (these headers match the deterministic template).
+        # Match is case-insensitive so header casing drift in agent configs does not
+        # silently drop all rules.
         priority_headers = [
             "# FHIR IDENTIFIER RULES",
-            "# SQL GENERATION RULES", 
+            "# SQL GENERATION RULES",
             "# DATA QUALITY & VALIDATION",
         ]
-        
-        # Extract sections by header
+
         for header in priority_headers:
-            if header in system_prompt:
-                # Find the section start
-                start_idx = system_prompt.find(header)
-                # Find the next major section (starts with "# " or "---")
+            header_lower = header.lower()
+            if header_lower in system_prompt_lower:
+                start_idx = system_prompt_lower.find(header_lower)
+                # Recover original casing of the matched header span
+                matched_header = system_prompt[start_idx:start_idx + len(header)]
                 remaining = system_prompt[start_idx + len(header):]
-                
-                # Look for next section delimiter
+
                 next_section = len(remaining)
+                remaining_lower = remaining.lower()
                 for delimiter in ["\n# ", "\n---\n"]:
-                    pos = remaining.find(delimiter)
+                    pos = remaining_lower.find(delimiter)
                     if pos != -1 and pos < next_section:
                         next_section = pos
-                
+
                 section_content = remaining[:next_section].strip()
-                
-                # Limit individual section length
+
                 if len(section_content) > 1500:
                     section_content = section_content[:1500] + "..."
-                
+
                 if section_content:
-                    relevant_sections.append(f"{header}\n{section_content}")
-        
-        # Fallback: If no priority sections found, use keyword-based extraction
+                    relevant_sections.append(f"{matched_header}\n{section_content}")
+
+        # Fallback 1: keyword-based section ranking
         if not relevant_sections:
             sql_keywords = [
                 "patient_id", "res_id", "fhir", "identifier",
@@ -717,22 +719,30 @@ class SQLService:
                 "do not use", "always use", "never use",
                 "critical", "important", "mandatory"
             ]
-            
+
             sections = system_prompt.split("\n\n")
-            
+
             for section in sections:
                 section_lower = section.lower()
                 relevance_score = sum(1 for kw in sql_keywords if kw in section_lower)
-                
+
                 if relevance_score >= 2:
                     if len(section) <= 500:
                         relevant_sections.append(section.strip())
                     else:
                         relevant_sections.append(section[:500].strip() + "...")
-        
-        # Combine and limit total output
+
+        # Fallback 2: nothing matched — surface a truncated version of the full
+        # system prompt rather than dropping all agent rules silently.
+        if not relevant_sections:
+            logger.warning(
+                "Agent system prompt has no recognized SQL-rule headers; "
+                "passing truncated full prompt downstream."
+            )
+            return system_prompt[:4000]
+
         combined = "\n\n".join(relevant_sections[:5])
-        return combined[:4000] if combined else ""
+        return combined[:4000] if combined else system_prompt[:4000]
     
     def _classify_error_type(self, error_message: str) -> str:
         """
@@ -1405,15 +1415,29 @@ class SQLService:
         if self._token_budget_manager:
             try:
                 schema_tokens = self._token_budget_manager.estimate_tokens(schema)
-                max_schema_tokens = 6000  # Reserve for prompt, plan, few-shot
-                
+                max_schema_tokens = 12000  # Reserve for prompt, plan, few-shot (16k total budget)
+
                 if schema_tokens > max_schema_tokens:
                     # Build priority map from query plan
                     table_priorities = {}
                     if query_plan and query_plan.entities:
                         for i, table in enumerate(query_plan.entities):
                             table_priorities[table] = 1.0 - (i * 0.1)  # First table highest priority
-                    
+
+                    # Compute priority-pinned tables from keyword routing — these
+                    # are NEVER dropped even if budget overflows.
+                    try:
+                        from app.modules.embeddings.schema_retriever import PRIORITY_TABLE_KEYWORDS
+                        query_lower = query.lower()
+                        priority_pinned = set()
+                        for keyword, tables in PRIORITY_TABLE_KEYWORDS.items():
+                            if keyword in query_lower:
+                                priority_pinned.update(tables)
+                        # Intersect with what was actually retrieved
+                        priority_pinned &= set(selected_tables)
+                    except Exception:
+                        priority_pinned = set()
+
                     # Truncate schema to fit budget
                     tables_ddl = {}
                     for table in selected_tables:
@@ -1422,19 +1446,21 @@ class SQLService:
                         match = re.search(table_pattern, schema, re.MULTILINE)
                         if match:
                             tables_ddl[table] = match.group(0)
-                    
+
                     truncated_schema, included_tables = self._token_budget_manager.fit_schema_to_budget(
                         tables_ddl=tables_ddl,
                         table_priorities=table_priorities,
-                        additional_context=query_plan_context
+                        additional_context=query_plan_context,
+                        priority_tables=priority_pinned,
                     )
-                    
+
                     logger.info(
                         "TokenBudget trimmed schema context",
                         original_tokens=schema_tokens,
                         max_tokens=max_schema_tokens,
                         included_tables=len(included_tables),
-                        excluded_tables=len(selected_tables) - len(included_tables)
+                        excluded_tables=len(selected_tables) - len(included_tables),
+                        priority_pinned=len(priority_pinned),
                     )
                     schema = truncated_schema
                 else:

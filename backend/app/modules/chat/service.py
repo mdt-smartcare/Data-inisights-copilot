@@ -1076,7 +1076,7 @@ class ChatService:
         
         INSTRUCTIONS:
         1. Generate exactly 4 distinct natural language questions that can be answered by the database. 
-        2. Use ONLY column names and table names present in the schema above. Do NOT invent columns like "patient_status" if they are not in the schema.
+        2. Use ONLY column names and table names present in the schema above. Do NOT invent or hallucinate columns that are not in the schema.
         3. If there are no clear metrics, focus on row counts, category distributions, or trend over time using provided date columns.
         4. Each question should be independent and designed for a specific chart type:
            - 1 Pie Chart (categorical distribution)
