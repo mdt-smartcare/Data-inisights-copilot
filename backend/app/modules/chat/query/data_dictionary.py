@@ -291,59 +291,22 @@ class DataDictionary:
             Formatted text for prompt injection
         """
         parts = []
-        
-        # Default filters
-        relevant_filters = self.get_all_default_filters(tables) if tables else self._default_filters
-        if relevant_filters:
-            parts.append("MANDATORY DEFAULT FILTERS (always apply unless explicitly asked otherwise):")
-            for table, filters in relevant_filters.items():
-                for f in filters:
-                    parts.append(f"  - {table}: {f}")
-        
-        # Business definitions relevant to the tables
-        if tables:
-            relevant_defs = {}
-            for key, defn in self._business_definitions.items():
-                if isinstance(defn, dict):
-                    def_table = defn.get("table", "")
-                    if isinstance(def_table, str) and def_table in tables:
-                        relevant_defs[key] = defn
-                    elif isinstance(def_table, list) and any(t in tables for t in def_table):
-                        relevant_defs[key] = defn
-            
-            if relevant_defs:
-                parts.append("\nBUSINESS DEFINITIONS:")
-                for key, defn in relevant_defs.items():
-                    desc = defn.get("description", defn.get("condition", str(defn)))
-                    parts.append(f"  - {key}: {desc}")
-        
-        # Metric templates
-        if self._metric_templates:
-            relevant_metrics = {}
-            for name, template in self._metric_templates.items():
-                if not tables or any(t in str(template) for t in tables):
-                    relevant_metrics[name] = template
-            
-            if relevant_metrics:
-                parts.append("\nMETRIC TEMPLATES:")
-                for name, template in relevant_metrics.items():
-                    expr = template.get("expression", str(template))
-                    desc = template.get("description", "")
-                    parts.append(f"  - {name}: {expr}")
-                    if desc:
-                        parts.append(f"    ({desc})")
-        
-        # Business glossary (free-form domain jargon)
-        if self._business_glossary:
-            parts.append("\nBUSINESS GLOSSARY (domain-specific terminology):")
-            for term in self._business_glossary:
-                parts.append(f"  - {term}")
-        
+
+        # ----- CRITICAL rules first (LLMs weight early-prompt content higher) -----
+
+        # Column type warnings (critical for avoiding type errors)
+        column_type_warnings = self._validation_rules.get("column_type_warnings", [])
+        if column_type_warnings:
+            parts.append("CRITICAL: COLUMN TYPE WARNINGS (follow exactly to avoid type errors):")
+            for warning in column_type_warnings:
+                parts.append(f"  - {warning}")
+
         # FHIR Identifier Rules (CRITICAL for healthcare schemas)
         if self._fhir_identifier_rules:
-            parts.append("\nCRITICAL: FHIR IDENTIFIER RULES (must follow exactly):")
-            
-            # Patient count tables
+            if parts:
+                parts.append("")
+            parts.append("CRITICAL: FHIR IDENTIFIER RULES (must follow exactly):")
+
             patient_count_tables = self._fhir_identifier_rules.get("patient_count_tables", {})
             if patient_count_tables:
                 parts.append("  When counting patients, use these exact patterns:")
@@ -353,23 +316,63 @@ class DataDictionary:
                     parts.append(f"    - {table_name}: COUNT(DISTINCT {identifier})")
                     if desc:
                         parts.append(f"      ({desc})")
-            
-            # Clinical tables with patient_id
+
             clinical_tables = self._fhir_identifier_rules.get("clinical_tables_with_patient_id", [])
             if clinical_tables:
                 parts.append(f"  Tables that have patient_id column: {', '.join(clinical_tables[:10])}")
-            
-            # Add explicit warning about patient_gold
+
             if "patient_gold" in patient_count_tables:
                 parts.append("  WARNING: patient_gold does NOT have patient_id column - use res_id instead!")
-        
-        # Column type warnings (critical for avoiding type errors)
-        column_type_warnings = self._validation_rules.get("column_type_warnings", [])
-        if column_type_warnings:
-            parts.append("\nCRITICAL: COLUMN TYPE WARNINGS (follow exactly to avoid type errors):")
-            for warning in column_type_warnings:
-                parts.append(f"  - {warning}")
-        
+
+        # ----- Mandatory default filters -----
+        relevant_filters = self.get_all_default_filters(tables) if tables else self._default_filters
+        if relevant_filters:
+            if parts:
+                parts.append("")
+            parts.append("MANDATORY DEFAULT FILTERS (always apply unless explicitly asked otherwise):")
+            for table, filters in relevant_filters.items():
+                for f in filters:
+                    parts.append(f"  - {table}: {f}")
+
+        # ----- Business definitions relevant to the tables -----
+        if tables:
+            relevant_defs = {}
+            for key, defn in self._business_definitions.items():
+                if isinstance(defn, dict):
+                    def_table = defn.get("table", "")
+                    if isinstance(def_table, str) and def_table in tables:
+                        relevant_defs[key] = defn
+                    elif isinstance(def_table, list) and any(t in tables for t in def_table):
+                        relevant_defs[key] = defn
+
+            if relevant_defs:
+                parts.append("\nBUSINESS DEFINITIONS:")
+                for key, defn in relevant_defs.items():
+                    desc = defn.get("description", defn.get("condition", str(defn)))
+                    parts.append(f"  - {key}: {desc}")
+
+        # ----- Metric templates -----
+        if self._metric_templates:
+            relevant_metrics = {}
+            for name, template in self._metric_templates.items():
+                if not tables or any(t in str(template) for t in tables):
+                    relevant_metrics[name] = template
+
+            if relevant_metrics:
+                parts.append("\nMETRIC TEMPLATES:")
+                for name, template in relevant_metrics.items():
+                    expr = template.get("expression", str(template))
+                    desc = template.get("description", "")
+                    parts.append(f"  - {name}: {expr}")
+                    if desc:
+                        parts.append(f"    ({desc})")
+
+        # ----- Business glossary (free-form domain jargon) -----
+        if self._business_glossary:
+            parts.append("\nBUSINESS GLOSSARY (domain-specific terminology):")
+            for term in self._business_glossary:
+                parts.append(f"  - {term}")
+
         return "\n".join(parts) if parts else ""
     
     def to_dict(self) -> Dict[str, Any]:
@@ -554,25 +557,33 @@ def get_agent_data_dictionary(
         agent_dd = DataDictionary.from_json(config_json, agent_id=agent_id)
     else:
         agent_dd = DataDictionary(agent_id=agent_id)
-    
-    # Optionally merge with global defaults
-    if merge_with_global and not agent_dd.is_empty:
-        global_dd = get_data_dictionary(agent_id=None)
-        if not global_dd.is_empty:
-            return global_dd.merge_with(agent_dd)
-    
-    return agent_dd
+
+    if not merge_with_global:
+        return agent_dd
+
+    global_dd = get_data_dictionary(agent_id=None)
+
+    if agent_dd.is_empty:
+        return global_dd
+
+    if global_dd.is_empty:
+        return agent_dd
+
+    return global_dd.merge_with(agent_dd)
 
 
 def reset_data_dictionary(agent_id: Optional[str] = None) -> None:
     """
     Reset the data dictionary cache.
-    
+
+    Also clears the semantic query cache, since cached NL->SQL pairs may
+    encode now-stale business rules from the previous dictionary version.
+
     Args:
         agent_id: Specific agent to reset. If None, resets ALL cached dictionaries.
     """
     global _data_dictionary_cache
-    
+
     with _data_dictionary_lock:
         if agent_id is None:
             _data_dictionary_cache.clear()
@@ -580,3 +591,10 @@ def reset_data_dictionary(agent_id: Optional[str] = None) -> None:
         elif agent_id in _data_dictionary_cache:
             del _data_dictionary_cache[agent_id]
             logger.info(f"DataDictionary reset for agent: {agent_id}")
+
+    try:
+        from app.modules.chat.query.semantic_cache import get_semantic_cache
+        get_semantic_cache().clear()
+        logger.info("Semantic query cache cleared after data dictionary reset")
+    except Exception as e:
+        logger.warning(f"Failed to clear semantic cache on dictionary reset: {e}")

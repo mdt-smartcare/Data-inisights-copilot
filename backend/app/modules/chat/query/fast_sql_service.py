@@ -818,29 +818,17 @@ class IntegratedFastSQLServiceFactory:
         return None
     
     async def _load_data_dictionary(self, config) -> DataDictionary:
-        """Load DataDictionary for agent config."""
+        """Load DataDictionary for agent config — agent JSON merged on top of global YAML."""
+        from app.modules.chat.query.data_dictionary import get_agent_data_dictionary
+
         agent_id_str = str(config.agent_id) if hasattr(config, 'agent_id') else None
-        
-        # Try to load from agent's config
-        if hasattr(config, 'data_dictionary') and config.data_dictionary:
-            return DataDictionary.from_json(
-                config.data_dictionary,
-                agent_id=agent_id_str
-            )
-        
-        # Fall back to default YAML file (same as SQLService)
-        # Path: fast_sql_service.py is in app/modules/chat/query/
-        # Need to go to app/core/config/data_dictionary.yaml
-        from pathlib import Path
-        default_path = Path(__file__).parent.parent.parent.parent / "core" / "config" / "data_dictionary.yaml"
-        
-        if default_path.exists():
-            logger.info(f"FastSQL: loading DataDictionary from YAML: {default_path}")
-            return DataDictionary(config_path=str(default_path), agent_id=agent_id_str)
-        
-        # Final fallback to empty
-        logger.warning("FastSQL: No DataDictionary found, using empty")
-        return DataDictionary(agent_id=agent_id_str)
+        config_json = config.data_dictionary if hasattr(config, 'data_dictionary') else None
+
+        return get_agent_data_dictionary(
+            agent_id=agent_id_str,
+            config_json=config_json,
+            merge_with_global=True,
+        )
     
     async def _create_llm(self, config) -> Optional[BaseChatModel]:
         """Create LLM instance for SQL generation."""
