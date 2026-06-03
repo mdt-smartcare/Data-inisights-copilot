@@ -119,7 +119,9 @@ class DialectTranslator:
             r"INTERVAL\s+'(\d+)\s+days'": r"DATEADD(day, \1, ",
             r"CURRENT_DATE": "CAST(GETDATE() AS DATE)",
             r"STDDEV\(": "STDEV(",
-            r"::\w+": "",  # Remove PostgreSQL type casts
+            # NOTE: PostgreSQL `::TYPE` shorthand intentionally NOT auto-stripped here —
+            # silently deleting the cast produces broken SQL. The dialect_rules block
+            # in prompt_templates.py tells the LLM to rewrite as CAST(... AS TYPE).
             r"WITH\s+RECURSIVE": "WITH",  # SQL Server doesn't need RECURSIVE keyword
         },
         SQLDialect.ORACLE: {
@@ -127,7 +129,7 @@ class DialectTranslator:
             r"DATE_TRUNC\('(\w+)',\s*(\w+)\)": r"TRUNC(\2, '\1')",
             r"CURRENT_DATE": "SYSDATE",
             r"INTERVAL\s+'(\d+)\s+days'": r"NUMTODSINTERVAL(\1, 'DAY')",
-            r"::\w+": "",  # Remove PostgreSQL type casts
+            # See SQLSERVER note above — `::TYPE` cast is left for LLM to rewrite.
         },
     }
     
