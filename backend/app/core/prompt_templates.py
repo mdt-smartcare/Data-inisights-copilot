@@ -100,6 +100,20 @@ SQLSERVER_RULES = """## SQL Server-Specific Rules
 - String concatenation uses + operator or CONCAT()
 """
 
+TRINO_RULES = """## Trino-Specific Rules
+- Fully-qualified names use catalog.schema.table form
+- Use DATE_TRUNC('month', date_col) for date truncation
+- Use INTERVAL '90' DAY (number quoted, unit unquoted) for date arithmetic
+- Use DATE_DIFF('day', start_date, end_date) with 3 arguments
+- Use CURRENT_DATE / CURRENT_TIMESTAMP (no parentheses)
+- String concatenation uses || operator; CONCAT() also supported
+- Use CAST(col AS type) — no :: shorthand
+- Window functions CANNOT be used in WHERE — use subquery/CTE
+- Aggregate functions CANNOT be used in WHERE — use HAVING or CTE
+- Boolean values are TRUE/FALSE, not 1/0
+- Use TRY(expr) to swallow per-row errors instead of failing the query
+"""
+
 DIALECT_RULES_MAP = {
     "postgresql": POSTGRESQL_RULES,
     "postgres": POSTGRESQL_RULES,
@@ -107,6 +121,7 @@ DIALECT_RULES_MAP = {
     "mysql": MYSQL_RULES,
     "sqlserver": SQLSERVER_RULES,
     "mssql": SQLSERVER_RULES,
+    "trino": TRINO_RULES,
 }
 
 

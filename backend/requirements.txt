@@ -32,6 +32,7 @@ mysqlclient==2.2.4
 pymysql==1.1.1
 duckdb==1.2.1
 duckdb-engine>=0.17.0
+trino[sqlalchemy]>=0.330.0
 
 # ============================================
 # Security & Authentication

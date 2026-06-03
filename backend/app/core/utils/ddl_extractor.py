@@ -44,6 +44,7 @@ class DatabaseDialect(Enum):
     MYSQL = "mysql"
     SQLITE = "sqlite"
     DUCKDB = "duckdb"
+    TRINO = "trino"
 
 
 @dataclass
@@ -358,6 +359,8 @@ def _detect_dialect_from_url(url: str) -> DatabaseDialect:
         return DatabaseDialect.SQLITE
     elif "duckdb" in url_lower:
         return DatabaseDialect.DUCKDB
+    elif "trino" in url_lower:
+        return DatabaseDialect.TRINO
     else:
         return DatabaseDialect.POSTGRESQL
 
@@ -996,7 +999,7 @@ class DDLExtractor:
     def _detect_dialect(self) -> DatabaseDialect:
         """Detect database dialect from engine."""
         dialect_name = self.engine.dialect.name.lower()
-        
+
         if "postgresql" in dialect_name or "postgres" in dialect_name:
             return DatabaseDialect.POSTGRESQL
         elif "mysql" in dialect_name:
@@ -1005,6 +1008,8 @@ class DDLExtractor:
             return DatabaseDialect.SQLITE
         elif "duckdb" in dialect_name:
             return DatabaseDialect.DUCKDB
+        elif "trino" in dialect_name:
+            return DatabaseDialect.TRINO
         else:
             logger.warning(f"Unknown dialect '{dialect_name}', defaulting to PostgreSQL")
             return DatabaseDialect.POSTGRESQL

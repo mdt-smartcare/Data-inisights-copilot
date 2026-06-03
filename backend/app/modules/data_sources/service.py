@@ -519,6 +519,9 @@ class DataSourceService:
                         "SELECT name FROM sqlite_master WHERE type='table'"
                     ))
                     tables = [row[0] for row in result]
+                elif "trino" in db_engine_type:
+                    result = conn.execute(text("SHOW TABLES"))
+                    tables = [row[0] for row in result]
             
             return {
                 "success": True,

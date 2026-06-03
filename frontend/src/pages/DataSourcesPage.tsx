@@ -691,6 +691,7 @@ export default function DataSourcesPage() {
                     <option value="sqlite">SQLite</option>
                     <option value="mssql">SQL Server</option>
                     <option value="oracle">Oracle</option>
+                    <option value="trino">Trino</option>
                   </select>
                   {isEditingInUse && (
                     <p className="mt-1 text-xs text-amber-600">
