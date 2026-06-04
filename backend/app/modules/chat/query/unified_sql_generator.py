@@ -196,7 +196,9 @@ SQL: SELECT condition_code, condition_display, COUNT(*) as count FROM "condition
         llm: BaseChatModel,
         schema_context: str,
         business_definitions: Optional[str] = None,
-        dialect: str = "duckdb"
+        dialect: str = "duckdb",
+        custom_system_prompt: Optional[str] = None,
+        agent_definition: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize UnifiedSQLGenerator.
@@ -206,14 +208,123 @@ SQL: SELECT condition_code, condition_display, COUNT(*) as count FROM "condition
             schema_context: Pre-compiled schema context from manifest
             business_definitions: Business glossary/definitions
             dialect: SQL dialect (duckdb, postgres, etc.)
+            custom_system_prompt: Agent's custom system prompt (if any)
+            agent_definition: Agent definition with domain rules, guardrails, etc.
         """
         self.llm = llm
         self.schema_context = schema_context
         self.business_definitions = business_definitions or ""
         self.dialect = dialect
+        self.custom_system_prompt = custom_system_prompt
+        self.agent_definition = agent_definition or {}
         
         # Check if LLM supports structured output
         self._supports_structured = hasattr(llm, 'with_structured_output')
+    
+    def _build_system_prompt(self, few_shot_examples: Optional[str] = None) -> str:
+        """
+        Build the system prompt, incorporating agent_definition if available.
+        
+        Priority:
+        1. Use agent's custom_system_prompt if available
+        2. Otherwise use template with agent_definition context injected
+        """
+        # Extract agent_definition components
+        agent_role = self.agent_definition.get("role", "")
+        domain_rules = self.agent_definition.get("domain_rules", [])
+        guardrails = self.agent_definition.get("guardrails", [])
+        kpis_metrics = self.agent_definition.get("kpis_metrics", [])
+        sample_questions = self.agent_definition.get("sample_questions", [])
+        
+        # Build agent context block from agent_definition
+        agent_context_parts = []
+        
+        if agent_role:
+            agent_context_parts.append(f"## Agent Role\n{agent_role}")
+        
+        if domain_rules:
+            rules_text = "\n".join(f"- {rule}" for rule in domain_rules if isinstance(rule, str))
+            if rules_text:
+                agent_context_parts.append(f"## Domain Rules\n{rules_text}")
+        
+        if guardrails:
+            guards_text = "\n".join(f"- {g}" for g in guardrails if isinstance(g, str))
+            if guards_text:
+                agent_context_parts.append(f"## Guardrails\n{guards_text}")
+        
+        if kpis_metrics:
+            kpi_parts = []
+            for kpi in kpis_metrics:
+                if isinstance(kpi, dict):
+                    name = kpi.get("name", kpi.get("metric", ""))
+                    formula = kpi.get("formula", kpi.get("sql", ""))
+                    if name:
+                        kpi_parts.append(f"- {name}" + (f": {formula}" if formula else ""))
+                elif isinstance(kpi, str):
+                    kpi_parts.append(f"- {kpi}")
+            if kpi_parts:
+                agent_context_parts.append(f"## KPIs & Metrics\n" + "\n".join(kpi_parts))
+        
+        # Extract few-shot examples from agent_definition sample_questions
+        agent_examples = []
+        for sq in sample_questions:
+            if isinstance(sq, dict) and sq.get("question"):
+                q = sq["question"]
+                sql = sq.get("sql", "")
+                if sql:
+                    agent_examples.append(f"Question: {q}\nSQL: {sql}")
+        
+        # Combine few-shot examples
+        combined_examples = few_shot_examples or ""
+        if agent_examples:
+            agent_examples_text = "\n\n".join(agent_examples)
+            if combined_examples:
+                combined_examples = f"{agent_examples_text}\n\n{combined_examples}"
+            else:
+                combined_examples = agent_examples_text
+        
+        agent_context_block = "\n\n".join(agent_context_parts) if agent_context_parts else ""
+        
+        # If custom_system_prompt is provided, use it with dynamic context
+        if self.custom_system_prompt:
+            # Try to inject schema and definitions into custom prompt
+            prompt = self.custom_system_prompt
+            
+            # Add schema context if not already present
+            if "{schema_context}" in prompt:
+                prompt = prompt.replace("{schema_context}", self.schema_context)
+            elif "## Available Schema" not in prompt and self.schema_context:
+                prompt += f"\n\n## Available Schema\n{self.schema_context}"
+            
+            # Add business definitions if not already present
+            if "{business_definitions}" in prompt:
+                prompt = prompt.replace("{business_definitions}", self.business_definitions)
+            elif "## Business Definitions" not in prompt and self.business_definitions:
+                prompt += f"\n\n## Business Definitions\n{self.business_definitions}"
+            
+            # Add agent context if available
+            if agent_context_block:
+                prompt += f"\n\n{agent_context_block}"
+            
+            # Add few-shot examples
+            if "{few_shot_examples}" in prompt:
+                prompt = prompt.replace("{few_shot_examples}", combined_examples or "No examples available.")
+            elif combined_examples:
+                prompt += f"\n\n## Few-Shot Examples\n{combined_examples}"
+            
+            return prompt
+        
+        # Use default template with agent context injected
+        business_defs = self.business_definitions
+        if agent_context_block:
+            # Prepend agent context to business definitions
+            business_defs = f"{agent_context_block}\n\n{business_defs}" if business_defs else agent_context_block
+        
+        return self.SYSTEM_PROMPT_TEMPLATE.format(
+            schema_context=self.schema_context,
+            business_definitions=business_defs,
+            few_shot_examples=combined_examples or "No examples available."
+        )
     
     async def generate(
         self,
@@ -236,12 +347,8 @@ SQL: SELECT condition_code, condition_display, COUNT(*) as count FROM "condition
         """
         start = time.time()
         
-        # Build system prompt
-        system_prompt = self.SYSTEM_PROMPT_TEMPLATE.format(
-            schema_context=self.schema_context,
-            business_definitions=self.business_definitions,
-            few_shot_examples=few_shot_examples or "No examples available."
-        )
+        # Build system prompt - use custom if available, otherwise use template
+        system_prompt = self._build_system_prompt(few_shot_examples)
         
         # Build messages
         messages = [SystemMessage(content=system_prompt)]
@@ -356,7 +463,9 @@ class UnifiedSQLGeneratorFactory:
         agent_id: str,
         llm: BaseChatModel,
         manifest: "SchemaManifest",
-        linked_tables: Optional[List[str]] = None
+        linked_tables: Optional[List[str]] = None,
+        custom_system_prompt: Optional[str] = None,
+        agent_definition: Optional[Dict[str, Any]] = None
     ) -> UnifiedSQLGenerator:
         """
         Get or create a UnifiedSQLGenerator for an agent.
@@ -366,6 +475,8 @@ class UnifiedSQLGeneratorFactory:
             llm: LangChain LLM instance
             manifest: Pre-compiled schema manifest
             linked_tables: Tables to include in context (or all if None)
+            custom_system_prompt: Agent's custom system prompt
+            agent_definition: Agent definition (role, domain_rules, guardrails, sample_questions)
             
         Returns:
             UnifiedSQLGenerator instance
@@ -389,7 +500,9 @@ class UnifiedSQLGeneratorFactory:
         return UnifiedSQLGenerator(
             llm=llm,
             schema_context=schema_context,
-            business_definitions=business_defs
+            business_definitions=business_defs,
+            custom_system_prompt=custom_system_prompt,
+            agent_definition=agent_definition
         )
 
 

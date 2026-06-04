@@ -473,12 +473,32 @@ class AgentConfigService:
         """Update a configuration."""
         config = await self.configs.update(config_id, config_data)
         if config:
+            # Invalidate FastSQL cache for this agent so changes take effect
+            self._invalidate_fast_sql_cache(str(config.agent_id))
             return self._to_response(config)
         return None
     
+    def _invalidate_fast_sql_cache(self, agent_id: str) -> None:
+        """Invalidate FastSQL cache for an agent when config changes."""
+        try:
+            from app.modules.chat.query.fast_sql_service import IntegratedFastSQLServiceFactory
+            # Access class-level cache and remove this agent
+            if agent_id in IntegratedFastSQLServiceFactory._cache:
+                del IntegratedFastSQLServiceFactory._cache[agent_id]
+                logger.info(f"FastSQL cache invalidated for agent {agent_id}")
+        except ImportError:
+            pass  # FastSQL not available
+        except Exception as e:
+            logger.warning(f"Failed to invalidate FastSQL cache: {e}")
+    
     async def activate_config(self, config_id: int) -> bool:
         """Activate a config (deactivates others)."""
-        return await self.configs.activate_config(config_id)
+        # Get config to find agent_id before activating
+        config = await self.configs.get_by_id(config_id)
+        result = await self.configs.activate_config(config_id)
+        if result and config:
+            self._invalidate_fast_sql_cache(str(config.agent_id))
+        return result
     
     async def get_config_history(self, agent_id: UUID) -> AgentConfigListResponse:
         """Get all config versions for an agent."""

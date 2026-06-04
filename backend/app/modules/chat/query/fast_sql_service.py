@@ -143,7 +143,9 @@ class FastSQLService:
         enable_templates: bool = True,
         enable_memory: bool = True,
         enable_learning: bool = True,
-        strict_mode: bool = False
+        strict_mode: bool = False,
+        system_prompt: Optional[str] = None,
+        agent_definition: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize FastSQLService.
@@ -158,6 +160,8 @@ class FastSQLService:
             enable_memory: Whether to use query memory
             enable_learning: Whether to store successful queries
             strict_mode: If True, reject queries with unknown tables
+            system_prompt: Agent's custom system prompt (optional)
+            agent_definition: Agent definition with role, domain_rules, guardrails (optional)
         """
         self.agent_id = agent_id
         self.llm = llm
@@ -168,6 +172,8 @@ class FastSQLService:
         self.enable_memory = enable_memory
         self.enable_learning = enable_learning
         self.strict_mode = strict_mode
+        self.system_prompt = system_prompt
+        self.agent_definition = agent_definition
         
         # Components (initialized in initialize())
         self._manifest: Optional[SchemaManifest] = None
@@ -337,11 +343,14 @@ class FastSQLService:
         llm_start = time.time()
         
         # Build generator with context (manifest provides schema context internally)
+        # Pass agent's custom system_prompt and agent_definition for context
         generator = UnifiedSQLGeneratorFactory.get_generator(
             self.agent_id,
             self.llm,
             self._manifest,
-            linked_tables
+            linked_tables,
+            custom_system_prompt=self.system_prompt,
+            agent_definition=self.agent_definition
         )
         
         # Single LLM call
@@ -767,7 +776,22 @@ class IntegratedFastSQLServiceFactory:
             dialect = self._detect_dialect(db_url)
             logger.info(f"FastSQL: dialect={dialect.value}")
             
-            # 8. Create FastSQLService
+            # 8. Extract agent's custom prompt and definition
+            system_prompt = getattr(config, 'system_prompt', None)
+            agent_definition_raw = getattr(config, 'agent_definition', None)
+            agent_definition = None
+            if agent_definition_raw:
+                import json
+                try:
+                    if isinstance(agent_definition_raw, str):
+                        agent_definition = json.loads(agent_definition_raw)
+                    elif isinstance(agent_definition_raw, dict):
+                        agent_definition = agent_definition_raw
+                    logger.info(f"FastSQL: loaded agent_definition with keys: {list(agent_definition.keys()) if agent_definition else []}")
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"FastSQL: Could not parse agent_definition: {e}")
+            
+            # 9. Create FastSQLService
             logger.info("FastSQL: creating FastSQLService instance")
             service = FastSQLService(
                 agent_id=agent_id_str,
@@ -778,13 +802,15 @@ class IntegratedFastSQLServiceFactory:
                 enable_templates=enable_templates if enable_fast_mode else False,
                 enable_memory=enable_memory if enable_fast_mode else False,
                 enable_learning=enable_learning if enable_fast_mode else False,
+                system_prompt=system_prompt,
+                agent_definition=agent_definition,
             )
             
-            # 9. Initialize (builds manifest, indexes schema)
+            # 10. Initialize (builds manifest, indexes schema)
             logger.info("FastSQL: initializing service")
             await service.initialize()
             
-            # 10. Cache and return
+            # 11. Cache and return
             self._cache[agent_id_str] = service
             
             logger.info(
@@ -837,7 +863,9 @@ class IntegratedFastSQLServiceFactory:
             from app.modules.chat.llm_helper import LLMHelper
             
             # For FastSQL, we want a low temperature for deterministic SQL
-            llm_helper = LLMHelper(None, config.agent_id)  # None for db, will use default
+            # Pass db session from config_repo to enable agent-specific LLM config
+            db_session = getattr(self.config_repo, 'db', None)
+            llm_helper = LLMHelper(db_session, config.agent_id)
             return await llm_helper.get_llm(temperature=0.1)
             
         except Exception as e:

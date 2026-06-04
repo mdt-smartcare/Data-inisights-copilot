@@ -41,6 +41,19 @@ class BootstrapError(Exception):
     """Raised when bootstrap cannot complete."""
 
 
+def _invalidate_fast_sql_cache(agent_id: str) -> None:
+    """Invalidate FastSQL cache for an agent when definition changes."""
+    try:
+        from app.modules.chat.query.fast_sql_service import IntegratedFastSQLServiceFactory
+        if agent_id in IntegratedFastSQLServiceFactory._cache:
+            del IntegratedFastSQLServiceFactory._cache[agent_id]
+            logger.info(f"FastSQL cache invalidated for agent {agent_id}")
+    except ImportError:
+        pass  # FastSQL not available
+    except Exception as e:
+        logger.warning(f"Failed to invalidate FastSQL cache: {e}")
+
+
 def _safe_engine(db_url: str):
     return create_engine(db_url, pool_pre_ping=True, pool_size=1)
 
@@ -354,6 +367,10 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
         config.agent_definition = json.dumps(definition)
         config.agent_definition_status = "completed"
         await session.commit()
+        
+        # Invalidate FastSQL cache so the new agent_definition takes effect
+        _invalidate_fast_sql_cache(str(agent_id))
+        
         logger.info(
             f"[BOOTSTRAP] AgentDefinition bootstrapped for version_id={version_id}, "
             f"tables={len(tables)}, sample_questions={len(definition['sample_questions'])}"
