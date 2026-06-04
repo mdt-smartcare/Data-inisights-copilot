@@ -256,12 +256,16 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
     Bootstrap an AgentDefinition for the given agent_config version.
 
     Persists `agent_definition` JSON + updates `agent_definition_status`.
-    Caller is responsible for providing a session; this function commits
-    its own writes to that session.
+    
+    IMPORTANT: This function uses short transaction scopes to avoid blocking
+    other database operations during long-running LLM calls.
     """
+    logger.info(f"[BOOTSTRAP] Entered bootstrap_agent_definition for version_id={version_id}")
     from app.modules.agents.models import AgentConfigModel, AgentModel
     from app.modules.data_sources.models import DataSourceModel
 
+    # ========== PHASE 1: Read data and set pending status (short transaction) ==========
+    logger.info(f"[BOOTSTRAP] Fetching agent config for version_id={version_id}")
     result = await session.execute(
         select(AgentConfigModel).where(AgentConfigModel.id == version_id)
     )
@@ -269,39 +273,61 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
     if config is None:
         raise BootstrapError(f"agent_config version {version_id} not found")
 
+    # Guard: if already completed, return existing definition
+    if config.agent_definition_status == "completed" and config.agent_definition:
+        logger.info(f"Bootstrap already completed for version_id={version_id}, returning existing definition")
+        return json.loads(config.agent_definition) if isinstance(config.agent_definition, str) else config.agent_definition
+
+    # Guard: if already pending, skip to avoid race conditions
+    if config.agent_definition_status == "pending":
+        logger.warning(f"Bootstrap already pending for version_id={version_id}, skipping")
+        return {}
+
+    # Capture all needed data before we release the transaction
+    data_source_id = config.data_source_id
+    agent_id = config.agent_id
+    selected_columns_raw = config.selected_columns
+    data_dictionary_raw = config.data_dictionary
+
+    # Set pending and commit immediately to release locks
     config.agent_definition_status = "pending"
     await session.commit()
+    logger.info(f"[BOOTSTRAP] Set status=pending and committed for version_id={version_id}")
 
+    # ========== PHASE 2: Fetch additional data (short transaction) ==========
     try:
         ds_result = await session.execute(
-            select(DataSourceModel).where(DataSourceModel.id == config.data_source_id)
+            select(DataSourceModel).where(DataSourceModel.id == data_source_id)
         )
         data_source: Optional[DataSourceModel] = ds_result.scalar_one_or_none()
         if data_source is None or not data_source.db_url:
             raise BootstrapError("data source missing or has no db_url")
+        
+        db_url = data_source.db_url  # Capture before releasing
 
-        selected_columns_map = _parse_selected_columns(config.selected_columns)
+        agent_result = await session.execute(
+            select(AgentModel).where(AgentModel.id == agent_id)
+        )
+        agent_row: Optional[AgentModel] = agent_result.scalar_one_or_none()
+        agent_name = agent_row.title if agent_row else "Untitled Agent"
+
+        selected_columns_map = _parse_selected_columns(selected_columns_raw)
         tables = list(selected_columns_map.keys())[:MAX_TABLES_FOR_BOOTSTRAP]
         if not tables:
             raise BootstrapError("no tables selected for this agent")
 
-        # Run blocking schema operations in a thread pool to avoid blocking event loop
-        logger.info(f"Building schema blocks for {len(tables)} tables (running in thread pool)...")
+        data_dictionary_block = (data_dictionary_raw or "")[:6000] or "(none provided)"
+
+        # ========== PHASE 3: Heavy lifting WITHOUT holding transaction ==========
+        # Run blocking schema operations in a thread pool
+        logger.info(f"[BOOTSTRAP] Building schema blocks for {len(tables)} tables (running in thread pool)...")
         schema_block, fk_block, sample_values_block = await asyncio.to_thread(
             _build_schema_blocks_sync,
-            data_source.db_url,
+            db_url,
             tables,
             selected_columns_map,
         )
-        logger.info("Schema blocks built successfully")
-
-        data_dictionary_block = (config.data_dictionary or "")[:6000] or "(none provided)"
-
-        agent_result = await session.execute(
-            select(AgentModel).where(AgentModel.id == config.agent_id)
-        )
-        agent_row: Optional[AgentModel] = agent_result.scalar_one_or_none()
-        agent_name = agent_row.title if agent_row else "Untitled Agent"
+        logger.info("[BOOTSTRAP] Schema blocks built successfully")
 
         prompt = _render_prompt(
             agent_name=agent_name,
@@ -311,24 +337,40 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
             data_dictionary_block=data_dictionary_block,
         )
 
-        llm_helper = LLMHelper(db_session=session, agent_id=config.agent_id)
+        # LLM call - this is the slow part, no transaction held during this
+        llm_helper = LLMHelper(db_session=session, agent_id=agent_id)
         raw_definition = await _invoke_llm_for_definition(llm_helper, prompt)
         definition = _coerce_definition_shape(raw_definition)
+
+        # ========== PHASE 4: Save results (short transaction) ==========
+        # Re-fetch config to update (avoids stale object issues)
+        result = await session.execute(
+            select(AgentConfigModel).where(AgentConfigModel.id == version_id)
+        )
+        config = result.scalar_one_or_none()
+        if config is None:
+            raise BootstrapError(f"agent_config version {version_id} disappeared during bootstrap")
 
         config.agent_definition = json.dumps(definition)
         config.agent_definition_status = "completed"
         await session.commit()
         logger.info(
-            f"AgentDefinition bootstrapped for version_id={version_id}, "
+            f"[BOOTSTRAP] AgentDefinition bootstrapped for version_id={version_id}, "
             f"tables={len(tables)}, sample_questions={len(definition['sample_questions'])}"
         )
         return definition
 
     except Exception as exc:
-        logger.exception(f"AgentDefinition bootstrap failed for version_id={version_id}: {exc}")
+        logger.exception(f"[BOOTSTRAP] AgentDefinition bootstrap failed for version_id={version_id}: {exc}")
         try:
-            config.agent_definition_status = "failed"
-            await session.commit()
+            # Re-fetch to update status
+            result = await session.execute(
+                select(AgentConfigModel).where(AgentConfigModel.id == version_id)
+            )
+            config = result.scalar_one_or_none()
+            if config:
+                config.agent_definition_status = "failed"
+                await session.commit()
         except Exception:
             await session.rollback()
         raise
@@ -366,7 +408,12 @@ async def bootstrap_agent_definition_background(version_id: int) -> None:
             logger.info(f"Creating database session for bootstrap version_id={version_id}")
             async with db.session() as session:
                 logger.info(f"Database session created, calling bootstrap_agent_definition")
-                await bootstrap_agent_definition(version_id, session)
+                try:
+                    result = await bootstrap_agent_definition(version_id, session)
+                    logger.info(f"Bootstrap completed successfully for version_id={version_id}")
+                except Exception as inner_exc:
+                    logger.exception(f"Exception inside bootstrap_agent_definition for version_id={version_id}: {inner_exc}")
+                    raise
         except Exception as exc:
             # Inner function already logged the cause + tried to set status=failed.
             # But if the exception happened before setting pending, mark as failed now.
