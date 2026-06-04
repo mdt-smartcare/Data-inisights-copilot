@@ -883,6 +883,8 @@ class IntegratedFastSQLServiceFactory:
             return SQLDialect.MYSQL
         elif "sqlite" in url_lower:
             return SQLDialect.SQLITE
+        elif "trino" in url_lower or "presto" in url_lower:
+            return SQLDialect.TRINO
         else:
             return SQLDialect.DUCKDB
     

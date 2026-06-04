@@ -50,6 +50,7 @@ class SQLDialect(str, Enum):
     BIGQUERY = "bigquery"
     SNOWFLAKE = "snowflake"
     SQLITE = "sqlite"
+    TRINO = "trino"
 
 
 @dataclass
