@@ -95,6 +95,11 @@ PRIORITY_TABLE_KEYWORDS = {
     "systolic": ["bp_log_latest_gold", "bp_log_gold"],
     "diastolic": ["bp_log_latest_gold", "bp_log_gold"],
     "average bp": ["bp_log_gold", "patient_tracker_gold"],
+    # Program-related queries need the facility-program join tables
+    "program": ["program_admin_gold", "health_facility_program_admin_gold", "health_facility_admin_gold", "patient_tracker_gold"],
+    "by program": ["program_admin_gold", "health_facility_program_admin_gold", "health_facility_admin_gold", "patient_tracker_gold"],
+    "program name": ["program_admin_gold", "health_facility_program_admin_gold"],
+    "wdf": ["program_admin_gold", "health_facility_program_admin_gold", "health_facility_admin_gold"],
 }
 
 
