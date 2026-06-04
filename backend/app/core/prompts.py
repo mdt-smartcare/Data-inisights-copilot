@@ -152,6 +152,92 @@ def get_file_generator_prompt() -> str:
     return load_prompt("file_generator", fallback="You are a data analyst for file-based data.")
 
 
+def get_sql_generator_rules_only() -> str:
+    """
+    Return the SQL generator prompt WITHOUT the FHIR-rules preamble.
+
+    Used when the assembled system prompt already injects FHIR rules as a
+    standalone section — avoids ~2KB of duplicated identifier guidance.
+
+    Strips everything up to and including the `## CRITICAL: FHIR Healthcare
+    Schema Rules` block; keeps from the generic `## Rules` heading onward.
+    """
+    full = get_sql_generator_prompt()
+    marker = "## Rules"
+    idx = full.find(marker)
+    if idx < 0:
+        return full
+    return "# SQL Generation Rules\n\n" + full[idx:]
+
+
+def get_generic_sql_generator_prompt() -> str:
+    """
+    Return a schema-agnostic SQL generation prompt for non-clinical agents.
+
+    No FHIR rules, no healthcare table examples, no M&E patterns. Used when
+    selected_columns has zero `*_gold` clinical tables (admin / operational
+    agents). Keeps generic best-practices: cast types, NO LIMIT by default,
+    GREATEST/LEAST, JOIN strategy, exact column names.
+    """
+    return """\
+# SQL Generation Rules (generic)
+
+You generate analytical SQL against the relational database described in the
+`# DATA DICTIONARY & SCHEMA` section. You MUST follow these rules.
+
+## Output
+1. Return ONLY the SQL query — no explanations, no markdown fences.
+2. Use lowercase SQL keywords.
+3. Do NOT add `LIMIT` unless the user explicitly asks for top-N / first-N.
+
+## Schema discipline
+4. Use ONLY tables and columns that appear in `# DATA DICTIONARY & SCHEMA`.
+   Never invent, never guess, never paraphrase column names.
+5. Before writing SQL, scan the schema and confirm each column lives on the
+   exact table you put it on. If a column appears in only one table, query
+   that table.
+6. If a question cannot be answered from the provided schema, return:
+   `SELECT 'Insufficient data for the requested question' AS error`.
+
+## Data types
+7. If a date column is `VARCHAR`, cast before date arithmetic:
+   `CAST(col AS TIMESTAMP)` or `col::TIMESTAMP`.
+   Example: `DATE_TRUNC('month', CAST(created_at AS TIMESTAMP))`.
+8. PostgreSQL `ROUND(value, decimals)` requires `NUMERIC`. Cast first:
+   `ROUND(AVG(col)::numeric, 2)`.
+9. Some boolean-like flags are stored as VARCHAR (`'true'` / `'false'`).
+   Compare with `IS DISTINCT FROM 'true'`, not `= false`.
+
+## Aggregation
+10. `COUNT(DISTINCT entity_id)` for unique-entity counts (prevents join
+    fan-out double-counts).
+11. Filter NULL values from aggregates when zeros aren't meaningful
+    (e.g. `WHERE height IS NOT NULL AND height > 0`).
+12. For row-wise min/max ACROSS columns, use `GREATEST(c1, c2, c3)` /
+    `LEAST(...)` — NOT `MAX()` / `MIN()`.
+13. Every non-aggregated column in `SELECT` must appear in `GROUP BY`.
+
+## Joins
+14. Use explicit `INNER JOIN` / `LEFT JOIN`, never comma joins.
+15. Use `INNER JOIN` when both sides must match; `LEFT JOIN` when the LEFT
+    side defines the population to preserve.
+16. Apply soft-delete filters on EVERY joined table (e.g. `is_deleted = false`
+    on tables that have it).
+17. When joining via a column with a type mismatch (VARCHAR ↔ BIGINT), cast
+    on the side that needs it: `CAST(a.col AS BIGINT) = b.col`.
+
+## Domain rules (from agent definition)
+- Follow every rule in `# DOMAIN RULES & GUARDRAILS` above as binding.
+- Follow `# PRIORITY METRICS` when choosing aggregations.
+- Match the patterns demonstrated in `# SAMPLE QUESTIONS THIS AGENT SHOULD
+  HANDLE` for any semantically similar question.
+
+## Output format
+Return only the SQL statement, no surrounding prose.
+"""
+
+
+
 def get_reasoning_generator_prompt() -> str:
     """Get the reasoning and example questions generator template."""
     return load_prompt("reasoning_generator", fallback="Generate reasoning and example questions for the data schema.")

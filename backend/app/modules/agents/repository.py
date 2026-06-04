@@ -794,6 +794,8 @@ def _config_to_dict(config: AgentConfigModel) -> Dict[str, Any]:
         "reranker_model_id": config.reranker_model_id,
         "system_prompt": config.system_prompt,
         "example_questions": json.loads(config.example_questions) if config.example_questions else None,
+        "agent_definition": json.loads(config.agent_definition) if getattr(config, "agent_definition", None) else None,
+        "agent_definition_status": getattr(config, "agent_definition_status", "not_started"),
         "embedding_path": config.embedding_path,
         "vector_collection_name": config.vector_collection_name,
         "embedding_status": config.embedding_status,

@@ -843,11 +843,58 @@ class AgentConfigService:
                 message=f"Version {version_id} not found",
                 status_code=404,
             )
-        
+
         updated = await self.configs.update(version_id, {
             "data_dictionary": data_dictionary,
             "completed_step": max(3, config.completed_step),
         })
+        return self._to_response(updated)
+
+    async def upsert_agent_definition_step(
+        self,
+        version_id: int,
+        agent_definition,
+    ) -> AgentConfigResponse:
+        """
+        Step 4.5: persist user-edited (or AI-drafted) agent definition.
+
+        Sample questions flagged with use_as_few_shot=true are indexed into
+        the agent's few-shot store after the row is updated.
+        """
+        import json as _json
+
+        config = await self.configs.get_by_id(version_id)
+        if not config:
+            raise AppException(
+                error_code=ErrorCode.RESOURCE_NOT_FOUND,
+                message=f"Version {version_id} not found",
+                status_code=404,
+            )
+
+        # Accept either pydantic AgentDefinition or plain dict.
+        if hasattr(agent_definition, "model_dump"):
+            payload = agent_definition.model_dump()
+        else:
+            payload = dict(agent_definition)
+
+        updated = await self.configs.update(version_id, {
+            "agent_definition": _json.dumps(payload),
+            "agent_definition_status": "completed",
+            "completed_step": max(4, config.completed_step),
+        })
+
+        # Promote sample_questions to the agent's few-shot store (best effort).
+        try:
+            from app.modules.sql_examples.store import upsert_agent_examples
+            sample_qs = [
+                q for q in payload.get("sample_questions") or []
+                if isinstance(q, dict) and q.get("question") and q.get("use_as_few_shot", True)
+            ]
+            if sample_qs and updated and updated.agent_id:
+                await upsert_agent_examples(str(updated.agent_id), sample_qs)
+        except Exception as exc:
+            logger.warning(f"Failed to index sample_questions as few-shot: {exc}")
+
         return self._to_response(updated)
 
     async def validate_data_dictionary(
@@ -1072,6 +1119,167 @@ class AgentConfigService:
         
         return await self._to_response_with_models(published)
 
+    @staticmethod
+    def _has_clinical_scope(selected_columns: Any) -> bool:
+        """
+        Heuristic: does the selected schema include clinical/FHIR tables?
+
+        Returns True when the user's table selection contains at least one
+        table that signals healthcare/NCD analytics. Used by `generate_prompt`
+        to gate FHIR rules, healthcare SQL examples, and M&E sections so that
+        admin-only agents don't get prompts teeming with references to tables
+        they cannot query.
+        """
+        if not isinstance(selected_columns, dict):
+            return False
+        keys = {str(k).lower() for k in selected_columns.keys()}
+        clinical_markers = {
+            "patient_tracker_gold", "patient_gold", "bp_log_gold",
+            "bp_log_latest_gold", "condition_gold", "encounter_gold",
+            "patient_diagnosis_gold", "glucose_log_gold",
+            "glucose_log_latest_gold",
+            "patient_confirmed_diagnosis_gold",
+            "patient_provisional_diagnosis_gold",
+            "careplan_gold", "appointment_gold", "screening_log_gold",
+        }
+        if keys & clinical_markers:
+            return True
+        clinical_substrings = ("patient", "bp_log", "glucose", "condition", "encounter")
+        return any(
+            k.endswith("_gold") and any(s in k for s in clinical_substrings)
+            for k in keys
+        )
+
+    @staticmethod
+    def _render_agent_definition_sections(definition: Dict[str, Any]) -> str:
+        """
+        Render the persisted AgentDefinition JSON as labelled prompt sections.
+
+        Placed early in the assembled system prompt so intent steers all
+        downstream sections (FHIR rules, SQL rules, data dictionary, etc.).
+        """
+        if not isinstance(definition, dict):
+            return ""
+
+        def _bullets(items: List[Any]) -> str:
+            return "\n".join(f"- {str(i).strip()}" for i in items if str(i).strip())
+
+        out: List[str] = []
+
+        role = (definition.get("role") or "").strip()
+        responsibilities = definition.get("responsibilities") or []
+        if role or responsibilities:
+            parts = ["# AGENT ROLE"]
+            if role:
+                parts.append(role)
+            if responsibilities:
+                parts.append("\n## Responsibilities")
+                parts.append(_bullets(responsibilities))
+            out.append("\n".join(parts))
+
+        personas = definition.get("target_personas") or []
+        if personas:
+            out.append("# TARGET USERS\n" + _bullets(personas))
+
+        objectives = definition.get("business_objectives") or []
+        if objectives:
+            out.append("# BUSINESS OBJECTIVES\n" + _bullets(objectives))
+
+        capabilities = definition.get("analytical_capabilities") or []
+        limitations = definition.get("limitations") or []
+        if capabilities or limitations:
+            cap_parts = ["# CAPABILITIES & LIMITATIONS"]
+            if capabilities:
+                cap_parts.append("## Can Do")
+                cap_parts.append(_bullets(capabilities))
+            if limitations:
+                cap_parts.append("## Must Refuse Or Caveat")
+                cap_parts.append(_bullets(limitations))
+            out.append("\n".join(cap_parts))
+
+        kpis = definition.get("kpis_metrics") or []
+        if kpis:
+            out.append("# PRIORITY METRICS\n" + _bullets(kpis))
+
+        domain_rules = definition.get("domain_rules") or []
+        guardrails = definition.get("guardrails") or []
+        if domain_rules or guardrails:
+            rule_parts = ["# DOMAIN RULES & GUARDRAILS (follow exactly)"]
+            if domain_rules:
+                rule_parts.append("## Domain Rules")
+                rule_parts.append(_bullets(domain_rules))
+            if guardrails:
+                rule_parts.append("## Guardrails")
+                rule_parts.append(_bullets(guardrails))
+            out.append("\n".join(rule_parts))
+
+        style = definition.get("response_style") or {}
+        if isinstance(style, dict) and any(style.values()):
+            style_lines = [f"- {k}: {v}" for k, v in style.items() if v]
+            if style_lines:
+                out.append("# RESPONSE STYLE\n" + "\n".join(style_lines))
+
+        sample_qs = definition.get("sample_questions") or []
+        if sample_qs:
+            # Split into "has SQL" (worth inlining) vs "question-only".
+            with_sql: List[Dict[str, Any]] = []
+            no_sql: List[str] = []
+            for q in sample_qs:
+                if isinstance(q, dict) and q.get("question"):
+                    qtext = str(q["question"]).strip()
+                    sql = str(q.get("sql") or "").strip()
+                    if sql:
+                        with_sql.append({
+                            "question": qtext,
+                            "sql": sql,
+                            "expected": str(q.get("expected_summary") or "").strip(),
+                        })
+                    else:
+                        no_sql.append(qtext)
+                elif isinstance(q, str) and q.strip():
+                    no_sql.append(q.strip())
+
+            # Take up to 3 full Q+SQL exemplars inline — guaranteed seen by the
+            # LLM (not behind vector retrieval). High-value stakeholder
+            # patterns belong here so they ground every relevant query.
+            inline = with_sql[:3]
+            remaining_with_sql = [q["question"] for q in with_sql[3:]]
+            bullet_questions = remaining_with_sql + no_sql
+
+            section_parts = [
+                "# SAMPLE QUESTIONS THIS AGENT SHOULD HANDLE",
+                "",
+                "The agent should be able to answer questions like the following.",
+                "For the patterns shown below the validated SQL is provided as",
+                "authoritative reference — match this style when the user asks",
+                "a semantically similar question.",
+                "",
+            ]
+
+            for idx, item in enumerate(inline, 1):
+                section_parts.append(f"## Q{idx}: {item['question']}")
+                section_parts.append("```sql")
+                section_parts.append(item["sql"])
+                section_parts.append("```")
+                if item["expected"]:
+                    section_parts.append(f"**Expected**: {item['expected']}")
+                section_parts.append("")
+
+            if bullet_questions:
+                section_parts.append("## Additional question patterns the agent should handle")
+                for bq in bullet_questions:
+                    section_parts.append(f"- {bq}")
+                section_parts.append("")
+
+            section_parts.append(
+                "(Sample questions are also indexed in the few-shot example "
+                "store and surfaced via vector retrieval for related queries.)"
+            )
+
+            out.append("\n".join(section_parts).rstrip())
+
+        return "\n\n".join(out)
+
     def _to_response(self, config) -> AgentConfigResponse:
         """Convert config model to response schema (without model info lookup)."""
         data = _config_to_dict(config)
@@ -1160,10 +1368,12 @@ class AgentConfigService:
         from langchain.schema import HumanMessage, SystemMessage
         from app.core.llm import create_llm_provider
         from app.core.prompts import (
-            get_chart_generator_prompt, 
+            get_chart_generator_prompt,
             get_base_system_prompt,
             get_fhir_rules_prompt,
             get_sql_generator_prompt,
+            get_sql_generator_rules_only,
+            get_generic_sql_generator_prompt,
             get_duckdb_sql_rules_prompt,
             get_reasoning_generator_prompt,
         )
@@ -1180,6 +1390,11 @@ class AgentConfigService:
         data_dictionary = json.loads(config.data_dictionary) if config.data_dictionary else {}
         selected_columns = json.loads(config.selected_columns) if config.selected_columns else {}
         llm_config = json.loads(config.llm_config) if config.llm_config else {}
+        agent_definition = (
+            json.loads(config.agent_definition)
+            if getattr(config, "agent_definition", None)
+            else None
+        )
         
         # Get data source type (database or file) from the config's data source
         data_source_type = "database"  # default
@@ -1213,12 +1428,17 @@ class AgentConfigService:
         # Compose the system prompt from templates (deterministic, no LLM)
         prompt_sections = []
         
-        # Section 1: Core Identity
+        # Section 1: Core Identity (domain-neutral skeleton).
+        # The actual role + responsibilities come from `# AGENT ROLE` below,
+        # which is populated by the AI-bootstrapped Agent Definition.
         prompt_sections.append("""# CORE IDENTITY & PIPELINE
 
-You are a Senior Healthcare Data Analyst and SQL Architect operating against a live relational healthcare analytics database. You must reason in clinical context, use medical terminology precisely, and protect patient privacy by minimizing exposure of identifiable data unless explicitly requested and authorized by the user's analytical need.
+You are an analytics agent for a relational database. Follow the role,
+responsibilities, target users, and domain rules declared in `# AGENT ROLE`
+and `# DOMAIN RULES & GUARDRAILS` below as your primary identity and
+operating contract — do not contradict them.
 
-You must execute the planning pipeline in this exact order:
+Pipeline order (apply on every request):
 1. Intent Parser
 2. Schema Mapper
 3. Query Planner
@@ -1226,15 +1446,34 @@ You must execute the planning pipeline in this exact order:
 5. Validator
 
 Operational principles:
-- Prefer deterministic, auditable, read-only analytical SQL.
-- Treat patient-level, encounter-level, and organization-level data as distinct analytical grains.
-- Use healthcare semantics correctly: patient_id is the primary longitudinal key; encounter_id is a clinical interaction key; organization_id is a care-delivery context key.
-- Never invent tables, columns, join keys, or clinical meanings not grounded in the schema context.
-- Never expose passwords, tokens, or other sensitive operational credentials.
-- For any user request, generate an executable analytical answer, not a narrative approximation.""")
+- Read-only, deterministic, auditable analytical SQL.
+- Use ONLY tables and columns present in `# DATA DICTIONARY & SCHEMA`.
+- Never invent tables, columns, joins, values, or semantics not grounded
+  in the schema or in the explicitly stated domain rules.
+- Never expose credentials, secrets, or tokens stored in any column.
+- For any user request, return an executable SQL answer + concise
+  interpretation when the response style asks for it — never a narrative
+  approximation.""")
         
-        # Section 2: FHIR Rules (critical for healthcare data)
-        prompt_sections.append("# FHIR IDENTIFIER RULES - CRITICAL\n\n" + get_fhir_rules_prompt())
+        # Section 1.5: Agent Definition (Step 5) — intent before mechanics.
+        # Only injected when present so legacy agents without a definition still
+        # produce a working prompt via the generic identity above.
+        if agent_definition:
+            ad_sections = self._render_agent_definition_sections(agent_definition)
+            if ad_sections:
+                prompt_sections.append(ad_sections)
+
+        # Detect clinical scope ONCE — gates the next several healthcare-specific
+        # sections so admin/operational agents don't get prompts polluted with
+        # references to tables (patient_tracker_gold, bp_log_gold, etc.) they
+        # cannot query.
+        has_clinical_scope = self._has_clinical_scope(selected_columns)
+
+        # Section 2: FHIR Rules — only when clinical tables are in scope
+        if has_clinical_scope:
+            prompt_sections.append(
+                "# FHIR IDENTIFIER RULES - CRITICAL\n\n" + get_fhir_rules_prompt()
+            )
         
         # Section 3: Schema & Data Dictionary (injected ONCE here)
         if schema_parts or data_dict_content:
@@ -1245,8 +1484,17 @@ Operational principles:
                 schema_section += "## DATA DICTIONARY\n" + data_dict_content
             prompt_sections.append(schema_section)
         
-        # Section 4: SQL Generation Rules
-        prompt_sections.append("# SQL GENERATION RULES\n\n" + get_sql_generator_prompt())
+        # Section 4: SQL Generation Rules — scope-aware.
+        # Clinical scope: full FHIR-flavoured SQL prompt MINUS the duplicate
+        # FHIR-rules preamble (FHIR section already emitted above).
+        # Non-clinical scope: domain-agnostic SQL rules (no `*_gold` examples,
+        # no M&E patterns) so the LLM isn't pointed at tables out of scope.
+        if has_clinical_scope:
+            prompt_sections.append(
+                "# SQL GENERATION RULES\n\n" + get_sql_generator_rules_only()
+            )
+        else:
+            prompt_sections.append(get_generic_sql_generator_prompt())
         
         # Section 5: DuckDB-specific rules (if applicable)
         # Note: At runtime, sql_service will add these based on actual DB type

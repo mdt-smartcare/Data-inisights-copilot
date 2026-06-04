@@ -682,6 +682,13 @@ class SQLService:
         # Match is case-insensitive so header casing drift in agent configs does not
         # silently drop all rules.
         priority_headers = [
+            # Agent Definition (Step 5) — intent + domain knowledge first
+            "# AGENT ROLE",
+            "# BUSINESS OBJECTIVES",
+            "# DOMAIN RULES & GUARDRAILS",
+            "# PRIORITY METRICS",
+            "# SAMPLE QUESTIONS THIS AGENT SHOULD HANDLE",
+            # Schema + mechanics
             "# FHIR IDENTIFIER RULES",
             "# SQL GENERATION RULES",
             "# DATA QUALITY & VALIDATION",

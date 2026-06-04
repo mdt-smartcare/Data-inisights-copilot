@@ -495,6 +495,59 @@ def get_sql_examples_store(
         return _sql_examples_store_instances[agent_id]
 
 
+async def upsert_agent_examples(
+    agent_id: str,
+    qa_pairs: List[Dict[str, Any]],
+    category: str = "agent_definition",
+) -> int:
+    """
+    Index a list of sample Q&A pairs into the agent's few-shot example store.
+
+    Used by Step 4.5 (Agent Definition save) to promote user-confirmed sample
+    questions into retrievable few-shot examples. Idempotent — re-running with
+    the same questions overwrites existing rows (deterministic ID by question).
+
+    Args:
+        agent_id: UUID of the agent.
+        qa_pairs: List of dicts with at least a `question` key. Optional keys:
+            `sql`, `expected_summary`, `use_as_few_shot` (defaults to True).
+        category: Category tag stored in metadata for filtering.
+
+    Returns:
+        Number of examples successfully indexed.
+    """
+    if not agent_id or not qa_pairs:
+        return 0
+
+    store = get_sql_examples_store(agent_id=agent_id)
+    indexed = 0
+    for q in qa_pairs:
+        if not isinstance(q, dict):
+            continue
+        question = (q.get("question") or "").strip()
+        if not question:
+            continue
+        if q.get("use_as_few_shot", True) is False:
+            continue
+        sql = (q.get("sql") or "").strip() or f"-- Pending: expected output: {q.get('expected_summary', '')}"
+        description = (q.get("expected_summary") or "").strip()
+        try:
+            ok = await store.add_example(
+                question=question,
+                sql=sql,
+                category=category,
+                tags=["agent_definition", "sample_question"],
+                description=description,
+                agent_id=agent_id,
+            )
+            if ok:
+                indexed += 1
+        except Exception as exc:
+            logger.warning(f"Failed to index sample question for agent {agent_id}: {exc}")
+    logger.info(f"Indexed {indexed}/{len(qa_pairs)} sample questions into few-shot store for agent {agent_id}")
+    return indexed
+
+
 def reset_sql_examples_store(agent_id: Optional[str] = None) -> None:
     """
     Reset the store instance for a specific agent or all stores.

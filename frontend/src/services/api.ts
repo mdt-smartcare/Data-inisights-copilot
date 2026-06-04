@@ -1606,6 +1606,8 @@ export interface AgentConfig {
   reranker_model?: ConfigModelInfo;
   system_prompt?: string;
   example_questions?: string[];
+  agent_definition?: Record<string, unknown> | null;
+  agent_definition_status?: 'not_started' | 'pending' | 'completed' | 'failed';
   embedding_path?: string;
   vector_collection_name?: string;
   embedding_status: string;
@@ -1721,7 +1723,9 @@ export const saveSchemaSelectionStep = async (agentId: string, versionId: number
  * Requires version_id in path.
  */
 export const saveDataDictionaryStep = async (agentId: string, versionId: number, data: DataDictionaryStepRequest): Promise<AgentConfig> => {
-  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/data-dictionary`, data);
+  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/data-dictionary`, data, {
+    timeout: 180 * 1000, // 3 minutes - this triggers bootstrap in background
+  });
   return response.data?.data || response.data;
 };
 
@@ -1730,7 +1734,9 @@ export const saveDataDictionaryStep = async (agentId: string, versionId: number,
  * Requires version_id in path.
  */
 export const saveSettingsStep = async (agentId: string, versionId: number, data: SettingsStepRequest): Promise<AgentConfig> => {
-  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/settings`, data);
+  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/settings`, data, {
+    timeout: 180 * 1000, // 3 minutes for settings step which can be slow
+  });
   return response.data?.data || response.data;
 };
 
@@ -1740,6 +1746,90 @@ export const saveSettingsStep = async (agentId: string, versionId: number, data:
  */
 export const savePromptStep = async (agentId: string, versionId: number, data: PromptStepRequest): Promise<AgentConfig> => {
   const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/prompt`, data);
+  return response.data?.data || response.data;
+};
+
+// ==========================================
+// Agent Definition (Step 5 — AI-bootstrapped)
+// ==========================================
+
+export interface SampleQuestion {
+  question: string;
+  sql?: string | null;
+  expected_summary?: string | null;
+  use_as_few_shot?: boolean;
+}
+
+export interface AgentDefinition {
+  role: string;
+  responsibilities: string[];
+  business_objectives: string[];
+  target_personas: string[];
+  analytical_capabilities: string[];
+  limitations: string[];
+  response_style: Record<string, string>;
+  kpis_metrics: string[];
+  domain_rules: string[];
+  guardrails: string[];
+  sample_questions: SampleQuestion[];
+  confidence_per_field?: Record<string, number> | null;
+  ai_drafted_fields?: string[] | null;
+}
+
+export interface AgentDefinitionPollResponse {
+  status: 'not_started' | 'pending' | 'completed' | 'failed';
+  data: AgentDefinition | null;
+  error: string | null;
+}
+
+export interface BootstrapAgentDefinitionResponse {
+  status: 'started' | 'already_pending' | 'skipped';
+  version_id: number;
+  message?: string | null;
+}
+
+/**
+ * Kick off async bootstrap of the agent definition (fire-and-forget on the server).
+ */
+export const bootstrapAgentDefinition = async (
+  agentId: string,
+  versionId: number,
+): Promise<BootstrapAgentDefinitionResponse> => {
+  const response = await apiClient.post(
+    `/api/v1/config/${agentId}/version/${versionId}/step/bootstrap-definition`,
+    {},
+    { timeout: 180 * 1000 }, // 3 minutes for bootstrap which can be slow
+  );
+  return response.data?.data || response.data;
+};
+
+/**
+ * Poll the current agent definition status + payload.
+ */
+export const pollAgentDefinition = async (
+  agentId: string,
+  versionId: number,
+): Promise<AgentDefinitionPollResponse> => {
+  const response = await apiClient.get(
+    `/api/v1/config/${agentId}/version/${versionId}/agent-definition`,
+  );
+  return response.data?.data || response.data;
+};
+
+/**
+ * Save user-confirmed (or AI-drafted) agent definition.
+ * Sample questions flagged `use_as_few_shot=true` are indexed into the agent's
+ * few-shot example store as a side effect on the backend.
+ */
+export const saveAgentDefinitionStep = async (
+  agentId: string,
+  versionId: number,
+  data: { agent_definition: AgentDefinition },
+): Promise<AgentConfig> => {
+  const response = await apiClient.put(
+    `/api/v1/config/${agentId}/version/${versionId}/step/agent-definition`,
+    data,
+  );
   return response.data?.data || response.data;
 };
 

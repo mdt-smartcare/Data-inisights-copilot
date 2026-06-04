@@ -11,7 +11,7 @@ Note: Data source routes are in app.modules.data_sources.routes
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session as get_db
@@ -39,6 +39,9 @@ from app.modules.agents.schemas import (
     # Per-step schemas (named steps)
     DataSourceStepRequest, SchemaSelectionStepRequest, DataDictionaryStepRequest,
     SettingsStepRequest, PromptStepRequest, PublishStepRequest, GeneratePromptResponse,
+    # Agent Definition (Step 4.5)
+    AgentDefinition, AgentDefinitionStepRequest, AgentDefinitionPollResponse,
+    BootstrapAgentDefinitionResponse,
     # User access schemas
     UserAgentGrantRequest, UserAgentResponse, UserAgentListResponse,
     BulkAssignAgentsRequest, BulkAssignAgentsResponse,
@@ -781,18 +784,141 @@ async def upsert_data_dictionary_step(
     agent_id: UUID,
     version_id: int,
     data: DataDictionaryStepRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     service: AgentConfigService = Depends(get_config_service),
     agent_service: AgentService = Depends(get_agent_service),
 ) -> BaseResponse[AgentConfigResponse]:
     """
     Step: data-dictionary.
-    Add data dictionary/context for an existing version.
+
+    Persists the data dictionary, then kicks off the AI Agent Definition
+    bootstrap in the background so the user lands on Step 4.5 with fields
+    pre-populated.
     """
     await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
-    
+
     try:
         config = await service.upsert_data_dictionary_step(version_id, data.data_dictionary)
+
+        # Fire-and-forget bootstrap. Failures inside the task are caught and
+        # surfaced via agent_definition_status='failed' on the config row.
+        from app.modules.agents.agent_definition_generator import (
+            bootstrap_agent_definition_background,
+        )
+        background_tasks.add_task(bootstrap_agent_definition_background, version_id)
+
+        return BaseResponse.ok(data=config)
+    except AppException as e:
+        raise HTTPException(status_code=e.status_code, detail=e.message)
+
+
+@config_router.post(
+    "/{agent_id}/version/{version_id}/step/bootstrap-definition",
+    response_model=BaseResponse[BootstrapAgentDefinitionResponse],
+)
+async def bootstrap_agent_definition_route(
+    agent_id: UUID,
+    version_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    service: AgentConfigService = Depends(get_config_service),
+    agent_service: AgentService = Depends(get_agent_service),
+) -> BaseResponse[BootstrapAgentDefinitionResponse]:
+    """
+    Step 4.5: kick off AI Agent Definition bootstrap.
+
+    Idempotent w.r.t. status — if a bootstrap is already pending, we report
+    that and skip scheduling another one.
+    """
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
+
+    config = await service.configs.get_by_id(version_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Version {version_id} not found")
+
+    current_status = getattr(config, "agent_definition_status", "not_started")
+    if current_status == "pending":
+        return BaseResponse.ok(data=BootstrapAgentDefinitionResponse(
+            status="already_pending",
+            version_id=version_id,
+            message="Bootstrap is already running.",
+        ))
+
+    from app.modules.agents.agent_definition_generator import (
+        bootstrap_agent_definition_background,
+    )
+    background_tasks.add_task(bootstrap_agent_definition_background, version_id)
+
+    return BaseResponse.ok(data=BootstrapAgentDefinitionResponse(
+        status="started",
+        version_id=version_id,
+    ))
+
+
+@config_router.get(
+    "/{agent_id}/version/{version_id}/agent-definition",
+    response_model=BaseResponse[AgentDefinitionPollResponse],
+)
+async def get_agent_definition(
+    agent_id: UUID,
+    version_id: int,
+    current_user: User = Depends(get_current_user),
+    service: AgentConfigService = Depends(get_config_service),
+    agent_service: AgentService = Depends(get_agent_service),
+) -> BaseResponse[AgentDefinitionPollResponse]:
+    """
+    Poll the agent definition status + payload.
+
+    Status values: not_started | pending | completed | failed
+    """
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="user")
+
+    config = await service.configs.get_by_id(version_id)
+    if config is None:
+        raise HTTPException(status_code=404, detail=f"Version {version_id} not found")
+
+    raw_definition = getattr(config, "agent_definition", None)
+    parsed: Optional[AgentDefinition] = None
+    if raw_definition:
+        try:
+            import json as _json
+            parsed_dict = _json.loads(raw_definition) if isinstance(raw_definition, str) else raw_definition
+            parsed = AgentDefinition.model_validate(parsed_dict)
+        except Exception as exc:
+            logger.warning(f"Failed to parse persisted agent_definition for v{version_id}: {exc}")
+
+    payload = AgentDefinitionPollResponse(
+        status=getattr(config, "agent_definition_status", "not_started"),
+        data=parsed,
+        error=None,
+    )
+    return BaseResponse.ok(data=payload)
+
+
+@config_router.put(
+    "/{agent_id}/version/{version_id}/step/agent-definition",
+    response_model=BaseResponse[AgentConfigResponse],
+)
+async def upsert_agent_definition_step(
+    agent_id: UUID,
+    version_id: int,
+    data: AgentDefinitionStepRequest,
+    current_user: User = Depends(get_current_user),
+    service: AgentConfigService = Depends(get_config_service),
+    agent_service: AgentService = Depends(get_agent_service),
+) -> BaseResponse[AgentConfigResponse]:
+    """
+    Step 4.5: persist user-confirmed agent definition.
+
+    On save, sample_questions flagged with use_as_few_shot=true are indexed
+    into the agent's few-shot example store so they ground future SQL
+    generation.
+    """
+    await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
+
+    try:
+        config = await service.upsert_agent_definition_step(version_id, data.agent_definition)
         return BaseResponse.ok(data=config)
     except AppException as e:
         raise HTTPException(status_code=e.status_code, detail=e.message)

@@ -108,6 +108,35 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
         setSelectedSchema(output);
     };
 
+    // Clinical-table heuristic — matches FHIR/NCD analytics tables.
+    // Used to detect domain-vs-selection mismatch and offer one-click fix.
+    const CLINICAL_TABLE_REGEX = /^(patient|encounter|condition|bp_log|glucose_log|diagnosis|careplan|appointment|screening_log)\w*_gold$/i;
+
+    const clinicalTablesInSource: TableInfoResponse[] = useMemo(() => {
+        if (!schema?.tables) return [];
+        return schema.tables.filter(t => CLINICAL_TABLE_REGEX.test(t.table_name));
+    }, [schema]);
+
+    const showClinicalMismatchBanner = useMemo(() => {
+        if (clinicalTablesInSource.length === 0) return false;
+        const selectedHasClinical = Object.keys(selected).some(
+            t => CLINICAL_TABLE_REGEX.test(t) && (selected[t]?.size ?? 0) > 0
+        );
+        return !selectedHasClinical;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [clinicalTablesInSource, selected]);
+
+    const addSuggestedClinicalTables = () => {
+        if (!schema?.tables) return;
+        const next: Record<string, Set<string>> = { ...selected };
+        clinicalTablesInSource.forEach(table => {
+            const cols = new Set(table.columns.map((c: ColumnInfo) => c.column_name));
+            next[table.table_name] = cols;
+        });
+        setSelected(next);
+        emitSelection(next);
+    };
+
     // Ensure primary keys are included when table has selections
     const ensurePrimaryKeys = (tableName: string, columnSet: Set<string>): Set<string> => {
         // Only add PKs if there are other columns selected (table is "active")
@@ -386,6 +415,33 @@ export const SchemaSelectionStep: React.FC<SchemaSelectionStepProps> = ({
                 </p>
 
                 <div className="space-y-3 sm:space-y-4 w-full overflow-hidden">
+                    {/* Domain-mismatch banner — clinical tables exist in source but none picked */}
+                    {showClinicalMismatchBanner && canEdit && (
+                        <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 sm:p-4">
+                            <div className="flex items-start gap-2">
+                                <span className="text-amber-600 flex-shrink-0">⚠</span>
+                                <div className="text-sm flex-1">
+                                    <p className="font-medium text-amber-900">
+                                        Healthcare tables detected but not selected
+                                    </p>
+                                    <p className="text-amber-800 text-xs sm:text-sm mt-1">
+                                        Your data source contains {clinicalTablesInSource.length} patient / encounter / diagnosis tables
+                                        (e.g. {clinicalTablesInSource.slice(0, 3).map(t => t.table_name).join(', ')}
+                                        {clinicalTablesInSource.length > 3 ? `, +${clinicalTablesInSource.length - 3} more` : ''}),
+                                        but none are currently selected. NCD / clinical-analytics questions
+                                        won&apos;t work without them.
+                                    </p>
+                                    <button
+                                        onClick={addSuggestedClinicalTables}
+                                        className="mt-2 sm:mt-3 rounded-md bg-amber-600 px-3 py-1.5 text-xs sm:text-sm font-medium text-white hover:bg-amber-700"
+                                    >
+                                        Add suggested clinical tables
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Missing dependencies warning banner */}
                     {Object.keys(missingDependencies).length > 0 && (
                         <div className="bg-red-50 border border-red-200 rounded-lg p-3">

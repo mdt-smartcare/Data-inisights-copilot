@@ -225,6 +225,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods
     allow_headers=["*"],  # Allow all headers
+    max_age=3600,  # Cache preflight responses for 1 hour (reduces OPTIONS requests)
 )
 
 # Trusted hosts (optional security)
