@@ -5,6 +5,36 @@ import { oidcService } from './oidcService';
 import { ErrorCode } from '../constants/errorCodes';
 
 /**
+ * In-flight request tracker to prevent duplicate concurrent API calls.
+ * Maps request keys (method + URL) to their pending promises.
+ */
+const inFlightRequests = new Map<string, Promise<unknown>>();
+
+/**
+ * Wraps an async API call to prevent duplicate concurrent requests.
+ * If a request with the same key is already in progress, returns the existing promise.
+ */
+export async function deduplicateRequest<T>(
+  key: string,
+  requestFn: () => Promise<T>
+): Promise<T> {
+  // Check if request is already in flight
+  const existing = inFlightRequests.get(key);
+  if (existing) {
+    console.log(`[API] Deduplicating request: ${key}`);
+    return existing as Promise<T>;
+  }
+
+  // Start new request and track it
+  const promise = requestFn().finally(() => {
+    inFlightRequests.delete(key);
+  });
+  
+  inFlightRequests.set(key, promise);
+  return promise;
+}
+
+/**
  * Configured Axios instance for all API requests
  * 
  * Features:
@@ -54,6 +84,15 @@ apiClient.interceptors.request.use(
       if (accessToken) {
         // Add Bearer token to all authenticated requests
         config.headers.Authorization = `Bearer ${accessToken}`;
+      } else {
+        // Token is null - user needs to re-authenticate
+        console.warn('No access token available for request:', config.url);
+        // Redirect to login if no token available
+        const currentPath = window.location.pathname;
+        if (!currentPath.includes('/login') && !currentPath.includes('/callback')) {
+          window.location.href = '/login?error=SESSION_EXPIRED';
+          return Promise.reject(new Error('Session expired. Please log in again.'));
+        }
       }
     } catch (error) {
       console.error('Error getting access token:', error);
@@ -70,17 +109,44 @@ apiClient.interceptors.request.use(
  * Response Interceptor
  * Runs after every API response to:
  * 1. Handle 401 Unauthorized errors for inactive users
- * 2. Renew expired tokens and retry the request
+ * 2. Handle 403 Forbidden with "Not authenticated" (missing credentials)
+ * 3. Renew expired tokens and retry the request
  */
 apiClient.interceptors.response.use(
   (response) => response,  // Pass successful responses through unchanged
   async (error: AxiosError) => {
+    const responseData = error.response?.data as {
+      error_code?: string;
+      message?: string;
+      detail?: string;
+    };
+    
+    // Handle 403 "Not authenticated" as auth error (backend returns 403 when Bearer token missing)
+    if (error.response?.status === 403 && responseData?.detail === 'Not authenticated') {
+      console.warn('403 Not authenticated - token may be missing or expired');
+      // Try to refresh token and retry
+      const config = error.config as AxiosRequestConfig & { _retry?: boolean };
+      if (config && !config._retry) {
+        config._retry = true;
+        try {
+          const user = await oidcService.renewToken();
+          if (user) {
+            config.headers = config.headers || {};
+            config.headers.Authorization = `Bearer ${user.access_token}`;
+            return apiClient.request(config);
+          }
+        } catch {
+          console.error('Token renewal failed after 403');
+        }
+      }
+      // Redirect to login if renewal failed
+      await oidcService.removeUser();
+      window.location.href = '/login?error=SESSION_EXPIRED';
+      return Promise.reject(error);
+    }
+    
     // Handle authentication errors globally
     if (error.response?.status === 401) {
-      const responseData = error.response?.data as {
-        error_code?: string;
-        message?: string;
-      };
       const errorCode = responseData.error_code;
 
       // Inactive user - logout from Keycloak and redirect to login with error
@@ -1723,10 +1789,13 @@ export const saveSchemaSelectionStep = async (agentId: string, versionId: number
  * Requires version_id in path.
  */
 export const saveDataDictionaryStep = async (agentId: string, versionId: number, data: DataDictionaryStepRequest): Promise<AgentConfig> => {
-  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/data-dictionary`, data, {
-    timeout: 180 * 1000, // 3 minutes - this triggers bootstrap in background
+  const key = `PUT:/config/${agentId}/version/${versionId}/step/data-dictionary`;
+  return deduplicateRequest(key, async () => {
+    const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/data-dictionary`, data, {
+      timeout: 180 * 1000, // 3 minutes - this triggers bootstrap in background
+    });
+    return response.data?.data || response.data;
   });
-  return response.data?.data || response.data;
 };
 
 /**
@@ -1734,10 +1803,13 @@ export const saveDataDictionaryStep = async (agentId: string, versionId: number,
  * Requires version_id in path.
  */
 export const saveSettingsStep = async (agentId: string, versionId: number, data: SettingsStepRequest): Promise<AgentConfig> => {
-  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/settings`, data, {
-    timeout: 180 * 1000, // 3 minutes for settings step which can be slow
+  const key = `PUT:/config/${agentId}/version/${versionId}/step/settings`;
+  return deduplicateRequest(key, async () => {
+    const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/settings`, data, {
+      timeout: 180 * 1000, // 3 minutes for settings step which can be slow
+    });
+    return response.data?.data || response.data;
   });
-  return response.data?.data || response.data;
 };
 
 /**

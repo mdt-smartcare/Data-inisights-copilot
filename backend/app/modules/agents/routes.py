@@ -796,10 +796,15 @@ async def upsert_data_dictionary_step(
     bootstrap in the background so the user lands on Step 4.5 with fields
     pre-populated.
     """
+    logger.info(f"[DATA-DICTIONARY] Received PUT request for agent={agent_id}, version={version_id}")
+    
     await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
+    logger.info(f"[DATA-DICTIONARY] Access verified for user={current_user.email}")
 
     try:
+        logger.info(f"[DATA-DICTIONARY] Calling upsert_data_dictionary_step for version={version_id}")
         config = await service.upsert_data_dictionary_step(version_id, data.data_dictionary)
+        logger.info(f"[DATA-DICTIONARY] Data dictionary saved successfully for version={version_id}")
 
         # Fire-and-forget bootstrap. Failures inside the task are caught and
         # surfaced via agent_definition_status='failed' on the config row.
@@ -807,10 +812,15 @@ async def upsert_data_dictionary_step(
             bootstrap_agent_definition_background,
         )
         background_tasks.add_task(bootstrap_agent_definition_background, version_id)
+        logger.info(f"[DATA-DICTIONARY] Bootstrap task queued for version={version_id}")
 
         return BaseResponse.ok(data=config)
     except AppException as e:
+        logger.error(f"[DATA-DICTIONARY] AppException: {e.message} (status={e.status_code})")
         raise HTTPException(status_code=e.status_code, detail=e.message)
+    except Exception as e:
+        logger.exception(f"[DATA-DICTIONARY] Unexpected error: {e}")
+        raise
 
 
 @config_router.post(

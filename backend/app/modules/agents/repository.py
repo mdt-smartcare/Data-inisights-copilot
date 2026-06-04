@@ -266,10 +266,13 @@ class AgentConfigRepository:
     
     async def update(self, config_id: int, config_data: Dict[str, Any]) -> Optional[AgentConfigModel]:
         """Update a configuration."""
+        logger.info(f"[REPO-UPDATE] Starting update for config_id={config_id}, keys={list(config_data.keys())}")
         config = await self.get_by_id(config_id)
         if not config:
+            logger.warning(f"[REPO-UPDATE] Config {config_id} not found")
             return None
         
+        logger.info(f"[REPO-UPDATE] Found config, applying updates...")
         # Update JSON fields
         if "selected_columns" in config_data:
             config.selected_columns = json.dumps(config_data["selected_columns"]) if config_data["selected_columns"] else None
@@ -304,8 +307,11 @@ class AgentConfigRepository:
         if "reranker_model_id" in config_data:
             config.reranker_model_id = config_data["reranker_model_id"]
         
+        logger.info(f"[REPO-UPDATE] All fields set, calling flush for config_id={config_id}...")
         await self.db.flush()
+        logger.info(f"[REPO-UPDATE] Flush completed, refreshing config...")
         await self.db.refresh(config)
+        logger.info(f"[REPO-UPDATE] Refresh done, re-fetching with relationships...")
         # Re-fetch with relationships loaded
         return await self.get_by_id(config.id)
     

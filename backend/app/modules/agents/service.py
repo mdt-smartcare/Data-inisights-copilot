@@ -836,18 +836,25 @@ class AgentConfigService:
         Step: data-dictionary.
         Updates data dictionary for an existing version.
         """
+        logger.info(f"[DATA-DICTIONARY-SVC] Starting upsert for version_id={version_id}")
+        
         config = await self.configs.get_by_id(version_id)
         if not config:
+            logger.error(f"[DATA-DICTIONARY-SVC] Version {version_id} not found")
             raise AppException(
                 error_code=ErrorCode.RESOURCE_NOT_FOUND,
                 message=f"Version {version_id} not found",
                 status_code=404,
             )
 
+        logger.info(f"[DATA-DICTIONARY-SVC] Found config, current completed_step={config.completed_step}")
+        
         updated = await self.configs.update(version_id, {
             "data_dictionary": data_dictionary,
             "completed_step": max(3, config.completed_step),
         })
+        
+        logger.info(f"[DATA-DICTIONARY-SVC] Updated successfully, new completed_step={updated.completed_step if updated else 'None'}")
         return self._to_response(updated)
 
     async def upsert_agent_definition_step(
