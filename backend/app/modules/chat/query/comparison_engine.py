@@ -178,6 +178,44 @@ def _get_comparison_prompt() -> str:
     return load_prompt("comparison_generator", fallback=_FALLBACK_PROMPT)
 
 
+def _column_types_to_annotation(column_types: Dict[str, Dict[str, str]], dialect: str) -> str:
+    """Compact column-type block appended to schema_context for comparison generator.
+
+    Tells the LLM the exact verified type for each column so it never writes
+    boolean = 'true' or varchar = false.
+    """
+    if not column_types:
+        return ""
+    cast_fn = "TRY_CAST" if dialect in ("trino", "duckdb") else "CAST"
+    lines = ["", "## VERIFIED COLUMN TYPES (use exactly as shown)", ""]
+    for table in sorted(column_types):
+        cols = column_types[table]
+        if not cols:
+            continue
+        lines.append(f"### {table}")
+        for col in sorted(cols):
+            t = cols[col].lower()
+            if t == "boolean":
+                hint = f"BOOLEAN — use `{col} = true` or `{col} = false` (never quotes)"
+            elif t in ("varchar", "text", "character varying", "char", "string"):
+                col_l = col.lower()
+                if "deleted" in col_l or col_l.startswith("is_"):
+                    hint = f"VARCHAR — use `{col} IS DISTINCT FROM 'true'`"
+                elif any(kw in col_l for kw in ("date", "_on", "_at", "_time")):
+                    hint = f"VARCHAR date — use `{cast_fn}({col} AS DATE)` for date ops"
+                else:
+                    hint = "VARCHAR — string comparisons only"
+            elif t in ("integer", "int", "bigint", "smallint", "tinyint", "int64", "int32"):
+                hint = "INTEGER — direct numeric comparison"
+            elif t in ("double", "float", "real", "double precision", "float64"):
+                hint = "DOUBLE — direct numeric comparison"
+            else:
+                hint = t.upper()
+            lines.append(f"- `{col}`: {hint}")
+        lines.append("")
+    return "\n".join(lines)
+
+
 async def generate_comparison_insights(
     original_question: str,
     original_sql: str,
@@ -186,6 +224,7 @@ async def generate_comparison_insights(
     sql_service,
     llm,
     dialect: str = "postgresql",
+    column_types: Optional[Dict[str, Dict[str, str]]] = None,
 ) -> Optional[str]:
     """
     Generate comparison questions, execute them, and synthesize insights.
@@ -204,10 +243,15 @@ async def generate_comparison_insights(
     """
     try:
         # Step 1: Generate comparison questions with SQL
+        # Append verified column types so the LLM knows exact boolean/varchar/double
+        # types and never generates type-mismatched comparisons.
+        type_annotation = _column_types_to_annotation(column_types or {}, dialect)
+        enriched_schema = (schema_context + type_annotation)[:8000]
+
         comparison_prompt = _get_comparison_prompt()
         formatted_prompt = comparison_prompt.replace("{original_question}", original_question)
         formatted_prompt = formatted_prompt.replace("{original_sql}", original_sql)
-        formatted_prompt = formatted_prompt.replace("{schema_context}", schema_context[:8000])
+        formatted_prompt = formatted_prompt.replace("{schema_context}", enriched_schema)
         formatted_prompt = formatted_prompt.replace("{dialect}", dialect)
         
         from langchain_core.messages import SystemMessage, HumanMessage

@@ -288,7 +288,14 @@ class ChatService:
                             phase_start = time.time()
                             comp_llm = await llm_helper.get_llm(temperature=0.3)
                             schema_ctx = sql_service.cached_schema if sql_service else ""
-                            
+                            _agent_def = agent_config.get("agent_definition") or {} if agent_config else {}
+                            if isinstance(_agent_def, str):
+                                import json as _json
+                                try:
+                                    _agent_def = _json.loads(_agent_def)
+                                except Exception:
+                                    _agent_def = {}
+
                             # Wrap with timeout - comparisons are optional, don't block main response
                             comparison_insights = await asyncio.wait_for(
                                 generate_comparison_insights(
@@ -299,6 +306,7 @@ class ChatService:
                                     sql_service=sql_service,
                                     llm=comp_llm,
                                     dialect="duckdb" if sql_service._is_duckdb() else ("trino" if sql_service._is_trino() else "postgresql"),
+                                    column_types=_agent_def.get("_column_types"),
                                 ),
                                 timeout=75.0  # Max 75s for entire comparison phase
                             )
@@ -708,7 +716,14 @@ class ChatService:
                         phase_start = time.time()
                         comp_llm = await llm_helper.get_llm(temperature=0.3)
                         schema_ctx = sql_service.cached_schema if sql_service else ""
-                        
+                        _agent_def_s = agent_config.get("agent_definition") or {} if agent_config else {}
+                        if isinstance(_agent_def_s, str):
+                            import json as _json
+                            try:
+                                _agent_def_s = _json.loads(_agent_def_s)
+                            except Exception:
+                                _agent_def_s = {}
+
                         comparison_insights = await asyncio.wait_for(
                             generate_comparison_insights(
                                 original_question=rewritten_query,
@@ -718,6 +733,7 @@ class ChatService:
                                 sql_service=sql_service,
                                 llm=comp_llm,
                                 dialect="duckdb" if sql_service._is_duckdb() else ("trino" if sql_service._is_trino() else "postgresql"),
+                                column_types=_agent_def_s.get("_column_types"),
                             ),
                             timeout=75.0
                         )
