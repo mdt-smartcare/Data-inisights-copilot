@@ -50,19 +50,22 @@ class SchemaGraph:
         engine: Engine,
         schema_name: str = "public",
         excluded_tables: Optional[List[str]] = None,
+        tables_only: Optional[List[str]] = None,
     ):
         """
         Initialize SchemaGraph by introspecting the database.
-        
+
         Args:
             engine: SQLAlchemy engine connected to the target database
             schema_name: Database schema to introspect (default: "public").
                          For Trino, auto-extracted from URL if not specified.
             excluded_tables: Tables to exclude from the graph
+            tables_only: If set, only introspect these bare table names (no schema prefix).
+                         Dramatically reduces init time when the agent uses a small subset.
         """
         self.engine = engine
         self._is_trino = self._detect_trino()
-        
+
         # For Trino, extract schema from URL if using default
         if self._is_trino and schema_name == "public":
             extracted_schema = self._extract_trino_schema()
@@ -71,11 +74,12 @@ class SchemaGraph:
                 logger.debug(f"Trino: using schema '{extracted_schema}' from connection URL")
         else:
             self.schema_name = schema_name
-            
+
         self._excluded_tables: Set[str] = set(excluded_tables or [
             "flyway_schema_history", "audit", "user_token",
             "django_migrations", "alembic_version"
         ])
+        self._tables_only: Optional[Set[str]] = set(tables_only) if tables_only else None
         
         # Core data structures
         self._tables: Dict[str, TableInfo] = {}
@@ -142,7 +146,7 @@ class SchemaGraph:
     def _introspect_tables_and_columns(self, conn):
         """Load all tables and their columns from information_schema."""
         try:
-            # Get all tables and views
+            # Get all tables and views (optionally filtered to a specific subset)
             tables_query = text("""
                 SELECT table_name, table_type
                 FROM information_schema.tables
@@ -153,8 +157,12 @@ class SchemaGraph:
             tables_result = conn.execute(tables_query, {"schema": self.schema_name})
             table_names = []
             for row in tables_result:
-                if row[0] not in self._excluded_tables:
-                    table_names.append(row[0])
+                name = row[0]
+                if name in self._excluded_tables:
+                    continue
+                if self._tables_only is not None and name not in self._tables_only:
+                    continue
+                table_names.append(name)
             
             if not table_names:
                 logger.warning(f"No tables found in schema '{self.schema_name}'")
@@ -164,16 +172,28 @@ class SchemaGraph:
             
             # Get columns - use different query for Trino vs PostgreSQL
             if self._is_trino:
-                # Trino: fetch all columns for schema, filter in Python
-                columns_query = text("""
-                    SELECT table_name, column_name, data_type, 
-                           is_nullable, ordinal_position
-                    FROM information_schema.columns
-                    WHERE table_schema = :schema
-                    ORDER BY table_name, ordinal_position
-                """)
+                # Trino: filter by table list when a subset is selected (avoids fetching 12k+ rows)
+                if table_names:
+                    # Inline table list — safe because names come from our config, not user input
+                    tnames_sql = ", ".join(f"'{n}'" for n in table_names)
+                    columns_query = text(f"""
+                        SELECT table_name, column_name, data_type,
+                               is_nullable, ordinal_position
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema
+                          AND table_name IN ({tnames_sql})
+                        ORDER BY table_name, ordinal_position
+                    """)
+                else:
+                    columns_query = text("""
+                        SELECT table_name, column_name, data_type,
+                               is_nullable, ordinal_position
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema
+                        ORDER BY table_name, ordinal_position
+                    """)
                 columns_result = conn.execute(
-                    columns_query, 
+                    columns_query,
                     {"schema": self.schema_name}
                 )
             else:

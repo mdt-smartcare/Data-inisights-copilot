@@ -154,10 +154,10 @@ Common FHIR resources and their purposes:
    - bmi, weight, height: stored as VARCHAR → for math use bp_log_gold.bmi (DOUBLE) instead
    - created_at, updated_at, enrollment_at: stored as VARCHAR → TRY_CAST(col AS TIMESTAMP)
    - bp_taken_on, bg_taken_on on clinical tables: stored as VARCHAR → TRY_CAST(col AS DATE)
-4b. VARCHAR boolean-flag columns on patient_tracker_gold — compare as string literals:
-   - is_htn_diagnosis, is_diabetes_diagnosis, is_prescribed, is_htn_counseling, is_diabetes_counseling: VARCHAR
-   - CORRECT: is_htn_diagnosis = 'true', is_prescribed = 'true'
-   - WRONG: is_htn_diagnosis = true, is_prescribed = true (boolean literal — type mismatch!)
+4b. Boolean flag columns on patient_tracker_gold — use boolean literals:
+   - is_htn_diagnosis, is_diabetes_diagnosis, is_prescribed, is_htn_counseling, is_diabetes_counseling: BOOLEAN
+   - CORRECT: is_htn_diagnosis = true, is_prescribed = true, is_prescribed = false
+   - WRONG: is_htn_diagnosis = true (varchar literal — type mismatch!)
 4. Use appropriate aggregations (COUNT, SUM, AVG) for analytical questions
 5. **DO NOT add LIMIT unless the user explicitly requests a limited number of results** — data analysts need all data
 6. Include ORDER BY for any "top N" or trending questions
@@ -960,7 +960,7 @@ class QueryTemplateEngine:
                 r"htn\s+patients?\s+(?:with|had)\s+(?:bp\s+)?follow[- ]?up\s+(?:last|in)\s+3\s+months",
                 r"hypertensive\s+patients?\s+(?:who\s+)?had\s+(?:a\s+)?follow[- ]?up\s+(?:in\s+)?3\s+months"
             ],
-            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS htn_with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = 'true' AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3' MONTH AND bp.is_src_deleted IS DISTINCT FROM 'true'",
+            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS htn_with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = true AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3' MONTH AND bp.is_src_deleted IS DISTINCT FROM 'true'",
             "extract_table": False
         },
         "htn_followup_percentage_3months": {
@@ -969,7 +969,7 @@ class QueryTemplateEngine:
                 r"(?:what\s+)?(?:percentage|proportion)\s+(?:of\s+)?htn\s+patients?\s+(?:had|with)\s+follow[- ]?up",
                 r"htn\s+follow[- ]?up\s+(?:rate|percentage|proportion)"
             ],
-            "sql": "WITH htn_total AS (SELECT COUNT(DISTINCT patient_id) AS total FROM patient_tracker_gold WHERE is_deleted = false AND is_htn_diagnosis = 'true'), htn_with_fu AS (SELECT COUNT(DISTINCT pt.patient_id) AS with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = 'true' AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3' MONTH AND bp.is_src_deleted IS DISTINCT FROM 'true') SELECT htn_with_fu.with_followup AS htn_with_followup, htn_total.total AS total_htn_patients, ROUND(100.0 * htn_with_fu.with_followup / NULLIF(htn_total.total, 0), 2) AS followup_percentage FROM htn_total, htn_with_fu",
+            "sql": "WITH htn_total AS (SELECT COUNT(DISTINCT patient_id) AS total FROM patient_tracker_gold WHERE is_deleted = false AND is_htn_diagnosis = true), htn_with_fu AS (SELECT COUNT(DISTINCT pt.patient_id) AS with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = true AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3' MONTH AND bp.is_src_deleted IS DISTINCT FROM 'true') SELECT htn_with_fu.with_followup AS htn_with_followup, htn_total.total AS total_htn_patients, ROUND(100.0 * htn_with_fu.with_followup / NULLIF(htn_total.total, 0), 2) AS followup_percentage FROM htn_total, htn_with_fu",
             "extract_table": False
         },
         "dm_glucose_3months": {
@@ -977,7 +977,7 @@ class QueryTemplateEngine:
                 r"(?:how many\s+)?diabetes\s+patients?\s+with\s+(?:documented\s+)?(?:blood\s+)?glucose\s+(?:in\s+)?(?:the\s+)?last\s+3\s+months",
                 r"dm\s+patients?\s+(?:with\s+)?glucose\s+(?:reading(?:s)?|measurement(?:s)?)\s+(?:last|in)\s+3\s+months"
             ],
-            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_glucose FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = false AND pt.is_diabetes_diagnosis = 'true' AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
+            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_glucose FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = false AND pt.is_diabetes_diagnosis = true AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
             "extract_table": False
         },
         "dm_hba1c_3months": {
@@ -985,7 +985,7 @@ class QueryTemplateEngine:
                 r"(?:how many\s+)?diabetes\s+patients?\s+with\s+(?:documented\s+|a\s+)?hba1c\s+(?:in\s+)?(?:the\s+)?last\s+3\s+months",
                 r"dm\s+patients?\s+(?:with\s+)?hba1c\s+(?:last|in)\s+3\s+months"
             ],
-            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_hba1c FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = false AND pt.is_diabetes_diagnosis = 'true' AND gl.hba1c IS NOT NULL AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
+            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_hba1c FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = false AND pt.is_diabetes_diagnosis = true AND gl.hba1c IS NOT NULL AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
             "extract_table": False
         },
         "htn_control_rate": {
@@ -994,7 +994,7 @@ class QueryTemplateEngine:
                 r"htn\s+control\s+rate",
                 r"controlled\s+hypertension\s+(?:rate|proportion|percentage)"
             ],
-            "sql": "WITH htn_patients AS (SELECT DISTINCT pt.patient_id FROM patient_tracker_gold pt INNER JOIN bp_log_latest_gold bl ON pt.patient_id = bl.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = 'true' AND TRY_CAST(bl.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months') SELECT COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) AS controlled_count, COUNT(DISTINCT bl.patient_id) AS total_htn_with_reading, ROUND(100.0 * COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) / NULLIF(COUNT(DISTINCT bl.patient_id), 0), 2) AS control_rate FROM bp_log_latest_gold bl WHERE bl.patient_id IN (SELECT patient_id FROM htn_patients)",
+            "sql": "WITH htn_patients AS (SELECT DISTINCT pt.patient_id FROM patient_tracker_gold pt INNER JOIN bp_log_latest_gold bl ON pt.patient_id = bl.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = true AND TRY_CAST(bl.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months') SELECT COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) AS controlled_count, COUNT(DISTINCT bl.patient_id) AS total_htn_with_reading, ROUND(100.0 * COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) / NULLIF(COUNT(DISTINCT bl.patient_id), 0), 2) AS control_rate FROM bp_log_latest_gold bl WHERE bl.patient_id IN (SELECT patient_id FROM htn_patients)",
             "extract_table": False
         },
         "enrolled_by_county": {
@@ -1003,7 +1003,7 @@ class QueryTemplateEngine:
                 r"patient\s+distribution\s+by\s+county",
                 r"enrollment\s+by\s+county"
             ],
-            "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = false) SELECT f.county_name, COUNT(DISTINCT pt.patient_id) AS enrolled_patients FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id WHERE pt.is_deleted = false AND (pt.is_htn_diagnosis = 'true' OR pt.is_diabetes_diagnosis = 'true') GROUP BY f.county_name ORDER BY enrolled_patients DESC",
+            "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = false) SELECT f.county_name, COUNT(DISTINCT pt.patient_id) AS enrolled_patients FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id WHERE pt.is_deleted = false AND (pt.is_htn_diagnosis = true OR pt.is_diabetes_diagnosis = true) GROUP BY f.county_name ORDER BY enrolled_patients DESC",
             "extract_table": False
         },
         "assessments_by_county": {

@@ -58,6 +58,11 @@ def _safe_engine(db_url: str):
     return create_engine(db_url, pool_pre_ping=True, pool_size=1)
 
 
+def _bare(table: str) -> str:
+    """Strip schema prefix: 'spice_af.bp_log_gold' → 'bp_log_gold'."""
+    return table.split(".")[-1] if "." in table else table
+
+
 def _build_schema_block(
     graph: SchemaGraph,
     tables: List[str],
@@ -66,7 +71,7 @@ def _build_schema_block(
     """Render schema block as `- table: col1, col2, ...` lines."""
     lines: List[str] = []
     for table in tables:
-        info = graph.get_table(table)
+        info = graph.get_table(_bare(table))
         if info is None:
             continue
         cols = selected_columns_map.get(table) or [c.name for c in info.columns]
@@ -77,7 +82,7 @@ def _build_schema_block(
 
 def _build_fk_block(graph: SchemaGraph, tables: List[str]) -> str:
     """Render FK graph as `from.col -> to.col` lines for the selected scope."""
-    table_set = set(tables)
+    table_set = {_bare(t) for t in tables}
     seen = set()
     lines: List[str] = []
     for fk in graph._foreign_keys:  # noqa: SLF001 — module-internal access acceptable
@@ -108,7 +113,7 @@ def _build_sample_values_block(
 
     for table in tables:
         try:
-            samples = graph.sample_distinct_values_for_table(table)
+            samples = graph.sample_distinct_values_for_table(_bare(table))
         except Exception as exc:  # pragma: no cover — defensive
             logger.warning(f"Failed to sample values for {table}: {exc}")
             continue
@@ -166,7 +171,8 @@ def _build_schema_blocks_sync(
     """
     engine = _safe_engine(db_url)
     try:
-        graph = SchemaGraph(engine, schema_name="public")
+        bare_tables = [_bare(t) for t in tables]
+        graph = SchemaGraph(engine, schema_name="public", tables_only=bare_tables)
         redactor = PHIRedactor(enabled=True, log_redactions=False)
         
         schema_block = _build_schema_block(graph, tables, selected_columns_map)

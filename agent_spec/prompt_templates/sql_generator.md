@@ -94,9 +94,9 @@ When asked "how many patients", "total patients", "patient count", etc.:
     - `bp_log_gold.is_src_deleted` is **VARCHAR** — use `is_src_deleted IS DISTINCT FROM 'true'` (NOT `= false`)
     - `encounter_gold.is_src_deleted` is **VARCHAR** — use `is_src_deleted IS DISTINCT FROM 'true'`
     - Admin tables (`health_facility_admin_gold`, `district_admin_gold`): BOOLEAN `is_deleted` — use `= false`
-    - `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_prescribed` are **VARCHAR** — compare as strings:
-      - CORRECT: `is_htn_diagnosis = 'true'`, `is_prescribed = 'true'`
-      - WRONG: `is_htn_diagnosis = true`, `is_prescribed = true` (boolean literal — type mismatch!)
+    - `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_prescribed` are **BOOLEAN** — use boolean literals:
+      - CORRECT: `is_htn_diagnosis = true`, `is_prescribed = true`, `is_prescribed = false`
+      - WRONG: `is_htn_diagnosis = 'true'` (varchar literal — type mismatch!)
 19. **CRITICAL: VARCHAR NUMERIC COLUMNS** - Some columns on `patient_tracker_gold` are stored as VARCHAR:
     - `patient_tracker_gold.bmi` is VARCHAR — for numeric comparisons, use `bp_log_gold.bmi` (DOUBLE) instead
     - Date columns (`bp_taken_on`, `bg_taken_on`, `created_at`) are VARCHAR — wrap in `TRY_CAST(col AS DATE)` or `TRY_CAST(col AS TIMESTAMP)` for date arithmetic

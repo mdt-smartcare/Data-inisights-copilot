@@ -752,10 +752,19 @@ class IntegratedFastSQLServiceFactory:
                 logger.warning("FastSQL: Could not determine database URL for data source")
                 return None
             
-            # 4. Create SchemaGraph
-            logger.info("FastSQL: creating SchemaGraph")
+            # 4. Create SchemaGraph — scoped to the agent's selected tables only
+            selected_cols = config.selected_columns or {}
+            if isinstance(selected_cols, str):
+                import json as _json
+                try:
+                    selected_cols = _json.loads(selected_cols)
+                except Exception:
+                    selected_cols = {}
+            # Strip schema prefix: 'spice_af.bp_log_gold' → 'bp_log_gold'
+            agent_tables = [k.split(".")[-1] if "." in k else k for k in selected_cols.keys()] or None
+            logger.info(f"FastSQL: creating SchemaGraph (tables_only={agent_tables})")
             engine = create_engine(db_url, pool_pre_ping=True, pool_size=1)
-            schema_graph = SchemaGraph(engine)
+            schema_graph = SchemaGraph(engine, tables_only=agent_tables)
             
             # 5. Load DataDictionary
             logger.info("FastSQL: loading DataDictionary")

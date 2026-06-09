@@ -162,10 +162,11 @@ class SQLService:
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
         embedding_model: Optional[str] = None,
+        selected_table_names: Optional[List[str]] = None,
     ):
         """
         Initialize SQL service with a database URL.
-        
+
         Args:
             db_url: Database connection URL (postgresql://, duckdb://, etc.)
             schema: Optional schema name for table discovery
@@ -174,13 +175,16 @@ class SQLService:
             config_id: Optional agent config ID for semantic schema retrieval
             agent_id: Optional agent ID for per-agent SQL examples and data dictionary
             embedding_model: Optional embedding model name (e.g., "huggingface/BAAI/bge-base-en-v1.5")
+            selected_table_names: Bare table names the agent is scoped to. When provided,
+                _discover_tables() returns these directly without querying the DB.
         """
         self._db_url = db_url
         self._schema = schema
         self._max_result_rows = max_result_rows
         self._engine: Optional[Engine] = None
         self._cached_schema: Optional[str] = None
-        self._table_names: List[str] = []
+        # Pre-seed table list from agent's selected_columns; skips DB discovery entirely.
+        self._table_names: List[str] = list(selected_table_names) if selected_table_names else []
         self._settings = get_settings()
         self._enable_few_shot = enable_few_shot
         self._config_id = config_id  # For semantic schema retrieval
@@ -2224,6 +2228,7 @@ class SQLServiceFactory:
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
         embedding_model: Optional[str] = None,
+        selected_table_names: Optional[List[str]] = None,
         **kwargs,
     ) -> Optional[SQLService]:
         """
@@ -2265,6 +2270,7 @@ class SQLServiceFactory:
                     config_id=config_id,
                     agent_id=agent_id,
                     embedding_model=embedding_model,
+                    selected_table_names=selected_table_names,
                 )
                 
             elif data_source.source_type == "file":
@@ -2363,12 +2369,26 @@ class SQLServiceFactory:
             except Exception as e:
                 logger.debug(f"Could not determine embedding model: {e}")
             
+            # Extract bare table names from selected_columns so SQLService doesn't
+            # discover all tables in the schema (can be 300+ on a shared Trino catalog).
+            selected_cols = config.selected_columns or {}
+            if isinstance(selected_cols, str):
+                import json as _json
+                try:
+                    selected_cols = _json.loads(selected_cols)
+                except Exception:
+                    selected_cols = {}
+            selected_table_names = [
+                k.split(".")[-1] if "." in k else k for k in selected_cols.keys()
+            ] or None
+
             sql_service = await self.create_from_data_source(
                 config.data_source_id,
                 enable_few_shot=enable_few_shot,
                 config_id=config.id,  # Pass config ID for semantic schema retrieval
                 agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples
                 embedding_model=embedding_model,  # Pass agent's embedding model
+                selected_table_names=selected_table_names,
             )
             
             # Set the agent's system prompt for SQL generation context
