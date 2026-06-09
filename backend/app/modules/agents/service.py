@@ -75,8 +75,10 @@ def _generate_column_type_rules_section(
                 hint = f"BOOLEAN → `{col} = true` / `{col} = false`  (never `= 'true'`)"
             elif t in ("varchar", "text", "character varying", "char", "string"):
                 col_l = col.lower()
-                if "deleted" in col_l or col_l.startswith("is_"):
+                if "deleted" in col_l:
                     hint = f"VARCHAR → `{col} IS DISTINCT FROM 'true'`  (soft-delete pattern)"
+                elif col_l.startswith("is_"):
+                    hint = f"VARCHAR flag → `{col} = 'true'` / `{col} = 'false'`  (not boolean literals)"
                 elif any(kw in col_l for kw in ("date", "_on", "_at", "_time")):
                     hint = f"VARCHAR date string → `{cast_fn}({col} AS DATE)` before date comparisons"
                 else:

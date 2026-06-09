@@ -68,9 +68,9 @@ Generate exactly 3 follow-up comparison questions with valid SQL queries that:
   -- then use dis.name AS county_name
   ```
   Or simply group by `pt.site_id` / `pt.program_id` if admin join is complex.
-- **`medication_status`** — Does NOT exist. Use `pt.is_prescribed` (VARCHAR: `'true'`/`'false'`) or `pt.last_medication_prescribed_date IS NOT NULL`.
+- **`medication_status`** — Does NOT exist. Use `pt.is_prescribed` (BOOLEAN) → `pt.is_prescribed = true` or `pt.last_medication_prescribed_date IS NOT NULL`.
 - **`enrollment_status`** — Does NOT exist. Use `pt.patient_status` (values: `'Screening'`, `'Enrolled'`, `'Referred'`).
-- **`is_on_medication`** — Does NOT exist on any table. Use `pt.is_prescribed IS DISTINCT FROM 'false'`.
+- **`is_on_medication`** — Does NOT exist on any table. Use `pt.is_prescribed = true` (is_prescribed is BOOLEAN).
 - **`pt.bmi`** — `patient_tracker_gold.bmi` is VARCHAR in Trino. For numeric BMI comparisons, use `bp_log_gold.bmi` (DOUBLE) instead.
 
 ## CRITICAL: Soft-Delete Filters
@@ -79,12 +79,14 @@ Generate exactly 3 follow-up comparison questions with valid SQL queries that:
 - `encounter_gold.is_src_deleted` is **VARCHAR** — use `is_src_deleted IS DISTINCT FROM 'true'`
 - Admin tables (`health_facility_admin_gold`, `district_admin_gold`): BOOLEAN `is_deleted = false`
 
-## CRITICAL: VARCHAR Flag Columns (stored as 'true'/'false' strings, NOT SQL BOOLEAN)
-- `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_prescribed`,
-  `is_before_htn_diagnosis`, `is_old_record`, `is_regular_smoker`, `is_patient_referred` — all **VARCHAR**
-- CORRECT: `pt.is_htn_diagnosis = 'true'`, `pt.is_prescribed = 'true'`, `pt.is_prescribed = 'false'`
-- WRONG: `pt.is_htn_diagnosis = true` (boolean literal — causes `varchar = boolean` TYPE_MISMATCH in Trino!)
-- Exception: `patient_tracker_gold.is_deleted` is **BOOLEAN** → use `pt.is_deleted = false`
+## CRITICAL: Column Type Rules for Flag Columns
+- `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_before_htn_diagnosis`,
+  `is_old_record`, `is_regular_smoker`, `is_patient_referred` — **VARCHAR** ('true'/'false' strings)
+  - CORRECT: `pt.is_htn_diagnosis = 'true'`, `pt.is_diabetes_diagnosis = 'false'`
+  - WRONG: `pt.is_htn_diagnosis = true` → `varchar = boolean` TYPE_MISMATCH
+- `patient_tracker_gold.is_prescribed`, `is_deleted` — **BOOLEAN**
+  - CORRECT: `pt.is_prescribed = true`, `pt.is_deleted = false`
+  - WRONG: `pt.is_prescribed = 'true'` → `boolean = varchar` TYPE_MISMATCH
 
 ## Output Format
 

@@ -126,16 +126,15 @@ def _find_lhs_start(sql: str, cast_pos: int) -> int:
 # not SQL BOOLEAN. The LLM often generates `= true` (boolean literal) which causes
 # TYPE_MISMATCH: varchar = boolean. We rewrite to `= 'true'` before execution.
 _VARCHAR_FLAG_COLS = {
-    # patient_tracker_gold — confirmed VARCHAR by Trino TYPE_MISMATCH errors
+    # patient_tracker_gold — confirmed VARCHAR by Trino TYPE_MISMATCH: varchar = boolean
+    # NOTE: is_prescribed is BOOLEAN — confirmed by boolean = varchar(4) error when using = 'true'
+    # NOTE: is_deleted is BOOLEAN — do NOT include here
     "is_htn_diagnosis",
     "is_diabetes_diagnosis",
-    "is_prescribed",
     "is_before_htn_diagnosis",
     "is_old_record",
     "is_regular_smoker",
     "is_patient_referred",
-    # encounter_gold
-    "is_latest_encounter",
 }
 
 

@@ -154,12 +154,14 @@ Common FHIR resources and their purposes:
    - bmi, weight, height: stored as VARCHAR → for math use bp_log_gold.bmi (DOUBLE) instead
    - created_at, updated_at, enrollment_at: stored as VARCHAR → TRY_CAST(col AS TIMESTAMP)
    - bp_taken_on, bg_taken_on on clinical tables: stored as VARCHAR → TRY_CAST(col AS DATE)
-4b. VARCHAR flag columns on patient_tracker_gold — stored as 'true'/'false' strings, NOT SQL BOOLEAN:
-   - is_htn_diagnosis, is_diabetes_diagnosis, is_prescribed, is_htn_counseling, is_diabetes_counseling,
-     is_before_htn_diagnosis, is_old_record, is_regular_smoker, is_patient_referred: VARCHAR
-   - CORRECT: is_htn_diagnosis = 'true', is_prescribed = 'true', is_prescribed = 'false'
-   - WRONG: is_htn_diagnosis = 'true' (boolean literal — causes varchar = boolean TYPE_MISMATCH in Trino!)
-   - Exception: is_deleted on patient_tracker_gold IS BOOLEAN → use is_deleted = false
+4b. Flag column types on patient_tracker_gold — mixed BOOLEAN and VARCHAR:
+   VARCHAR (stored as 'true'/'false' strings): is_htn_diagnosis, is_diabetes_diagnosis,
+     is_before_htn_diagnosis, is_old_record, is_regular_smoker, is_patient_referred
+   - CORRECT: is_htn_diagnosis = 'true', is_diabetes_diagnosis = 'false'
+   - WRONG: is_htn_diagnosis = true → varchar = boolean TYPE_MISMATCH
+   BOOLEAN (native SQL boolean): is_prescribed, is_deleted
+   - CORRECT: is_prescribed = true, is_prescribed = false, is_deleted = false
+   - WRONG: is_prescribed = 'true' → boolean = varchar TYPE_MISMATCH
 4. Use appropriate aggregations (COUNT, SUM, AVG) for analytical questions
 5. **DO NOT add LIMIT unless the user explicitly requests a limited number of results** — data analysts need all data
 6. Include ORDER BY for any "top N" or trending questions
