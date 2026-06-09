@@ -49,13 +49,19 @@ structlog==24.1.0
 
 # ============================================
 # Observability - OpenTelemetry
+# NOTE: All opentelemetry packages must be upgraded together to avoid version conflicts
 # ============================================
 opentelemetry-api>=1.42.0
 opentelemetry-sdk>=1.42.0
+opentelemetry-instrumentation>=0.63b0
+opentelemetry-instrumentation-asgi>=0.63b0
 opentelemetry-instrumentation-fastapi>=0.63b0
 opentelemetry-instrumentation-httpx>=0.63b0
 opentelemetry-instrumentation-sqlalchemy>=0.63b0
 opentelemetry-exporter-otlp-proto-grpc>=1.42.0
+opentelemetry-exporter-otlp-proto-http>=1.42.0
+opentelemetry-util-http>=0.63b0
+opentelemetry-semantic-conventions>=0.63b0
 
 # ============================================
 # Tracing & Monitoring
