@@ -339,9 +339,10 @@ export function useConfigDraft(): UseConfigDraftReturn {
           break;
         case 4: {
           // Map to API format - strip model fields when model IDs are provided
-          const embeddingModelId = data.embeddingModelId as number | undefined;
-          const llmModelId = data.llmModelId as number | undefined;
-          const rerankerModelId = data.rerankerModelId as number | undefined;
+          // Accept both snake_case (from getStepData) and camelCase (legacy) forms
+          const embeddingModelId = (data.embedding_model_id ?? data.embeddingModelId) as number | undefined;
+          const llmModelId = (data.llm_model_id ?? data.llmModelId) as number | undefined;
+          const rerankerModelId = (data.reranker_model_id ?? data.rerankerModelId) as number | undefined;
           
           // Build config objects, excluding model field when ID is provided
           const embeddingConfig = data.embedding_config as Record<string, unknown> | undefined;
@@ -384,6 +385,12 @@ export function useConfigDraft(): UseConfigDraftReturn {
           break;
         }
         case 5:
+          // Skip save if no agent definition (bootstrap may still be pending)
+          if (!data.agent_definition) {
+            console.log('Step 5: No agent definition, skipping save');
+            updated = draft as AgentConfig;
+            break;
+          }
           updated = await saveAgentDefinitionStep(agentId, versionId!, {
             agent_definition: data.agent_definition as AgentDefinition,
           });

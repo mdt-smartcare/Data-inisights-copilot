@@ -221,8 +221,10 @@ You generate analytical SQL against the relational database described in the
 14. Use explicit `INNER JOIN` / `LEFT JOIN`, never comma joins.
 15. Use `INNER JOIN` when both sides must match; `LEFT JOIN` when the LEFT
     side defines the population to preserve.
-16. Apply soft-delete filters on EVERY joined table (e.g. `is_deleted = false`
-    on tables that have it).
+16. Apply soft-delete filters on EVERY joined table:
+    - `patient_tracker_gold.is_deleted` is **BOOLEAN** — use `is_deleted = false`.
+    - `bp_log_gold.is_src_deleted`, `encounter_gold.is_src_deleted` are **VARCHAR** — use `IS DISTINCT FROM 'true'`.
+    - Admin tables (`health_facility_admin_gold`, `district_admin_gold`) use BOOLEAN `is_deleted = false`.
 17. When joining via a column with a type mismatch (VARCHAR ↔ BIGINT), cast
     on the side that needs it: `CAST(a.col AS BIGINT) = b.col`.
 

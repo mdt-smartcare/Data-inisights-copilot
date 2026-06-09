@@ -382,9 +382,14 @@ class FastSQLService:
                 final_sql = rewrite_result.rewritten_sql
             else:
                 logger.warning(f"CTE rewrite failed: {rewrite_result.errors}")
-            
+
             rewrite_time = (time.time() - rewrite_start) * 1000
-        
+
+        # Strip PostgreSQL-specific cast syntax for Trino (unconditional — runs even when rewrite fails)
+        if self.dialect == SQLDialect.TRINO and final_sql:
+            from .comparison_engine import _strip_for_trino
+            final_sql = _strip_for_trino(final_sql)
+
         total_time = (time.time() - start) * 1000
         
         # Build result
@@ -636,31 +641,22 @@ class FastSQLServiceFactory:
 class IntegratedFastSQLServiceFactory:
     """
     Production factory for FastSQLService that integrates with repositories.
-    
-    This is the recommended way to create FastSQLService instances in the 
+
+    This is the recommended way to create FastSQLService instances in the
     application context. It handles:
     - Loading agent configuration from database
     - Building SchemaGraph from data source
     - Loading DataDictionary per agent
     - Creating the LLM instance
-    - Caching services per agent
-    
-    Usage:
-        factory = IntegratedFastSQLServiceFactory(
-            config_repo=AgentConfigRepository(db),
-            data_source_repo=DataSourceRepository(db),
-            ai_model_repo=AIModelRepository(db)
-        )
-        
-        # Get service for an agent (async)
-        service = await factory.create(agent_id)
-        
-        # Or use __call__ shorthand
-        service = await factory(agent_id)
+
+    _cache is a class-level attribute so it survives across per-request
+    factory instances (ChatService creates a new factory each request).
     """
-    
-    _cache: Dict[str, FastSQLService] = {}
-    
+
+    # Class-level cache: agent_id_str → FastSQLService
+    # Shared across all factory instances so the manifest/schema only builds once.
+    _cache: Dict[str, "FastSQLService"] = {}
+
     def __init__(
         self,
         config_repo,  # AgentConfigRepository
@@ -865,6 +861,11 @@ class IntegratedFastSQLServiceFactory:
             # For FastSQL, we want a low temperature for deterministic SQL
             # Pass db session from config_repo to enable agent-specific LLM config
             db_session = getattr(self.config_repo, 'db', None)
+            if db_session is None:
+                logger.warning(
+                    f"FastSQL: config_repo.db is None for agent {config.agent_id} — "
+                    "agent-specific LLM config will not be loaded, falling back to default"
+                )
             llm_helper = LLMHelper(db_session, config.agent_id)
             return await llm_helper.get_llm(temperature=0.1)
             

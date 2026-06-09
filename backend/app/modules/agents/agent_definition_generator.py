@@ -277,35 +277,80 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
     from app.modules.agents.models import AgentConfigModel, AgentModel
     from app.modules.data_sources.models import DataSourceModel
 
-    # ========== PHASE 1: Read data and set pending status (short transaction) ==========
-    logger.info(f"[BOOTSTRAP] Fetching agent config for version_id={version_id}")
+    # ========== PHASE 1: Atomically CLAIM the bootstrap slot ==========
+    # Single UPDATE statement collapses the SELECT + UPDATE + commit dance so
+    # concurrent workers cannot race past each other. The RETURNING clause lets
+    # us tell whether we won the claim. Statement only matches rows that are
+    # in a re-triggerable state ('not_started' or 'failed'); rows already
+    # 'pending' or 'completed' are left alone.
+    from sqlalchemy import update as sa_update
+    logger.info(f"[BOOTSTRAP] P1.1 atomic CLAIM update for version_id={version_id}")
+    # Hard timeout so an orphaned upstream transaction holding the row lock
+    # cannot stall the bootstrap forever. If we hit the timeout, raise so the
+    # outer error path marks the row as failed and releases the connection.
+    try:
+        claim_result = await asyncio.wait_for(
+            session.execute(
+                sa_update(AgentConfigModel)
+                .where(AgentConfigModel.id == version_id)
+                .where(AgentConfigModel.agent_definition_status.in_(["not_started", "failed"]))
+                .values(agent_definition_status="pending")
+                .returning(AgentConfigModel.id)
+            ),
+            timeout=15.0,
+        )
+        claimed = claim_result.scalar_one_or_none()
+        await asyncio.wait_for(session.commit(), timeout=10.0)
+    except asyncio.TimeoutError:
+        logger.error(
+            f"[BOOTSTRAP] CLAIM timed out for version_id={version_id}. "
+            f"Likely a stale transaction holds the row lock. Aborting; "
+            f"caller must terminate idle-in-transaction backends in pg_stat_activity."
+        )
+        await session.rollback()
+        raise BootstrapError(
+            f"CLAIM timed out for version_id={version_id} — DB row 44 is locked by an orphaned transaction"
+        )
+    logger.info(f"[BOOTSTRAP] P1.2 claim result for version_id={version_id}: claimed={claimed is not None}")
+
+    # Now re-read to see what the current status is.
     result = await session.execute(
         select(AgentConfigModel).where(AgentConfigModel.id == version_id)
     )
     config: Optional[AgentConfigModel] = result.scalar_one_or_none()
+    logger.info(
+        f"[BOOTSTRAP] P1.3 GOT CONFIG version_id={version_id} "
+        f"status={config.agent_definition_status if config else 'None'} "
+        f"claimed_by_us={claimed is not None}"
+    )
     if config is None:
         raise BootstrapError(f"agent_config version {version_id} not found")
 
-    # Guard: if already completed, return existing definition
-    if config.agent_definition_status == "completed" and config.agent_definition:
-        logger.info(f"Bootstrap already completed for version_id={version_id}, returning existing definition")
-        return json.loads(config.agent_definition) if isinstance(config.agent_definition, str) else config.agent_definition
-
-    # Guard: if already pending, skip to avoid race conditions
-    if config.agent_definition_status == "pending":
-        logger.warning(f"Bootstrap already pending for version_id={version_id}, skipping")
+    # If we did not win the claim, somebody else is already running the
+    # bootstrap (or it is already completed). Short-circuit without touching
+    # the row again so we never pile concurrent UPDATEs onto the same row.
+    if claimed is None:
+        if config.agent_definition_status == "completed" and config.agent_definition:
+            logger.info(f"Bootstrap already completed for version_id={version_id}, returning existing definition")
+            return json.loads(config.agent_definition) if isinstance(config.agent_definition, str) else config.agent_definition
+        logger.warning(
+            f"Bootstrap claim lost for version_id={version_id} "
+            f"(another worker is running, status={config.agent_definition_status}). Skipping."
+        )
         return {}
 
-    # Capture all needed data before we release the transaction
+    # We are the claimant; status is already 'pending' on disk after the
+    # atomic CLAIM commit above. Capture the fields we need for Phase 2/3.
+    logger.info(f"[BOOTSTRAP] P1.4 capturing fields from config row")
     data_source_id = config.data_source_id
     agent_id = config.agent_id
     selected_columns_raw = config.selected_columns
     data_dictionary_raw = config.data_dictionary
-
-    # Set pending and commit immediately to release locks
-    config.agent_definition_status = "pending"
-    await session.commit()
-    logger.info(f"[BOOTSTRAP] Set status=pending and committed for version_id={version_id}")
+    logger.info(
+        f"[BOOTSTRAP] P1.5 fields captured "
+        f"selected_columns_size={len(selected_columns_raw or '') if isinstance(selected_columns_raw, str) else 'non-str'} "
+        f"data_dictionary_size={len(data_dictionary_raw or '') if isinstance(data_dictionary_raw, str) else 'non-str'}"
+    )
 
     # ========== PHASE 2: Fetch additional data (short transaction) ==========
     try:
@@ -325,11 +370,43 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
         agent_name = agent_row.title if agent_row else "Untitled Agent"
 
         selected_columns_map = _parse_selected_columns(selected_columns_raw)
-        tables = list(selected_columns_map.keys())[:MAX_TABLES_FOR_BOOTSTRAP]
-        if not tables:
+        all_table_keys = list(selected_columns_map.keys())
+        if not all_table_keys:
             raise BootstrapError("no tables selected for this agent")
 
+        # Deterministic priority sort so bootstrap is reproducible when the
+        # selection exceeds MAX_TABLES_FOR_BOOTSTRAP. Production marts use a
+        # `_gold` suffix; favor those, then `_silver`, then everything else.
+        # Ties resolved alphabetically.
+        def _tier(name: str) -> int:
+            n = name.lower()
+            if n.endswith("_gold") or n.endswith("_gold_part"):
+                return 0
+            if n.endswith("_silver"):
+                return 1
+            if n.endswith("_bronze"):
+                return 2
+            return 3
+
+        sorted_tables = sorted(all_table_keys, key=lambda t: (_tier(t), t.lower()))
+        tables = sorted_tables[:MAX_TABLES_FOR_BOOTSTRAP]
+        dropped = sorted_tables[MAX_TABLES_FOR_BOOTSTRAP:]
+        if dropped:
+            logger.warning(
+                f"[BOOTSTRAP] selected_columns has {len(all_table_keys)} tables, "
+                f"capped at {MAX_TABLES_FOR_BOOTSTRAP}. "
+                f"Kept tiers (gold>silver>bronze>other), dropped {len(dropped)} tables. "
+                f"First dropped: {dropped[:5]}"
+            )
+
         data_dictionary_block = (data_dictionary_raw or "")[:6000] or "(none provided)"
+
+        # Release the implicit transaction held since the Phase 2 SELECTs so we
+        # do not sit idle-in-transaction for the entire LLM call. Without this
+        # commit, concurrent PUT /configs/step (e.g. Step 4 Advanced Settings)
+        # blocks waiting for this connection's transaction to close.
+        await session.commit()
+        logger.info("[BOOTSTRAP] Committed after Phase 2 to release connection during LLM call")
 
         # ========== PHASE 3: Heavy lifting WITHOUT holding transaction ==========
         # Run blocking schema operations in a thread pool

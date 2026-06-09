@@ -49,7 +49,8 @@ When asked "how many patients", "total patients", "patient count", etc.:
 7. **CRITICAL: CHECK COLUMN DATA TYPES AND CAST WHEN NEEDED.**
    - Look at the data type shown in parentheses in the schema (e.g., `VARCHAR`, `TIMESTAMP`, `INTEGER`)
    - If a date column is `VARCHAR` type, you MUST cast it before date comparisons or DATE_TRUNC:
-     - Use: `CAST(created_at AS TIMESTAMP)` or `created_at::TIMESTAMP`
+     - Use: `CAST(created_at AS TIMESTAMP)` — works in PostgreSQL, Trino, and DuckDB
+     - Do NOT use `created_at::TIMESTAMP` for Trino/Presto — the `::` shorthand is PostgreSQL-only
      - Example: `WHERE CAST(created_at AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '1 year'`
      - Example: `DATE_TRUNC('month', CAST(created_at AS TIMESTAMP))`
    - If comparing different types, always cast to match
@@ -67,10 +68,11 @@ When asked "how many patients", "total patients", "patient count", etc.:
 14. **GREATEST/LEAST for row-wise comparisons**: To find min/max across columns in a row, use GREATEST() and LEAST(), NOT max() or min():
     - WRONG: max(col1, col2, col3)
     - CORRECT: GREATEST(col1, col2, col3)
-15. **ROUND() in PostgreSQL requires numeric casting**: PostgreSQL's ROUND(value, decimals) only works with NUMERIC types, not DOUBLE PRECISION. Always cast to ::numeric first:
-    - WRONG: ROUND(AVG(column), 2)
-    - CORRECT: ROUND(AVG(column)::numeric, 2)
-    - CORRECT: ROUND(CAST(value AS numeric), 2)
+15. **ROUND() casting — dialect-specific**: PostgreSQL requires NUMERIC; Trino/DuckDB use DOUBLE. **Default to no-cast form** which works on all dialects:
+    - WRONG (PostgreSQL shorthand — never use): ROUND(AVG(column)::numeric, 2)
+    - WRONG (NUMERIC not valid in Trino/DuckDB): ROUND(CAST(AVG(column) AS NUMERIC), 2)
+    - CORRECT (works on Trino/DuckDB/PostgreSQL): ROUND(AVG(column), 2)
+    - PostgreSQL only (if needed): ROUND(CAST(AVG(column) AS DECIMAL), 2)
 16. **CRITICAL: Use `bp_log_gold` instead of `bp_log_latest_gold`**: The `bp_log_latest_gold` table is currently EMPTY (0 rows). Always use `bp_log_gold` for BP-related queries.
     - For distribution/aggregate queries: Use `bp_log_gold` directly
     - For latest BP per patient: Use `bp_log_gold` with `ROW_NUMBER() OVER (PARTITION BY patient_id ORDER BY bp_taken_on DESC) = 1`
@@ -87,12 +89,17 @@ When asked "how many patients", "total patients", "patient count", etc.:
       WHERE (patient_id = 123 OR related_person_id = 123) AND is_deleted = false
       ```
     - Common ID columns in `patient_tracker_gold`: `patient_id`, `related_person_id`, `ref_patient_track_id`, `site_id`, `village_id`
-18. **CRITICAL: VARCHAR BOOLEAN COLUMNS** - Some tables have boolean-like columns stored as VARCHAR:
-    - `bp_log_gold.is_src_deleted` is VARCHAR, NOT boolean!
-    - WRONG: `is_src_deleted = false` (type mismatch error!)
-    - CORRECT: `is_src_deleted IS DISTINCT FROM 'true'` (handles NULL and string values)
-    - ALTERNATIVE: `COALESCE(is_src_deleted, 'false') != 'true'`
-    - When in doubt, check the column type in the schema and use appropriate comparison
+18. **CRITICAL: COLUMN TYPE RULES FOR DELETE FLAGS AND BOOLEAN-LIKE COLUMNS**
+    - `patient_tracker_gold.is_deleted` is **BOOLEAN** — use `is_deleted = false` (NOT `IS DISTINCT FROM 'true'`)
+    - `bp_log_gold.is_src_deleted` is **VARCHAR** — use `is_src_deleted IS DISTINCT FROM 'true'` (NOT `= false`)
+    - `encounter_gold.is_src_deleted` is **VARCHAR** — use `is_src_deleted IS DISTINCT FROM 'true'`
+    - Admin tables (`health_facility_admin_gold`, `district_admin_gold`): BOOLEAN `is_deleted` — use `= false`
+    - `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_prescribed` are **VARCHAR** — compare as strings:
+      - CORRECT: `is_htn_diagnosis = 'true'`, `is_prescribed = 'true'`
+      - WRONG: `is_htn_diagnosis = true`, `is_prescribed = true` (boolean literal — type mismatch!)
+19. **CRITICAL: VARCHAR NUMERIC COLUMNS** - Some columns on `patient_tracker_gold` are stored as VARCHAR:
+    - `patient_tracker_gold.bmi` is VARCHAR — for numeric comparisons, use `bp_log_gold.bmi` (DOUBLE) instead
+    - Date columns (`bp_taken_on`, `bg_taken_on`, `created_at`) are VARCHAR — wrap in `TRY_CAST(col AS DATE)` or `TRY_CAST(col AS TIMESTAMP)` for date arithmetic
 
 ## Table Selection Strategy
 
@@ -122,11 +129,12 @@ SELECT
     WHEN pt.patient_age BETWEEN 30 AND 50 THEN '30-50'
     ELSE 'Over 50'
   END AS age_group,
-  ROUND(AVG(bp.avg_systolic)::numeric, 2) AS avg_systolic,
-  ROUND(AVG(bp.avg_diastolic)::numeric, 2) AS avg_diastolic
-FROM bp_log_latest_gold bp
+  ROUND(AVG(bp.avg_systolic), 2) AS avg_systolic,
+  ROUND(AVG(bp.avg_diastolic), 2) AS avg_diastolic
+FROM bp_log_gold bp
 INNER JOIN patient_tracker_gold pt ON bp.patient_id = pt.patient_id
 WHERE pt.is_deleted = false
+  AND bp.is_src_deleted IS DISTINCT FROM 'true'
 GROUP BY 1
 ORDER BY 1
 ```
@@ -134,7 +142,7 @@ ORDER BY 1
 ### Key Rules
 - ALWAYS check if a JOIN is needed before returning "Insufficient data"
 - Use INNER JOIN when both tables must have matching records
-- Apply mandatory filters on BOTH tables (e.g., `is_deleted = false`, `is_src_deleted IS NULL`)
+- Apply mandatory filters on BOTH tables (e.g., `is_deleted = false`, `is_src_deleted IS DISTINCT FROM 'true'`)
 
 ## Input Format
 
@@ -149,7 +157,7 @@ Return only the SQL query without any markdown formatting or explanations.
 ## Examples
 
 Question: What is the average height of patients?
-SQL: select avg(height) as average_height from patient_tracker_gold where height is not null and height > 0 and is_deleted = false
+SQL: select avg(try_cast(height as double)) as average_height from patient_tracker_gold where height is not null and is_deleted = false
 
 Question: How many patients are there?
 SQL: select count(distinct patient_id) as total_patients from patient_tracker_gold where is_deleted = false
@@ -157,14 +165,14 @@ SQL: select count(distinct patient_id) as total_patients from patient_tracker_go
 Question: How many unique patients in patient_gold?
 SQL: select count(distinct res_id) as total_patients from patient_gold where res_deleted_at is null
 
-Question: Breakdown of CVD risk levels by county
-SQL: select county_name, cvd_risk_level, count(*) as count from bp_log_latest_gold group by county_name, cvd_risk_level order by county_name, count desc
+Question: Breakdown of CVD risk levels by program
+SQL: select program_id, cvd_risk_level, count(*) as count from patient_tracker_gold where is_deleted = false group by program_id, cvd_risk_level order by program_id, count desc
 
 Question: Average CVD risk score trend over the past year (when created_at is VARCHAR type)
-SQL: select date_trunc('month', cast(created_at as timestamp)) as month, avg(cvd_risk_score) as avg_score from bp_log_latest_gold where cast(created_at as timestamp) >= current_date - interval '1 year' and cvd_risk_score is not null group by 1 order by 1
+SQL: select date_trunc('month', try_cast(created_at as timestamp)) as month, avg(cvd_risk_score) as avg_score from bp_log_gold where try_cast(created_at as timestamp) >= current_date - interval '1' year and cvd_risk_score is not null group by 1 order by 1
 
-Question: Show me the top 10 counties by patient count
-SQL: select county_name, count(distinct patient_id) as patient_count from patient_tracker_gold where is_deleted = false group by county_name order by patient_count desc limit 10
+Question: Show me the top 10 programs by patient count
+SQL: select program_id, count(distinct patient_id) as patient_count from patient_tracker_gold where is_deleted = false group by program_id order by patient_count desc limit 10
 
 Question: Give me details of ID 3305997 (ambiguous - could be patient_id or related_person_id)
 SQL: select * from patient_tracker_gold where (patient_id = 3305997 or related_person_id = 3305997) and is_deleted = false
@@ -211,7 +219,7 @@ facility_programs AS (
 ### Joining Clinical Data to Facility Hierarchy
 
 ```sql
--- For bp_log_gold, glucose_log_latest_gold, screening_log_gold:
+-- For bp_log_gold, glucose_log_gold, screening_log_gold:
 SELECT bl.*, f.facility_name, f.county_name, f.subcounty_name,
        COALESCE(fp.program_name, 'Unassigned') AS program_name
 FROM bp_log_gold bl
@@ -240,4 +248,4 @@ Question: Count patients by program and county
 SQL: WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE), facility_programs AS (SELECT hfp.health_facility_id AS facility_id, COALESCE(MAX(pg.name), 'Unassigned') AS program_name FROM health_facility_program_admin_gold hfp LEFT JOIN program_admin_gold pg ON pg.id = hfp.program_id GROUP BY hfp.health_facility_id) SELECT f.county_name, COALESCE(fp.program_name, 'Unassigned') AS program_name, COUNT(DISTINCT pt.patient_id) AS patient_count FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id LEFT JOIN facility_programs fp ON fp.facility_id = f.facility_id WHERE pt.is_deleted = FALSE GROUP BY f.county_name, fp.program_name ORDER BY patient_count DESC
 
 Question: Get glucose readings with facility details from October 2024 onwards
-SQL: WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE) SELECT gl.patient_id, gl.glucose_type, gl.glucose_value, gl.hba1c, TRY_CAST(gl.bg_taken_on AS DATE) AS bg_taken_on, f.facility_name, f.county_name, f.subcounty_name FROM glucose_log_latest_gold gl LEFT JOIN facilities f ON f.organization_id = gl.organization_id WHERE TRY_CAST(gl.bg_taken_on AS DATE) >= DATE '2024-10-01' AND TRY_CAST(gl.bg_taken_on AS DATE) <= CURRENT_DATE
+SQL: WITH facilities AS (SELECT hf.id AS facility_id, hf.name AS facility_name, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name, chif.name AS subcounty_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id WHERE hf.is_deleted = FALSE) SELECT gl.patient_id, gl.glucose_type, gl.glucose_value, gl.hba1c, TRY_CAST(gl.bg_taken_on AS DATE) AS bg_taken_on, f.facility_name, f.county_name, f.subcounty_name FROM glucose_log_gold gl LEFT JOIN facilities f ON f.organization_id = gl.organization_id WHERE TRY_CAST(gl.bg_taken_on AS DATE) >= DATE '2024-10-01' AND TRY_CAST(gl.bg_taken_on AS DATE) <= CURRENT_DATE

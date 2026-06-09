@@ -250,8 +250,12 @@ class AgentDefinition(BaseModel):
 
 
 class AgentDefinitionStepRequest(BaseModel):
-    """Step 4.5: persist user-confirmed (or AI-drafted) agent definition."""
-    agent_definition: AgentDefinition
+    """Step 4.5: persist user-confirmed (or AI-drafted) agent definition.
+
+    `agent_definition` is Optional so the wizard can call this endpoint as a
+    no-op when the user clicks Next before bootstrap has populated the form.
+    """
+    agent_definition: Optional[AgentDefinition] = None
 
 
 class AgentDefinitionPollResponse(BaseModel):

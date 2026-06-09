@@ -8,10 +8,36 @@ Provides endpoints for:
 
 Note: Data source routes are in app.modules.data_sources.routes
 """
+import asyncio
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+# Module-level set retains references to fire-and-forget bootstrap tasks so the
+# event loop does not garbage-collect them while they run. Tasks remove
+# themselves on completion via add_done_callback.
+_BOOTSTRAP_TASKS: set = set()
+
+
+def _spawn_bootstrap(version_id: int) -> None:
+    """Run bootstrap as a true fire-and-forget asyncio task.
+
+    Using `asyncio.create_task` instead of FastAPI BackgroundTasks decouples the
+    bootstrap from the request lifecycle. With BackgroundTasks the bootstrap
+    runs *before* the request's yield-style session dependency commits, so its
+    CLAIM UPDATE on `agent_configs` deadlocks against the still-open
+    transaction from the same request. create_task starts the coroutine in the
+    background immediately, lets the request handler return, and the request
+    session commits during dependency cleanup — releasing the row lock before
+    the bootstrap actually awaits the database.
+    """
+    from app.modules.agents.agent_definition_generator import (
+        bootstrap_agent_definition_background,
+    )
+    task = asyncio.create_task(bootstrap_agent_definition_background(version_id))
+    _BOOTSTRAP_TASKS.add(task)
+    task.add_done_callback(_BOOTSTRAP_TASKS.discard)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database.session import get_db_session as get_db
@@ -784,7 +810,6 @@ async def upsert_data_dictionary_step(
     agent_id: UUID,
     version_id: int,
     data: DataDictionaryStepRequest,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     service: AgentConfigService = Depends(get_config_service),
     agent_service: AgentService = Depends(get_agent_service),
@@ -806,13 +831,11 @@ async def upsert_data_dictionary_step(
         config = await service.upsert_data_dictionary_step(version_id, data.data_dictionary)
         logger.info(f"[DATA-DICTIONARY] Data dictionary saved successfully for version={version_id}")
 
-        # Fire-and-forget bootstrap. Failures inside the task are caught and
-        # surfaced via agent_definition_status='failed' on the config row.
-        from app.modules.agents.agent_definition_generator import (
-            bootstrap_agent_definition_background,
-        )
-        background_tasks.add_task(bootstrap_agent_definition_background, version_id)
-        logger.info(f"[DATA-DICTIONARY] Bootstrap task queued for version={version_id}")
+        # Fire-and-forget bootstrap using asyncio.create_task (NOT BackgroundTasks)
+        # to decouple from request lifecycle and avoid deadlock with yield-style
+        # session dependency cleanup.
+        _spawn_bootstrap(version_id)
+        logger.info(f"[DATA-DICTIONARY] Bootstrap task spawned for version={version_id}")
 
         return BaseResponse.ok(data=config)
     except AppException as e:
@@ -830,7 +853,6 @@ async def upsert_data_dictionary_step(
 async def bootstrap_agent_definition_route(
     agent_id: UUID,
     version_id: int,
-    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     service: AgentConfigService = Depends(get_config_service),
     agent_service: AgentService = Depends(get_agent_service),
@@ -839,7 +861,8 @@ async def bootstrap_agent_definition_route(
     Step 4.5: kick off AI Agent Definition bootstrap.
 
     Idempotent w.r.t. status — if a bootstrap is already pending, we report
-    that and skip scheduling another one.
+    that and skip scheduling another one. However, if pending for >5 minutes
+    (stale), we reset and allow re-triggering.
     """
     await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
 
@@ -848,17 +871,30 @@ async def bootstrap_agent_definition_route(
         raise HTTPException(status_code=404, detail=f"Version {version_id} not found")
 
     current_status = getattr(config, "agent_definition_status", "not_started")
+    
+    # Check for stale pending status (>5 minutes)
     if current_status == "pending":
-        return BaseResponse.ok(data=BootstrapAgentDefinitionResponse(
-            status="already_pending",
-            version_id=version_id,
-            message="Bootstrap is already running.",
-        ))
+        from datetime import datetime, timedelta
+        updated_at = getattr(config, "updated_at", None)
+        stale_threshold = timedelta(minutes=5)
+        
+        if updated_at and (datetime.utcnow() - updated_at) > stale_threshold:
+            # Reset stale pending status
+            logger.warning(
+                f"Resetting stale 'pending' agent_definition_status for version_id={version_id} "
+                f"(last updated: {updated_at})"
+            )
+            await service.configs.update(version_id, {"agent_definition_status": "not_started"})
+            current_status = "not_started"
+        else:
+            return BaseResponse.ok(data=BootstrapAgentDefinitionResponse(
+                status="already_pending",
+                version_id=version_id,
+                message="Bootstrap is already running.",
+            ))
 
-    from app.modules.agents.agent_definition_generator import (
-        bootstrap_agent_definition_background,
-    )
-    background_tasks.add_task(bootstrap_agent_definition_background, version_id)
+    # Use asyncio.create_task to avoid deadlock with yield-style dependencies
+    _spawn_bootstrap(version_id)
 
     return BaseResponse.ok(data=BootstrapAgentDefinitionResponse(
         status="started",
@@ -926,6 +962,11 @@ async def upsert_agent_definition_step(
     generation.
     """
     await verify_agent_access(agent_id, current_user, agent_service, min_role="admin")
+
+    # No-op when agent_definition is None (user clicked Next before bootstrap completed)
+    if data.agent_definition is None:
+        config = await service.get_config(version_id)
+        return BaseResponse.ok(data=config)
 
     try:
         config = await service.upsert_agent_definition_step(version_id, data.agent_definition)

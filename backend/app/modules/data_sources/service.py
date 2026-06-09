@@ -843,14 +843,34 @@ class DataSourceService:
                     # Trino/Presto optimized batch queries
                     logging.info("Using Trino/Presto optimized schema reflection")
                     
-                    # Get tables with a single query
-                    table_result = conn.execute(text("""
-                        SELECT table_schema, table_name 
-                        FROM information_schema.tables 
-                        WHERE table_type = 'BASE TABLE'
-                        ORDER BY table_schema, table_name
-                        LIMIT :limit
-                    """), {"limit": max_tables})
+                    # Extract schema from URL: trino://user:pass@host:port/catalog/schema
+                    from urllib.parse import urlparse
+                    parsed = urlparse(db_url)
+                    path_parts = parsed.path.strip('/').split('/')
+                    target_schema = path_parts[1] if len(path_parts) > 1 else None
+                    
+                    if target_schema:
+                        logging.info(f"Trino: filtering to schema '{target_schema}'")
+                        # Get tables filtered by schema
+                        table_result = conn.execute(text("""
+                            SELECT table_schema, table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            AND table_schema = :schema
+                            ORDER BY table_schema, table_name
+                            LIMIT :limit
+                        """), {"schema": target_schema, "limit": max_tables})
+                    else:
+                        logging.info("Trino: no schema specified, fetching all tables")
+                        # Get tables with a single query
+                        table_result = conn.execute(text("""
+                            SELECT table_schema, table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            ORDER BY table_schema, table_name
+                            LIMIT :limit
+                        """), {"limit": max_tables})
+                    
                     discovered_tables = [(row[0], row[1]) for row in table_result]
                     total_tables_in_db = len(discovered_tables)
                     logging.info(f"Trino: found {total_tables_in_db} tables")
@@ -859,14 +879,21 @@ class DataSourceService:
                         # Build set of valid tables for filtering
                         valid_tables = set(discovered_tables)
                         
-                        # Fetch ALL columns (Trino doesn't support complex WHERE with many ORs)
-                        # Then filter in Python - this is faster than N+1 queries
-                        logging.info("Trino: fetching all columns...")
-                        col_result = conn.execute(text("""
-                            SELECT table_schema, table_name, column_name, data_type, is_nullable
-                            FROM information_schema.columns
-                            ORDER BY table_schema, table_name, ordinal_position
-                        """))
+                        # Fetch columns for the target schema only
+                        logging.info("Trino: fetching columns...")
+                        if target_schema:
+                            col_result = conn.execute(text("""
+                                SELECT table_schema, table_name, column_name, data_type, is_nullable
+                                FROM information_schema.columns
+                                WHERE table_schema = :schema
+                                ORDER BY table_schema, table_name, ordinal_position
+                            """), {"schema": target_schema})
+                        else:
+                            col_result = conn.execute(text("""
+                                SELECT table_schema, table_name, column_name, data_type, is_nullable
+                                FROM information_schema.columns
+                                ORDER BY table_schema, table_name, ordinal_position
+                            """))
                         
                         all_columns = {}
                         for row in col_result:

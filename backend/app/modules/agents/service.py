@@ -1425,10 +1425,24 @@ class AgentConfigService:
         
         # Get data source type (database or file) from the config's data source
         data_source_type = "database"  # default
+        db_url_str = ""
         if config.data_source_id:
             source = await self.sources.get_by_id(config.data_source_id)
             if source:
                 data_source_type = source.source_type
+                db_url_str = str(source.db_url or "").lower()
+
+        # Detect SQL dialect from db_url so the prompt carries the right syntax rules
+        if db_url_str.startswith(("trino://", "presto://")):
+            data_source_dialect = "trino"
+        elif db_url_str.startswith("duckdb://"):
+            data_source_dialect = "duckdb"
+        elif db_url_str.startswith("mysql://"):
+            data_source_dialect = "mysql"
+        elif db_url_str.startswith(("mssql://", "sqlserver://")):
+            data_source_dialect = "sqlserver"
+        else:
+            data_source_dialect = "postgresql"
         
         # =========================================================================
         # DETERMINISTIC TEMPLATE COMPOSITION
@@ -1523,13 +1537,11 @@ Operational principles:
         else:
             prompt_sections.append(get_generic_sql_generator_prompt())
         
-        # Section 5: DuckDB-specific rules (if applicable)
-        # Note: At runtime, sql_service will add these based on actual DB type
-        # We include a placeholder instruction here
-        prompt_sections.append("""# DATABASE DIALECT
-
-The SQL dialect will be determined at runtime. Follow standard PostgreSQL syntax by default.
-For DuckDB connections, additional dialect-specific rules will be injected at query time.""")
+        # Section 5: Dialect-specific SQL rules — injected from DIALECT_RULES_MAP
+        # so the prompt carries the correct syntax constraints for the connected DB.
+        from app.core.prompt_templates import DIALECT_RULES_MAP
+        _dialect_rules = DIALECT_RULES_MAP.get(data_source_dialect, DIALECT_RULES_MAP["postgresql"])
+        prompt_sections.append(f"# DATABASE DIALECT\n\n{_dialect_rules}")
         
         # Section 6: Chart Visualization Rules
         prompt_sections.append("# CHART VISUALIZATION RULES\n\n" + get_chart_generator_prompt())

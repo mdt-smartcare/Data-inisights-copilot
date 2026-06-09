@@ -788,6 +788,18 @@ class SQLService:
         """Check if the database is DuckDB."""
         return self._db_url.startswith("duckdb://")
     
+    def _is_trino(self) -> bool:
+        """Check if the database is Trino/Presto."""
+        url_lower = self._db_url.lower()
+        return url_lower.startswith("trino://") or url_lower.startswith("presto://")
+    
+    def _get_trino_schema(self) -> Optional[str]:
+        """Extract schema from Trino URL: trino://user:pass@host:port/catalog/schema."""
+        from urllib.parse import urlparse
+        parsed = urlparse(self._db_url)
+        path_parts = parsed.path.strip('/').split('/')
+        return path_parts[1] if len(path_parts) > 1 else None
+    
     def _get_engine(self) -> Engine:
         """
         Get or create a database engine with thread-safe connection pooling.
@@ -802,9 +814,10 @@ class SQLService:
         
         # Use thread-safe cache with tenant isolation and fast-fail timeout
         try:
-            # Add connect_timeout for PostgreSQL to fail fast when database is unavailable
+            # Add connect_timeout for PostgreSQL/MySQL to fail fast when database is unavailable
+            # DuckDB and Trino don't support connect_timeout
             engine_kwargs = {}
-            if not self._is_duckdb():
+            if not self._is_duckdb() and not self._is_trino():
                 engine_kwargs["connect_args"] = {"connect_timeout": 3}
             
             self._engine = self._engine_cache.get_or_create(
@@ -877,6 +890,27 @@ class SQLService:
                             all_tables = [row[0] for row in result]
                         except Exception:
                             all_tables = []
+                elif self._is_trino():
+                    # For Trino/Presto: filter by schema from connection URL
+                    target_schema = self._get_trino_schema()
+                    if target_schema:
+                        logger.debug(f"Trino: filtering to schema '{target_schema}'")
+                        result = conn.execute(text("""
+                            SELECT table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            AND table_schema = :schema
+                            ORDER BY table_name
+                        """), {"schema": target_schema})
+                    else:
+                        logger.debug("Trino: no schema specified, fetching all tables")
+                        result = conn.execute(text("""
+                            SELECT table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            ORDER BY table_name
+                        """))
+                    all_tables = [row[0] for row in result]
                 else:
                     # For PostgreSQL, MySQL - use standard information_schema with BASE TABLE filter
                     try:
@@ -1716,9 +1750,14 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     sql = re.sub(r'\s*```$', '', sql)
                     sql = sql.strip()
                 
+                # Strip PostgreSQL-specific cast syntax before sending to Trino
+                if self._is_trino() and sql:
+                    from app.modules.chat.query.comparison_engine import _strip_for_trino
+                    sql = _strip_for_trino(sql)
+
                 last_sql = sql
                 generated_sql = sql  # Track for audit
-                
+
                 logger.info("LLM generated SQL", attempt=attempt + 1, generated_sql=sql, question=natural_language_query[:100])
                 
                 # =========================================================
@@ -1879,7 +1918,8 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 # SEMANTIC CACHE: Store successful query for future reuse
                 # =========================================================
                 cache_store_start = perf_time.perf_counter()
-                if self._semantic_cache and self._enable_semantic_cache and schema_hash:
+                _is_insufficient = "insufficient data" in sql.lower() or "insufficient_data" in sql.lower()
+                if self._semantic_cache and self._enable_semantic_cache and schema_hash and not _is_insufficient:
                     try:
                         # Use asyncio.to_thread to prevent blocking the event loop during embedding
                         await asyncio.to_thread(
@@ -2151,11 +2191,15 @@ class SQLServiceForCSV(SQLService):
 
 class SQLServiceFactory:
     """Factory for creating SQLService instances from data sources."""
-    
+
+    # Class-level cache: agent_id_str → SQLService
+    # Shared across per-request factory instances so SQLService init runs once per agent.
+    _cache: Dict[str, "SQLService"] = {}
+
     def __init__(self, config_repo, data_source_repo, ai_model_repo=None):
         """
         Initialize factory with repository dependencies.
-        
+
         Args:
             config_repo: AgentConfigRepository instance
             data_source_repo: DataSourceRepository instance
@@ -2273,20 +2317,27 @@ class SQLServiceFactory:
         Returns:
             SQLService instance or None if not found
         """
+        agent_id_str = str(agent_id)
+
+        # Return cached instance — avoids re-initializing examples store, data dictionary, etc.
+        if agent_id_str in self._cache:
+            logger.debug(f"SQLServiceFactory: returning cached SQLService for agent {agent_id_str}")
+            return self._cache[agent_id_str]
+
         try:
             # Get the active config for the agent using repository
             config = await self.config_repo.get_active_config(agent_id)
-            
+
             if not config:
                 logger.warning(f"No active config found for agent: {agent_id}")
                 return None
-            
+
             logger.debug(f"Agent config found: id={config.id}, data_source_id={config.data_source_id}")
-            
+
             if not config.data_source_id:
                 logger.warning(f"Agent config has no data_source_id")
                 return None
-            
+
             # Look up the embedding model name for this agent
             embedding_model = None
             try:
@@ -2324,7 +2375,11 @@ class SQLServiceFactory:
             if sql_service and config.system_prompt:
                 sql_service.set_agent_system_prompt(config.system_prompt)
                 logger.debug(f"Agent system prompt set on SQLService (length={len(config.system_prompt)})")
-            
+
+            if sql_service:
+                self._cache[agent_id_str] = sql_service
+                logger.info(f"SQLServiceFactory: cached SQLService for agent {agent_id_str}")
+
             return sql_service
             
         except Exception as e:

@@ -231,12 +231,45 @@ export const AgentDefinitionStep: React.FC<AgentDefinitionStepProps> = ({
   }, [agentId, versionId, onChange, stopPolling]);
 
   useEffect(() => {
-    // Initial fetch + poll if pending.
+    // When step loads, immediately check status and auto-start bootstrap if needed
     autoKickedRef.current = false;
-    void poll();
-    pollTimer.current = window.setInterval(() => {
-      void poll();
-    }, 2000);
+    
+    const initAndPoll = async () => {
+      // If no value exists, proactively start the bootstrap
+      if (!value) {
+        try {
+          const res = await pollAgentDefinition(agentId, versionId);
+          setStatus(res.status);
+          
+          if (res.status === 'completed' && res.data) {
+            onChange(res.data);
+            return; // No need to poll further
+          }
+          
+          // Auto-start bootstrap for not_started, failed, or stale pending
+          if (res.status === 'not_started' || res.status === 'failed') {
+            autoKickedRef.current = true;
+            setStatus('pending');
+            setError(null);
+            try {
+              await bootstrapAgentDefinition(agentId, versionId);
+            } catch (kickErr) {
+              // Even if kick fails, continue polling - server may have started it
+              console.warn('Bootstrap kick failed, will continue polling:', kickErr);
+            }
+          }
+        } catch (e) {
+          console.error('Initial poll failed:', e);
+        }
+      }
+      
+      // Start polling
+      pollTimer.current = window.setInterval(() => {
+        void poll();
+      }, 2000);
+    };
+    
+    void initAndPoll();
     return () => stopPolling();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId, versionId]);

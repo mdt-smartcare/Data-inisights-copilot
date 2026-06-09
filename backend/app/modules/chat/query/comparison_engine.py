@@ -48,6 +48,111 @@ def _fix_common_typos(sql: str) -> str:
     return fixed_sql
 
 
+# Allowed type tokens following PostgreSQL `::`. Captures the type token and
+# an optional `(prec[, scale])` suffix, plus the optional `double precision`
+# two-word form. Bounded explicitly so trailing SQL tokens are never slurped.
+_PG_CAST_TYPE_RE = re.compile(
+    r"::\s*(double\s+precision|[A-Za-z_]\w*)(\s*\([^)]*\))?",
+    re.IGNORECASE,
+)
+
+
+def _find_lhs_start(sql: str, cast_pos: int) -> int:
+    """Walk backwards from a `::` position to find the start of the LHS expr.
+
+    Handles three shapes:
+    - identifier or dotted identifier: `col`, `t.col`
+    - function call: `COUNT(*)`, `SUM(x) OVER ()`
+    - parenthesised expr: `(a + b)`
+
+    Returns the index where the LHS begins.
+    """
+    i = cast_pos - 1
+    # Skip whitespace immediately before ::
+    while i >= 0 and sql[i].isspace():
+        i -= 1
+    if i < 0:
+        return cast_pos
+
+    # If LHS ends with ')', walk back through balanced parens. Repeat to also
+    # absorb a function-name token or chained `fn() OVER ()` constructs.
+    while i >= 0 and sql[i] == ")":
+        depth = 1
+        j = i - 1
+        while j >= 0 and depth > 0:
+            if sql[j] == ")":
+                depth += 1
+            elif sql[j] == "(":
+                depth -= 1
+            j -= 1
+        if depth != 0:
+            return cast_pos  # unbalanced — bail
+        # j is now one before the matching '('. Three sub-cases:
+        # 1. identifier char abutting '(': function call like COUNT(...)
+        # 2. whitespace + window keyword (OVER/FILTER): chained window expr
+        # 3. whitespace + anything else: grouping parens — stop at '('
+        k = j
+        if k >= 0 and (sql[k].isalnum() or sql[k] == "_"):
+            while k >= 0 and (sql[k].isalnum() or sql[k] == "_"):
+                k -= 1
+            i = k
+            while i >= 0 and sql[i].isspace():
+                i -= 1
+        elif k >= 0 and sql[k].isspace():
+            # Check for window keyword between '(' and previous token
+            m = k
+            while m >= 0 and sql[m].isspace():
+                m -= 1
+            word_end = m + 1
+            while m >= 0 and (sql[m].isalnum() or sql[m] == "_"):
+                m -= 1
+            word = sql[m + 1:word_end].upper()
+            if word in {"OVER", "FILTER", "WITHIN"}:
+                i = m
+                while i >= 0 and sql[i].isspace():
+                    i -= 1
+            else:
+                return j + 1  # grouping parens
+        else:
+            return j + 1  # punctuation before '(' — grouping
+    # If LHS is a plain identifier (possibly dotted), walk back through word
+    # chars and dots.
+    while i >= 0 and (sql[i].isalnum() or sql[i] in "_."):
+        i -= 1
+    return i + 1
+
+
+def _strip_for_trino(sql: str) -> str:
+    """Strip Trino-incompatible artefacts: trailing ';' and PostgreSQL '::' casts.
+
+    Trino's parser rejects a trailing semicolon when the statement is the only
+    statement in the request, and it does not understand the PostgreSQL
+    `expr::type` cast shorthand. We convert those to `CAST(expr AS type)`.
+    """
+    fixed = sql
+    # Repeat to absorb nested casts (e.g. (x::int)::varchar).
+    for _ in range(4):
+        m = _PG_CAST_TYPE_RE.search(fixed)
+        if not m:
+            break
+        cast_pos = m.start()
+        lhs_start = _find_lhs_start(fixed, cast_pos)
+        lhs = fixed[lhs_start:cast_pos].strip()
+        type_name = m.group(1).upper()
+        if m.group(2):
+            type_name += m.group(2)
+        if not lhs:
+            # Couldn't recover an LHS — drop just the `::type` to avoid a
+            # parser error on the cast operator itself. Better than a crash.
+            fixed = fixed[:cast_pos] + fixed[m.end():]
+            continue
+        fixed = fixed[:lhs_start] + f"CAST({lhs} AS {type_name})" + fixed[m.end():]
+    # Trino uses DOUBLE/DECIMAL, not NUMERIC (PostgreSQL type)
+    import re as _re
+    fixed = _re.sub(r'\bAS\s+NUMERIC\b', 'AS DOUBLE', fixed, flags=_re.IGNORECASE)
+    return fixed.rstrip().rstrip(";").rstrip()
+
+
 def _fix_birth_date_to_age(sql: str) -> str:
     """
     Fix LLM mistakes where it tries to calculate age from birth_date on patient_tracker_gold.
@@ -138,6 +243,9 @@ async def generate_comparison_insights(
             sql = _fix_common_typos(sql)
             # Fix birth_date → age for patient_tracker_gold
             sql = _fix_birth_date_to_age(sql)
+            # Trino: strip trailing ';' and rewrite PostgreSQL '::' casts
+            if dialect == "trino":
+                sql = _strip_for_trino(sql)
             
             try:
                 # Use longer timeout for comparison queries (45s) - they can be complex

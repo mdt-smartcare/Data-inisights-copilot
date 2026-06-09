@@ -232,9 +232,9 @@ class CTERewriter:
         if match:
             errors.append(f"Dangerous SQL pattern detected: {match.group()}")
         
-        # Check manifest denied patterns
+        # Check manifest denied patterns (word-boundary to avoid column name false positives)
         for pattern in self.manifest.denied_patterns:
-            if pattern.lower() in sql.lower():
+            if re.search(rf'\b{re.escape(pattern)}\b', sql, re.IGNORECASE):
                 errors.append(f"Denied pattern: {pattern}")
         
         return errors
