@@ -162,10 +162,11 @@ class SQLService:
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
         embedding_model: Optional[str] = None,
+        selected_table_names: Optional[List[str]] = None,
     ):
         """
         Initialize SQL service with a database URL.
-        
+
         Args:
             db_url: Database connection URL (postgresql://, duckdb://, etc.)
             schema: Optional schema name for table discovery
@@ -174,13 +175,16 @@ class SQLService:
             config_id: Optional agent config ID for semantic schema retrieval
             agent_id: Optional agent ID for per-agent SQL examples and data dictionary
             embedding_model: Optional embedding model name (e.g., "huggingface/BAAI/bge-base-en-v1.5")
+            selected_table_names: Bare table names the agent is scoped to. When provided,
+                _discover_tables() returns these directly without querying the DB.
         """
         self._db_url = db_url
         self._schema = schema
         self._max_result_rows = max_result_rows
         self._engine: Optional[Engine] = None
         self._cached_schema: Optional[str] = None
-        self._table_names: List[str] = []
+        # Pre-seed table list from agent's selected_columns; skips DB discovery entirely.
+        self._table_names: List[str] = list(selected_table_names) if selected_table_names else []
         self._settings = get_settings()
         self._enable_few_shot = enable_few_shot
         self._config_id = config_id  # For semantic schema retrieval
@@ -274,7 +278,7 @@ class SQLService:
         # Initialize token budget manager for context size management
         self._token_budget_manager: Optional[TokenBudgetManager] = None
         try:
-            self._token_budget_manager = get_token_budget_manager(max_tokens=8000)
+            self._token_budget_manager = get_token_budget_manager(max_tokens=16000)
             logger.info("TokenBudgetManager initialized")
         except Exception as e:
             logger.warning(f"Failed to initialize TokenBudgetManager: {e}")
@@ -674,41 +678,50 @@ class SQLService:
         """
         if not system_prompt:
             return ""
-        
+
         relevant_sections = []
-        
-        # Priority sections to extract (these headers match the deterministic template)
+        system_prompt_lower = system_prompt.lower()
+
+        # Priority sections to extract (these headers match the deterministic template).
+        # Match is case-insensitive so header casing drift in agent configs does not
+        # silently drop all rules.
         priority_headers = [
+            # Agent Definition (Step 5) — intent + domain knowledge first
+            "# AGENT ROLE",
+            "# BUSINESS OBJECTIVES",
+            "# DOMAIN RULES & GUARDRAILS",
+            "# PRIORITY METRICS",
+            "# SAMPLE QUESTIONS THIS AGENT SHOULD HANDLE",
+            # Schema + mechanics
             "# FHIR IDENTIFIER RULES",
-            "# SQL GENERATION RULES", 
+            "# SQL GENERATION RULES",
             "# DATA QUALITY & VALIDATION",
         ]
-        
-        # Extract sections by header
+
         for header in priority_headers:
-            if header in system_prompt:
-                # Find the section start
-                start_idx = system_prompt.find(header)
-                # Find the next major section (starts with "# " or "---")
+            header_lower = header.lower()
+            if header_lower in system_prompt_lower:
+                start_idx = system_prompt_lower.find(header_lower)
+                # Recover original casing of the matched header span
+                matched_header = system_prompt[start_idx:start_idx + len(header)]
                 remaining = system_prompt[start_idx + len(header):]
-                
-                # Look for next section delimiter
+
                 next_section = len(remaining)
+                remaining_lower = remaining.lower()
                 for delimiter in ["\n# ", "\n---\n"]:
-                    pos = remaining.find(delimiter)
+                    pos = remaining_lower.find(delimiter)
                     if pos != -1 and pos < next_section:
                         next_section = pos
-                
+
                 section_content = remaining[:next_section].strip()
-                
-                # Limit individual section length
+
                 if len(section_content) > 1500:
                     section_content = section_content[:1500] + "..."
-                
+
                 if section_content:
-                    relevant_sections.append(f"{header}\n{section_content}")
-        
-        # Fallback: If no priority sections found, use keyword-based extraction
+                    relevant_sections.append(f"{matched_header}\n{section_content}")
+
+        # Fallback 1: keyword-based section ranking
         if not relevant_sections:
             sql_keywords = [
                 "patient_id", "res_id", "fhir", "identifier",
@@ -717,22 +730,30 @@ class SQLService:
                 "do not use", "always use", "never use",
                 "critical", "important", "mandatory"
             ]
-            
+
             sections = system_prompt.split("\n\n")
-            
+
             for section in sections:
                 section_lower = section.lower()
                 relevance_score = sum(1 for kw in sql_keywords if kw in section_lower)
-                
+
                 if relevance_score >= 2:
                     if len(section) <= 500:
                         relevant_sections.append(section.strip())
                     else:
                         relevant_sections.append(section[:500].strip() + "...")
-        
-        # Combine and limit total output
+
+        # Fallback 2: nothing matched — surface a truncated version of the full
+        # system prompt rather than dropping all agent rules silently.
+        if not relevant_sections:
+            logger.warning(
+                "Agent system prompt has no recognized SQL-rule headers; "
+                "passing truncated full prompt downstream."
+            )
+            return system_prompt[:4000]
+
         combined = "\n\n".join(relevant_sections[:5])
-        return combined[:4000] if combined else ""
+        return combined[:4000] if combined else system_prompt[:4000]
     
     def _classify_error_type(self, error_message: str) -> str:
         """
@@ -771,6 +792,18 @@ class SQLService:
         """Check if the database is DuckDB."""
         return self._db_url.startswith("duckdb://")
     
+    def _is_trino(self) -> bool:
+        """Check if the database is Trino/Presto."""
+        url_lower = self._db_url.lower()
+        return url_lower.startswith("trino://") or url_lower.startswith("presto://")
+    
+    def _get_trino_schema(self) -> Optional[str]:
+        """Extract schema from Trino URL: trino://user:pass@host:port/catalog/schema."""
+        from urllib.parse import urlparse
+        parsed = urlparse(self._db_url)
+        path_parts = parsed.path.strip('/').split('/')
+        return path_parts[1] if len(path_parts) > 1 else None
+    
     def _get_engine(self) -> Engine:
         """
         Get or create a database engine with thread-safe connection pooling.
@@ -785,9 +818,10 @@ class SQLService:
         
         # Use thread-safe cache with tenant isolation and fast-fail timeout
         try:
-            # Add connect_timeout for PostgreSQL to fail fast when database is unavailable
+            # Add connect_timeout for PostgreSQL/MySQL to fail fast when database is unavailable
+            # DuckDB and Trino don't support connect_timeout
             engine_kwargs = {}
-            if not self._is_duckdb():
+            if not self._is_duckdb() and not self._is_trino():
                 engine_kwargs["connect_args"] = {"connect_timeout": 3}
             
             self._engine = self._engine_cache.get_or_create(
@@ -860,6 +894,27 @@ class SQLService:
                             all_tables = [row[0] for row in result]
                         except Exception:
                             all_tables = []
+                elif self._is_trino():
+                    # For Trino/Presto: filter by schema from connection URL
+                    target_schema = self._get_trino_schema()
+                    if target_schema:
+                        logger.debug(f"Trino: filtering to schema '{target_schema}'")
+                        result = conn.execute(text("""
+                            SELECT table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            AND table_schema = :schema
+                            ORDER BY table_name
+                        """), {"schema": target_schema})
+                    else:
+                        logger.debug("Trino: no schema specified, fetching all tables")
+                        result = conn.execute(text("""
+                            SELECT table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            ORDER BY table_name
+                        """))
+                    all_tables = [row[0] for row in result]
                 else:
                     # For PostgreSQL, MySQL - use standard information_schema with BASE TABLE filter
                     try:
@@ -1405,15 +1460,29 @@ class SQLService:
         if self._token_budget_manager:
             try:
                 schema_tokens = self._token_budget_manager.estimate_tokens(schema)
-                max_schema_tokens = 6000  # Reserve for prompt, plan, few-shot
-                
+                max_schema_tokens = 12000  # Reserve for prompt, plan, few-shot (16k total budget)
+
                 if schema_tokens > max_schema_tokens:
                     # Build priority map from query plan
                     table_priorities = {}
                     if query_plan and query_plan.entities:
                         for i, table in enumerate(query_plan.entities):
                             table_priorities[table] = 1.0 - (i * 0.1)  # First table highest priority
-                    
+
+                    # Compute priority-pinned tables from keyword routing — these
+                    # are NEVER dropped even if budget overflows.
+                    try:
+                        from app.modules.embeddings.schema_retriever import PRIORITY_TABLE_KEYWORDS
+                        query_lower = query.lower()
+                        priority_pinned = set()
+                        for keyword, tables in PRIORITY_TABLE_KEYWORDS.items():
+                            if keyword in query_lower:
+                                priority_pinned.update(tables)
+                        # Intersect with what was actually retrieved
+                        priority_pinned &= set(selected_tables)
+                    except Exception:
+                        priority_pinned = set()
+
                     # Truncate schema to fit budget
                     tables_ddl = {}
                     for table in selected_tables:
@@ -1422,19 +1491,21 @@ class SQLService:
                         match = re.search(table_pattern, schema, re.MULTILINE)
                         if match:
                             tables_ddl[table] = match.group(0)
-                    
+
                     truncated_schema, included_tables = self._token_budget_manager.fit_schema_to_budget(
                         tables_ddl=tables_ddl,
                         table_priorities=table_priorities,
-                        additional_context=query_plan_context
+                        additional_context=query_plan_context,
+                        priority_tables=priority_pinned,
                     )
-                    
+
                     logger.info(
                         "TokenBudget trimmed schema context",
                         original_tokens=schema_tokens,
                         max_tokens=max_schema_tokens,
                         included_tables=len(included_tables),
-                        excluded_tables=len(selected_tables) - len(included_tables)
+                        excluded_tables=len(selected_tables) - len(included_tables),
+                        priority_pinned=len(priority_pinned),
                     )
                     schema = truncated_schema
                 else:
@@ -1683,9 +1754,14 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                     sql = re.sub(r'\s*```$', '', sql)
                     sql = sql.strip()
                 
+                # Strip PostgreSQL-specific cast syntax before sending to Trino
+                if self._is_trino() and sql:
+                    from app.modules.chat.query.comparison_engine import _strip_for_trino
+                    sql = _strip_for_trino(sql)
+
                 last_sql = sql
                 generated_sql = sql  # Track for audit
-                
+
                 logger.info("LLM generated SQL", attempt=attempt + 1, generated_sql=sql, question=natural_language_query[:100])
                 
                 # =========================================================
@@ -1846,7 +1922,8 @@ Please fix the SQL query to resolve this error. Generate ONLY the corrected SQL.
                 # SEMANTIC CACHE: Store successful query for future reuse
                 # =========================================================
                 cache_store_start = perf_time.perf_counter()
-                if self._semantic_cache and self._enable_semantic_cache and schema_hash:
+                _is_insufficient = "insufficient data" in sql.lower() or "insufficient_data" in sql.lower()
+                if self._semantic_cache and self._enable_semantic_cache and schema_hash and not _is_insufficient:
                     try:
                         # Use asyncio.to_thread to prevent blocking the event loop during embedding
                         await asyncio.to_thread(
@@ -2118,11 +2195,15 @@ class SQLServiceForCSV(SQLService):
 
 class SQLServiceFactory:
     """Factory for creating SQLService instances from data sources."""
-    
+
+    # Class-level cache: agent_id_str → SQLService
+    # Shared across per-request factory instances so SQLService init runs once per agent.
+    _cache: Dict[str, "SQLService"] = {}
+
     def __init__(self, config_repo, data_source_repo, ai_model_repo=None):
         """
         Initialize factory with repository dependencies.
-        
+
         Args:
             config_repo: AgentConfigRepository instance
             data_source_repo: DataSourceRepository instance
@@ -2147,6 +2228,7 @@ class SQLServiceFactory:
         config_id: Optional[int] = None,
         agent_id: Optional[str] = None,
         embedding_model: Optional[str] = None,
+        selected_table_names: Optional[List[str]] = None,
         **kwargs,
     ) -> Optional[SQLService]:
         """
@@ -2188,6 +2270,7 @@ class SQLServiceFactory:
                     config_id=config_id,
                     agent_id=agent_id,
                     embedding_model=embedding_model,
+                    selected_table_names=selected_table_names,
                 )
                 
             elif data_source.source_type == "file":
@@ -2240,20 +2323,27 @@ class SQLServiceFactory:
         Returns:
             SQLService instance or None if not found
         """
+        agent_id_str = str(agent_id)
+
+        # Return cached instance — avoids re-initializing examples store, data dictionary, etc.
+        if agent_id_str in self._cache:
+            logger.debug(f"SQLServiceFactory: returning cached SQLService for agent {agent_id_str}")
+            return self._cache[agent_id_str]
+
         try:
             # Get the active config for the agent using repository
             config = await self.config_repo.get_active_config(agent_id)
-            
+
             if not config:
                 logger.warning(f"No active config found for agent: {agent_id}")
                 return None
-            
+
             logger.debug(f"Agent config found: id={config.id}, data_source_id={config.data_source_id}")
-            
+
             if not config.data_source_id:
                 logger.warning(f"Agent config has no data_source_id")
                 return None
-            
+
             # Look up the embedding model name for this agent
             embedding_model = None
             try:
@@ -2279,19 +2369,37 @@ class SQLServiceFactory:
             except Exception as e:
                 logger.debug(f"Could not determine embedding model: {e}")
             
+            # Extract bare table names from selected_columns so SQLService doesn't
+            # discover all tables in the schema (can be 300+ on a shared Trino catalog).
+            selected_cols = config.selected_columns or {}
+            if isinstance(selected_cols, str):
+                import json as _json
+                try:
+                    selected_cols = _json.loads(selected_cols)
+                except Exception:
+                    selected_cols = {}
+            selected_table_names = [
+                k.split(".")[-1] if "." in k else k for k in selected_cols.keys()
+            ] or None
+
             sql_service = await self.create_from_data_source(
                 config.data_source_id,
                 enable_few_shot=enable_few_shot,
                 config_id=config.id,  # Pass config ID for semantic schema retrieval
                 agent_id=str(agent_id),  # Pass agent ID for per-agent SQL examples
                 embedding_model=embedding_model,  # Pass agent's embedding model
+                selected_table_names=selected_table_names,
             )
             
             # Set the agent's system prompt for SQL generation context
             if sql_service and config.system_prompt:
                 sql_service.set_agent_system_prompt(config.system_prompt)
                 logger.debug(f"Agent system prompt set on SQLService (length={len(config.system_prompt)})")
-            
+
+            if sql_service:
+                self._cache[agent_id_str] = sql_service
+                logger.info(f"SQLServiceFactory: cached SQLService for agent {agent_id_str}")
+
             return sql_service
             
         except Exception as e:

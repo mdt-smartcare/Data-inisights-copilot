@@ -125,10 +125,23 @@ class SchemaLinker:
                 if len(matched_tables) < max_tables:
                     matched_tables.add(t)
         
-        # Fallback: If no tables matched, use all tables (full schema)
+        # Fallback: If no tables matched, use clinically important *_gold tables first.
+        # The alphabetical fallback (table_names[:max_tables]) would return admin/silver
+        # tables starting with 'a', which are useless for most healthcare queries.
         if not matched_tables:
-            logger.info("No specific tables matched. Using full schema.")
-            matched_tables = set(self.schema_graph.table_names[:max_tables])
+            logger.info("No specific tables matched. Using priority clinical tables as fallback.")
+            _CLINICAL_PRIORITY = [
+                "patient_tracker_gold",
+                "bp_log_gold",
+                "glucose_log_gold",
+                "screening_log_gold",
+                "patient_gold",
+                "encounter_gold",
+                "condition_gold",
+                "prescription_gold",
+            ]
+            priority_present = [t for t in _CLINICAL_PRIORITY if t in set(self.schema_graph.table_names)]
+            matched_tables = set(priority_present[:max_tables])
         
         # Limit tables
         tables_list = list(matched_tables)[:max_tables]

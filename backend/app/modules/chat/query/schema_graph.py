@@ -50,21 +50,36 @@ class SchemaGraph:
         engine: Engine,
         schema_name: str = "public",
         excluded_tables: Optional[List[str]] = None,
+        tables_only: Optional[List[str]] = None,
     ):
         """
         Initialize SchemaGraph by introspecting the database.
-        
+
         Args:
             engine: SQLAlchemy engine connected to the target database
-            schema_name: Database schema to introspect (default: "public")
+            schema_name: Database schema to introspect (default: "public").
+                         For Trino, auto-extracted from URL if not specified.
             excluded_tables: Tables to exclude from the graph
+            tables_only: If set, only introspect these bare table names (no schema prefix).
+                         Dramatically reduces init time when the agent uses a small subset.
         """
         self.engine = engine
-        self.schema_name = schema_name
+        self._is_trino = self._detect_trino()
+
+        # For Trino, extract schema from URL if using default
+        if self._is_trino and schema_name == "public":
+            extracted_schema = self._extract_trino_schema()
+            self.schema_name = extracted_schema if extracted_schema else schema_name
+            if extracted_schema:
+                logger.debug(f"Trino: using schema '{extracted_schema}' from connection URL")
+        else:
+            self.schema_name = schema_name
+
         self._excluded_tables: Set[str] = set(excluded_tables or [
             "flyway_schema_history", "audit", "user_token",
             "django_migrations", "alembic_version"
         ])
+        self._tables_only: Optional[Set[str]] = set(tables_only) if tables_only else None
         
         # Core data structures
         self._tables: Dict[str, TableInfo] = {}
@@ -84,6 +99,19 @@ class SchemaGraph:
             f"SchemaGraph built in {elapsed:.0f}ms: "
             f"{len(self._tables)} tables, {len(self._foreign_keys)} FK relationships"
         )
+    
+    def _detect_trino(self) -> bool:
+        """Check if the database is Trino/Presto."""
+        url_str = str(self.engine.url).lower()
+        return url_str.startswith("trino://") or url_str.startswith("presto://")
+    
+    def _extract_trino_schema(self) -> Optional[str]:
+        """Extract schema from Trino URL: trino://user:pass@host:port/catalog/schema."""
+        from urllib.parse import urlparse
+        url_str = str(self.engine.url)
+        parsed = urlparse(url_str)
+        path_parts = parsed.path.strip('/').split('/')
+        return path_parts[1] if len(path_parts) > 1 else None
     
     # =========================================================================
     # Introspection (runs once at init)
@@ -106,15 +134,19 @@ class SchemaGraph:
         """Introspect the database to build the schema graph."""
         with self.engine.connect() as conn:
             self._introspect_tables_and_columns(conn)
-            self._introspect_primary_keys(conn)
-            self._introspect_foreign_keys(conn)
+            # Trino/Iceberg doesn't have constraint metadata tables
+            if not self._is_trino:
+                self._introspect_primary_keys(conn)
+                self._introspect_foreign_keys(conn)
+            else:
+                logger.debug("Trino: skipping PK/FK introspection (not supported)")
         # After explicit FKs, infer implicit ones from naming conventions
         self._infer_implicit_foreign_keys()
     
     def _introspect_tables_and_columns(self, conn):
         """Load all tables and their columns from information_schema."""
         try:
-            # Get all tables and views
+            # Get all tables and views (optionally filtered to a specific subset)
             tables_query = text("""
                 SELECT table_name, table_type
                 FROM information_schema.tables
@@ -125,35 +157,71 @@ class SchemaGraph:
             tables_result = conn.execute(tables_query, {"schema": self.schema_name})
             table_names = []
             for row in tables_result:
-                if row[0] not in self._excluded_tables:
-                    table_names.append(row[0])
+                name = row[0]
+                if name in self._excluded_tables:
+                    continue
+                if self._tables_only is not None and name not in self._tables_only:
+                    continue
+                table_names.append(name)
             
             if not table_names:
                 logger.warning(f"No tables found in schema '{self.schema_name}'")
                 return
             
-            # Get columns for all tables in one query
-            columns_query = text("""
-                SELECT table_name, column_name, data_type, 
-                       is_nullable, column_default, ordinal_position
-                FROM information_schema.columns
-                WHERE table_schema = :schema
-                AND table_name = ANY(:tables)
-                ORDER BY table_name, ordinal_position
-            """)
-            columns_result = conn.execute(
-                columns_query, 
-                {"schema": self.schema_name, "tables": table_names}
-            )
+            table_set = set(table_names)
+            
+            # Get columns - use different query for Trino vs PostgreSQL
+            if self._is_trino:
+                # Trino: filter by table list when a subset is selected (avoids fetching 12k+ rows)
+                if table_names:
+                    # Inline table list — safe because names come from our config, not user input
+                    tnames_sql = ", ".join(f"'{n}'" for n in table_names)
+                    columns_query = text(f"""
+                        SELECT table_name, column_name, data_type,
+                               is_nullable, ordinal_position
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema
+                          AND table_name IN ({tnames_sql})
+                        ORDER BY table_name, ordinal_position
+                    """)
+                else:
+                    columns_query = text("""
+                        SELECT table_name, column_name, data_type,
+                               is_nullable, ordinal_position
+                        FROM information_schema.columns
+                        WHERE table_schema = :schema
+                        ORDER BY table_name, ordinal_position
+                    """)
+                columns_result = conn.execute(
+                    columns_query,
+                    {"schema": self.schema_name}
+                )
+            else:
+                # PostgreSQL: use ANY() for efficient filtering
+                columns_query = text("""
+                    SELECT table_name, column_name, data_type, 
+                           is_nullable, column_default, ordinal_position
+                    FROM information_schema.columns
+                    WHERE table_schema = :schema
+                    AND table_name = ANY(:tables)
+                    ORDER BY table_name, ordinal_position
+                """)
+                columns_result = conn.execute(
+                    columns_query, 
+                    {"schema": self.schema_name, "tables": table_names}
+                )
             
             # Group columns by table
             table_columns: Dict[str, List[ColumnInfo]] = defaultdict(list)
             for row in columns_result:
+                # For Trino, filter to only tables we care about
+                if row[0] not in table_set:
+                    continue
                 table_columns[row[0]].append(ColumnInfo(
                     name=row[1],
                     data_type=row[2],
                     is_nullable=(row[3] == "YES"),
-                    default_value=str(row[4]) if row[4] else None
+                    default_value=str(row[4]) if not self._is_trino and row[4] else None
                 ))
             
             # Build TableInfo objects
@@ -723,11 +791,15 @@ class SchemaGraph:
                     self._distinct_values_cache[cache_key] = []
                     return []
                 
+                if self._is_trino:
+                    col_expr = f'CAST("{column_name}" AS VARCHAR)'
+                else:
+                    col_expr = f'"{column_name}"::TEXT'
                 sample_query = text(f"""
-                    SELECT DISTINCT "{column_name}"::TEXT 
+                    SELECT DISTINCT {col_expr}
                     FROM "{self.schema_name}"."{table_name}"
                     WHERE "{column_name}" IS NOT NULL
-                    ORDER BY "{column_name}"::TEXT
+                    ORDER BY {col_expr}
                     LIMIT :limit
                 """)
                 result = conn.execute(sample_query, {"limit": limit})

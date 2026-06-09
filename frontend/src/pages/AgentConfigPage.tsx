@@ -18,7 +18,7 @@ import {
     type DataSource,
     type DataSourceSchemaResponse
 } from '../services/api';
-import type { IngestionResponse } from '../services/api';
+import type { IngestionResponse, AgentDefinition } from '../services/api';
 import { canPublishPrompt } from '../utils/permissions';
 import type { Agent } from '../types/agent';
 import type { AdvancedSettings } from '../contexts/AgentContext';
@@ -42,6 +42,7 @@ import {
     SchemaSelectionStep,
     DictionaryStep,
     AdvancedSettingsStep,
+    AgentDefinitionStep,
     ReviewPublishStep,
     SummaryStep
 } from '../components/config/steps';
@@ -51,9 +52,12 @@ const steps = [
     { id: 2, name: 'Select Schema' },
     { id: 3, name: 'Data Dictionary' },
     { id: 4, name: 'Advanced Settings' },
-    { id: 5, name: 'System Prompt' },
-    { id: 6, name: 'Knowledge Base' }
+    { id: 5, name: 'Agent Definition' },
+    { id: 6, name: 'System Prompt' },
+    { id: 7, name: 'Knowledge Base' }
 ];
+
+const TOTAL_STEPS = steps.length;
 
 const defaultAdvancedSettings: AdvancedSettings = {
     embedding: { model: 'huggingface/BAAI/bge-m3' },
@@ -75,7 +79,6 @@ const AgentConfigPage: React.FC = () => {
         draft,
         versionId: hookVersionId,
         isLoading: isDraftLoading,
-        isSaving,
         isPublishing,
         error: draftError,
         loadDraft,
@@ -108,6 +111,7 @@ const AgentConfigPage: React.FC = () => {
     const [reasoning, setReasoning] = useState<Record<string, string>>({});
     const [exampleQuestions, setExampleQuestions] = useState<string[]>([]);
     const [draftPrompt, setDraftPrompt] = useState('');
+    const [agentDefinition, setAgentDefinition] = useState<AgentDefinition | null>(null);
     const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettings>(defaultAdvancedSettings);
     const [advancedSettingsValid, setAdvancedSettingsValid] = useState(true);
     const [embeddingJobId, setEmbeddingJobId] = useState<string | null>(null);
@@ -182,6 +186,9 @@ const AgentConfigPage: React.FC = () => {
                     }
                     if (config.system_prompt) setDraftPrompt(config.system_prompt);
                     if (config.example_questions) setExampleQuestions(config.example_questions);
+                    if (config.agent_definition) {
+                        setAgentDefinition(config.agent_definition as unknown as AgentDefinition);
+                    }
                     // Handle selected_columns - now always object format { table_name: columns[] }
                     if (config.selected_columns) {
                         if (typeof config.selected_columns === 'object' && !Array.isArray(config.selected_columns)) {
@@ -321,23 +328,28 @@ const AgentConfigPage: React.FC = () => {
                     embedding_config: advancedSettings.embedding,
                     chunking_config: advancedSettings.chunking,
                     rag_config: advancedSettings.retriever,
-                    // Model IDs from AI Registry
-                    embeddingModelId: advancedSettings.embeddingModelId,
-                    llmModelId: advancedSettings.llmModelId,
-                    rerankerModelId: advancedSettings.rerankerModelId,
+                    // Model IDs from AI Registry (snake_case to match STEP_FIELDS and server response keys)
+                    embedding_model_id: advancedSettings.embeddingModelId,
+                    llm_model_id: advancedSettings.llmModelId,
+                    reranker_model_id: advancedSettings.rerankerModelId,
                 };
             case 5:
+                // Agent Definition (Step 5) — only save when a definition exists
+                // (the bootstrap may still be pending, in which case advancing
+                // simply moves the user forward; user can return to refine).
+                return agentDefinition ? { agent_definition: agentDefinition } : {};
+            case 6:
                 return {
                     system_prompt: draftPrompt,
                     example_questions: exampleQuestions,
                 };
-            case 6:
+            case 7:
                 // embedding_path and vector_collection_name are set by the embedding job
                 return {};
             default:
                 return {};
         }
-    }, [selectedDataSource, dataSourceType, selectedFileColumns, selectedSchema, dataDictionary, advancedSettings, draftPrompt, exampleQuestions, fileUploadResult]);
+    }, [selectedDataSource, dataSourceType, selectedFileColumns, selectedSchema, dataDictionary, advancedSettings, draftPrompt, exampleQuestions, fileUploadResult, agentDefinition]);
 
     const handleNext = async () => {
         if (currentStep === 1) {
@@ -374,7 +386,7 @@ const AgentConfigPage: React.FC = () => {
             return;
         }
         setError(null);
-        if (currentStep < 6) setCurrentStep(currentStep + 1);
+        if (currentStep < TOTAL_STEPS) setCurrentStep(currentStep + 1);
     };
 
     const handleBack = () => {
@@ -396,6 +408,9 @@ const AgentConfigPage: React.FC = () => {
                 await saveStep(2, getStepData(2)); // Schema selection
                 await saveStep(3, getStepData(3)); // Data dictionary
                 await saveStep(4, getStepData(4)); // Advanced settings
+                if (agentDefinition) {
+                    await saveStep(5, getStepData(5)); // Agent Definition
+                }
             }
 
             // Generate prompt using endpoint that reads from saved DB data
@@ -420,7 +435,7 @@ const AgentConfigPage: React.FC = () => {
 
             if (published) {
                 setSuccessMessage(`Configuration published successfully!`);
-                setCurrentStep(6); // Move to Summary
+                setCurrentStep(TOTAL_STEPS); // Move to Summary (Knowledge Base)
             } else {
                 setError(draftError || 'Failed to publish configuration');
             }
@@ -515,15 +530,6 @@ const AgentConfigPage: React.FC = () => {
                                     )}
                                 </h1>
                                 <div className="flex items-center gap-2 flex-shrink-0">
-                                    {isSaving && (
-                                        <span className="text-xs text-gray-500 flex items-center gap-1">
-                                            <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24">
-                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                            </svg>
-                                            Saving...
-                                        </span>
-                                    )}
                                     <span className="text-xs sm:text-sm text-gray-500">Step {currentStep} of 6</span>
                                 </div>
                             </div>
@@ -636,7 +642,16 @@ const AgentConfigPage: React.FC = () => {
                                 />
                             )}
 
-                            {currentStep === 5 && (
+                            {currentStep === 5 && agent && hookVersionId && (
+                                <AgentDefinitionStep
+                                    agentId={agent.id}
+                                    versionId={hookVersionId}
+                                    value={agentDefinition}
+                                    onChange={setAgentDefinition}
+                                />
+                            )}
+
+                            {currentStep === 6 && (
                                 <ReviewPublishStep
                                     draftPrompt={draftPrompt}
                                     setDraftPrompt={setDraftPrompt}
@@ -652,7 +667,7 @@ const AgentConfigPage: React.FC = () => {
                                 />
                             )}
 
-                            {currentStep === 6 && (
+                            {currentStep === 7 && (
                                 <SummaryStep
                                     configId={draft?.id}
                                     embeddingJobId={embeddingJobId}
@@ -683,8 +698,8 @@ const AgentConfigPage: React.FC = () => {
                         </button>
 
                         <div className="order-1 sm:order-2">
-                            {currentStep === 5 ? (
-                                // Step 5: Show Publish button only when prompt exists
+                            {currentStep === 6 ? (
+                                // Step 6 (System Prompt): Show Publish button only when prompt exists
                                 draftPrompt ? (
                                     canPublish ? (
                                         <button
@@ -715,12 +730,12 @@ const AgentConfigPage: React.FC = () => {
                                         </div>
                                     )
                                 ) : (
-                                    // No prompt yet - show disabled placeholder (actual button is in the step component)
+                                    // No prompt yet - show disabled placeholder (actual generate button is in the step component)
                                     <div className="text-black-400">
                                         Generate a prompt to continue
                                     </div>
                                 )
-                            ) : currentStep === 6 ? (
+                            ) : currentStep === 7 ? (
                                 <button
                                     onClick={handleGoToDashboard}
                                     className="w-full sm:w-auto px-4 sm:px-6 py-2 bg-blue-600 text-white rounded-md font-medium text-sm sm:text-base hover:bg-blue-700 shadow-md"

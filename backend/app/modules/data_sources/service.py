@@ -519,6 +519,9 @@ class DataSourceService:
                         "SELECT name FROM sqlite_master WHERE type='table'"
                     ))
                     tables = [row[0] for row in result]
+                elif "trino" in db_engine_type:
+                    result = conn.execute(text("SHOW TABLES"))
+                    tables = [row[0] for row in result]
             
             return {
                 "success": True,
@@ -836,6 +839,100 @@ class DataSourceService:
                                 "columns": columns,
                                 "primary_key_columns": list(table_pks),
                             })
+                elif "trino" in db_url.lower() or "presto" in db_url.lower():
+                    # Trino/Presto optimized batch queries
+                    logging.info("Using Trino/Presto optimized schema reflection")
+                    
+                    # Extract schema from URL: trino://user:pass@host:port/catalog/schema
+                    from urllib.parse import urlparse
+                    parsed = urlparse(db_url)
+                    path_parts = parsed.path.strip('/').split('/')
+                    target_schema = path_parts[1] if len(path_parts) > 1 else None
+                    
+                    if target_schema:
+                        logging.info(f"Trino: filtering to schema '{target_schema}'")
+                        # Get tables filtered by schema
+                        table_result = conn.execute(text("""
+                            SELECT table_schema, table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            AND table_schema = :schema
+                            ORDER BY table_schema, table_name
+                            LIMIT :limit
+                        """), {"schema": target_schema, "limit": max_tables})
+                    else:
+                        logging.info("Trino: no schema specified, fetching all tables")
+                        # Get tables with a single query
+                        table_result = conn.execute(text("""
+                            SELECT table_schema, table_name 
+                            FROM information_schema.tables 
+                            WHERE table_type = 'BASE TABLE'
+                            ORDER BY table_schema, table_name
+                            LIMIT :limit
+                        """), {"limit": max_tables})
+                    
+                    discovered_tables = [(row[0], row[1]) for row in table_result]
+                    total_tables_in_db = len(discovered_tables)
+                    logging.info(f"Trino: found {total_tables_in_db} tables")
+                    
+                    if discovered_tables:
+                        # Build set of valid tables for filtering
+                        valid_tables = set(discovered_tables)
+                        
+                        # Fetch columns for the target schema only
+                        logging.info("Trino: fetching columns...")
+                        if target_schema:
+                            col_result = conn.execute(text("""
+                                SELECT table_schema, table_name, column_name, data_type, is_nullable
+                                FROM information_schema.columns
+                                WHERE table_schema = :schema
+                                ORDER BY table_schema, table_name, ordinal_position
+                            """), {"schema": target_schema})
+                        else:
+                            col_result = conn.execute(text("""
+                                SELECT table_schema, table_name, column_name, data_type, is_nullable
+                                FROM information_schema.columns
+                                ORDER BY table_schema, table_name, ordinal_position
+                            """))
+                        
+                        all_columns = {}
+                        for row in col_result:
+                            key = (row[0], row[1])
+                            # Filter to only include columns for discovered tables
+                            if key not in valid_tables:
+                                continue
+                            if key not in all_columns:
+                                all_columns[key] = []
+                            all_columns[key].append({
+                                "column_name": row[2],
+                                "data_type": row[3],
+                                "is_nullable": str(row[4]).upper() == 'YES',
+                            })
+                        
+                        logging.info(f"Trino: fetched columns for {len(all_columns)} tables")
+                        
+                        # Build tables_info
+                        for schema, table_name in discovered_tables:
+                            key = (schema, table_name)
+                            full_name = f"{schema}.{table_name}"
+                            columns = []
+                            
+                            for col in all_columns.get(key, []):
+                                columns.append({
+                                    "column_name": col["column_name"],
+                                    "data_type": col["data_type"],
+                                    "is_nullable": col["is_nullable"],
+                                    "is_primary_key": False,  # Trino doesn't have PK metadata
+                                    "foreign_key": None,  # Trino doesn't have FK metadata
+                                })
+                            
+                            tables_info.append({
+                                "table_name": full_name,
+                                "columns": columns,
+                                "primary_key_columns": [],
+                            })
+                    
+                    logging.info(f"Trino: processed {len(tables_info)} tables")
                 else:
                     inspector = inspect(engine)
                     all_tables = inspector.get_table_names()

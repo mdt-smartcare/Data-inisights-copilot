@@ -105,6 +105,13 @@ class AgentConfigModel(Base):
     # Prompt
     system_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     example_questions: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # JSON array
+
+    # AI-bootstrapped Agent Definition (Step 4.5): role, personas, KPIs, guardrails, sample Q&A.
+    # Stored as JSON string; status tracks async bootstrap lifecycle.
+    agent_definition: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    agent_definition_status: Mapped[str] = mapped_column(
+        String, default="not_started", nullable=False
+    )  # not_started | pending | completed | failed
     
     # Vector store
     embedding_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

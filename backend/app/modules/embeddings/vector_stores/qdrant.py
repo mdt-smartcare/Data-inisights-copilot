@@ -77,7 +77,11 @@ class QdrantStore(BaseVectorStore):
                 except Exception:
                     pass
             
-            self._client = AsyncQdrantClient(url=self.url)
+            # Use short timeout to fail fast when Qdrant is unavailable
+            self._client = AsyncQdrantClient(
+                url=self.url,
+                timeout=5.0,  # 5 second timeout instead of default 30+
+            )
             self._loop = current_loop
             logger.debug(f"Initialized new Qdrant client for loop {id(current_loop)}")
             

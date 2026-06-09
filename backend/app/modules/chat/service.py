@@ -269,7 +269,8 @@ class ChatService:
                     await check_cancelled(fastapi_request)
                     phase_start = time.time()
                     answer, reasoning_steps, chart_data = await self._handle_sql_intent(
-                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
+                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper,
+                        session_id=session_id,
                     )
                     timings["sql_intent_ms"] = int((time.time() - phase_start) * 1000)
                     logger.info(
@@ -287,7 +288,14 @@ class ChatService:
                             phase_start = time.time()
                             comp_llm = await llm_helper.get_llm(temperature=0.3)
                             schema_ctx = sql_service.cached_schema if sql_service else ""
-                            
+                            _agent_def = agent_config.get("agent_definition") or {} if agent_config else {}
+                            if isinstance(_agent_def, str):
+                                import json as _json
+                                try:
+                                    _agent_def = _json.loads(_agent_def)
+                                except Exception:
+                                    _agent_def = {}
+
                             # Wrap with timeout - comparisons are optional, don't block main response
                             comparison_insights = await asyncio.wait_for(
                                 generate_comparison_insights(
@@ -297,7 +305,8 @@ class ChatService:
                                     schema_context=schema_ctx,
                                     sql_service=sql_service,
                                     llm=comp_llm,
-                                    dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                                    dialect="duckdb" if sql_service._is_duckdb() else ("trino" if sql_service._is_trino() else "postgresql"),
+                                    column_types=_agent_def.get("_column_types"),
                                 ),
                                 timeout=75.0  # Max 75s for entire comparison phase
                             )
@@ -618,10 +627,11 @@ class ChatService:
                     
                     phase_start = time.time()
                     answer, reasoning_steps, chart_data = await self._handle_sql_intent(
-                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper
+                        rewritten_query, sql_service, agent_config, tracing_ctx, llm_helper,
+                        session_id=session_id,
                     )
                     timings["sql_intent_ms"] = int((time.time() - phase_start) * 1000)
-                    
+
                     # === PROGRESS: Synthesizing ===
                     yield {
                         "event": StreamEventType.PROGRESS,
@@ -706,7 +716,14 @@ class ChatService:
                         phase_start = time.time()
                         comp_llm = await llm_helper.get_llm(temperature=0.3)
                         schema_ctx = sql_service.cached_schema if sql_service else ""
-                        
+                        _agent_def_s = agent_config.get("agent_definition") or {} if agent_config else {}
+                        if isinstance(_agent_def_s, str):
+                            import json as _json
+                            try:
+                                _agent_def_s = _json.loads(_agent_def_s)
+                            except Exception:
+                                _agent_def_s = {}
+
                         comparison_insights = await asyncio.wait_for(
                             generate_comparison_insights(
                                 original_question=rewritten_query,
@@ -715,7 +732,8 @@ class ChatService:
                                 schema_context=schema_ctx,
                                 sql_service=sql_service,
                                 llm=comp_llm,
-                                dialect="duckdb" if sql_service._is_duckdb() else "postgresql",
+                                dialect="duckdb" if sql_service._is_duckdb() else ("trino" if sql_service._is_trino() else "postgresql"),
+                                column_types=_agent_def_s.get("_column_types"),
                             ),
                             timeout=75.0
                         )
@@ -763,10 +781,11 @@ class ChatService:
         agent_config: Optional[Dict[str, Any]],
         tracing_ctx: TracingContext,
         llm_helper,
+        session_id: Optional[str] = None,
     ) -> Tuple[str, List[ReasoningStep], Optional[ChartData]]:
         """Handle Intent A: SQL-only queries. Returns answer, reasoning steps, and optional chart data."""
         import time as timing_module
-        
+
         reasoning_steps = []
         chart_data = None
         sql_intent_start = timing_module.perf_counter()
@@ -795,8 +814,9 @@ class ChatService:
                         if fast_service:
                             logger.info(f"⚡ Using FastSQL for query: {query[:50]}...")
                             return await self._handle_fast_sql(
-                                query, fast_service, sql_service, agent_config, 
-                                tracing_ctx, llm_helper, sql_intent_start
+                                query, fast_service, sql_service, agent_config,
+                                tracing_ctx, llm_helper, sql_intent_start,
+                                session_id=session_id,
                             )
                         else:
                             logger.warning("FastSQL factory returned None, using standard path")
@@ -885,29 +905,39 @@ class ChatService:
         tracing_ctx: TracingContext,
         llm_helper,
         start_time: float,
+        session_id: Optional[str] = None,
     ) -> Tuple[str, List[ReasoningStep], Optional[ChartData]]:
         """
         Handle SQL generation using FastSQLService (optimized pipeline).
-        
-        This method uses the new optimized pipeline which:
-        - Uses template matching for common patterns (~5ms)
-        - Single LLM call for intent + relevance + SQL (~1s)
-        - CTE rewriting for deterministic transformation
-        - Query memory for few-shot learning
-        
-        Falls back to standard SQL service on errors.
+
+        Falls back to standard SQL service on errors or clarification intent.
         """
         import time as timing_module
-        
+
         reasoning_steps = []
         chart_data = None
-        
+
+        # Fetch conversation history so follow-up questions have prior-turn context
+        conversation_history = None
+        if session_id:
+            history_str = self._memory.get_context(session_id, max_messages=5)
+            if history_str:
+                # Convert string context to list-of-dicts format expected by UnifiedSQLGenerator
+                conversation_history = []
+                for line in history_str.split("\n"):
+                    if line.startswith("User: "):
+                        conversation_history.append({"role": "user", "content": line[6:]})
+                    elif line.startswith("Assistant: "):
+                        conversation_history.append({"role": "assistant", "content": line[11:]})
+
         tracing_ctx.add_span("fast_sql_generate", input=query)
-        
+
         try:
             # Generate SQL using optimized pipeline
             fast_start = timing_module.perf_counter()
-            fast_result = await fast_service.generate(query)
+            fast_result = await fast_service.generate(
+                query, conversation_history=conversation_history
+            )
             fast_duration = timing_module.perf_counter() - fast_start
             
             tracing_ctx.update_span("fast_sql_generate", output={
@@ -933,7 +963,13 @@ class ChatService:
                     logger.info(f"FastSQL routed to vector search: {query[:50]}...")
                     return "This question requires document search. Please rephrase or ask a data question.", reasoning_steps, None
                 elif fast_result.intent == "clarification":
-                    return "Could you please clarify your question?", reasoning_steps, None
+                    # Fall back to standard pipeline — it has conversation history context
+                    # and can generate SQL for follow-up questions that reference prior results.
+                    logger.info(f"FastSQL clarification intent → falling back to standard SQL pipeline: {query[:60]}...")
+                    tracing_ctx.add_span("fast_sql_clarification_fallback", input="clarification intent, trying standard")
+                    return await self._handle_sql_intent_standard(
+                        query, sql_service, agent_config, tracing_ctx, llm_helper, start_time
+                    )
                 elif fast_result.intent == "general":
                     return "This appears to be a general question not related to the data.", reasoning_steps, None
             
@@ -1076,7 +1112,7 @@ class ChatService:
         
         INSTRUCTIONS:
         1. Generate exactly 4 distinct natural language questions that can be answered by the database. 
-        2. Use ONLY column names and table names present in the schema above. Do NOT invent columns like "patient_status" if they are not in the schema.
+        2. Use ONLY column names and table names present in the schema above. Do NOT invent or hallucinate columns that are not in the schema.
         3. If there are no clear metrics, focus on row counts, category distributions, or trend over time using provided date columns.
         4. Each question should be independent and designed for a specific chart type:
            - 1 Pie Chart (categorical distribution)

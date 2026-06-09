@@ -218,6 +218,8 @@ async def rewrite_query_with_context(
         'it', 'that', 'this', 'they', 'them', 'those',
         'the same', 'previous', 'earlier', 'above',
         'more', 'another', 'also', 'too',
+        # Follow-up words referencing prior result sets / patient cohorts
+        'group', 'these', 'their', 'cohort', 'subset', 'same',
     ]
     
     query_lower = query.lower()

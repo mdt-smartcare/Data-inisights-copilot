@@ -13,7 +13,7 @@ Usage:
     truncated = manager.fit_to_budget(schema_context, tables_priority)
 """
 import re
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Set, Tuple
 from dataclasses import dataclass
 
 from app.core.utils.logging import get_logger
@@ -47,7 +47,7 @@ class TokenBudgetManager:
     
     def __init__(
         self,
-        max_tokens: int = 8000,
+        max_tokens: int = 16000,
         use_tiktoken: bool = True
     ):
         """
@@ -91,44 +91,68 @@ class TokenBudgetManager:
         self,
         tables_ddl: Dict[str, str],
         table_priorities: Dict[str, float],
-        additional_context: str = ""
+        additional_context: str = "",
+        priority_tables: Optional[Set[str]] = None,
     ) -> Tuple[str, List[str]]:
         """
         Fit schema DDL to token budget.
-        
+
         Args:
             tables_ddl: Dict mapping table name to DDL string
             table_priorities: Dict mapping table name to priority score (higher = more important)
             additional_context: Additional context to include (data dictionary, etc.)
-            
+            priority_tables: Names that MUST be included verbatim, ignoring budget
+                (e.g. keyword-routed tables from PRIORITY_TABLE_KEYWORDS).
+                If the priority set alone exceeds budget, every priority table
+                is still emitted and a warning is logged.
+
         Returns:
             Tuple of (fitted_schema_string, included_table_names)
         """
+        priority_tables = priority_tables or set()
         available_budget = self.max_tokens - self.RESERVED_TOKENS
-        
+
         # Account for additional context
         additional_tokens = self.estimate_tokens(additional_context)
         available_budget -= additional_tokens
-        
+
         if available_budget <= 0:
             logger.warning("No token budget available for schema after additional context")
-            return "", []
-        
-        # Sort tables by priority (highest first)
-        sorted_tables = sorted(
-            tables_ddl.keys(),
-            key=lambda t: table_priorities.get(t, 0.0),
-            reverse=True
-        )
-        
-        included_ddl = []
-        included_tables = []
+
+        included_ddl: List[str] = []
+        included_tables: List[str] = []
         current_tokens = 0
-        
-        for table in sorted_tables:
+        seen: Set[str] = set()
+
+        # Pass 1: priority tables always included, regardless of budget
+        for table in priority_tables:
+            if table not in tables_ddl or table in seen:
+                continue
             ddl = tables_ddl[table]
             ddl_tokens = self.estimate_tokens(ddl)
-            
+            included_ddl.append(ddl)
+            included_tables.append(table)
+            current_tokens += ddl_tokens
+            seen.add(table)
+
+        if current_tokens > available_budget:
+            logger.warning(
+                f"Priority tables alone consume {current_tokens} tokens, "
+                f"exceeds available budget {available_budget}. Emitting anyway."
+            )
+
+        # Pass 2: remaining tables, sorted by priority score, fit-to-budget
+        remaining = [t for t in tables_ddl.keys() if t not in seen]
+        sorted_remaining = sorted(
+            remaining,
+            key=lambda t: table_priorities.get(t, 0.0),
+            reverse=True,
+        )
+
+        for table in sorted_remaining:
+            ddl = tables_ddl[table]
+            ddl_tokens = self.estimate_tokens(ddl)
+
             if current_tokens + ddl_tokens <= available_budget:
                 included_ddl.append(ddl)
                 included_tables.append(table)
@@ -142,16 +166,14 @@ class TokenBudgetManager:
                         included_ddl.append(truncated)
                         included_tables.append(f"{table} (truncated)")
                         current_tokens += truncated_tokens
-                
-                # If we couldn't fit even truncated, check if we should continue
-                # looking for smaller tables
                 continue
-        
+
         logger.info(
             f"Token budget: {current_tokens}/{available_budget} tokens used, "
-            f"{len(included_tables)}/{len(tables_ddl)} tables included"
+            f"{len(included_tables)}/{len(tables_ddl)} tables included "
+            f"({len([t for t in priority_tables if t in seen])} priority-pinned)"
         )
-        
+
         return "\n\n".join(included_ddl), included_tables
     
     def _truncate_ddl(
@@ -247,6 +269,6 @@ class TokenBudgetManager:
         return max(0, self.max_tokens - self.RESERVED_TOKENS - used_tokens)
 
 
-def get_token_budget_manager(max_tokens: int = 8000) -> TokenBudgetManager:
+def get_token_budget_manager(max_tokens: int = 16000) -> TokenBudgetManager:
     """Factory function for TokenBudgetManager."""
     return TokenBudgetManager(max_tokens=max_tokens)

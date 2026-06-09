@@ -295,9 +295,8 @@ class ReflectionService:
         sql_cleaned = self._remove_function_from_expressions(sql_query)
         sql_lower = sql_cleaned.lower()
         
-        # 1. Identify CTE names (aliases defined in WITH clause)
-        # Pattern: WITH cte_name AS (
-        cte_pattern = r'with\s+([a-z_][a-z0-9_]*)'
+        # 1. Identify CTE names — matches ALL `name AS (` forms so multi-CTE queries work
+        cte_pattern = r'\b([a-z_][a-z0-9_]*)\s+as\s*\('
         ctes = set(re.findall(cte_pattern, sql_lower))
         
         # 2. Extract all tables from FROM and JOIN

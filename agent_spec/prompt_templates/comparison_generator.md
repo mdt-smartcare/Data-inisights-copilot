@@ -24,22 +24,24 @@ Generate exactly 3 follow-up comparison questions with valid SQL queries that:
 - For PostgreSQL: Use DATE_TRUNC('month', column_name) directly on timestamp columns
 - For DuckDB with VARCHAR date columns: Use CAST(column_name AS TIMESTAMP) before DATE_TRUNC
 
-## CRITICAL: PostgreSQL ROUND() Function
-**ROUND(value, decimals) ONLY works with NUMERIC types in PostgreSQL.**
-- **WRONG (will error):** `ROUND(AVG(column), 2)`
-- **CORRECT:** `ROUND(AVG(column)::numeric, 2)`
+## CRITICAL: ROUND() — Dialect-Specific Casting
+**The NUMERIC type does NOT exist in Trino or DuckDB — never use `::numeric` or `CAST(x AS NUMERIC)` for those dialects.**
 
-ALWAYS cast to `::numeric` before calling ROUND with decimal precision:
-```sql
--- Examples:
-ROUND(AVG(bp.avg_systolic)::numeric, 2) AS avg_systolic
-ROUND(COUNT(*)::numeric / total_count::numeric * 100, 2) AS percentage
-```
+- **If {dialect} = trino or duckdb**: Use `ROUND(AVG(column), 2)` directly — no cast needed.
+  ```sql
+  ROUND(AVG(bp.avg_systolic), 2) AS avg_systolic
+  ROUND(CAST(COUNT(*) AS DOUBLE) / total_count * 100, 2) AS percentage
+  ```
+- **If {dialect} = postgresql**: Use `ROUND(CAST(AVG(column) AS NUMERIC), 2)` — PostgreSQL requires NUMERIC for ROUND with decimals.
+  ```sql
+  ROUND(CAST(AVG(bp.avg_systolic) AS NUMERIC), 2) AS avg_systolic
+  ```
+- **NEVER use `::numeric` shorthand** — it is PostgreSQL-only and will error on Trino/DuckDB.
 
 ## Cross-Table JOINs
 - If a needed column (e.g., patient_age, gender) doesn't exist in the primary table, JOIN to related tables via `patient_id`:
   - Patient demographics (age, gender): JOIN to `patient_tracker_gold`
-  - BP data: JOIN to `bp_log_gold` or `bp_log_latest_gold`
+  - BP data: JOIN to `bp_log_gold` (NOT `bp_log_latest_gold` — that table is EMPTY)
   - Example: `FROM bp_log_gold bp INNER JOIN patient_tracker_gold pt ON bp.patient_id = pt.patient_id`
 - Ensure all queries are executable and free of syntax errors
 - Use aggregations (COUNT, SUM, AVG) — never return individual-level data
@@ -57,6 +59,34 @@ ROUND(COUNT(*)::numeric / total_count::numeric * 100, 2) AS percentage
   END AS age_group
   ```
 - `birth_date` only exists in `relatedperson_gold` and `care_giver_gold` tables
+
+## CRITICAL: Columns That Do NOT Exist — Never Use These
+- **`county` / `county_name`** — NOT a column on `patient_tracker_gold` or `bp_log_gold`. For geographic breakdown, join through admin tables:
+  ```sql
+  LEFT JOIN health_facility_admin_gold hf ON hf.fhir_id = CAST(pt.site_id AS VARCHAR)
+  LEFT JOIN district_admin_gold dis ON dis.id = hf.district_id
+  -- then use dis.name AS county_name
+  ```
+  Or simply group by `pt.site_id` / `pt.program_id` if admin join is complex.
+- **`medication_status`** — Does NOT exist. Use `pt.is_prescribed` (BOOLEAN) → `pt.is_prescribed = true` or `pt.last_medication_prescribed_date IS NOT NULL`.
+- **`enrollment_status`** — Does NOT exist. Use `pt.patient_status` (values: `'Screening'`, `'Enrolled'`, `'Referred'`).
+- **`is_on_medication`** — Does NOT exist on any table. Use `pt.is_prescribed = true` (is_prescribed is BOOLEAN).
+- **`pt.bmi`** — `patient_tracker_gold.bmi` is VARCHAR in Trino. For numeric BMI comparisons, use `bp_log_gold.bmi` (DOUBLE) instead.
+
+## CRITICAL: Soft-Delete Filters
+- `patient_tracker_gold.is_deleted` is **BOOLEAN** — use `pt.is_deleted = false` (NOT `IS DISTINCT FROM 'true'`)
+- `bp_log_gold.is_src_deleted` is **VARCHAR** — use `bp.is_src_deleted IS DISTINCT FROM 'true'`
+- `encounter_gold.is_src_deleted` is **VARCHAR** — use `is_src_deleted IS DISTINCT FROM 'true'`
+- Admin tables (`health_facility_admin_gold`, `district_admin_gold`): BOOLEAN `is_deleted = false`
+
+## CRITICAL: Column Type Rules for Flag Columns
+- `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_before_htn_diagnosis`,
+  `is_old_record`, `is_regular_smoker`, `is_patient_referred` — **VARCHAR** ('true'/'false' strings)
+  - CORRECT: `pt.is_htn_diagnosis = 'true'`, `pt.is_diabetes_diagnosis = 'false'`
+  - WRONG: `pt.is_htn_diagnosis = true` → `varchar = boolean` TYPE_MISMATCH
+- `patient_tracker_gold.is_prescribed`, `is_deleted` — **BOOLEAN**
+  - CORRECT: `pt.is_prescribed = true`, `pt.is_deleted = false`
+  - WRONG: `pt.is_prescribed = 'true'` → `boolean = varchar` TYPE_MISMATCH
 
 ## Output Format
 

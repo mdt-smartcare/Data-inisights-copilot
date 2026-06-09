@@ -144,7 +144,7 @@ business_definitions:
   diabetic patient:
     table: patient_tracker_gold
     condition: "is_diabetes_diagnosis = true AND is_deleted = false"
-    description: "Patient with confirmed diabetes diagnosis (DM)"
+    description: "Patient flagged with diabetes (DM) per is_diabetes_diagnosis. This boolean aggregates BOTH confirmed and provisional DM tags at the gold-table layer — do NOT add extra diagnosis joins unless explicitly asked."
 
   controlled diabetes:
     table: glucose_log_latest_gold
@@ -199,6 +199,21 @@ business_definitions:
     condition: "is_htn_diagnosis = true AND is_diabetes_diagnosis = true AND is_deleted = false"
     description: "Patient enrolled with both hypertension and diabetes (comorbid)"
 
+  comorbid patient:
+    table: patient_tracker_gold
+    condition: "is_htn_diagnosis = true AND is_diabetes_diagnosis = true AND is_deleted = false"
+    description: "Synonym for comorbid HTN + DM. The is_*_diagnosis booleans aggregate both confirmed and provisional tags from upstream — single filter suffices."
+
+  enrolled diabetic patient:
+    table: patient_tracker_gold
+    condition: "patient_status = 'Enrolled' AND is_diabetes_diagnosis = true AND is_deleted = false"
+    description: "Diabetic patient who is currently enrolled in the NCD program. Combine enrollment string filter with DM boolean."
+
+  enrolled hypertensive patient:
+    table: patient_tracker_gold
+    condition: "patient_status = 'Enrolled' AND is_htn_diagnosis = true AND is_deleted = false"
+    description: "Hypertensive patient currently enrolled. Combine enrollment string filter with HTN boolean."
+
   # =========================================================================
   # Patient Tracking & Program Status
   # =========================================================================
@@ -214,13 +229,23 @@ business_definitions:
 
   enrolled patient:
     table: patient_tracker_gold
-    condition: "is_deleted = false"
-    description: "Patient successfully enrolled in the hypertension management program"
+    condition: "patient_status = 'Enrolled' AND is_deleted = false"
+    description: "Patient currently enrolled in the NCD program. ALWAYS use patient_status = 'Enrolled' string filter — do NOT use is_deleted alone as the enrollment proxy."
+
+  screening patient:
+    table: patient_tracker_gold
+    condition: "patient_status = 'Screening' AND is_deleted = false"
+    description: "Patient currently in screening phase (not yet enrolled). Filter by patient_status string."
 
   screened patient:
     table: patient_tracker_gold
     condition: "is_screening = true AND is_deleted = false"
-    description: "Patient who has completed initial BP screening"
+    description: "Patient who has completed initial BP screening (boolean flag — distinct from current screening-phase status)"
+
+  enrollment trend:
+    table: patient_tracker_gold
+    condition: "patient_status = 'Enrolled' AND is_deleted = false AND enrollment_at IS NOT NULL"
+    description: "For 'enrollment over time' / 'how many patients enrolled by month|year' use DATE_TRUNC('month', enrollment_at) or EXTRACT(YEAR FROM enrollment_at) GROUP BY 1, count DISTINCT patient_id."
 
   diagnosed patient:
     table: patient_tracker_gold
@@ -297,6 +322,67 @@ business_definitions:
     table: bp_log_gold
     condition: "ymd >= DATE_TRUNC('year', CURRENT_DATE)"
     description: "Assessments from the current calendar year"
+
+  last 3 months:
+    table: bp_log_gold
+    condition: "TRY_CAST(bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3' MONTH"
+    description: "Records from the last 3 months (rolling). Use INTERVAL '3' MONTH (Trino syntax). For glucose_log_gold swap bp_taken_on -> bg_taken_on; for patient_tracker_gold swap to enrollment_at or last_review_date depending on intent."
+
+  since 2024:
+    table: bp_log_latest_gold
+    condition: "TRY_CAST(bp_taken_on AS DATE) >= DATE '2024-01-01'"
+    description: "Records on/after 2024-01-01. Anchor date filter for multi-year cumulative reporting."
+
+  from january 2026 to date:
+    table: bp_log_latest_gold
+    condition: "TRY_CAST(bp_taken_on AS DATE) BETWEEN DATE '2026-01-01' AND CURRENT_DATE"
+    description: "Records in calendar 2026 up to today. Use literal '2026-01-01' anchor."
+
+  # =========================================================================
+  # SPICE Africa Screening Terms (M&E Reporting)
+  # =========================================================================
+  bp screened:
+    table: bp_log_latest_gold
+    condition: ""
+    description: "Individual with at least one BP reading on record. Count via COUNT(DISTINCT patient_id) on bp_log_latest_gold; layer date or program filters as needed. Latest-table is pre-deduped to one row per patient."
+
+  glucose screened:
+    table: glucose_log_latest_gold
+    condition: ""
+    description: "Individual with at least one glucose reading on record. Count via COUNT(DISTINCT patient_id) on glucose_log_latest_gold. Synonyms: BG screening, blood sugar screening."
+
+  elevated bp screening:
+    table: bp_log_latest_gold
+    condition: "avg_systolic >= 140 OR avg_diastolic >= 90"
+    description: "SPICE Africa M&E definition of 'elevated BP' for screening reports — systolic >=140 OR diastolic >=90. Distinct from AHA 'elevated' (120-129/<80); when the user asks about 'elevated BP' in the SPICE Africa screening context, USE THIS DEFINITION."
+
+  smoker patient:
+    table: patient_tracker_gold
+    condition: "is_smoker = TRUE AND is_deleted = false"
+    description: "Patient flagged as smoker on patient_tracker_gold. Filter via boolean is_smoker."
+
+  wdf county:
+    table: health_facility_admin_gold
+    condition: "facility joined to district_admin_gold AND program_name ILIKE '%WDF%'"
+    description: "Counties (district_admin_gold.name) that contain at least one WDF-supported facility. Requires the facilities + facility_programs CTE pattern joined on organization_id."
+
+  # =========================================================================
+  # Aggregate / Histogram Patterns
+  # =========================================================================
+  age band histogram:
+    table: patient_tracker_gold
+    condition: ""
+    description: "10-year age band breakdown starting at 20. Use CASE expression: <20, 20-29, 30-39, 40-49, 50-59, 60-69, 70-79, 80+. GROUP BY the band, COUNT(DISTINCT patient_id). If only birth_date is present, derive age via DATE_DIFF('year', TRY_CAST(birth_date AS DATE), CURRENT_DATE)."
+
+  gender contribution:
+    table: patient_tracker_gold
+    condition: ""
+    description: "Gender breakdown of a cohort. GROUP BY gender, COUNT(DISTINCT patient_id), then divide by SUM(...) OVER () for share. Apply to screening (join bp_log_latest_gold) or enrollment cohorts as needed."
+
+  county distribution:
+    table: patient_tracker_gold
+    condition: ""
+    description: "Patient distribution across counties. Join through facilities CTE (health_facility_admin_gold -> district_admin_gold for county_name) on organization_id. GROUP BY county_name, COUNT(DISTINCT patient_id), ORDER BY count DESC."
 
 # =============================================================================
 # Healthcare Synonyms - Medical Terminology Mapping
@@ -393,6 +479,32 @@ synonyms:
     - "fhir id"
     - "resource identifier"
 
+  # Enrollment / status synonyms
+  patient_status:
+    - "enrollment status"
+    - "patient state"
+    - "status"
+    - "enrollment state"
+
+  enrollment_at:
+    - "enrollment date"
+    - "date enrolled"
+    - "enrolled on"
+    - "enrollment timestamp"
+    - "date of enrollment"
+
+  is_htn_diagnosis:
+    - "hypertension flag"
+    - "htn diagnosis"
+    - "has hypertension"
+    - "hypertensive"
+
+  is_diabetes_diagnosis:
+    - "diabetes flag"
+    - "dm diagnosis"
+    - "has diabetes"
+    - "diabetic"
+
   # Date/Time synonyms
   ymd:
     - "date"
@@ -418,7 +530,7 @@ synonyms:
 default_filters:
   patient_tracker_gold:
     filter: "is_deleted = false"
-    description: "Exclude soft-deleted patients"
+    description: "Exclude soft-deleted patients (is_deleted is VARCHAR not boolean)"
   
   patient_gold:
     filter: "res_deleted_at IS NULL"
@@ -508,6 +620,38 @@ metric_templates:
       Both: COUNT(DISTINCT CASE WHEN is_htn_diagnosis = true AND is_diabetes_diagnosis = true THEN patient_id END)
     description: "Breakdown of enrolled patients by condition type"
     tables: ["patient_tracker_gold"]
+
+  # =========================================================================
+  # Enrolled-Cohort Metrics (stakeholder-validated)
+  # =========================================================================
+  avg_systolic_enrolled:
+    expression: "AVG(bp.avg_systolic)"
+    description: "Average systolic BP for enrolled patients. JOIN bp_log_gold bp ON bp.patient_id = pt.patient_id WHERE pt.patient_status = 'Enrolled' AND pt.is_deleted = false AND bp.is_src_deleted IS DISTINCT FROM 'true'"
+    tables: ["bp_log_gold", "patient_tracker_gold"]
+
+  avg_diastolic_enrolled:
+    expression: "AVG(bp.avg_diastolic)"
+    description: "Average diastolic BP for enrolled patients. Same JOIN pattern as avg_systolic_enrolled."
+    tables: ["bp_log_gold", "patient_tracker_gold"]
+
+  avg_bp_enrolled:
+    expression: "AVG(bp.avg_systolic) AS avg_systolic, AVG(bp.avg_diastolic) AS avg_diastolic"
+    description: "Average systolic AND diastolic for enrolled patients. Single query, JOIN bp_log_gold to patient_tracker_gold with patient_status='Enrolled'."
+    tables: ["bp_log_gold", "patient_tracker_gold"]
+
+  cvd_risk_distribution_enrolled:
+    expression: "SELECT bll.cvd_risk_level, COUNT(DISTINCT bll.patient_id) FROM bp_log_latest_gold bll JOIN patient_tracker_gold pt ON pt.patient_id = bll.patient_id WHERE pt.patient_status = 'Enrolled' AND pt.is_deleted = false GROUP BY bll.cvd_risk_level"
+    description: "CVD risk level distribution for enrolled patients only. Use this for 'CVD risk of enrolled patients' / 'risk score of enrolled patients' questions."
+    tables: ["bp_log_latest_gold", "patient_tracker_gold"]
+
+  enrollment_count_by_year:
+    expression: "SELECT YEAR(TRY_CAST(enrollment_at AS DATE)) AS year, COUNT(DISTINCT patient_id) AS enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND patient_status = 'Enrolled' AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1"
+    description: "Yearly enrollment count. Use for 'enrollment by year' / 'enrolled patients per year' / 'enrollment trend'."
+    tables: ["patient_tracker_gold"]
+
+  enrollment_count_by_month:
+    expression: "SELECT DATE_TRUNC('month', enrollment_at) AS month, COUNT(DISTINCT patient_id) AS enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND patient_status = 'Enrolled' AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1"
+    description: "Monthly enrollment trend. Use for 'enrollment by month' / 'enrollment trend monthly'."
     tables: ["patient_tracker_gold"]
 
 # =============================================================================
@@ -572,9 +716,14 @@ column_semantics:
   patient_tracker_gold:
     patient_id: "Unique patient identifier"
     is_deleted: "Soft-delete flag - exclude from queries"
-    is_screening: "Whether patient completed initial screening"
-    is_enrolled: "Whether patient is enrolled in NCD program"
+    patient_status: "Enrollment state string. Known values: 'Enrolled', 'Screening' (plus others). FILTER patient_status = 'Enrolled' for the enrolled cohort and patient_status = 'Screening' for screening cohort. This is the AUTHORITATIVE column for enrollment-state questions — preferred over is_enrolled / is_screening booleans."
+    enrollment_at: "Timestamp when patient was enrolled in NCD program. NULL if not enrolled. Use DATE_TRUNC('month', enrollment_at) or EXTRACT(YEAR FROM enrollment_at) for trend queries."
+    is_screening: "Boolean — whether patient completed initial screening event (historical flag)"
+    is_enrolled: "Boolean — whether patient is enrolled. Prefer patient_status = 'Enrolled' string filter for the enrolled cohort."
     is_confirmed_diagnosis: "Whether patient has confirmed hypertension diagnosis"
+    is_htn_diagnosis: "Boolean — patient flagged with hypertension. Aggregates both confirmed and provisional HTN tags at the ETL layer."
+    is_diabetes_diagnosis: "Boolean — patient flagged with diabetes (DM). Aggregates both confirmed and provisional DM tags at the ETL layer."
+    risk_level: "Risk classification stored on patient record (e.g. high/medium/low). For CVD-specific risk prefer bp_log_latest_gold.cvd_risk_level."
     gender: "Patient gender (Male/Female)"
     age: "Patient age in years"
     cvd_risk_level: "Most recent CVD risk classification"
@@ -627,6 +776,34 @@ query_patterns:
     description: "Patient distribution by BMI category"
     pattern: "SELECT bmi_category, COUNT(DISTINCT patient_id) as count FROM bp_log_latest_gold GROUP BY bmi_category"
 
+  enrollment_yearly_trend:
+    description: "Yearly enrollment trend (use for 'how many patients enrolled by year' / 'enrollment per year')"
+    pattern: "SELECT YEAR(TRY_CAST(enrollment_at AS DATE)) AS year, COUNT(DISTINCT patient_id) AS enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND patient_status = 'Enrolled' AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1"
+
+  enrollment_monthly_trend:
+    description: "Monthly enrollment trend (use for 'enrollment by month' / 'monthly enrollment')"
+    pattern: "SELECT DATE_TRUNC('month', enrollment_at) AS month, COUNT(DISTINCT patient_id) AS enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND patient_status = 'Enrolled' AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1"
+
+  screening_by_gender:
+    description: "Screening-phase patient count by gender (use for 'how many men/women from screening')"
+    pattern: "SELECT gender, COUNT(DISTINCT patient_id) AS patient_count FROM patient_tracker_gold WHERE patient_status = 'Screening' AND is_deleted = false GROUP BY gender"
+
+  cvd_risk_of_enrolled:
+    description: "CVD risk distribution for enrolled patients only (use for 'CVD risk score of enrolled patients' / 'risk score for enrolled')"
+    pattern: "SELECT bll.cvd_risk_level, COUNT(DISTINCT bll.patient_id) AS patient_count FROM bp_log_latest_gold bll JOIN patient_tracker_gold pt ON pt.patient_id = bll.patient_id WHERE pt.patient_status = 'Enrolled' AND pt.is_deleted = false AND bll.cvd_risk_level IS NOT NULL GROUP BY bll.cvd_risk_level ORDER BY patient_count DESC"
+
+  avg_bp_of_enrolled:
+    description: "Average systolic and diastolic for enrolled patients (use for 'average BP of enrolled patients')"
+    pattern: "SELECT ROUND(AVG(bp.avg_systolic)::numeric, 1) AS avg_systolic, ROUND(AVG(bp.avg_diastolic)::numeric, 1) AS avg_diastolic, COUNT(DISTINCT bp.patient_id) AS patient_count FROM bp_log_gold bp JOIN patient_tracker_gold pt ON pt.patient_id = bp.patient_id WHERE pt.patient_status = 'Enrolled' AND pt.is_deleted = false AND bp.is_src_deleted IS DISTINCT FROM 'true'"
+
+  diabetic_enrolled_count:
+    description: "Count of diabetic patients who are enrolled (use for 'how many diabetic enrolled patients')"
+    pattern: "SELECT COUNT(DISTINCT patient_id) AS diabetic_enrolled FROM patient_tracker_gold WHERE patient_status = 'Enrolled' AND is_diabetes_diagnosis = true AND is_deleted = false"
+
+  comorbid_enrolled_count:
+    description: "Count of enrolled patients comorbid for HTN and DM (use for 'comorbid patients' / 'patients with both HTN and DM')"
+    pattern: "SELECT COUNT(DISTINCT patient_id) AS comorbid_enrolled FROM patient_tracker_gold WHERE patient_status = 'Enrolled' AND is_htn_diagnosis = true AND is_diabetes_diagnosis = true AND is_deleted = false"
+
 # =============================================================================
 # M&E Join Patterns - Facility Hierarchy & Program Assignments
 # =============================================================================
@@ -659,7 +836,7 @@ me_join_patterns:
       - "co.name AS country"
       - "dis.name AS county_name"
       - "chif.name AS subcounty_name"
-    filter: "hf.is_deleted = FALSE"
+    filter: "hf.is_deleted = false"
     pattern: |
       WITH facilities AS (
           SELECT
@@ -676,7 +853,7 @@ me_join_patterns:
           LEFT JOIN country_admin_gold co ON hf.country_id = co.id
           LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
           LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
-          WHERE hf.is_deleted = FALSE
+          WHERE hf.is_deleted = false
       )
 
   # ===========================================================================
@@ -753,7 +930,7 @@ me_join_patterns:
           LEFT JOIN country_admin_gold co ON hf.country_id = co.id
           LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
           LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
-          WHERE hf.is_deleted = FALSE
+          WHERE hf.is_deleted = false
       ),
       facility_programs AS (
           SELECT hfp.health_facility_id AS facility_id,
@@ -785,7 +962,7 @@ me_join_patterns:
           LEFT JOIN country_admin_gold co ON hf.country_id = co.id
           LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id
           LEFT JOIN chiefdom_admin_gold chif ON hf.chiefdom_id = chif.id
-          WHERE hf.is_deleted = FALSE
+          WHERE hf.is_deleted = false
       ),
       facility_programs AS (
           SELECT hfp.health_facility_id AS facility_id,

@@ -213,6 +213,65 @@ class GeneratePromptResponse(BaseModel):
     example_questions: List[str] = Field(default_factory=list, description="Example questions the agent can answer")
 
 
+# ==========================================
+# Agent Definition (Step 4.5 — AI-bootstrapped)
+# ==========================================
+
+class SampleQuestion(BaseModel):
+    """A sample question that doubles as a few-shot training example."""
+    question: str = Field(..., min_length=1, description="Natural-language question users may ask")
+    sql: Optional[str] = Field(None, description="Expected SQL (optional; if present, used as few-shot exemplar)")
+    expected_summary: Optional[str] = Field(None, description="One-line description of expected answer shape")
+    use_as_few_shot: bool = Field(default=True, description="If true, indexed into agent's few-shot store on save")
+
+
+class AgentDefinition(BaseModel):
+    """
+    AI-bootstrapped Agent Definition (Step 4.5).
+
+    Populated from data source schema + relations + sample values. User can
+    accept-all or edit any field before reaching the System Prompt step.
+    """
+    role: str = Field(..., description="Agent role/title (e.g. 'NCD Program Analyst')")
+    responsibilities: List[str] = Field(default_factory=list, description="Day-to-day analytical responsibilities")
+    business_objectives: List[str] = Field(default_factory=list, description="Business outcomes this agent supports")
+    target_personas: List[str] = Field(default_factory=list, description="Intended user personas")
+    analytical_capabilities: List[str] = Field(default_factory=list, description="What the agent CAN answer")
+    limitations: List[str] = Field(default_factory=list, description="What the agent should refuse or caveat")
+    response_style: Dict[str, str] = Field(default_factory=dict, description="tone, format, verbosity")
+    kpis_metrics: List[str] = Field(default_factory=list, description="Priority KPIs / metrics to surface")
+    domain_rules: List[str] = Field(default_factory=list, description="Domain-specific business rules (e.g. cohort filters)")
+    guardrails: List[str] = Field(default_factory=list, description="Safety/compliance guardrails")
+    sample_questions: List[SampleQuestion] = Field(default_factory=list, description="Seed questions, optionally promoted to few-shot store")
+
+    # Bootstrap metadata
+    confidence_per_field: Optional[Dict[str, float]] = Field(default=None, description="0-1 confidence tagged by LLM/heuristics per field")
+    ai_drafted_fields: Optional[List[str]] = Field(default=None, description="Field names still showing AI-drafted state (not yet user-edited)")
+
+
+class AgentDefinitionStepRequest(BaseModel):
+    """Step 4.5: persist user-confirmed (or AI-drafted) agent definition.
+
+    `agent_definition` is Optional so the wizard can call this endpoint as a
+    no-op when the user clicks Next before bootstrap has populated the form.
+    """
+    agent_definition: Optional[AgentDefinition] = None
+
+
+class AgentDefinitionPollResponse(BaseModel):
+    """Polled status of async bootstrap job."""
+    status: Literal["not_started", "pending", "completed", "failed"]
+    data: Optional[AgentDefinition] = None
+    error: Optional[str] = None
+
+
+class BootstrapAgentDefinitionResponse(BaseModel):
+    """Response when scheduling async bootstrap."""
+    status: Literal["started", "already_pending", "skipped"]
+    version_id: int
+    message: Optional[str] = None
+
+
 class ModelInfo(BaseModel):
     """Resolved model information from ai_models table."""
     id: int
@@ -256,7 +315,11 @@ class AgentConfigResponse(BaseModel):
     # Prompt
     system_prompt: Optional[str] = None
     example_questions: Optional[List[str]] = None
-    
+
+    # Agent Definition (Step 4.5) — parsed from JSON
+    agent_definition: Optional[Dict[str, Any]] = None
+    agent_definition_status: str = "not_started"
+
     # Vector store
     embedding_path: Optional[str] = None
     vector_collection_name: Optional[str] = None

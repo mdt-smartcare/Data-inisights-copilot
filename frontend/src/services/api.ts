@@ -5,6 +5,36 @@ import { oidcService } from './oidcService';
 import { ErrorCode } from '../constants/errorCodes';
 
 /**
+ * In-flight request tracker to prevent duplicate concurrent API calls.
+ * Maps request keys (method + URL) to their pending promises.
+ */
+const inFlightRequests = new Map<string, Promise<unknown>>();
+
+/**
+ * Wraps an async API call to prevent duplicate concurrent requests.
+ * If a request with the same key is already in progress, returns the existing promise.
+ */
+export async function deduplicateRequest<T>(
+  key: string,
+  requestFn: () => Promise<T>
+): Promise<T> {
+  // Check if request is already in flight
+  const existing = inFlightRequests.get(key);
+  if (existing) {
+    console.log(`[API] Deduplicating request: ${key}`);
+    return existing as Promise<T>;
+  }
+
+  // Start new request and track it
+  const promise = requestFn().finally(() => {
+    inFlightRequests.delete(key);
+  });
+  
+  inFlightRequests.set(key, promise);
+  return promise;
+}
+
+/**
  * Configured Axios instance for all API requests
  * 
  * Features:
@@ -54,6 +84,15 @@ apiClient.interceptors.request.use(
       if (accessToken) {
         // Add Bearer token to all authenticated requests
         config.headers.Authorization = `Bearer ${accessToken}`;
+      } else {
+        // Token is null - user needs to re-authenticate
+        console.warn('No access token available for request:', config.url);
+        // Redirect to login if no token available
+        const currentPath = window.location.pathname;
+        if (!currentPath.includes('/login') && !currentPath.includes('/callback')) {
+          window.location.href = '/login?error=SESSION_EXPIRED';
+          return Promise.reject(new Error('Session expired. Please log in again.'));
+        }
       }
     } catch (error) {
       console.error('Error getting access token:', error);
@@ -70,17 +109,44 @@ apiClient.interceptors.request.use(
  * Response Interceptor
  * Runs after every API response to:
  * 1. Handle 401 Unauthorized errors for inactive users
- * 2. Renew expired tokens and retry the request
+ * 2. Handle 403 Forbidden with "Not authenticated" (missing credentials)
+ * 3. Renew expired tokens and retry the request
  */
 apiClient.interceptors.response.use(
   (response) => response,  // Pass successful responses through unchanged
   async (error: AxiosError) => {
+    const responseData = error.response?.data as {
+      error_code?: string;
+      message?: string;
+      detail?: string;
+    };
+    
+    // Handle 403 "Not authenticated" as auth error (backend returns 403 when Bearer token missing)
+    if (error.response?.status === 403 && responseData?.detail === 'Not authenticated') {
+      console.warn('403 Not authenticated - token may be missing or expired');
+      // Try to refresh token and retry
+      const config = error.config as AxiosRequestConfig & { _retry?: boolean };
+      if (config && !config._retry) {
+        config._retry = true;
+        try {
+          const user = await oidcService.renewToken();
+          if (user) {
+            config.headers = config.headers || {};
+            config.headers.Authorization = `Bearer ${user.access_token}`;
+            return apiClient.request(config);
+          }
+        } catch {
+          console.error('Token renewal failed after 403');
+        }
+      }
+      // Redirect to login if renewal failed
+      await oidcService.removeUser();
+      window.location.href = '/login?error=SESSION_EXPIRED';
+      return Promise.reject(error);
+    }
+    
     // Handle authentication errors globally
     if (error.response?.status === 401) {
-      const responseData = error.response?.data as {
-        error_code?: string;
-        message?: string;
-      };
       const errorCode = responseData.error_code;
 
       // Inactive user - logout from Keycloak and redirect to login with error
@@ -1606,6 +1672,8 @@ export interface AgentConfig {
   reranker_model?: ConfigModelInfo;
   system_prompt?: string;
   example_questions?: string[];
+  agent_definition?: Record<string, unknown> | null;
+  agent_definition_status?: 'not_started' | 'pending' | 'completed' | 'failed';
   embedding_path?: string;
   vector_collection_name?: string;
   embedding_status: string;
@@ -1721,8 +1789,13 @@ export const saveSchemaSelectionStep = async (agentId: string, versionId: number
  * Requires version_id in path.
  */
 export const saveDataDictionaryStep = async (agentId: string, versionId: number, data: DataDictionaryStepRequest): Promise<AgentConfig> => {
-  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/data-dictionary`, data);
-  return response.data?.data || response.data;
+  const key = `PUT:/config/${agentId}/version/${versionId}/step/data-dictionary`;
+  return deduplicateRequest(key, async () => {
+    const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/data-dictionary`, data, {
+      timeout: 180 * 1000, // 3 minutes - this triggers bootstrap in background
+    });
+    return response.data?.data || response.data;
+  });
 };
 
 /**
@@ -1730,8 +1803,13 @@ export const saveDataDictionaryStep = async (agentId: string, versionId: number,
  * Requires version_id in path.
  */
 export const saveSettingsStep = async (agentId: string, versionId: number, data: SettingsStepRequest): Promise<AgentConfig> => {
-  const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/settings`, data);
-  return response.data?.data || response.data;
+  const key = `PUT:/config/${agentId}/version/${versionId}/step/settings`;
+  return deduplicateRequest(key, async () => {
+    const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/settings`, data, {
+      timeout: 180 * 1000, // 3 minutes for settings step which can be slow
+    });
+    return response.data?.data || response.data;
+  });
 };
 
 /**
@@ -1740,6 +1818,90 @@ export const saveSettingsStep = async (agentId: string, versionId: number, data:
  */
 export const savePromptStep = async (agentId: string, versionId: number, data: PromptStepRequest): Promise<AgentConfig> => {
   const response = await apiClient.put(`/api/v1/config/${agentId}/version/${versionId}/step/prompt`, data);
+  return response.data?.data || response.data;
+};
+
+// ==========================================
+// Agent Definition (Step 5 — AI-bootstrapped)
+// ==========================================
+
+export interface SampleQuestion {
+  question: string;
+  sql?: string | null;
+  expected_summary?: string | null;
+  use_as_few_shot?: boolean;
+}
+
+export interface AgentDefinition {
+  role: string;
+  responsibilities: string[];
+  business_objectives: string[];
+  target_personas: string[];
+  analytical_capabilities: string[];
+  limitations: string[];
+  response_style: Record<string, string>;
+  kpis_metrics: string[];
+  domain_rules: string[];
+  guardrails: string[];
+  sample_questions: SampleQuestion[];
+  confidence_per_field?: Record<string, number> | null;
+  ai_drafted_fields?: string[] | null;
+}
+
+export interface AgentDefinitionPollResponse {
+  status: 'not_started' | 'pending' | 'completed' | 'failed';
+  data: AgentDefinition | null;
+  error: string | null;
+}
+
+export interface BootstrapAgentDefinitionResponse {
+  status: 'started' | 'already_pending' | 'skipped';
+  version_id: number;
+  message?: string | null;
+}
+
+/**
+ * Kick off async bootstrap of the agent definition (fire-and-forget on the server).
+ */
+export const bootstrapAgentDefinition = async (
+  agentId: string,
+  versionId: number,
+): Promise<BootstrapAgentDefinitionResponse> => {
+  const response = await apiClient.post(
+    `/api/v1/config/${agentId}/version/${versionId}/step/bootstrap-definition`,
+    {},
+    { timeout: 180 * 1000 }, // 3 minutes for bootstrap which can be slow
+  );
+  return response.data?.data || response.data;
+};
+
+/**
+ * Poll the current agent definition status + payload.
+ */
+export const pollAgentDefinition = async (
+  agentId: string,
+  versionId: number,
+): Promise<AgentDefinitionPollResponse> => {
+  const response = await apiClient.get(
+    `/api/v1/config/${agentId}/version/${versionId}/agent-definition`,
+  );
+  return response.data?.data || response.data;
+};
+
+/**
+ * Save user-confirmed (or AI-drafted) agent definition.
+ * Sample questions flagged `use_as_few_shot=true` are indexed into the agent's
+ * few-shot example store as a side effect on the backend.
+ */
+export const saveAgentDefinitionStep = async (
+  agentId: string,
+  versionId: number,
+  data: { agent_definition: AgentDefinition },
+): Promise<AgentConfig> => {
+  const response = await apiClient.put(
+    `/api/v1/config/${agentId}/version/${versionId}/step/agent-definition`,
+    data,
+  );
   return response.data?.data || response.data;
 };
 

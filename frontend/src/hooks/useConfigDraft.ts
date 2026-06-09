@@ -21,7 +21,9 @@ import {
   saveDataDictionaryStep,
   saveSettingsStep,
   savePromptStep,
+  saveAgentDefinitionStep,
   type AgentConfig,
+  type AgentDefinition,
 } from '../services/api';
 
 // Simple deep equality check without lodash dependency
@@ -76,9 +78,12 @@ const STEP_FIELDS: Record<number, string[]> = {
   2: ['selected_columns'],
   3: ['data_dictionary'],
   4: ['llm_config', 'embedding_config', 'chunking_config', 'rag_config', 'llm_model_id', 'embedding_model_id', 'reranker_model_id'],
-  5: ['system_prompt', 'example_questions'],
-  6: ['embedding_path', 'vector_collection_name'],
+  5: ['agent_definition'],
+  6: ['system_prompt', 'example_questions'],
+  7: ['embedding_path', 'vector_collection_name'],
 };
+
+const TOTAL_STEPS = 7;
 
 /**
  * Extract step-specific data from config
@@ -117,7 +122,7 @@ export function useConfigDraft(): UseConfigDraftReturn {
   useEffect(() => {
     if (draft) {
       // Populate lastSavedRef with current draft state for all steps
-      for (let step = 1; step <= 6; step++) {
+      for (let step = 1; step <= TOTAL_STEPS; step++) {
         lastSavedRef.current[step] = extractStepData(draft, step);
       }
     }
@@ -137,7 +142,7 @@ export function useConfigDraft(): UseConfigDraftReturn {
         setDraft(existingDraft);
         setVersionId(existingDraft.id);
         // Navigate to next step after the last completed one
-        setCurrentStep(Math.min((existingDraft.completed_step || 0) + 1, 6));
+        setCurrentStep(Math.min((existingDraft.completed_step || 0) + 1, TOTAL_STEPS));
       } else {
         setVersionId(null);
       }
@@ -210,7 +215,7 @@ export function useConfigDraft(): UseConfigDraftReturn {
       if (existingDraft) {
         setDraft(existingDraft);
         setVersionId(existingDraft.id);
-        setCurrentStep(Math.min((existingDraft.completed_step || 0) + 1, 6));
+        setCurrentStep(Math.min((existingDraft.completed_step || 0) + 1, TOTAL_STEPS));
         return existingDraft;
       }
       
@@ -334,9 +339,10 @@ export function useConfigDraft(): UseConfigDraftReturn {
           break;
         case 4: {
           // Map to API format - strip model fields when model IDs are provided
-          const embeddingModelId = data.embeddingModelId as number | undefined;
-          const llmModelId = data.llmModelId as number | undefined;
-          const rerankerModelId = data.rerankerModelId as number | undefined;
+          // Accept both snake_case (from getStepData) and camelCase (legacy) forms
+          const embeddingModelId = (data.embedding_model_id ?? data.embeddingModelId) as number | undefined;
+          const llmModelId = (data.llm_model_id ?? data.llmModelId) as number | undefined;
+          const rerankerModelId = (data.reranker_model_id ?? data.rerankerModelId) as number | undefined;
           
           // Build config objects, excluding model field when ID is provided
           const embeddingConfig = data.embedding_config as Record<string, unknown> | undefined;
@@ -379,10 +385,26 @@ export function useConfigDraft(): UseConfigDraftReturn {
           break;
         }
         case 5:
+          // Skip save if no agent definition (bootstrap may still be pending)
+          if (!data.agent_definition) {
+            console.log('Step 5: No agent definition, skipping save');
+            updated = draft as AgentConfig;
+            break;
+          }
+          updated = await saveAgentDefinitionStep(agentId, versionId!, {
+            agent_definition: data.agent_definition as AgentDefinition,
+          });
+          break;
+        case 6:
           updated = await savePromptStep(agentId, versionId!, {
             system_prompt: data.system_prompt as string,
             example_questions: data.example_questions as string[] | undefined,
           });
+          break;
+        case 7:
+          // Step 7 (Knowledge Base) is handled out-of-band by the embedding job
+          // flow; no per-step save call is required from the wizard.
+          updated = draft as AgentConfig;
           break;
         default:
           throw new Error(`Invalid step: ${step}`);
@@ -460,7 +482,7 @@ export function useConfigDraft(): UseConfigDraftReturn {
       const newDraft = await cloneConfigAsDraft(configId);
       setDraft(newDraft);
       setVersionId(newDraft.id);
-      setCurrentStep(6); // Cloned config has all steps completed
+      setCurrentStep(TOTAL_STEPS); // Cloned config has all steps completed
       return newDraft;
     } catch (err: unknown) {
       const errorObj = err as { response?: { data?: { detail?: string } }; message?: string };

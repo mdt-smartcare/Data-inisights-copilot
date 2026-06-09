@@ -140,17 +140,30 @@ Common FHIR resources and their purposes:
 - **DiagnosticReport**: Lab reports, imaging results
 
 ## SQL Generation Rules
-1. Write DuckDB-compatible SQL (similar to PostgreSQL)
+1. Write SQL compatible with the target database dialect (see DATABASE DIALECT section in system prompt if present)
 2. Use double quotes for identifiers: "patient_tracker", "encounter"
 3. Apply table-specific soft-delete filters:
-   - patient_tracker_gold: WHERE is_deleted = false
+   - patient_tracker_gold: WHERE is_deleted = false (is_deleted is BOOLEAN — use = false, NOT IS DISTINCT FROM 'true')
    - patient_gold: WHERE res_deleted_at IS NULL
    - bp_log_gold: WHERE is_src_deleted IS DISTINCT FROM 'true' (is_src_deleted is VARCHAR, not boolean!)
+   - encounter_gold: WHERE is_src_deleted IS DISTINCT FROM 'true'
    - bp_log_latest_gold: No filter needed (pre-filtered to latest records)
    - glucose_log_gold: No is_deleted filter (use date filters)
-   - health_facility_admin_gold: WHERE is_deleted = FALSE
+   - health_facility_admin_gold: WHERE is_deleted = FALSE (BOOLEAN column — this one is OK)
+4a. VARCHAR columns on patient_tracker_gold — always TRY_CAST before numeric/date comparisons:
+   - bmi, weight, height: stored as VARCHAR → for math use bp_log_gold.bmi (DOUBLE) instead
+   - created_at, updated_at, enrollment_at: stored as VARCHAR → TRY_CAST(col AS TIMESTAMP)
+   - bp_taken_on, bg_taken_on on clinical tables: stored as VARCHAR → TRY_CAST(col AS DATE)
+4b. Flag column types on patient_tracker_gold — mixed BOOLEAN and VARCHAR:
+   VARCHAR (stored as 'true'/'false' strings): is_htn_diagnosis, is_diabetes_diagnosis,
+     is_before_htn_diagnosis, is_old_record, is_regular_smoker, is_patient_referred
+   - CORRECT: is_htn_diagnosis = 'true', is_diabetes_diagnosis = 'false'
+   - WRONG: is_htn_diagnosis = true → varchar = boolean TYPE_MISMATCH
+   BOOLEAN (native SQL boolean): is_prescribed, is_deleted
+   - CORRECT: is_prescribed = true, is_prescribed = false, is_deleted = false
+   - WRONG: is_prescribed = 'true' → boolean = varchar TYPE_MISMATCH
 4. Use appropriate aggregations (COUNT, SUM, AVG) for analytical questions
-5. Limit results to reasonable sizes (default LIMIT 100 for patient lists)
+5. **DO NOT add LIMIT unless the user explicitly requests a limited number of results** — data analysts need all data
 6. Include ORDER BY for any "top N" or trending questions
 7. For date ranges, use CURRENT_DATE, DATE_TRUNC, INTERVAL appropriately
 8. Handle PHI carefully - only return necessary identifiers
@@ -196,7 +209,9 @@ SQL: SELECT condition_code, condition_display, COUNT(*) as count FROM "condition
         llm: BaseChatModel,
         schema_context: str,
         business_definitions: Optional[str] = None,
-        dialect: str = "duckdb"
+        dialect: str = "duckdb",
+        custom_system_prompt: Optional[str] = None,
+        agent_definition: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize UnifiedSQLGenerator.
@@ -206,14 +221,123 @@ SQL: SELECT condition_code, condition_display, COUNT(*) as count FROM "condition
             schema_context: Pre-compiled schema context from manifest
             business_definitions: Business glossary/definitions
             dialect: SQL dialect (duckdb, postgres, etc.)
+            custom_system_prompt: Agent's custom system prompt (if any)
+            agent_definition: Agent definition with domain rules, guardrails, etc.
         """
         self.llm = llm
         self.schema_context = schema_context
         self.business_definitions = business_definitions or ""
         self.dialect = dialect
+        self.custom_system_prompt = custom_system_prompt
+        self.agent_definition = agent_definition or {}
         
         # Check if LLM supports structured output
         self._supports_structured = hasattr(llm, 'with_structured_output')
+    
+    def _build_system_prompt(self, few_shot_examples: Optional[str] = None) -> str:
+        """
+        Build the system prompt, incorporating agent_definition if available.
+        
+        Priority:
+        1. Use agent's custom_system_prompt if available
+        2. Otherwise use template with agent_definition context injected
+        """
+        # Extract agent_definition components
+        agent_role = self.agent_definition.get("role", "")
+        domain_rules = self.agent_definition.get("domain_rules", [])
+        guardrails = self.agent_definition.get("guardrails", [])
+        kpis_metrics = self.agent_definition.get("kpis_metrics", [])
+        sample_questions = self.agent_definition.get("sample_questions", [])
+        
+        # Build agent context block from agent_definition
+        agent_context_parts = []
+        
+        if agent_role:
+            agent_context_parts.append(f"## Agent Role\n{agent_role}")
+        
+        if domain_rules:
+            rules_text = "\n".join(f"- {rule}" for rule in domain_rules if isinstance(rule, str))
+            if rules_text:
+                agent_context_parts.append(f"## Domain Rules\n{rules_text}")
+        
+        if guardrails:
+            guards_text = "\n".join(f"- {g}" for g in guardrails if isinstance(g, str))
+            if guards_text:
+                agent_context_parts.append(f"## Guardrails\n{guards_text}")
+        
+        if kpis_metrics:
+            kpi_parts = []
+            for kpi in kpis_metrics:
+                if isinstance(kpi, dict):
+                    name = kpi.get("name", kpi.get("metric", ""))
+                    formula = kpi.get("formula", kpi.get("sql", ""))
+                    if name:
+                        kpi_parts.append(f"- {name}" + (f": {formula}" if formula else ""))
+                elif isinstance(kpi, str):
+                    kpi_parts.append(f"- {kpi}")
+            if kpi_parts:
+                agent_context_parts.append(f"## KPIs & Metrics\n" + "\n".join(kpi_parts))
+        
+        # Extract few-shot examples from agent_definition sample_questions
+        agent_examples = []
+        for sq in sample_questions:
+            if isinstance(sq, dict) and sq.get("question"):
+                q = sq["question"]
+                sql = sq.get("sql", "")
+                if sql:
+                    agent_examples.append(f"Question: {q}\nSQL: {sql}")
+        
+        # Combine few-shot examples
+        combined_examples = few_shot_examples or ""
+        if agent_examples:
+            agent_examples_text = "\n\n".join(agent_examples)
+            if combined_examples:
+                combined_examples = f"{agent_examples_text}\n\n{combined_examples}"
+            else:
+                combined_examples = agent_examples_text
+        
+        agent_context_block = "\n\n".join(agent_context_parts) if agent_context_parts else ""
+        
+        # If custom_system_prompt is provided, use it with dynamic context
+        if self.custom_system_prompt:
+            # Try to inject schema and definitions into custom prompt
+            prompt = self.custom_system_prompt
+            
+            # Add schema context if not already present
+            if "{schema_context}" in prompt:
+                prompt = prompt.replace("{schema_context}", self.schema_context)
+            elif "## Available Schema" not in prompt and self.schema_context:
+                prompt += f"\n\n## Available Schema\n{self.schema_context}"
+            
+            # Add business definitions if not already present
+            if "{business_definitions}" in prompt:
+                prompt = prompt.replace("{business_definitions}", self.business_definitions)
+            elif "## Business Definitions" not in prompt and self.business_definitions:
+                prompt += f"\n\n## Business Definitions\n{self.business_definitions}"
+            
+            # Add agent context if available
+            if agent_context_block:
+                prompt += f"\n\n{agent_context_block}"
+            
+            # Add few-shot examples
+            if "{few_shot_examples}" in prompt:
+                prompt = prompt.replace("{few_shot_examples}", combined_examples or "No examples available.")
+            elif combined_examples:
+                prompt += f"\n\n## Few-Shot Examples\n{combined_examples}"
+            
+            return prompt
+        
+        # Use default template with agent context injected
+        business_defs = self.business_definitions
+        if agent_context_block:
+            # Prepend agent context to business definitions
+            business_defs = f"{agent_context_block}\n\n{business_defs}" if business_defs else agent_context_block
+        
+        return self.SYSTEM_PROMPT_TEMPLATE.format(
+            schema_context=self.schema_context,
+            business_definitions=business_defs,
+            few_shot_examples=combined_examples or "No examples available."
+        )
     
     async def generate(
         self,
@@ -236,22 +360,21 @@ SQL: SELECT condition_code, condition_display, COUNT(*) as count FROM "condition
         """
         start = time.time()
         
-        # Build system prompt
-        system_prompt = self.SYSTEM_PROMPT_TEMPLATE.format(
-            schema_context=self.schema_context,
-            business_definitions=self.business_definitions,
-            few_shot_examples=few_shot_examples or "No examples available."
-        )
+        # Build system prompt - use custom if available, otherwise use template
+        system_prompt = self._build_system_prompt(few_shot_examples)
         
         # Build messages
         messages = [SystemMessage(content=system_prompt)]
         
-        # Add conversation history if provided
+        # Add conversation history if provided — include both user and assistant turns
+        # so follow-up questions ("the group", "those patients") have prior SQL/results context
         if conversation_history:
-            for msg in conversation_history[-5:]:  # Last 5 messages
+            from langchain_core.messages import AIMessage
+            for msg in conversation_history[-6:]:  # last 3 turns (user+assistant pairs)
                 if msg["role"] == "user":
                     messages.append(HumanMessage(content=msg["content"]))
-                # Could add assistant messages too
+                elif msg["role"] == "assistant":
+                    messages.append(AIMessage(content=msg["content"]))
         
         # Add current question
         messages.append(HumanMessage(content=f"Question: {question}"))
@@ -356,7 +479,9 @@ class UnifiedSQLGeneratorFactory:
         agent_id: str,
         llm: BaseChatModel,
         manifest: "SchemaManifest",
-        linked_tables: Optional[List[str]] = None
+        linked_tables: Optional[List[str]] = None,
+        custom_system_prompt: Optional[str] = None,
+        agent_definition: Optional[Dict[str, Any]] = None
     ) -> UnifiedSQLGenerator:
         """
         Get or create a UnifiedSQLGenerator for an agent.
@@ -366,6 +491,8 @@ class UnifiedSQLGeneratorFactory:
             llm: LangChain LLM instance
             manifest: Pre-compiled schema manifest
             linked_tables: Tables to include in context (or all if None)
+            custom_system_prompt: Agent's custom system prompt
+            agent_definition: Agent definition (role, domain_rules, guardrails, sample_questions)
             
         Returns:
             UnifiedSQLGenerator instance
@@ -389,7 +516,9 @@ class UnifiedSQLGeneratorFactory:
         return UnifiedSQLGenerator(
             llm=llm,
             schema_context=schema_context,
-            business_definitions=business_defs
+            business_definitions=business_defs,
+            custom_system_prompt=custom_system_prompt,
+            agent_definition=agent_definition
         )
 
 
@@ -427,7 +556,7 @@ class QueryTemplateEngine:
                 # Additional patterns for "during april 2024" or "for april 2024"
                 r"(?:total\s+)?(?:number\s+of\s+)?patients?\s+(?:with\s+)?(?:high\s+)?(?:bp|blood\s+pressure)\s*(?:>|greater\s+than|above|over)\s*(\d+)\s*/\s*(\d+)\s+(?:during|for)\s+(\w+)\s+(\d{4})"
             ],
-            "sql_template": "SELECT COUNT(DISTINCT patient_id) as high_bp_patients FROM bp_log_gold WHERE is_src_deleted IS DISTINCT FROM 'true' AND (avg_systolic > {systolic} OR avg_diastolic > {diastolic}) AND DATE_TRUNC('month', bp_taken_on) = DATE '{year}-{month_num:02d}-01'",
+            "sql_template": "SELECT COUNT(DISTINCT patient_id) as high_bp_patients FROM bp_log_gold WHERE is_src_deleted IS DISTINCT FROM 'true' AND (avg_systolic > {systolic} OR avg_diastolic > {diastolic}) AND DATE_TRUNC('month', TRY_CAST(bp_taken_on AS DATE)) = DATE '{year}-{month_num:02d}-01'",
             "extract_table": False,
             "params": ["systolic", "diastolic", "month", "year"],
             "month_param": True
@@ -487,7 +616,7 @@ class QueryTemplateEngine:
                 r"active patient(?:s)?\s+(?:count|total)",
                 r"all active patients?"
             ],
-            "sql": 'SELECT COUNT(DISTINCT patient_id) as total_active_patients FROM patient_tracker_gold WHERE is_deleted = false',
+            "sql": "SELECT COUNT(DISTINCT patient_id) as total_active_patients FROM patient_tracker_gold WHERE is_deleted = false",
             "extract_table": False
         },
         "total_patients": {
@@ -496,7 +625,7 @@ class QueryTemplateEngine:
                 r"^(?:how many|count|number of)\s+(?:total\s+)?patients?\s*\??$",
                 r"^patient(?:s)?\s+(?:count|total)$"
             ],
-            "sql": 'SELECT COUNT(DISTINCT patient_id) as total_patients FROM patient_tracker_gold WHERE is_deleted = false',
+            "sql": "SELECT COUNT(DISTINCT patient_id) as total_patients FROM patient_tracker_gold WHERE is_deleted = false",
             "extract_table": False
         },
         "patients_by_status": {
@@ -505,7 +634,7 @@ class QueryTemplateEngine:
                 r"patient (?:enrollment\s+)?status breakdown",
                 r"how many patients? (?:are\s+)?(?:enrolled|inactive)"
             ],
-            "sql": 'SELECT patient_status, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC',
+            "sql": "SELECT patient_status, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC",
             "extract_table": False
         },
         "patients_by_site": {
@@ -514,7 +643,7 @@ class QueryTemplateEngine:
                 r"site.?wise patient (?:count|distribution)",
                 r"how many patients? at each (?:site|facility|clinic)"
             ],
-            "sql": 'SELECT site_id, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC',
+            "sql": "SELECT site_id, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC",
             "extract_table": False
         },
         "patients_by_organization": {
@@ -522,7 +651,7 @@ class QueryTemplateEngine:
                 r"patients? (?:by|per) organization",
                 r"organization.?wise patient"
             ],
-            "sql": 'SELECT organization_id, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC',
+            "sql": "SELECT organization_id, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC",
             "extract_table": False
         },
         "patients_by_gender": {
@@ -531,7 +660,7 @@ class QueryTemplateEngine:
                 r"gender.?wise patient",
                 r"male (?:and|vs) female patients?"
             ],
-            "sql": 'SELECT gender, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC',
+            "sql": "SELECT gender, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC",
             "extract_table": False
         },
         "patients_by_risk_level": {
@@ -540,7 +669,7 @@ class QueryTemplateEngine:
                 r"risk level breakdown",
                 r"high risk patients?"
             ],
-            "sql": 'SELECT risk_level, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC',
+            "sql": "SELECT risk_level, COUNT(DISTINCT patient_id) as patient_count FROM patient_tracker_gold WHERE is_deleted = false GROUP BY 1 ORDER BY 2 DESC",
             "extract_table": False
         },
         
@@ -574,7 +703,7 @@ class QueryTemplateEngine:
                 r"yearly enrollment(?:s)?",
                 r"annual enrollment (?:count|breakdown|trend)"
             ],
-            "sql": "SELECT EXTRACT(YEAR FROM enrollment_at)::INTEGER as year, COUNT(DISTINCT patient_id) as enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1",
+            "sql": "SELECT YEAR(TRY_CAST(enrollment_at AS DATE)) as year, COUNT(DISTINCT patient_id) as enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1",
             "extract_table": False
         },
         "enrollment_by_month": {
@@ -583,7 +712,7 @@ class QueryTemplateEngine:
                 r"monthly enrollment(?:s)?",
                 r"enrollment (?:count|breakdown|trend) by month"
             ],
-            "sql": "SELECT DATE_TRUNC('month', enrollment_at) as month, COUNT(DISTINCT patient_id) as enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1",
+            "sql": "SELECT DATE_TRUNC('month', TRY_CAST(enrollment_at AS TIMESTAMP)) as month, COUNT(DISTINCT patient_id) as enrolled_patients FROM patient_tracker_gold WHERE is_deleted = false AND enrollment_at IS NOT NULL GROUP BY 1 ORDER BY 1",
             "extract_table": False
         },
         "recent_enrollments": {
@@ -835,7 +964,7 @@ class QueryTemplateEngine:
                 r"htn\s+patients?\s+(?:with|had)\s+(?:bp\s+)?follow[- ]?up\s+(?:last|in)\s+3\s+months",
                 r"hypertensive\s+patients?\s+(?:who\s+)?had\s+(?:a\s+)?follow[- ]?up\s+(?:in\s+)?3\s+months"
             ],
-            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS htn_with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months' AND bp.is_src_deleted IS DISTINCT FROM 'true'",
+            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS htn_with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = 'true' AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3' MONTH AND bp.is_src_deleted IS DISTINCT FROM 'true'",
             "extract_table": False
         },
         "htn_followup_percentage_3months": {
@@ -844,7 +973,7 @@ class QueryTemplateEngine:
                 r"(?:what\s+)?(?:percentage|proportion)\s+(?:of\s+)?htn\s+patients?\s+(?:had|with)\s+follow[- ]?up",
                 r"htn\s+follow[- ]?up\s+(?:rate|percentage|proportion)"
             ],
-            "sql": "WITH htn_total AS (SELECT COUNT(DISTINCT patient_id) AS total FROM patient_tracker_gold WHERE is_deleted = FALSE AND is_htn_diagnosis = TRUE), htn_with_fu AS (SELECT COUNT(DISTINCT pt.patient_id) AS with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months' AND bp.is_src_deleted IS DISTINCT FROM 'true') SELECT htn_with_fu.with_followup AS htn_with_followup, htn_total.total AS total_htn_patients, ROUND(100.0 * htn_with_fu.with_followup / NULLIF(htn_total.total, 0), 2) AS followup_percentage FROM htn_total, htn_with_fu",
+            "sql": "WITH htn_total AS (SELECT COUNT(DISTINCT patient_id) AS total FROM patient_tracker_gold WHERE is_deleted = false AND is_htn_diagnosis = 'true'), htn_with_fu AS (SELECT COUNT(DISTINCT pt.patient_id) AS with_followup FROM patient_tracker_gold pt INNER JOIN bp_log_gold bp ON pt.patient_id = bp.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = 'true' AND TRY_CAST(bp.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3' MONTH AND bp.is_src_deleted IS DISTINCT FROM 'true') SELECT htn_with_fu.with_followup AS htn_with_followup, htn_total.total AS total_htn_patients, ROUND(100.0 * htn_with_fu.with_followup / NULLIF(htn_total.total, 0), 2) AS followup_percentage FROM htn_total, htn_with_fu",
             "extract_table": False
         },
         "dm_glucose_3months": {
@@ -852,7 +981,7 @@ class QueryTemplateEngine:
                 r"(?:how many\s+)?diabetes\s+patients?\s+with\s+(?:documented\s+)?(?:blood\s+)?glucose\s+(?:in\s+)?(?:the\s+)?last\s+3\s+months",
                 r"dm\s+patients?\s+(?:with\s+)?glucose\s+(?:reading(?:s)?|measurement(?:s)?)\s+(?:last|in)\s+3\s+months"
             ],
-            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_glucose FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_diabetes_diagnosis = TRUE AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
+            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_glucose FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = false AND pt.is_diabetes_diagnosis = 'true' AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
             "extract_table": False
         },
         "dm_hba1c_3months": {
@@ -860,7 +989,7 @@ class QueryTemplateEngine:
                 r"(?:how many\s+)?diabetes\s+patients?\s+with\s+(?:documented\s+|a\s+)?hba1c\s+(?:in\s+)?(?:the\s+)?last\s+3\s+months",
                 r"dm\s+patients?\s+(?:with\s+)?hba1c\s+(?:last|in)\s+3\s+months"
             ],
-            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_hba1c FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_diabetes_diagnosis = TRUE AND gl.hba1c IS NOT NULL AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
+            "sql": "SELECT COUNT(DISTINCT pt.patient_id) AS dm_with_hba1c FROM patient_tracker_gold pt INNER JOIN glucose_log_gold gl ON pt.patient_id = gl.patient_id WHERE pt.is_deleted = false AND pt.is_diabetes_diagnosis = 'true' AND gl.hba1c IS NOT NULL AND TRY_CAST(gl.bg_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months'",
             "extract_table": False
         },
         "htn_control_rate": {
@@ -869,7 +998,7 @@ class QueryTemplateEngine:
                 r"htn\s+control\s+rate",
                 r"controlled\s+hypertension\s+(?:rate|proportion|percentage)"
             ],
-            "sql": "WITH htn_patients AS (SELECT DISTINCT pt.patient_id FROM patient_tracker_gold pt INNER JOIN bp_log_latest_gold bl ON pt.patient_id = bl.patient_id WHERE pt.is_deleted = FALSE AND pt.is_htn_diagnosis = TRUE AND TRY_CAST(bl.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months') SELECT COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) AS controlled_count, COUNT(DISTINCT bl.patient_id) AS total_htn_with_reading, ROUND(100.0 * COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) / NULLIF(COUNT(DISTINCT bl.patient_id), 0), 2) AS control_rate FROM bp_log_latest_gold bl WHERE bl.patient_id IN (SELECT patient_id FROM htn_patients)",
+            "sql": "WITH htn_patients AS (SELECT DISTINCT pt.patient_id FROM patient_tracker_gold pt INNER JOIN bp_log_latest_gold bl ON pt.patient_id = bl.patient_id WHERE pt.is_deleted = false AND pt.is_htn_diagnosis = 'true' AND TRY_CAST(bl.bp_taken_on AS DATE) >= CURRENT_DATE - INTERVAL '3 months') SELECT COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) AS controlled_count, COUNT(DISTINCT bl.patient_id) AS total_htn_with_reading, ROUND(100.0 * COUNT(DISTINCT CASE WHEN bl.avg_systolic < 140 AND bl.avg_diastolic < 90 THEN bl.patient_id END) / NULLIF(COUNT(DISTINCT bl.patient_id), 0), 2) AS control_rate FROM bp_log_latest_gold bl WHERE bl.patient_id IN (SELECT patient_id FROM htn_patients)",
             "extract_table": False
         },
         "enrolled_by_county": {
@@ -878,7 +1007,7 @@ class QueryTemplateEngine:
                 r"patient\s+distribution\s+by\s+county",
                 r"enrollment\s+by\s+county"
             ],
-            "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = FALSE) SELECT f.county_name, COUNT(DISTINCT pt.patient_id) AS enrolled_patients FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id WHERE pt.is_deleted = FALSE AND (pt.is_htn_diagnosis = TRUE OR pt.is_diabetes_diagnosis = TRUE) GROUP BY f.county_name ORDER BY enrolled_patients DESC",
+            "sql": "WITH facilities AS (SELECT hf.id AS facility_id, CAST(hf.fhir_id AS BIGINT) AS organization_id, dis.name AS county_name FROM health_facility_admin_gold hf LEFT JOIN district_admin_gold dis ON hf.district_id = dis.id WHERE hf.is_deleted = false) SELECT f.county_name, COUNT(DISTINCT pt.patient_id) AS enrolled_patients FROM patient_tracker_gold pt LEFT JOIN facilities f ON f.organization_id = pt.site_id WHERE pt.is_deleted = false AND (pt.is_htn_diagnosis = 'true' OR pt.is_diabetes_diagnosis = 'true') GROUP BY f.county_name ORDER BY enrolled_patients DESC",
             "extract_table": False
         },
         "assessments_by_county": {

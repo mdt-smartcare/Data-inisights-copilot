@@ -30,13 +30,13 @@ class DatabaseSourceCreate(DataSourceBase):
     """Create a database connection data source."""
     source_type: Literal["database"] = "database"
     db_url: str = Field(..., description="Database connection URL (can be base64 encoded)")
-    db_engine_type: str = Field(..., description="Database engine: postgresql, mysql, sqlite")
+    db_engine_type: str = Field(..., description="Database engine: postgresql, mysql, sqlite, trino")
     is_encoded: bool = Field(default=False, description="Whether db_url is base64 encoded")
-    
+
     @field_validator("db_engine_type")
     @classmethod
     def validate_engine(cls, v: str) -> str:
-        allowed = {"postgresql", "mysql", "sqlite", "mssql", "oracle"}
+        allowed = {"postgresql", "mysql", "sqlite", "mssql", "oracle", "trino"}
         if v.lower() not in allowed:
             raise ValueError(f"db_engine_type must be one of: {', '.join(allowed)}")
         return v.lower()

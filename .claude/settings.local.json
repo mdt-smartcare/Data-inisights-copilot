@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.\\(py|ts|tsx\\)$\")",
+      "Bash(xargs ls -lt)",
+      "Bash(xargs cat)"
+    ]
+  }
+}
