@@ -80,6 +80,32 @@ def _build_schema_block(
     return "\n".join(lines) if lines else "(none)"
 
 
+def _build_column_types(
+    graph: SchemaGraph,
+    tables: List[str],
+    selected_columns_map: Dict[str, List[str]],
+) -> Dict[str, Dict[str, str]]:
+    """Extract verified column type metadata for selected columns.
+
+    Returns {bare_table_name: {col_name: data_type_lower}} so the system
+    prompt can emit precise type rules and eliminate LLM type-guessing.
+    """
+    result: Dict[str, Dict[str, str]] = {}
+    for table in tables:
+        bare = _bare(table)
+        info = graph.get_table(bare)
+        if info is None:
+            continue
+        selected = set(selected_columns_map.get(table) or [c.name for c in info.columns])
+        types: Dict[str, str] = {}
+        for col in info.columns:
+            if col.name in selected:
+                types[col.name] = (col.data_type or "unknown").lower()
+        if types:
+            result[bare] = types
+    return result
+
+
 def _build_fk_block(graph: SchemaGraph, tables: List[str]) -> str:
     """Render FK graph as `from.col -> to.col` lines for the selected scope."""
     table_set = {_bare(t) for t in tables}
@@ -162,24 +188,27 @@ def _build_schema_blocks_sync(
     db_url: str,
     tables: List[str],
     selected_columns_map: Dict[str, List[str]],
-) -> Tuple[str, str, str]:
+) -> Tuple[str, str, str, Dict[str, Dict[str, str]]]:
     """
     Synchronous helper that creates SchemaGraph and builds schema/fk/sample blocks.
-    
-    This is designed to be called via asyncio.to_thread() to avoid blocking
-    the event loop during schema reflection and sample value queries.
+
+    Returns (schema_block, fk_block, sample_values_block, column_types) where
+    column_types is {bare_table: {col: data_type}} for prompt type-rule injection.
+
+    Called via asyncio.to_thread() to avoid blocking the event loop.
     """
     engine = _safe_engine(db_url)
     try:
         bare_tables = [_bare(t) for t in tables]
         graph = SchemaGraph(engine, schema_name="public", tables_only=bare_tables)
         redactor = PHIRedactor(enabled=True, log_redactions=False)
-        
+
         schema_block = _build_schema_block(graph, tables, selected_columns_map)
         fk_block = _build_fk_block(graph, tables)
         sample_values_block = _build_sample_values_block(graph, tables, redactor)
-        
-        return schema_block, fk_block, sample_values_block
+        column_types = _build_column_types(graph, tables, selected_columns_map)
+
+        return schema_block, fk_block, sample_values_block, column_types
     finally:
         engine.dispose()
 
@@ -417,13 +446,16 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
         # ========== PHASE 3: Heavy lifting WITHOUT holding transaction ==========
         # Run blocking schema operations in a thread pool
         logger.info(f"[BOOTSTRAP] Building schema blocks for {len(tables)} tables (running in thread pool)...")
-        schema_block, fk_block, sample_values_block = await asyncio.to_thread(
+        schema_block, fk_block, sample_values_block, column_types = await asyncio.to_thread(
             _build_schema_blocks_sync,
             db_url,
             tables,
             selected_columns_map,
         )
-        logger.info("[BOOTSTRAP] Schema blocks built successfully")
+        logger.info(
+            f"[BOOTSTRAP] Schema blocks built: {sum(len(v) for v in column_types.values())} "
+            f"columns typed across {len(column_types)} tables"
+        )
 
         prompt = _render_prompt(
             agent_name=agent_name,
@@ -437,6 +469,9 @@ async def bootstrap_agent_definition(version_id: int, session: AsyncSession) -> 
         llm_helper = LLMHelper(db_session=session, agent_id=agent_id)
         raw_definition = await _invoke_llm_for_definition(llm_helper, prompt)
         definition = _coerce_definition_shape(raw_definition)
+        # Attach verified column types so generate_prompt() can emit precise
+        # type rules without the LLM having to guess boolean vs varchar.
+        definition["_column_types"] = column_types
 
         # ========== PHASE 4: Save results (short transaction) ==========
         # Re-fetch config to update (avoids stale object issues)

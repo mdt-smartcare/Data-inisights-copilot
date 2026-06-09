@@ -40,7 +40,63 @@ from app.core.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-logger = get_logger(__name__)
+
+def _generate_column_type_rules_section(
+    column_types: Dict[str, Dict[str, str]],
+    dialect: str,
+) -> str:
+    """Generate `# COLUMN TYPE RULES` from introspected metadata.
+
+    Produces a concise table-per-table section that tells the SQL generator
+    the verified type for each selected column so it never guesses boolean vs
+    varchar, or date-string vs native timestamp.
+    """
+    if not column_types:
+        return ""
+
+    cast_fn = "TRY_CAST" if dialect in ("trino", "duckdb") else "CAST"
+
+    lines: List[str] = [
+        "# COLUMN TYPE RULES (verified from live schema)",
+        "",
+        "Use these exact types — never guess. Treat as ground truth over any",
+        "conflicting rule you infer from column names alone.",
+        "",
+    ]
+
+    for table in sorted(column_types):
+        cols = column_types[table]
+        if not cols:
+            continue
+        lines.append(f"## {table}")
+        for col in sorted(cols):
+            t = cols[col].lower()
+            if t == "boolean":
+                hint = f"BOOLEAN → `{col} = true` / `{col} = false`  (never `= 'true'`)"
+            elif t in ("varchar", "text", "character varying", "char", "string"):
+                col_l = col.lower()
+                if "deleted" in col_l or col_l.startswith("is_"):
+                    hint = f"VARCHAR → `{col} IS DISTINCT FROM 'true'`  (soft-delete pattern)"
+                elif any(kw in col_l for kw in ("date", "_on", "_at", "_time")):
+                    hint = f"VARCHAR date string → `{cast_fn}({col} AS DATE)` before date comparisons"
+                else:
+                    hint = "VARCHAR → string comparisons; CAST when numeric operation needed"
+            elif t in ("integer", "int", "bigint", "smallint", "tinyint", "int64", "int32"):
+                hint = "INTEGER → direct numeric comparison, no CAST"
+            elif t in ("double", "float", "real", "double precision", "float64"):
+                hint = "DOUBLE → direct numeric comparison, no CAST"
+            elif t in ("decimal", "numeric"):
+                hint = "NUMERIC → direct numeric comparison"
+            elif "timestamp" in t or "datetime" in t:
+                hint = "TIMESTAMP → DATE_TRUNC for truncation; no CAST needed"
+            elif t == "date":
+                hint = "DATE → direct date comparison; no CAST needed"
+            else:
+                hint = t.upper()
+            lines.append(f"- `{col}`: {hint}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 class AgentService:
@@ -1542,7 +1598,16 @@ Operational principles:
         from app.core.prompt_templates import DIALECT_RULES_MAP
         _dialect_rules = DIALECT_RULES_MAP.get(data_source_dialect, DIALECT_RULES_MAP["postgresql"])
         prompt_sections.append(f"# DATABASE DIALECT\n\n{_dialect_rules}")
-        
+
+        # Section 5.5: Per-column type rules derived from live schema introspection.
+        # Only present when bootstrap has run and stored _column_types in agent_definition.
+        if agent_definition and isinstance(agent_definition.get("_column_types"), dict):
+            _col_type_section = _generate_column_type_rules_section(
+                agent_definition["_column_types"], data_source_dialect
+            )
+            if _col_type_section:
+                prompt_sections.append(_col_type_section)
+
         # Section 6: Chart Visualization Rules
         prompt_sections.append("# CHART VISUALIZATION RULES\n\n" + get_chart_generator_prompt())
         
