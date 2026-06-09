@@ -122,8 +122,55 @@ def _find_lhs_start(sql: str, cast_pos: int) -> int:
     return i + 1
 
 
+# VARCHAR flag columns in SPICE Africa Trino/Iceberg that store 'true'/'false' strings,
+# not SQL BOOLEAN. The LLM often generates `= true` (boolean literal) which causes
+# TYPE_MISMATCH: varchar = boolean. We rewrite to `= 'true'` before execution.
+_VARCHAR_FLAG_COLS = {
+    # patient_tracker_gold — confirmed VARCHAR by Trino TYPE_MISMATCH errors
+    "is_htn_diagnosis",
+    "is_diabetes_diagnosis",
+    "is_prescribed",
+    "is_before_htn_diagnosis",
+    "is_old_record",
+    "is_regular_smoker",
+    "is_patient_referred",
+    # encounter_gold
+    "is_latest_encounter",
+}
+
+
+def _fix_varchar_flag_columns(sql: str) -> str:
+    """Rewrite boolean literals to string literals for known VARCHAR flag columns.
+
+    In the SPICE Africa Iceberg schema, several `is_*` columns are stored as
+    VARCHAR('true'/'false') rather than BOOLEAN. The LLM frequently generates
+    `col = true` (boolean literal), causing `varchar = boolean` TYPE_MISMATCH.
+    This pass converts them to `col = 'true'`/`col = 'false'` (varchar literal).
+
+    `is_deleted` is intentionally excluded — it IS BOOLEAN in patient_tracker_gold.
+    """
+    fixed = sql
+    for col in _VARCHAR_FLAG_COLS:
+        # col = true  →  col = 'true'
+        fixed = re.sub(
+            rf'(\b{col}\s*=\s*)true\b',
+            rf"\g<1>'true'",
+            fixed,
+            flags=re.IGNORECASE,
+        )
+        # col = false  →  col = 'false'
+        fixed = re.sub(
+            rf'(\b{col}\s*=\s*)false\b',
+            rf"\g<1>'false'",
+            fixed,
+            flags=re.IGNORECASE,
+        )
+    return fixed
+
+
 def _strip_for_trino(sql: str) -> str:
-    """Strip Trino-incompatible artefacts: trailing ';' and PostgreSQL '::' casts.
+    """Strip Trino-incompatible artefacts: trailing ';', PostgreSQL '::' casts,
+    and boolean literals on known-VARCHAR flag columns.
 
     Trino's parser rejects a trailing semicolon when the statement is the only
     statement in the request, and it does not understand the PostgreSQL
@@ -150,6 +197,8 @@ def _strip_for_trino(sql: str) -> str:
     # Trino uses DOUBLE/DECIMAL, not NUMERIC (PostgreSQL type)
     import re as _re
     fixed = _re.sub(r'\bAS\s+NUMERIC\b', 'AS DOUBLE', fixed, flags=_re.IGNORECASE)
+    # Rewrite boolean literals for VARCHAR flag columns
+    fixed = _fix_varchar_flag_columns(fixed)
     return fixed.rstrip().rstrip(";").rstrip()
 
 

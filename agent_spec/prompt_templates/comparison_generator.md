@@ -79,10 +79,12 @@ Generate exactly 3 follow-up comparison questions with valid SQL queries that:
 - `encounter_gold.is_src_deleted` is **VARCHAR** — use `is_src_deleted IS DISTINCT FROM 'true'`
 - Admin tables (`health_facility_admin_gold`, `district_admin_gold`): BOOLEAN `is_deleted = false`
 
-## CRITICAL: Boolean Flag Columns
-- `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_prescribed` are **BOOLEAN**
-- CORRECT: `pt.is_htn_diagnosis = true`, `pt.is_prescribed = true`, `pt.is_prescribed = false`
-- WRONG: `pt.is_htn_diagnosis = 'true'` (varchar literal — causes type mismatch in Trino!)
+## CRITICAL: VARCHAR Flag Columns (stored as 'true'/'false' strings, NOT SQL BOOLEAN)
+- `patient_tracker_gold.is_htn_diagnosis`, `is_diabetes_diagnosis`, `is_prescribed`,
+  `is_before_htn_diagnosis`, `is_old_record`, `is_regular_smoker`, `is_patient_referred` — all **VARCHAR**
+- CORRECT: `pt.is_htn_diagnosis = 'true'`, `pt.is_prescribed = 'true'`, `pt.is_prescribed = 'false'`
+- WRONG: `pt.is_htn_diagnosis = true` (boolean literal — causes `varchar = boolean` TYPE_MISMATCH in Trino!)
+- Exception: `patient_tracker_gold.is_deleted` is **BOOLEAN** → use `pt.is_deleted = false`
 
 ## Output Format
 
